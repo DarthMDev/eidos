@@ -309,6 +309,17 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg_affine.c  # rotation/scaling BG layers
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/window.c     # windows, alpha and brightness
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/frame/frame.c    # the vblank frame loop and the OS tick
+
+    # engine/audio/ -- the SDAT sequencer and mixer, the host's stand-in for
+    # the ARM7 sound core.  No SDL here either: the platform layer's audio
+    # callback calls into this, and tests/test_audio.c drives it headless
+    # against aletheia's tools/assets/sseqsynth.py.
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/sdat.c     # SYMB/INFO/FAT/FILE
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/sbnk.c     # instrument tables
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/swav.c     # SWAR/SWAV, PCM8/PCM16/ADPCM
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/sseq.c     # the SSEQ interpreter
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/mixer.c    # one voice: resample, ADSR, PSG
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/player.c   # render and stream a sequence
 )
 
 add_library(eidos STATIC
@@ -321,7 +332,49 @@ target_include_directories(eidos PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/frame
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio
 )
+
+# engine/audio is the only part of the engine that needs libm (pow for the
+# semitone ratio, fmod for the square's phase, ceil/round/fabs).  On a
+# toolchain that keeps the maths functions in a separate library it has to
+# be named; where they are in libc, find_library simply finds nothing and
+# this is a no-op.
+find_library(BW_LIBM m)
+if(BW_LIBM)
+    target_link_libraries(eidos PUBLIC ${BW_LIBM})
+endif()
+
+# engine/audio is required to agree with its Python oracle *exactly* (see
+# engine/audio/audio.h and tests/test_audio.c), and on 32-bit x86 the
+# default floating point unit is x87, which evaluates double expressions in
+# 80-bit registers and rounds to 64 bits only when a value is spilled.  That
+# is not IEEE binary64 arithmetic, and it made every ILP32 render differ
+# from the oracle's in the last ulp of a gain or a note-off time.  Asking
+# for SSE2 instead gives the same 64-bit rounding at every step that every
+# other target already has.  It is applied to the audio sources only: the
+# rest of the engine is integer arithmetic and does not care.
+include(CheckCCompilerFlag)
+set(BW_AUDIO_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/sdat.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/sbnk.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/swav.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/sseq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/mixer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/player.c
+)
+if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT MSVC)
+    check_c_compiler_flag("-msse2 -mfpmath=sse" BW_HAVE_SSE2_MATH)
+    if(BW_HAVE_SSE2_MATH)
+        set_source_files_properties(${BW_AUDIO_SOURCES} PROPERTIES
+            COMPILE_OPTIONS "-msse2;-mfpmath=sse")
+        message(STATUS "engine/audio: SSE2 double arithmetic (x87 excess "
+                       "precision would break the oracle comparison)")
+    else()
+        message(WARNING "engine/audio: no -msse2 on this 32-bit compiler; "
+                        "test_audio may differ from the oracle in the last ulp")
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # SDL2, optional
@@ -573,6 +626,56 @@ add_custom_command(
 add_custom_target(bw_bg_oracle DEPENDS ${BW_BG_ORACLE_FILES})
 
 # ---------------------------------------------------------------------------
+# The audio engine's oracle
+# ---------------------------------------------------------------------------
+#
+# tools/audio_oracle.py imports aletheia's tools/assets/sseqsynth.py, the
+# sample-based SSEQ renderer that lane wrote against the ROM's own SDAT, and
+# writes one .wav and one .notes.txt per sequence plus seqs.txt, the
+# manifest tests/test_audio.c reads.  Nothing is copied here and aletheia is
+# not modified; the renders are game data and are written into the build
+# directory only.
+#
+# The three sequences cover the three channel kinds the mixer implements:
+#
+#   1062  SEQ_BGM_GYM          PCM waves out of a real SWAR (the gym theme)
+#   1146  SEQ_BGM_BATTLEPINCH  PSG square, alongside PCM on other tracks
+#   1379  SEQ_SE_KOUKA_H       PSG noise
+#
+# The window is deliberately short.  It is the same window on both sides, it
+# is long enough to reach several tempo segments and dozens of note-ons, and
+# the oracle is a pure-Python mixer: a full-length render would put minutes
+# into every build for no extra coverage.
+set(BW_AUDIO_SEQS 1062 1146 1379)
+set(BW_AUDIO_SECONDS 10.0)
+set(BW_AUDIO_ORACLE_DIR ${CMAKE_CURRENT_BINARY_DIR}/oracle/audio)
+
+set(BW_AUDIO_ORACLE_FILES ${BW_AUDIO_ORACLE_DIR}/seqs.txt)
+foreach(sq ${BW_AUDIO_SEQS})
+    list(APPEND BW_AUDIO_ORACLE_FILES ${BW_AUDIO_ORACLE_DIR}/seq${sq}.wav)
+endforeach()
+
+add_custom_command(
+    OUTPUT ${BW_AUDIO_ORACLE_FILES}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/audio_oracle.py
+            --aletheia-root ${ALETHEIA_ROOT}
+            --data-root ${BW_DATA_ROOT_ABS}
+            --out ${BW_AUDIO_ORACLE_DIR}
+            --max-seconds ${BW_AUDIO_SECONDS}
+            ${BW_AUDIO_SEQS}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/audio_oracle.py
+            ${ALETHEIA_ROOT}/tools/assets/sseqsynth.py
+            ${ALETHEIA_ROOT}/tools/assets/sdat.py
+            ${ALETHEIA_ROOT}/tools/assets/sbnk.py
+            ${ALETHEIA_ROOT}/tools/assets/sseq.py
+            ${ALETHEIA_ROOT}/tools/assets/swav.py
+            ${ALETHEIA_ROOT}/tools/assets/adpcm.py
+    COMMENT "Generating the audio oracle with aletheia's sseqsynth.py"
+    VERBATIM
+)
+add_custom_target(bw_audio_oracle DEPENDS ${BW_AUDIO_ORACLE_FILES})
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -601,6 +704,16 @@ add_dependencies(test_bg bw_bg_oracle)
 target_include_directories(test_bg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_bg PRIVATE eidos)
 add_test(NAME test_bg COMMAND test_bg ${BW_DATA_ROOT_ABS} ${BW_BG_ORACLE_DIR})
+
+# The audio test reads its sequence list out of the audio oracle's own
+# manifest, so the set of sequences is changed in one place
+# (BW_AUDIO_SEQS above), and writes its own note dump next to the oracle's
+# so a failure leaves both files on disk to diff by hand.
+add_executable(test_audio ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audio.c)
+add_dependencies(test_audio bw_audio_oracle)
+target_include_directories(test_audio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_audio PRIVATE eidos)
+add_test(NAME test_audio COMMAND test_audio ${BW_DATA_ROOT_ABS} ${BW_AUDIO_ORACLE_DIR})
 
 # The synthetic engine tests need neither game data nor an oracle: every
 # expected pixel in them is computed on paper from the hardware rule under

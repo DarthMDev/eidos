@@ -43,6 +43,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio.h"
 #include "frame.h"
 #include "g2d.h"
 #include "platform.h"
@@ -372,15 +373,44 @@ static void view_render(void *user, u8 *top, u8 *bottom)
 }
 
 /* ------------------------------------------------------------------ */
+/* Music                                                              */
+/* ------------------------------------------------------------------ */
+/*
+ * The platform layer's audio callback is a plain function pointer over a
+ * 32768 Hz stereo signed-16-bit buffer, which is exactly what
+ * bw_audio_player_mix() fills, so the whole of the wiring is this thunk and
+ * one eidos_platform_set_audio() call.  The callback runs on SDL's audio
+ * thread and must not allocate or block: the player prepared every note and
+ * decoded every wave it needs when it was created, and mixing touches
+ * nothing but its own sixteen voices and a stack block buffer.
+ *
+ * SEQ 1062 is SEQ_BGM_GYM, one of the three sequences tests/test_audio.c
+ * checks sample for sample against aletheia's sseqsynth.py.  The title
+ * music replaces it here once the boot path names its SEQ id; until then
+ * this is a real sequence out of the player's own ROM rather than a
+ * placeholder tone.
+ */
+#define VIEW_MUSIC_SEQ     1062
+#define VIEW_MUSIC_SECONDS 60.0
+
+static void view_audio(void *user, s16 *out, u32 frames)
+{
+    bw_audio_player_mix((BwAudioPlayer *)user, out, frames);
+}
+
+/* ------------------------------------------------------------------ */
 
 static void usage(void)
 {
     printf("eidos_view [--data-root PATH] [--scale N] [--side-by-side]\n"
            "           [--gap N] [--species N] [--frames N] [--shot PATH]\n"
            "           [--shot-first PATH] [--anim-speed N] [--no-audio]\n"
+           "           [--music [SEQ]]\n"
            "\n"
            "Escape quits, F12 writes a screenshot.  --shot-first writes one\n"
-           "after the first frame, so two frames can be compared.\n");
+           "after the first frame, so two frames can be compared.\n"
+           "--music plays a sequence out of the SDAT through engine/audio;\n"
+           "with no argument it plays SEQ %d, SEQ_BGM_GYM.\n", VIEW_MUSIC_SEQ);
 }
 
 int main(int argc, char **argv)
@@ -397,6 +427,10 @@ int main(int argc, char **argv)
     int species = 25;
     int anim_speed = 1;
     int audio = 1;
+    long music_seq = -1;
+    BwSdat music_sdat;
+    BwAudioPlayer *music = NULL;
+    int music_sdat_open = 0;
     u8 *top, *bottom;
     int i;
     int rc = 0;
@@ -427,6 +461,11 @@ int main(int argc, char **argv)
             anim_speed = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--no-audio") == 0) {
             audio = 0;
+        } else if (strcmp(argv[i], "--music") == 0) {
+            music_seq = VIEW_MUSIC_SEQ;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
+                music_seq = strtol(argv[++i], NULL, 10);
+            }
         } else if (strcmp(argv[i], "--help") == 0) {
             usage();
             return 0;
@@ -483,6 +522,25 @@ int main(int argc, char **argv)
            cfg.layout == EIDOS_LAYOUT_SIDE_BY_SIDE ? "side by side" : "stacked",
            eidos_platform_audio_open(plat) ? "open" : "silent");
 
+    if (music_seq >= 0) {
+        char sdat_path[1024];
+        sprintf(sdat_path, "%s/wb_sound_data.sdat", data_root);
+        if (bw_sdat_load(&music_sdat, sdat_path) == 0) {
+            music_sdat_open = 1;
+            music = bw_audio_player_create(&music_sdat, (u32)music_seq,
+                                           VIEW_MUSIC_SECONDS, 1);
+        }
+        if (music != NULL) {
+            const char *name = bw_sdat_name(&music_sdat, BW_SDAT_SEQ, (u32)music_seq);
+            eidos_platform_set_audio(plat, view_audio, music);
+            printf("music: SEQ %ld (%s), looping\n", music_seq,
+                   name != NULL ? name : "unnamed");
+        } else {
+            fprintf(stderr, "eidos_view: cannot play SEQ %ld; running silent\n",
+                    music_seq);
+        }
+    }
+
     memset(&hooks, 0, sizeof(hooks));
     hooks.step = view_step;
     hooks.vblank = view_vblank;
@@ -535,7 +593,17 @@ int main(int argc, char **argv)
            (unsigned long long)eidos_platform_audio_frames(plat));
 
     eidos_frame_set_current(NULL);
+    if (music != NULL) {
+        printf("music: %llu frames mixed, %u channel overflows\n",
+               (unsigned long long)bw_audio_player_frames(music),
+               bw_audio_player_voice_overflows(music));
+    }
+    /* Unhook the callback before the player is freed: the audio device is
+     * still running until eidos_platform_quit() closes it. */
+    eidos_platform_set_audio(plat, NULL, NULL);
     eidos_platform_quit(plat);
+    bw_audio_player_free(music);
+    if (music_sdat_open) bw_sdat_close(&music_sdat);
     free(top);
     free(bottom);
     view_free(&view);

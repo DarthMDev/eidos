@@ -93,12 +93,13 @@ displacing any other.
 
 Alongside those three, **the engine**, under `engine/`, is the host-side
 stand-in for the DS hardware itself rather than for its SDK: see "The 2D
-engine, and the pixel oracle it is tested against" below. It has three
+engine, and the pixel oracle it is tested against" below. It has four
 parts:
 
 | directory | what it is |
 | --- | --- |
 | `engine/g2d/` | the 2D engine: OBJ, BG, affine, windows and the colour effects, no SDL |
+| `engine/audio/` | the SDAT sequencer and the 16-channel mixer, the ARM7 sound core's stand-in, no SDL |
 | `engine/frame/` | the per-frame skeleton: the vblank convention and the DS OS tick, no SDL |
 | `engine/platform/` | the host: the SDL2 window, the keyboard, the audio device and the frame pacer |
 
@@ -474,6 +475,156 @@ positive case that makes the "directly beneath" rule concrete: hiding BG1
 with a window makes the backdrop the layer directly beneath BG0, and the
 same blend that refused to run then runs.
 
+## The audio engine, and the synth oracle it is tested against
+
+`engine/audio/` is the second host-side reimplementation of hardware the DS
+had and a PC does not: the ARM7 sound core. It is pure C99 with no SDL, no
+third-party code and nothing outside the standard library (`math.h` for
+`pow`, `fmod`, `ceil`, `round` and `fabs`, and nothing else). The platform
+layer's audio callback calls into it; `tests/test_audio.c` drives it
+headless.
+
+| file | what it does |
+| --- | --- |
+| `engine/audio/audio.h` | the whole API, and the provenance of every rule it implements |
+| `engine/audio/sdat.c` | the SDAT container: SYMB, INFO, FAT and FILE, and the SEQ / BANK / WAVARC / PLAYER records |
+| `engine/audio/sbnk.c` | SBNK instrument tables: types 0, 1, 2, 3, 16 and 17, and region selection |
+| `engine/audio/swav.c` | SWAR archives and SWAV waves: PCM8, PCM16 and IMA-ADPCM, and the loop point |
+| `engine/audio/sseq.c` | the SSEQ opcode decoder and the per-track bytecode interpreter |
+| `engine/audio/mixer.c` | one voice: the resample, the ADSR, the pan, and the two PSG generators |
+| `engine/audio/player.c` | SEQ to BANK to WAVARC resolution, the tempo map, the render and the streaming player |
+
+**The formats.** The SEQ INFO record's bytes +4:+6 are one little-endian
+u16 holding a **direct** BANK-table index, not two u8 fields and not a
+PLAYER indirection; aletheia's asset lane settled that against the data
+(940 of 940 populated SEQ records resolve to a real BANK record that way,
+and the resolved BANK's name matches the SEQ's own in every case sampled)
+and `bw_sdat_seq_record` is that reading. A BANK record carries a file id
+and four wave-archive slots; a region's `wave_arc` is a *local* 0-3 index
+into those, which gives the global WAVARC index, whose INFO record is a
+bare u32 file id for the SWAR archive, in which `wave_id` selects the
+SWAV. The SBNK region record is **10 bytes**, `wave_id` first, and a type
+16 or 17 region entry is a u16 type prefix in front of it, so 12 bytes per
+region: reading it 12 bytes wide is what used to make every region past
+the first of a drum kit decode as garbage. Types 2 and 3 are PSG and carry
+no wave at all; type 2's leading u16 is a duty selector.
+
+**The sequencer** is a real interpreter, not a linear disassembly. Each
+track runs its own bytecode with its own tick, program, volume, expression,
+pan and transpose; a note's duration gates the next event as well as
+sounding the note, because this format has no note-off; a forward `Jump` is
+taken unconditionally, a backward one (this format's loop idiom) once, so a
+looping track renders as its body twice and then ends; `Call` and `Return`
+use a real return stack. The three opcodes `0xA0` (Random), `0xA1`
+(GetVariable) and `0xA2` (If) are genuinely undocumented in this project:
+their argument shapes were never re-derived, and they are skipped by the
+commonly cited 5, 2 and 1 byte widths. That is a labelled approximation
+rather than a decode, it is the same one the oracle makes, and any *other*
+unrecognised opcode ends that track's render where it stands.
+
+**The mixer** is 16 channels at 32768 Hz, which is the DS mixer's own
+output rate and the rate the host device is opened at, so nothing resamples
+twice. A voice resamples its source by the semitone ratio
+`2^((played - base) / 12) * native_rate / output_rate` with linear
+interpolation, wraps into `[loop_start, total_len)` past the loop point,
+plays a one-shot out to its own natural length whatever the note's gate
+says (which is what makes a cry, whose gate is zero ticks, sound at all),
+shapes it with a linear ADSR, pans it linearly about 64 and clips to 16
+bits. PSG square is a bipolar rectangle with the hardware's eight duty
+settings; PSG noise is the 15-bit Galois LFSR clocked at the *channel timer*
+rate the SDK's SND timer formula derives from the note's frequency
+(`timer = -(clock / frequency)`, clock = 33513982/2 Hz) and sample-and-held
+to the output rate, because an LFSR bit is a held digital level between
+clocks rather than something to interpolate through.
+
+**A voice is chunked, and that is load bearing.** All the state a note
+carries (the source position, the square's phase, the noise LFSR and its
+cursor, the sample counter) lives in the voice, so rendering a note in
+pieces is bit-identical to rendering it in one call. That is what lets the
+offline render and the real-time callback be the *same* mixer rather than
+two implementations that drift; `tests/test_audio.c` checks it directly, on
+a PCM voice in 37-sample chunks and a PSG voice in 101-sample chunks.
+
+**The oracle, and why the comparison is exact.** `tests/test_audio.c` does
+not compare against hand-written expected values. `tools/audio_oracle.py`
+imports aletheia's `tools/assets/sseqsynth.py` (out of the sibling
+checkout; nothing is copied here and aletheia is not modified), renders the
+same sequences in Python and writes the `.wav` that tool itself produces
+plus a note dump, into the build directory. The C engine renders the same
+sequences and the test checks two things:
+
+- **the note event list**, diffed line for line. A difference there is a
+  *sequencer* difference: a mis-decoded opcode, a jump taken a different
+  number of times, a tempo segment off by a tick, a region resolved to the
+  wrong instrument. Every float in the dump is written as its exact
+  IEEE-754 bit pattern, so the diff means "the same double" rather than
+  "the same 17 digits", which two printf implementations need not agree on.
+- **the sample buffers**, sample for sample, with the peak, the RMS and the
+  largest difference reported per sequence.
+
+The tolerance is **zero**: the two renders are required to be identical,
+not merely close. That is reachable, and it is reachable on purpose.
+sseqsynth.py is a Python program and Python floats are IEEE-754 binary64,
+so `engine/audio` computes the same quantities in the same order in
+`double` and gets the same bits. Three things had to be got right for that
+and each is written down where it lives:
+
+- **Python's `round()` is round-half-to-even**, not C `round()`'s
+  half-away-from-zero, and the oracle uses it for the note start sample,
+  the note length, the timer period and the final quantisation. Getting it
+  wrong shifts whole notes by a sample. `bw_audio_py_round` is CPython's
+  own `float.__round__`.
+- **the order of the mix accumulation is observable**, because floating
+  point addition is not associative. The offline render sums the notes in
+  the oracle's order, which is a Python dict's insertion order over the
+  tracks (the `OpenTrack` order with track 0 appended last) and then note
+  order within a track, each note's whole span at once.
+- **x87 is not binary64.** On 32-bit x86 the default floating point unit
+  evaluates `double` expressions in 80-bit registers and rounds to 64 bits
+  only on a spill, which made every ILP32 render differ from the oracle's
+  in the last ulp of a gain or a note-off time. `CMakeLists.txt` compiles
+  the six audio sources with `-msse2 -mfpmath=sse` on such a target. That
+  is the whole of the difference; the other 32-bit results were already
+  integer arithmetic and never cared.
+
+Nothing about the engine *requires* double. `BwAudioVoice` is the whole of
+the per-note arithmetic and is the piece a later fixed-point pass would
+replace, with this test standing as the reference it then has to stay near
+rather than equal.
+
+**Measured**, three sequences over the same 10-second window, checked by
+ctest:
+
+| SEQ | name | what it covers | notes | render | difference |
+| --- | --- | --- | --- | --- | --- |
+| 1062 | `SEQ_BGM_GYM` | PCM waves out of a real SWAR | 296 events, 22 rendered, 9 tracks, 116 BPM | peak 14960, RMS 3090.378 | **0 of 655360 samples** |
+| 1146 | `SEQ_BGM_BATTLEPINCH` | PSG square, with PCM alongside | 173 events, 35 rendered, 6 tracks, 180 BPM | peak 6052, RMS 2221.014 | **0 of 655360 samples** |
+| 1379 | `SEQ_SE_KOUKA_H` | PSG noise | 17 events, 12 rendered, 2 tracks, 89 BPM | peak 5751, RMS 1896.658 | **0 of 275032 samples** |
+
+All three note event lists are identical to the oracle's, and the peak and
+RMS agree exactly because the buffers do. The busiest of the three needs
+**5 voices at once**, so the DS's 16 channels are not the binding
+constraint on any of them; the test reports that number and the streaming
+player counts the note-ons that found no free channel, which is zero here.
+
+**What is reproduced rather than improved, deliberately.** sseqsynth.py
+documents its own approximations, and the engine makes the same ones,
+because the point of an oracle comparison is that two independent
+implementations of the *same* model agree. The ADSR is linear with the
+byte used directly as a fraction of each stage's maximum time (the asset
+lane picked that direction empirically, not from a spec); volume,
+expression and velocity multiply linearly rather than in dB; pan is a
+linear crossfade rather than equal power; portamento, modulation, sweep and
+the pitch wheel are no-ops. One of them looks like a bug and is not:
+**the noise LFSR's all-ones reset value is a fixed point of its own
+update** (right-shifting all ones always shifts out a 1, so the tap is
+always XORed back in), so every noise note is a constant level shaped by
+the envelope rather than noise. aletheia's tool found that, proved it (its
+clock-rate fix changed the rendered file not at all, byte for byte) and
+deliberately left it. The engine reproduces it exactly, so that whoever
+fixes the seed fixes it in the tool first and this test then *measures* the
+change instead of hiding it.
+
 ## The frame skeleton
 
 `engine/frame/` is the per-frame shape the game will run on, and it contains
@@ -809,10 +960,16 @@ is created **without** `SDL_RENDERER_PRESENTVSYNC`: a 60.000 Hz or 144 Hz
 panel would otherwise pull the game off the DS's rate.
 
 **The audio device** is opened at 32768 Hz, stereo, signed 16-bit, which is
-the DS mixer's own output rate, so the eventual sequencer (Milestone 5) does
-not resample twice. The callback is silent for now and the buffer is 1024
-frames, 31 ms, under two DS frames. A machine with no sound device prints a
-line and runs silent rather than refusing to start.
+the DS mixer's own output rate, so the sequencer does not resample twice,
+and the buffer is 1024 frames, 31 ms, under two DS frames. A machine with
+no sound device prints a line and runs silent rather than refusing to
+start. The callback itself is a plain function pointer over that buffer,
+which is exactly what `bw_audio_player_mix` fills, so the whole of the
+wiring between the platform layer and `engine/audio` is one thunk and one
+`eidos_platform_set_audio` call. It runs on SDL's audio thread and never
+allocates: the player prepared every note and decoded every wave it needs
+when it was created, and mixing touches nothing but its own sixteen voices
+and a block buffer on the stack.
 
 **The frame upload** is two 256x192 RGBA buffers into two streaming textures
 created as `SDL_PIXELFORMAT_ABGR8888`, which is the packed pixel `0xAABBGGRR`
@@ -831,7 +988,16 @@ is written at 1x in the configured layout, as RGB24, so SDL writes a plain
 build/eidos_view --data-root <extract/data> [--scale N] [--side-by-side]
                  [--gap N] [--species N] [--frames N] [--shot PATH]
                  [--shot-first PATH] [--anim-speed N] [--no-audio]
+                 [--music [SEQ]]
 ```
+
+`--music` plays a sequence out of the player's own `wb_sound_data.sdat`
+through `engine/audio`, looping; with no argument it plays SEQ 1062,
+`SEQ_BGM_GYM`, which is one of the three the audio test checks sample for
+sample against the Python synth. It is behind a flag because it is the
+demo's only reason to open a 50 MB archive, and the title music replaces it
+once the boot path names its SEQ id. On exit the demo reports how many
+frames it mixed and how many note-ons found no free channel.
 
 The top screen is `titledemo.narc` member 0, the 256x256 8bpp title screen
 the asset lane identified, over the NCGR/NCLR pair `background.py`'s coverage
@@ -1054,8 +1220,8 @@ Measured on this machine, same tree, same tests:
 
 | configuration | node / manager | the nine tcbl sources | ctest | test_tcbl |
 | --- | --- | --- | --- | --- |
-| LP64 (default) | 40 / 88 bytes | `stubs/reimpl_` | 10/10 | 49 checks, 0 failures |
-| ILP32 | 24 / 56 bytes | matched, compiled as written | 10/10 | 49 checks, 0 failures |
+| LP64 (default) | 40 / 88 bytes | `stubs/reimpl_` | 11/11 | 49 checks, 0 failures |
+| ILP32 | 24 / 56 bytes | matched, compiled as written | 11/11 | 49 checks, 0 failures |
 
 24 and 56 are `0x18` and `0x38`. `tests/test_tcbl.c` asserts both layouts
 rather than one, and on ILP32 it additionally asserts that
@@ -1324,10 +1490,28 @@ clean.
   - [ ] DS rasterizer quirks (perspective handling, edge rules)
   - [ ] Overworld and map chunks render correctly
 - [ ] **Milestone 5**: Audio
-  - [ ] SDAT sequencer and mixer (replacing ARM7 audio core)
-  - [ ] PCM and ADPCM channels
-  - [ ] PSG square wave and noise channels
-  - [ ] Music, sound effects, and Pokémon cries play accurately
+  - [x] SDAT sequencer and mixer (replacing ARM7 audio core): the SDAT
+        container, SBNK instrument tables, SWAR/SWAV waves, the SSEQ
+        bytecode interpreter and a 16-channel mixer at 32768 Hz, in pure C
+        with no SDL (`engine/audio/`), checked sample for sample against
+        aletheia's `sseqsynth.py` and wired into the platform layer's audio
+        callback (`eidos_view --music`)
+  - [x] PCM and ADPCM channels: PCM8, PCM16 and IMA-ADPCM decode with loop
+        points, semitone-ratio resampling and the linear ADSR, bit-identical
+        to the oracle on `SEQ_BGM_GYM`
+  - [x] PSG square wave and noise channels: the eight duty settings, and the
+        15-bit Galois LFSR clocked at the SND timer rate, bit-identical to
+        the oracle on `SEQ_BGM_BATTLEPINCH` and `SEQ_SE_KOUKA_H`
+  - [ ] Music, sound effects, and Pokémon cries play accurately (the
+        sequencer renders all three and the cry path is the same one, but
+        the model it reproduces is the asset lane's: the ADSR curve, the
+        volume law and the pan law are documented approximations of the
+        hardware's, and Tie, portamento, modulation and the pitch wheel are
+        no-ops. Making those accurate needs the DS sound driver itself,
+        which is not decompiled yet, and it is what this test exists to
+        measure the change of)
+  - [ ] The game's own sound calls reach it: nothing in `src/matched/` plays
+        a sequence yet, so the SEQ id is still chosen by the demo
 - [ ] **Milestone 6**: Data pipeline & asset extraction
   - [ ] First-run asset extractor from legally dumped ROM
   - [ ] File layer: VFS with mod overlay support
