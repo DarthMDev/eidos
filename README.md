@@ -331,4 +331,8 @@ repository: 32 objects, both tests pass (test_text 5/5 strings, test_stats
 
 ## Legal
 
-This repository contains no game assets, copyrighted Nintendo/Game Freak code, or ROMs. You must provide your own legally obtained ROM to extract required game assets.
+eidos is original code under the MIT License (`LICENSE`). It contains no game
+data and no reverse-engineered game source: it compiles that source from the
+user's own aletheia checkout and reads assets the user extracted from their own
+ROM. See `LEGAL.md`. Pokémon and Nintendo DS are trademarks of Nintendo; the
+game is the property of Nintendo, Creatures Inc. and GAME FREAK inc.
