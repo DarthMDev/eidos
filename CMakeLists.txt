@@ -25,9 +25,19 @@ set(CMAKE_C_EXTENSIONS OFF)
 # checkout; nothing from aletheia is copied into this repository.  The
 # default assumes the two repositories are cloned as siblings; pass this
 # explicitly when they are not (see README.md).
-set(ALETHEIA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../aletheia" CACHE PATH
+# The sibling checkout may keep the repository's original folder name
+# (bw_decomp); both spellings are tried before giving up.
+set(_aletheia_default "${CMAKE_CURRENT_SOURCE_DIR}/../aletheia")
+if(NOT EXISTS "${_aletheia_default}/src/matched"
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../bw_decomp/src/matched")
+    set(_aletheia_default "${CMAKE_CURRENT_SOURCE_DIR}/../bw_decomp")
+endif()
+set(ALETHEIA_ROOT "${_aletheia_default}" CACHE PATH
     "Path to the aletheia decompilation repository checkout")
 get_filename_component(ALETHEIA_ROOT "${ALETHEIA_ROOT}" ABSOLUTE)
+if(NOT EXISTS "${ALETHEIA_ROOT}/src/matched")
+    message(FATAL_ERROR "ALETHEIA_ROOT=${ALETHEIA_ROOT} does not contain src/matched; pass -DALETHEIA_ROOT=<path to the aletheia checkout>")
+endif()
 
 # Where the player's extracted assets live.  Relative paths are taken against
 # the aletheia checkout, so -DBW_DATA_ROOT=extract/data does the obvious
