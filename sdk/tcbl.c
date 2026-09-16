@@ -42,7 +42,7 @@ EidosTcblList *bw_tcbl_create(u32 heap, u16 home_heap, u32 count,
 
 u32 bw_tcbl_work_size(const EidosTcblList *list)
 {
-    if (list == NULL || list->work_size < EIDOS_TCBL_HEADER_BIAS) {
+    if (list == NULL || list->work_size <= EIDOS_TCBL_HEADER_BIAS) {
         return 0u;
     }
     return list->work_size - EIDOS_TCBL_HEADER_BIAS;

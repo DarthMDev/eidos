@@ -861,7 +861,11 @@ python tools/hostbuild.py --aletheia-root ../aletheia --check    # cross compile
 `tools/gcc-arm/`. It proves every source compiles clean and that the symbol
 closure is complete, because the link fails on the first missing name. It
 cannot run the tests: what comes out is an ARM ELF and there is no runner
-for it.
+for it. It is also the port's only LP32 build, which is worth more than it
+used to be now that game-owned structs with pointers in them are in the
+source list: on that target a task-callback node is exactly 0x18 bytes again
+and `EIDOS_TCBL_HEADER_BIAS` is zero. Current state: 62 objects compiled
+clean, `test_text`, `test_stats` and `test_tcbl` linked.
 
 ## Portability rules
 

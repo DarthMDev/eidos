@@ -39,7 +39,7 @@ PORT = ROOT
 CMAKELISTS = os.path.join(PORT, "CMakeLists.txt")
 DEFAULT_ALETHEIA_ROOT = os.path.normpath(os.path.join(ROOT, "..", "aletheia"))
 
-TESTS = ["test_text", "test_stats"]
+TESTS = ["test_text", "test_stats", "test_tcbl"]
 
 
 def read_source_lists(aletheia_root):
@@ -126,12 +126,18 @@ def build(cc, kind, builddir, aletheia_root, data_root, link, run_tests):
                          "use CMake, which knows how to drive cl.exe")
 
     warn = ["-std=c99", "-Wall", "-Wextra", "-fsigned-char"]
+    # The same include directories CMakeLists.txt puts on the eidos
+    # target: the shim, the 2D engine and the frame skeleton each have
+    # headers the port's own sources reach by bare name.
+    inc = []
+    for d in (("sdk",), ("engine", "g2d"), ("engine", "frame")):
+        inc += ["-I", os.path.join(PORT, *d)]
     objs = []
     failed = 0
     for src in sources:
         obj = os.path.join(builddir, os.path.splitext(os.path.basename(src))[0] + ".o")
         extra = ["-Wno-unused-parameter"] if os.sep + "matched" + os.sep in src else []
-        rc = run([cc] + warn + extra + ["-c", src, "-o", obj])
+        rc = run([cc] + warn + inc + extra + ["-c", src, "-o", obj])
         if rc != 0:
             failed += 1
             print("hostbuild.py: FAILED to compile %s" % src)
@@ -140,7 +146,7 @@ def build(cc, kind, builddir, aletheia_root, data_root, link, run_tests):
     for t in TESTS:
         src = os.path.join(PORT, "tests", t + ".c")
         obj = os.path.join(builddir, t + ".o")
-        rc = run([cc] + warn + ["-I", builddir, "-c", src, "-o", obj])
+        rc = run([cc] + warn + inc + ["-I", builddir, "-c", src, "-o", obj])
         if rc != 0:
             failed += 1
             print("hostbuild.py: FAILED to compile %s" % src)
