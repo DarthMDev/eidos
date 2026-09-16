@@ -93,12 +93,13 @@ displacing any other.
 
 Alongside those three, **the engine**, under `engine/`, is the host-side
 stand-in for the DS hardware itself rather than for its SDK: see "The 2D
-engine, and the pixel oracle it is tested against" below. It has four
+engine, and the pixel oracle it is tested against" below. It has five
 parts:
 
 | directory | what it is |
 | --- | --- |
 | `engine/g2d/` | the 2D engine: OBJ, BG, affine, windows and the colour effects, no SDL |
+| `engine/g3d/` | the 3D engine: the fixed-point geometry pipeline, NSBMD/NSBTX loading, the display-list interpreter and a software rasteriser, no SDL |
 | `engine/audio/` | the SDAT sequencer and the 16-channel mixer, the ARM7 sound core's stand-in, no SDL |
 | `engine/frame/` | the per-frame skeleton: the vblank convention and the DS OS tick, no SDL |
 | `engine/platform/` | the host: the SDL2 window, the keyboard, the audio device and the frame pacer |
@@ -474,6 +475,216 @@ first target that is not the topmost pixel. It also checks the
 positive case that makes the "directly beneath" rule concrete: hiding BG1
 with a window makes the backdrop the layer directly beneath BG0, and the
 same blend that refused to run then runs.
+
+## The 3D engine, and the geometry oracle it is tested against
+
+`engine/g3d/` is the host-side stand-in for the DS's geometry engine and
+its rasteriser. Pure C99, no SDL, no third-party code, and not even
+`math.h`: every number below is integer arithmetic on the hardware's own
+20.12 fixed point, which is portability rule 3 taken literally.
+
+| file | what it does |
+| --- | --- |
+| `engine/g3d/g3d.h` | the whole API, and the provenance of every rule it implements |
+| `engine/g3d/mtx.c` | fx32 matrices, the four matrix modes, the position/vector stack, and frustum, perspective and look-at |
+| `engine/g3d/nsbmd.c` | NSBMD/NSBTX containers, Nitro resource dictionaries, TEX0 records, the MDL0 shape dictionary, the render-command bytecode, the a/0/1/4 texture index |
+| `engine/g3d/texture.c` | all seven GX texture pixel formats |
+| `engine/g3d/gx.c` | the display-list interpreter: the packed command word, the whole opcode table, every vertex encoding, strip assembly |
+| `engine/g3d/raster.c` | the 256x192 software rasteriser, and the meeting point with the 2D compositor |
+
+**Where the rules come from.** In order of authority, and each file
+header repeats it: aletheia's asset lane (`tools/assets/nsbmd.py` cracked
+the container, the resource dictionary, the TEX0 records and the MDL0
+shape dictionary; `tools/assets/map_shapes.py` cracked the render-command
+bytecode and the material-to-texture link, and `docs/ASSETS.md` records
+both with their gaps); aletheia's matched sources
+(`src/matched/unit_02048AD0.c` and `unit_02048BC4.c` are g3d_light.c's
+accessor run and light-set builder, and are what says the game's 3D
+vectors are three `fx32` in the 1.19.12 format `sdk/types.h` defines --
+no matched source in aletheia today carries the geometry engine's own
+arithmetic); and public NDS hardware documentation for the command set,
+the matrix modes and stack depths, the vertex encodings,
+`TEXIMAGE_PARAM`'s bits, the texture formats and `POLYGON_ATTR`'s fields.
+
+### What is attested
+
+**The container and the display lists**, because they are compared
+against an oracle. `tools/g3d_oracle.py` imports aletheia's `nsbmd.py`
+and `map_shapes.py` out of the sibling checkout (nothing is copied here,
+and aletheia is not modified), writes the per-shape textured OBJ that
+lane exports into the build directory, and beside it `models.txt`: the
+manifest naming each shape's texture and the `(width, height)` the OBJ's
+`vt` lines were divided by. `tests/test_g3d.c` decodes the same
+sub-files with the engine's own reader, runs every shape's display list
+through `engine/g3d/gx.c` with an identity matrix stack, and compares.
+
+| model | what it is | shapes | vertices | faces | textures agreed |
+| --- | --- | --- | --- | --- | --- |
+| `pl_00_00` (`a/0/0/8#120`) | an interior, the model the shape-dictionary crack was confirmed against | 40 / 40 | **5678 / 5678** | **1782 / 1782** | 40 / 40 |
+| `map24_23` (`a/0/0/8#0`) | an outdoor terrain chunk | 26 / 26 | **2120 / 2120** | **572 / 572** | 26 / 26 |
+
+**The tolerance, and why it is what it is.** The OBJ writes each
+coordinate with `%.6f`, so the oracle's number is the exact value rounded
+to six decimals and carries at most 5e-7 of representation error. The
+engine's number is exact: a vertex command's payload is a whole number of
+1/4096 (VTX_16, VTX_XY/XZ/YZ), 1/64 (VTX_10) or 1/512 (VTX_DIFF) and
+stays in fx32 the whole way. The test therefore requires
+`|obj - engine/4096| <= 1e-6` and reports the worst deviation every run.
+**Measured: 5.000e-07 on both models**, for positions and for texture
+coordinates alike, which is exactly the rounding bound and not one ulp
+more. Texture coordinates are compared after undoing the OBJ's own
+normalisation (the manifest's per-shape texture size, and the flipped v
+axis), so what is compared is the sixteenth-of-a-texel number `TEXCOORD`
+really carried.
+
+The face comparison is not a count: every face's vertex indices are
+compared slot by slot, relative to its own shape, so the four primitive
+kinds and the strip winding (an odd triangle of a strip has its last two
+vertices swapped; a quad strip's four consecutive vertices go out as
+a, b, d, c) are under test rather than assumed.
+
+**Which texture formats occur.** The oracle also surveys `a/0/1/4`, the
+shared terrain and building texture archive every map model draws from:
+**21780 textures**, in five of the seven formats.
+
+| format | name | textures in `a/0/1/4` |
+| --- | --- | --- |
+| 3 | 16-colour, 4bpp | 15395 |
+| 2 | 4-colour, 2bpp | 3467 |
+| 1 | A3I5 (5-bit index, 3-bit alpha) | 1702 |
+| 6 | A5I3 (3-bit index, 5-bit alpha) | 1083 |
+| 4 | 256-colour, 8bpp | 133 |
+| 5 | 4x4 texel compressed | **none** |
+| 7 | direct colour, BGR555 | **none** |
+
+All seven decode anyway, because a decoder that only handles what one
+archive happens to use is a trap for the next archive. Format 5 is the
+one piece here with no real instance behind it: it is implemented from
+the public block encoding (one u32 of sixteen two-bit indices plus one
+u16 of palette address and interpolation mode per 4x4 block, both inside
+the one region the TEX0 header bounds) and `engine/g3d/texture.c` says so
+where it lives. aletheia's own asset lane reached the same conclusion,
+that format 5 is absent ROM-wide.
+
+**Palette pairing is the asset lane's, gaps included.** A texture record
+does not name its palette; the material record that would is a structure
+nothing in this project has cracked. So `g3d_tex0_decode` does what
+aletheia does: the `<name>_pl` naming convention where the palette
+dictionary has that exact name (a real link, confirmed 1:1 across the
+shared sets), otherwise the palette whose decoded indices all land in
+range, tie-broken by how closely the format's index range matches the
+palette's colour count. Validated per candidate, not guessed, and still
+a stand-in for a link that has not been found.
+
+### The rasteriser, and what it does not claim
+
+**There is no DS frame in this repository to compare a picture against,
+and nothing in `engine/g3d/raster.c` claims pixel-exactness with the
+hardware.** That is the sharpest difference between this engine and the
+other two: `engine/g2d` is pixel-identical to a Python renderer and
+`engine/audio` is bit-identical to a Python synth, and neither statement
+has an analogue here yet. Every rule in the rasteriser is marked in its
+own comment as one of three things, and the file header lists them:
+
+- **documented hardware behaviour**: the near-plane clip, the
+  perspective divide, the 256x192 viewport, `POLYGON_ATTR`'s two culling
+  bits and its 5-bit alpha (0 being the wireframe mode, which this engine
+  skips rather than quietly filling), `TEXIMAGE_PARAM`'s repeat, flip and
+  clamp wrapping by mask (every texture dimension is a power of two,
+  which is what makes a mask rather than a modulo correct), and the
+  modulate and decal blend formulas, which are defined on 6-bit colour
+  channels and 5-bit alpha rather than on the 8 bits a host buffer holds.
+  Blending in the 8-bit expansion instead would round differently on
+  essentially every pixel, which is the same reason
+  `engine/g2d/window.c` blends in 5 bits.
+- **an approximation, named as one**: texture coordinates are
+  interpolated **affinely along a span**, not divided per pixel, which is
+  invisible on the near-axis-aligned geometry a map chunk is made of and
+  would first show on a steeply oblique floor; the fill rule is a
+  **top-left rule at pixel centres** in 20.4 fixed point, chosen to be
+  watertight (no pixel drawn twice, no gap between shared edges) rather
+  than to be the hardware's, whose own edge inclusion is not documented
+  precisely enough anywhere public to transcribe; depth is **z/w mapped
+  linearly onto a 23-bit range**, and the exact quantisation is this
+  engine's; the toon and highlight polygon mode **falls back to
+  modulate**, because the toon table is a register nothing in this port
+  loads and inventing a ramp would be a guess; and shadow polygons are
+  **not drawn at all** rather than drawn as black slabs.
+- **a port decision**: a polygon whose `POLYGON_ATTR` word is zero is
+  drawn double-sided and opaque rather than culled. That is not a
+  hardware rule. A shape's display list is entered at a heuristically
+  located offset, which is usually *past* the model's own `POLYGON_ATTR`
+  command, so the attribute word really was never seen rather than really
+  being zero, and culling everything in that case would render an empty
+  screen and call it correct.
+
+**What the raster test checks instead.** Two things, and it says which is
+which. It renders `pl_00_00` from a fixed camera, writes the frame as a
+BMP into the build directory, and asserts *content* rather than pixels:
+**21239 of 49152 pixels covered (432 per mille), 133 distinct colours,
+20229 of them textured** (a pixel whose three channels are not all
+equal), and that the depth buffer was written on exactly the pixels the
+colour buffer was. Beside that are synthetic cases whose every expected
+pixel is computed on paper from the rules above: one flat triangle
+(coverage at six hand-checked pixels including both sides of the
+hypotenuse at one pixel's resolution, both culling bits, the wireframe
+alpha, and that an untextured polygon's colour comes through byte for
+byte), one textured quad (a 2x2 texture over 64x48 pixels, four
+hand-computed texel lookups, the exact modulate result at two vertex
+brightnesses, and the repeat wrap), the matrix stack (identity, that
+`MTX_MULT` puts the parameter on the *left* so a later command is applied
+to the vertex earlier, push/pop, the underflow flag, and that `FX_MUL`
+truncates towards minus infinity), and the texture byte sizes and two
+format decodes. **68 checks, 0 failures.**
+
+### Meeting the 2D compositor
+
+The render target is an RGBA buffer in exactly the byte order and at
+exactly the geometry `g2d_frame_compose` writes, so it can stand as BG0's
+pixels the way the 3D layer does on hardware. `g3d_compose_over()` puts
+it *behind* an ordinary `G2dFrameDesc`: every pixel where the 2D frame
+would show its backdrop shows the 3D frame instead, which is the
+arrangement a DS game uses when BG0 carries the 3D output at the lowest
+priority, and is the overworld's.
+
+**What that is not** is a general BG0-is-3D hook. A 2D BG layer *behind*
+the 3D one, and the colour special effects blending with a 3D pixel, need
+the 3D layer inside `g2d_frame_stack`'s own per-pixel resolution rather
+than under it. That is the piece of Milestone 4 this does not close.
+
+### What is not decoded, and is the next step
+
+- **The node and bone table.** A model's own node dictionary, the packed
+  rotation forms a joint's matrix is stored in, and the per-shape matrix
+  binding are not decoded: every shape is drawn in the space its own
+  display list leaves it in, which is exactly what aletheia's OBJ export
+  does too, so the oracle comparison is unaffected and the picture is a
+  map chunk whose parts are each at their own authored origin. For the
+  static map models this is enough to render; it is not enough for an
+  animated model, and it is what the next 3D wave has to crack. The
+  render-command bytecode has opcodes beside the two (`4` bind material,
+  `5` draw shape) the asset lane identified, and they are where the
+  matrix binding will be.
+- **Lighting.** The four light slots, the diffuse/ambient and
+  specular/emission material registers and the shininess table are
+  consumed with the right parameter counts so the stream stays aligned,
+  and are not interpreted. Nothing has shown that a map model enables
+  them, and inventing lighting would be a guess.
+- **The texture matrix.** `TEXIMAGE_PARAM` bits 30-31 select a
+  coordinate transform source; no map model in the corpus was found to
+  need one and `map_shapes.py` records the same finding, so a texture
+  coordinate arrives at the rasteriser exactly as its command carried it.
+  If a model ever does need one it shows up as a texcoord mismatch
+  against the oracle rather than as a silently wrong picture.
+- **A pixel oracle.** The rasteriser's honest exit condition is a real DS
+  frame to compare against. Until there is one, the synthetic cases are
+  the only thing under this engine that is checked rather than believed.
+- **The per-shape display list preamble.** Each shape's declared range
+  opens with a short (0 to 20 byte) non-command preamble neither project
+  has identified, so the stream's start is located by the same
+  self-consistency scan aletheia uses. Both sides make the same
+  assumption, so the oracle cannot see it; cracking it would remove a
+  heuristic from the middle of the loader.
 
 ## The audio engine, and the synth oracle it is tested against
 
@@ -986,10 +1197,24 @@ is written at 1x in the configured layout, as RGB24, so SDL writes a plain
 
 ```
 build/eidos_view --data-root <extract/data> [--scale N] [--side-by-side]
-                 [--gap N] [--species N] [--frames N] [--shot PATH]
-                 [--shot-first PATH] [--anim-speed N] [--no-audio]
-                 [--music [SEQ]]
+                 [--gap N] [--species N] [--map N] [--frames N]
+                 [--shot PATH] [--shot-first PATH] [--anim-speed N]
+                 [--no-audio] [--music [SEQ]]
 ```
+
+`--map N` replaces the top screen with the 3D layer: one `a/0/0/8` map,
+building or dungeon model, decoded once into a geometry buffer in model
+space and transformed and rasterised every frame by `engine/g3d`, with
+its textures out of `a/0/1/4`. `--map 120` is `pl_00_00`, the interior
+`tests/test_g3d.c` compares vertex for vertex against aletheia's OBJ, and
+`--map 0` is `map24_23`, an outdoor terrain chunk. The camera is a
+**second task on the same task-callback list**, at a higher priority than
+the animation task so the matched runner reaches it first; it writes the
+eye's yaw, pitch and distance into the pending register block and the
+vblank commits them, exactly as the animation task writes the sprite's
+position. The arrows orbit, X and Y (or L and R) move in and out, START
+recentres. The angles are 16-bit binary angles into `engine/g2d`'s own
+sine table, so the demo still needs no libm.
 
 `--music` plays a sequence out of the player's own `wb_sound_data.sdat`
 through `engine/audio`, looping; with no argument it plays SEQ 1062,
@@ -1390,6 +1615,16 @@ the matched heap, and needs neither SDL nor game data; `test_view` now also
 checks that two frames of the demo differ on the bottom screen, which is the
 animation a task on that list drove, and not at all on the top screen.
 
+With the 3D engine added (2026-09-17): five more library objects, all of
+them `engine/g3d/`, and **twelve tests pass** in 1.7 seconds. `test_g3d` runs 68 checks: the geometry half
+against the OBJ aletheia's `map_shapes.py` exports (7798 vertices and
+2354 faces over two map models, worst deviation 5.000e-07), and the
+raster half against hand-computed pixels plus a content check on a
+rendered frame. `test_view` also runs `eidos_view --map 120` headless and
+checks the 3D layer reached the top screen. The same tree configured
+with `cmake/ilp32-toolchain.cmake` passes the same twelve, and
+`-DEIDOS_SDL=OFF` builds warning-free and passes the other eleven.
+
 With the ILP32 configuration added (2026-09-16): the same tree configured
 with `cmake/ilp32-toolchain.cmake` against the `i686-w64-mingw32-gcc` in the
 same MinGW-w64 archive builds 96 targets warning-free, finds the i686 SDL2
@@ -1484,11 +1719,43 @@ clean.
         screen's BG renders, checked pixel for pixel against the Python
         renderer and shown by `eidos_view`; the cinematic is untouched)
 - [ ] **Milestone 4**: 3D engine shim
-  - [ ] DS fixed-point geometry engine emulation
-  - [ ] Matrix stack and vertex pipeline
-  - [ ] Texture formats (A3I5, A5I3, 4x4 texel compressed, etc.)
-  - [ ] DS rasterizer quirks (perspective handling, edge rules)
-  - [ ] Overworld and map chunks render correctly
+  - [x] DS fixed-point geometry engine emulation: the whole pipeline is
+        20.12 integer arithmetic with 64-bit intermediates and no float
+        and no `math.h` anywhere in `engine/g3d/`, including the
+        perspective divide, the viewport transform and the camera
+        helpers, which take the sine and cosine from `engine/g2d`'s
+        existing table rather than adding a second one
+  - [x] Matrix stack and vertex pipeline: the four matrix modes, the
+        one-deep projection and texture saves, the 31-entry
+        position/vector stack with its sticky over and underflow flag,
+        load/mult in the 4x4, 4x3 and 3x3 forms, translate and scale,
+        and a display-list interpreter covering the whole opcode table
+        with all six vertex encodings, the current-vertex register,
+        texcoord, colour, normal, polygon attributes and strip assembly
+        (`engine/g3d/mtx.c`, `engine/g3d/gx.c`). Checked against
+        aletheia's own OBJ export: 5678 of 5678 vertices and 1782 of
+        1782 faces on one model, 2120 / 2120 and 572 / 572 on another,
+        worst deviation 5.000e-07 against a 1e-6 tolerance
+  - [x] Texture formats (A3I5, A5I3, 4x4 texel compressed, etc.): all
+        seven decode (`engine/g3d/texture.c`), and the five that occur
+        in `a/0/1/4`'s 21780 textures are surveyed and listed above.
+        Format 5 is implemented from the public block encoding and has
+        no real instance in this ROM; format 7 likewise does not occur
+  - [ ] DS rasterizer quirks (perspective handling, edge rules): there
+        is a rasteriser, it is documented rule by rule as hardware
+        behaviour, approximation or port decision, and it has synthetic
+        tests. It is **not** checked against a DS frame, and the two
+        items in this line's name are precisely the two that are
+        approximations: texture coordinates are interpolated affinely
+        per span, and the fill rule is a conventional top-left one
+        rather than the hardware's own edge inclusion. This box stays
+        open until there is a frame to compare against
+  - [ ] Overworld and map chunks render correctly: a map chunk renders,
+        textured, from the player's own archives, and `eidos_view
+        --map N` orbits it. What is missing is the node and bone table,
+        so every shape sits at its own authored origin rather than at
+        the one a joint matrix would put it at, and lighting, which is
+        parsed and not interpreted
 - [ ] **Milestone 5**: Audio
   - [x] SDAT sequencer and mixer (replacing ARM7 audio core): the SDAT
         container, SBNK instrument tables, SWAR/SWAV waves, the SSEQ
