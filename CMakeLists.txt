@@ -116,6 +116,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/narc.c          # data root, NARC framing, ARM9 rodata
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/game_globals.c  # the ARM9 globals the matched code names
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/aliases.c       # sub_/func_ spelling forwarders
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_tick.c       # OS_GetTick onto the frame loop
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/panic.c
 )
 
@@ -152,6 +153,7 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg.c         # BG layers, the frame compositor
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg_affine.c  # rotation/scaling BG layers
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/window.c     # windows, alpha and brightness
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/frame/frame.c    # the vblank frame loop and the OS tick
 )
 
 add_library(eidos STATIC
@@ -163,16 +165,8 @@ add_library(eidos STATIC
 target_include_directories(eidos PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/frame
 )
-
-# The matched files are compiled with the port's warning set but without the
-# ones that are inherent to reproducing a 2010 compiler's output: they declare
-# each extern locally with the prototype that call site needs, so prototypes
-# for the same function differ between translation units by design.
-if(NOT MSVC)
-    set_source_files_properties(${BW_MATCHED_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-missing-prototypes")
-endif()
 
 # ---------------------------------------------------------------------------
 # Generated fixtures
@@ -342,7 +336,7 @@ add_test(NAME test_bg COMMAND test_bg ${BW_DATA_ROOT_ABS} ${BW_BG_ORACLE_DIR})
 # expected pixel in them is computed on paper from the hardware rule under
 # test.  They are the counterweight to the oracle comparisons, which can
 # only ever show that two implementations agree.
-foreach(t test_affine test_bg_affine test_window)
+foreach(t test_affine test_bg_affine test_window test_frame)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)
