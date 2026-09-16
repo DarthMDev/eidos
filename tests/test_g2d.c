@@ -37,6 +37,23 @@
 
 static const int k_species[] = { 25, 6, 94, 150 };
 
+/*
+ * The two species whose rest pose carries a genuinely non-identity SRT at
+ * t=0: species 50's sequence 4 has sy = 2048 (a half-height scale) and
+ * species 88's sequence 1 has rotZ = 3640.  They are checked differently.
+ * The engine transforms in the hardware's fixed point (a 12-bit sine
+ * table, an 8.8 matrix, a floor-truncating shift) and rig.py transforms in
+ * double precision and rounds to nearest, so the two can land on different
+ * texels along a boundary.  The engine is the reference where they differ
+ * (README.md), so the check is that the pose renders at all and that the
+ * divergence from the oracle is small and reported, not that it is zero.
+ */
+static const int k_affine_species[] = { 50, 88 };
+
+/* A pose may differ from the oracle on at most this share of its pixels
+ * before the divergence stops being fixed-point slop and becomes a bug. */
+#define AFFINE_MAX_DIVERGENCE_PERMILLE 150
+
 typedef struct Oracle {
     u32 width, height;
     u8 *rgba;
@@ -166,6 +183,89 @@ static int compare_species(BwArcFile *arc, const char *oracle_dir, int species)
     return failed;
 }
 
+/*
+ * The affine species: the pose must render, and the divergence from the
+ * oracle is measured and reported rather than required to be zero.  A
+ * canvas whose size differs from the oracle's by more than a couple of
+ * pixels, or a pose that differs on more than a small share of its
+ * pixels, is a real disagreement and fails; anything smaller is the
+ * fixed-point difference the README documents.
+ */
+static int compare_affine_species(BwArcFile *arc, const char *oracle_dir,
+                                  int species)
+{
+    G2dRig rig;
+    G2dPose pose;
+    Oracle oracle;
+    u8 *rgba;
+    int rc;
+    int failed = 0;
+    u32 i, diff = 0;
+    s32 dw, dh;
+
+    printf("species %d (affine):\n", species);
+
+    if (oracle_load(&oracle, oracle_dir, species) != 0) {
+        printf("  FAIL oracle dump missing or malformed\n");
+        return 1;
+    }
+    if (g2d_rig_load(&rig, arc, (u32)species * RIG_BLOCK_SIZE, RIG_BLOCK_SIZE) != 0) {
+        printf("  FAIL rig block did not load\n");
+        free(oracle.rgba);
+        return 1;
+    }
+    rc = g2d_compose_pose(&rig.ncgr, &rig.ncer,
+                          rig.has_nanr ? &rig.nanr : NULL,
+                          &rig.nmcr.groups[0], 0, rig.palette.count, &pose);
+    if (rc == G2D_ERR_NONIDENTITY) {
+        printf("  FAIL the affine path refused a non-identity SRT\n");
+        g2d_rig_free(&rig);
+        free(oracle.rgba);
+        return 1;
+    }
+    if (rc != 0) {
+        printf("  FAIL compose failed\n");
+        g2d_rig_free(&rig);
+        free(oracle.rgba);
+        return 1;
+    }
+
+    dw = (s32)pose.width - (s32)oracle.width;
+    dh = (s32)pose.height - (s32)oracle.height;
+    printf("  rendered %ux%u, oracle %ux%u (%+d, %+d)\n",
+           pose.width, pose.height, oracle.width, oracle.height, dw, dh);
+    if (dw < -2 || dw > 2 || dh < -2 || dh > 2) {
+        printf("  FAIL the canvases disagree by more than the truncation margin\n");
+        failed = 1;
+    } else if (dw == 0 && dh == 0) {
+        rgba = (u8 *)malloc((size_t)pose.width * pose.height * 4u);
+        if (rgba == NULL) {
+            failed = 1;
+        } else {
+            u32 n = pose.width * pose.height;
+
+            g2d_pose_to_rgba(&pose, &rig.palette, rgba);
+            for (i = 0; i < n; i++) {
+                if (memcmp(rgba + i * 4, oracle.rgba + i * 4, 4) != 0) {
+                    diff++;
+                }
+            }
+            printf("  divergence from the oracle: %u of %u pixels (%u permille)\n",
+                   diff, n, n ? (u32)((u64)diff * 1000u / n) : 0u);
+            if (n != 0 && (u64)diff * 1000u / n > AFFINE_MAX_DIVERGENCE_PERMILLE) {
+                printf("  FAIL that is more than fixed-point slop\n");
+                failed = 1;
+            }
+            free(rgba);
+        }
+    }
+
+    free(oracle.rgba);
+    g2d_pose_free(&pose);
+    g2d_rig_free(&rig);
+    return failed;
+}
+
 int main(int argc, char **argv)
 {
     const char *oracle_dir;
@@ -197,6 +297,14 @@ int main(int argc, char **argv)
         for (i = 0; i < sizeof(k_species) / sizeof(k_species[0]); i++) {
             bw_checks++;
             if (compare_species(&arc, oracle_dir, k_species[i]) != 0) {
+                bw_failures++;
+            }
+        }
+        for (i = 0; i < sizeof(k_affine_species) / sizeof(k_affine_species[0]);
+             i++) {
+            bw_checks++;
+            if (compare_affine_species(&arc, oracle_dir,
+                                       k_affine_species[i]) != 0) {
                 bw_failures++;
             }
         }

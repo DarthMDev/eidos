@@ -146,6 +146,7 @@ set(BW_STUB_SOURCES
 set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/lzss.c       # LZ77/LZ11 containers
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/resources.c  # NCGR/NCLR/NCER/NANR/NMCR
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/affine.c     # PA..PD, the per-pixel resample
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/compose.c    # the OBJ compositor
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/rig.c        # rig block loading
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg.c         # BG layers, the frame compositor
@@ -202,11 +203,19 @@ add_custom_target(bw_fixtures DEPENDS ${BW_FIXTURES})
 # them pixel for pixel.  The dumps are game data derived from the player's
 # own ROM: they are written into the build directory only, never here.
 #
+# The four reference species are identity poses at t=0 and are compared
+# pixel for pixel.  Species 50 and 88 are the two genuinely non-identity SRT
+# poses the asset lane's sweep found (a half-height scale and a rotation);
+# the test renders them through the affine path and reports the divergence
+# from the oracle rather than demanding equality, because the engine
+# transforms in the hardware's fixed point and rig.py transforms in doubles
+# (README.md, "the fixed-point question").
 set(BW_G2D_SPECIES 25 6 94 150)
+set(BW_G2D_AFFINE_SPECIES 50 88)
 set(BW_G2D_ORACLE_DIR ${CMAKE_CURRENT_BINARY_DIR}/oracle/rig)
 
 set(BW_G2D_ORACLE_FILES "")
-foreach(sp ${BW_G2D_SPECIES})
+foreach(sp ${BW_G2D_SPECIES} ${BW_G2D_AFFINE_SPECIES})
     # rig_oracle.py names its output with a four-digit species number.
     string(LENGTH "${sp}" _len)
     math(EXPR _pad "4 - ${_len}")
@@ -224,7 +233,7 @@ add_custom_command(
             --aletheia-root ${ALETHEIA_ROOT}
             --data-root ${BW_DATA_ROOT_ABS}
             --out ${BW_G2D_ORACLE_DIR}
-            ${BW_G2D_SPECIES}
+            ${BW_G2D_SPECIES} ${BW_G2D_AFFINE_SPECIES}
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/rig_oracle.py
             ${ALETHEIA_ROOT}/tools/assets/rig.py
             ${ALETHEIA_ROOT}/tools/assets/narc.py
@@ -326,3 +335,14 @@ add_dependencies(test_bg bw_bg_oracle)
 target_include_directories(test_bg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_bg PRIVATE eidos)
 add_test(NAME test_bg COMMAND test_bg ${BW_DATA_ROOT_ABS} ${BW_BG_ORACLE_DIR})
+
+# The synthetic engine tests need neither game data nor an oracle: every
+# expected pixel in them is computed on paper from the hardware rule under
+# test.  They are the counterweight to the oracle comparisons, which can
+# only ever show that two implementations agree.
+foreach(t test_affine)
+    add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
+    target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(${t} PRIVATE eidos)
+    add_test(NAME ${t} COMMAND ${t})
+endforeach()

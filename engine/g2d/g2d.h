@@ -228,6 +228,89 @@ int  g2d_nmcr_parse(G2dNmcr *out, const u8 *data, u32 size);
 void g2d_nmcr_free(G2dNmcr *nmcr);
 
 /* ------------------------------------------------------------------ */
+/* Affine (rotation and scaling)                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The DS transforms in fixed point, and so does this engine.  The full
+ * derivation, the reference-point rule and the deliberate divergence from
+ * aletheia's rig.py are in engine/g2d/affine.c's header; the short form:
+ *
+ *   - a 4096-entry sine table over one turn, fx32 valued, indexed by a
+ *     16-bit binary angle shifted right by four (which is what a NANR
+ *     frame's rotZ, 1/65536 of a turn, feeds directly);
+ *   - PA/PB/PC/PD in 8.8, holding the *inverse* of the intended
+ *     transform, because the hardware walks output pixels and asks each
+ *     one which texel it shows;
+ *   - the product shifted right eight with the fraction discarded, so the
+ *     sample is a whole texel: the hardware's nearest neighbour.
+ *
+ * rig.py inverse-maps the same geometry in double precision and rounds to
+ * nearest.  Where the two disagree, on a pixel near a texel boundary, the
+ * engine is the reference: it is what the hardware computes.
+ */
+
+#define G2D_FX_ONE 4096   /* fx32 1.0, the unit of a NANR frame's sx/sy */
+
+/* fx32 sine/cosine of a 16-bit binary angle (65536 == one turn). */
+s32 g2d_sin_fx(u16 angle);
+s32 g2d_cos_fx(u16 angle);
+
+/* The four 8.8 OBJ affine parameters (BGxPA..BGxPD hold the same). */
+typedef struct G2dAffine {
+    s16 pa, pb, pc, pd;
+} G2dAffine;
+
+int  g2d_affine_is_identity(s32 sx, s32 sy, u16 rot_z);
+void g2d_affine_from_srt(s32 sx, s32 sy, u16 rot_z, G2dAffine *out);
+
+/* One inverse map: an output offset from the reference point to a source
+ * offset from the source reference point, fraction discarded. */
+void g2d_affine_map(const G2dAffine *m, s32 dx, s32 dy, s32 *sx, s32 *sy);
+
+/*
+ * The drawn canvas of an affine OBJ: W x H normally, 2W x 2H with attr0
+ * bits 8-9 == 3 (the double-size mode), centred on the same point either
+ * way.
+ */
+void g2d_obj_affine_size(u32 w, u32 h, int double_size, u32 *out_w, u32 *out_h);
+
+/*
+ * One OBJ's w*h texel block through the matrix onto its drawn canvas
+ * (caller-allocated, the size g2d_obj_affine_size reports).  The output
+ * reference point is the canvas centre and the source reference point is
+ * the block's centre; a pixel whose source lands outside the block is
+ * left as index 0.  Returns 0, or -1 on a bad argument.
+ */
+int g2d_obj_affine_render(const u8 *src, u32 w, u32 h, const G2dAffine *m,
+                          int double_size, u8 *out);
+
+/*
+ * A loose raster with its origin recorded: `(ox, oy)` is where the
+ * transform's own origin sits inside the buffer, so a local coordinate
+ * (x, y) is buffer index (x + ox, y + oy).
+ */
+typedef struct G2dRaster {
+    u32 w, h;
+    s32 ox, oy;
+    u8 *px;      /* owned, w*h indices */
+} G2dRaster;
+
+void g2d_raster_free(G2dRaster *r);
+
+/*
+ * Resample one already-composed raster through a frame's (sx, sy, rotZ)
+ * about the raster's own origin, sizing the output canvas to the forward
+ * transform of the source bounds.  This is the cell-level counterpart of
+ * g2d_obj_affine_render: the NNS cell animation carries one SRT per node,
+ * applied about the cell origin (aletheia's src/matched/unit_020640B0.c
+ * and its docs/notes/g2d_srt_setters.c.txt), not one matrix per OAM about
+ * each OAM's own centre.  The per-pixel arithmetic is identical.
+ */
+int g2d_affine_resample(const u8 *src, u32 sw, u32 sh, s32 src_ox, s32 src_oy,
+                        s32 sx, s32 sy, u16 rot_z, G2dRaster *out);
+
+/* ------------------------------------------------------------------ */
 /* Compositing                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -241,10 +324,14 @@ typedef struct G2dPose {
  * canvas (two pixels of margin on every side, the convention the oracle
  * uses so the two rasters are directly comparable).
  *
- * Returns 0 on success, -1 on a parse/bounds failure, and
- * G2D_ERR_NONIDENTITY when a node's active frame carries a non-identity
- * SRT: the affine resampling path is not part of this first piece, and
- * failing loudly is better than silently drawing the identity pose.
+ * A node whose active frame carries a non-identity SRT has its whole cell
+ * composed at identity and then resampled through the frame's matrix by
+ * g2d_affine_resample, which is what the hardware does with the node's
+ * OAM entries and what the asset lane's rig.py does in doubles.
+ *
+ * Returns 0 on success and -1 on a parse/bounds failure.
+ * G2D_ERR_NONIDENTITY is kept for callers that still test for it; it is
+ * no longer returned, because the affine path is implemented.
  */
 #define G2D_ERR_NONIDENTITY (-2)
 

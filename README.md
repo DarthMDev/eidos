@@ -164,22 +164,79 @@ pixel-identical. `test_g2d` also accepts an explicit species list after
 the oracle directory, which is how a wider sweep is run by hand: species
 1 to 120, 118 of 120 pixel-identical.
 
-**The one gap, stated rather than hidden.** The remaining 2 of those 120
-(species 50 and 88) are genuinely non-identity SRT frames at t=0: species
-50's sequence 4 carries `sy = 2048` (a half-height scale) and species
-88's sequence 1 carries `rotZ = 3640`. rig.py handles these by rendering
-the cell at identity and then inverse-mapping every output pixel through
-the transform with `math.cos`/`math.sin` and a nearest-neighbour sample.
-The C engine does not implement that path at all: `g2d_compose_pose`
-returns `G2D_ERR_NONIDENTITY` and the test reports it, because silently
-drawing the untransformed pose would be a wrong picture that looks
-right. This is a missing feature, not an unresolved disagreement: no
-species was found where the two composers both produce a pose and the
-poses differ. Implementing it is a decision about arithmetic rather than
-about format, and the DS does this in fixed point through the OAM affine
-parameters rather than in doubles, so matching rig.py's float path and
-matching the hardware may not be the same target. That is the first
-thing to settle when the affine path is written.
+### The affine path, and the fixed-point question settled
+
+The 2 of those 120 that did not render (species 50 and 88) are genuinely
+non-identity SRT frames at t=0: species 50's sequence 4 carries `sy =
+2048` (a half-height scale) and species 88's sequence 1 carries `rotZ =
+3640`. Both render now. `engine/g2d/affine.c` is the OBJ rotation and
+scaling engine:
+
+- a **fixed-point sine table**, 4096 entries over one turn, fx32 valued
+  (4096 == 1.0), indexed by a 16-bit binary angle shifted right by four,
+  which is the index convention the NNS fixed-point helpers use and the
+  one a NANR frame's `rotZ` (1/65536 of a turn) feeds directly. The table
+  is built once by evaluating the sine series in 2.30 fixed point with
+  64-bit intermediates: no float, no libm, no table literal. Every entry
+  equals `round(sin(2*pi*i/4096) * 4096)`, checked for all 4096 indices.
+- **PA/PB/PC/PD in 8.8**, the four parameters the DS OBJ engine holds per
+  affine slot, computed from the frame's `(sx, sy, rotZ)`. They hold the
+  *inverse* of the intended transform, because the hardware walks output
+  pixels and asks each one which texel it shows: `PA = cos * 4096 / sx`,
+  `PB = sin * 4096 / sx`, `PC = -sin * 4096 / sy`, `PD = cos * 4096 / sy`,
+  each then in 8.8. Identity is `(256, 0, 0, 256)`; a 2x scale is `PA =
+  PD = 128`.
+- **the per-pixel fetch**: the output pixel's offset from the reference
+  point through the matrix, shifted right eight with the fraction
+  *discarded*, giving a whole texel. That truncation is the hardware's
+  nearest neighbour.
+- **the double-size reference point**: the drawn canvas is `W x H`
+  normally and `2W x 2H` with `attr0` bits 8-9 == 3, centred on the same
+  point either way. The matched code records the same offset from the
+  other end of the pipe: `func_02066E30` shifts a double-size entry's
+  translation by half its own width and height before shifting it left 12
+  into the geometry engine's translate register, which is exactly the
+  displacement of a `2W x 2H` canvas whose centre must stay put while its
+  top-left moves.
+
+The NNS cell animation carries one SRT per *node*, applied about the cell
+origin (`src/matched/unit_020640B0.c` and
+`docs/notes/g2d_srt_setters.c.txt`), not one matrix per OAM about each
+OAM's own centre, so `g2d_compose_pose` composes the cell at identity and
+resamples it as one picture. The arithmetic is the same either way;
+`g2d_obj_affine_render` is the per-OBJ form of it, with the double-size
+canvas, and is what the synthetic tests drive.
+
+**The decision.** The engine follows the hardware. rig.py inverse-maps
+the same geometry in double precision with `math.cos`/`math.sin` and
+rounds the source coordinate to nearest; the engine uses a 12-bit sine
+table, an 8.8 matrix and a floor-truncating shift. Where the two differ,
+on a pixel near a texel boundary, **the engine is the reference**, because
+the DS is. rig.py is not modified: it is the asset lane's tool, its
+double-precision mapping is a good approximation for exporting art, and
+the two answering the same question differently is now a documented
+divergence rather than an open one.
+
+**The divergence, measured.** Species 50 (a pure half-height scale)
+renders **pixel-identical** to the oracle at 44x34: a power-of-two scale
+with no rotation lands on the same texel in both arithmetics. Species 88
+(`rotZ = 3640`, about 20 degrees) renders on the same 61x47 canvas as the
+oracle and differs on **64 of 2867 pixels, 22 per mille**, all of them on
+texel boundaries inside the rotated art. `tests/test_g2d.c` measures that
+number every run and fails if it exceeds 150 per mille, so a real
+regression in the affine path is caught while the fixed-point difference
+itself is recorded rather than papered over.
+
+**The synthetic tests.** `tests/test_affine.c` uses no game data and no
+oracle: every expected pixel is computed on paper from the rule above. It
+checks the sine table at the quarter and eighth turns, the four
+parameters for identity, a 2x scale and a quarter turn, a quarter turn of
+a known 4x4 block at single size (where the even-sized block loses a
+column off the canvas, which is what double size exists to prevent), the
+same quarter turn at double size (where all sixteen texels survive), a 2x
+scale at double size (which is also the check that the shift floors
+rather than truncating towards zero), and the cell-level resample at
+identity and at a quarter turn.
 
 ### BG layers
 
