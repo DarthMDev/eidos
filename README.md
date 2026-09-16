@@ -88,11 +88,97 @@ is only pulled in when nothing else defines its symbol. That is what lets
 `tests/test_stats.c` supply its own substitute for one function without
 displacing any other.
 
+Alongside those three, **the engine**, under `engine/`, is the host-side
+stand-in for the DS hardware itself rather than for its SDK: see "The 2D
+engine, and the pixel oracle it is tested against" below.
+
 **Assets** come from the player's own ROM. aletheia's `tools/ndsrom.py
 extract` writes `extract/`, and eidos opens files under `extract/data` (the
 NitroFS tree) and `extract/arm9_dec.bin` (for the constant tables that live
 in the ARM9 image rather than in a file). No game data is in this
 repository, and none is produced by a build.
+
+## The 2D engine, and the pixel oracle it is tested against
+
+`engine/` is the fourth thing in this repository, and the first that is
+neither a shim over an SDK name nor game code: it is the host-side
+reimplementation of hardware the DS had and a PC does not. `engine/g2d/`
+is the OBJ (sprite/OAM) half of the 2D engine, a pure C99 library with no
+SDL dependency and no third-party code.
+
+| file | what it does |
+| --- | --- |
+| `engine/g2d/g2d.h` | the whole API, and the provenance of every rule it implements |
+| `engine/g2d/lzss.c` | BIOS LZ77 (0x10) / LZ11 (0x11) container decompression |
+| `engine/g2d/resources.c` | NCLR palettes, NCGR character data, NCER cell banks, NANR cell animations, NMCR multi-cell node tables |
+| `engine/g2d/compose.c` | the compositor: one OAM's pixels, and a whole multi-cell pose, into palette indices and then into 32-bit RGBA |
+| `engine/g2d/rig.c` | loading one poseable multi-part sprite bundle out of a rig archive |
+
+What is covered: 4bpp and 8bpp character data, both `char_format`
+conventions (8x8 tiled and linear bitmap), the `0xFFFF` "unspecified
+dimensions" sentinel (which switches tile addressing from the sheet's own
+width to the OAM's, the 1D OBJ mapping case), the full OAM attribute
+decode (shape, size, H/V flip, affine double-size, priority, 16-colour
+palette bank), the cell bank's simple and extended record shapes, the
+NANR frame-entry indirection with all three frame-data shapes and the
+duration-summing timeline, and the NMCR node walk.
+
+Three behaviours are not the obvious reading of the bitfields, and each
+one is attested rather than assumed:
+
+- **Per-OAM flip placement.** A set flip bit replaces the entry's own
+  position: `x = -(x + objWidth)`, `y = -(y + objHeight)`, with the
+  dimensions from the standard OBJ tables. This is
+  `src/matched/unit_02067B40.c`, the composer's flip lane, which names
+  both tables by address. A composer that mirrors the pixels but leaves
+  x and y alone puts every flipped part off by its own size.
+- **Affine double-size placement.** `attr0` bits 8-9 == 3 shifts the
+  entry by half its own width and height (`func_02066E30`, recorded in
+  aletheia's `docs/ASSETS.md`).
+- **Painter's order.** Nodes are emitted forward, and within a node's
+  cell its OAMs are emitted forward, so the earliest-emitted OAM lands in
+  the lowest hardware OAM slot, and a lower slot draws in *front*. A
+  painter that blits in list order and lets later writes win therefore
+  has to run the reverse of the emission order, with `attr2`'s priority
+  outranking the slot index. Getting this backwards is what made
+  sprites' eyes vanish under their heads in the asset lane.
+
+**The oracle.** `tests/test_g2d.c` does not compare against hand-written
+expected values. `tools/rig_oracle.py` imports aletheia's
+`tools/assets/rig.py` (out of the sibling checkout; nothing is copied
+here and aletheia is not modified), composes the same poses in Python and
+dumps each one as a raw RGBA file next to the PNG the asset lane itself
+produces, into the build directory. The C engine composes the same poses
+and the test compares them pixel for pixel, printing the first differing
+pixel and both colours on a mismatch. The raw dump exists so neither side
+needs a PNG decoder or any third-party code; its framing is `'RGBA'`,
+`u32 width`, `u32 height`, then `width * height * 4` bytes.
+
+The two composers share no code and no language: rig.py was written in
+the decompilation project against the archive's bytes and the game's own
+composer, `engine/g2d` here against the same attested formats. Four
+species are checked by ctest (25, 6, 94, 150 of `a/0/0/4`), covering
+different cell counts, node counts and double-size mixes; all four are
+pixel-identical. `test_g2d` also accepts an explicit species list after
+the oracle directory, which is how a wider sweep is run by hand: species
+1 to 120, 118 of 120 pixel-identical.
+
+**The one gap, stated rather than hidden.** The remaining 2 of those 120
+(species 50 and 88) are genuinely non-identity SRT frames at t=0: species
+50's sequence 4 carries `sy = 2048` (a half-height scale) and species
+88's sequence 1 carries `rotZ = 3640`. rig.py handles these by rendering
+the cell at identity and then inverse-mapping every output pixel through
+the transform with `math.cos`/`math.sin` and a nearest-neighbour sample.
+The C engine does not implement that path at all: `g2d_compose_pose`
+returns `G2D_ERR_NONIDENTITY` and the test reports it, because silently
+drawing the untransformed pose would be a wrong picture that looks
+right. This is a missing feature, not an unresolved disagreement: no
+species was found where the two composers both produce a pose and the
+poses differ. Implementing it is a decision about arithmetic rather than
+about format, and the DS does this in fixed point through the OAM affine
+parameters rather than in doubles, so matching rig.py's float path and
+matching the hardware may not be the same target. That is the first
+thing to settle when the affine path is written.
 
 ## Growing the source list
 
@@ -279,7 +365,8 @@ equivalents), with `ALETHEIA` pointing at the aletheia checkout:
 
 First run on this layout (2026-09-16), after the port moved into this
 repository: 32 objects, both tests pass (test_text 5/5 strings, test_stats
-3 species).
+3 species). With the 2D engine added (2026-09-16): 38 objects, three tests
+pass (test_g2d 4/4 species, pixel-identical to the oracle).
 
 ## Planned Milestones
 
@@ -294,7 +381,9 @@ repository: 32 objects, both tests pass (test_text 5/5 strings, test_stats
   - [ ] DS frame emulation loop: task list scheduler running at 60 Hz, vblank callbacks
 - [ ] **Milestone 3**: 2D engine shim
   - [ ] BG layers from tile and palette memory
-  - [ ] OAM sprites: priorities, flips, affine transformations, double-size
+  - [x] OAM sprites: priorities, flips, double-size placement, cell banks
+        and multi-cell poses (`engine/g2d/`, oracle-tested); affine
+        resampling still open
   - [ ] Windowing and alpha blending
   - [ ] Dual-screen rendering layout
   - [ ] Opening cinematic and title screen render correctly

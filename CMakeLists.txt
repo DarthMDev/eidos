@@ -132,12 +132,34 @@ set(BW_STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02018598.c
 )
 
+# ---------------------------------------------------------------------------
+# The engine
+# ---------------------------------------------------------------------------
+#
+# eidos's own code, not a shim over an SDK name and not game code: the
+# host-side reimplementation of hardware the DS had and a PC does not.
+# engine/g2d/ is the 2D (OBJ/OAM) software compositor; every rule it
+# implements is attested by a matched source, by aletheia's docs/ASSETS.md
+# or by public NDS hardware documentation, and the file headers cite which.
+# No SDL, no third-party code, standard library only.
+#
+set(BW_ENGINE_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/lzss.c       # LZ77/LZ11 containers
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/resources.c  # NCGR/NCLR/NCER/NANR/NMCR
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/compose.c    # the OBJ compositor
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/rig.c        # rig block loading
+)
+
 add_library(eidos STATIC
     ${BW_MATCHED_SOURCES}
     ${BW_SDK_SOURCES}
     ${BW_STUB_SOURCES}
+    ${BW_ENGINE_SOURCES}
 )
-target_include_directories(eidos PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/sdk)
+target_include_directories(eidos PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d
+)
 
 # The matched files are compiled with the port's warning set but without the
 # ones that are inherent to reproducing a 2010 compiler's output: they declare
@@ -169,6 +191,49 @@ add_custom_command(
 add_custom_target(bw_fixtures DEPENDS ${BW_FIXTURES})
 
 # ---------------------------------------------------------------------------
+# The 2D engine's pixel oracle
+# ---------------------------------------------------------------------------
+#
+# tools/rig_oracle.py imports aletheia's tools/assets/rig.py (nothing is
+# copied here, and aletheia is not modified) and dumps the rest pose of
+# each species as a raw RGBA file next to the PNG rig.py itself writes.
+# tests/test_g2d.c composes the same poses through engine/g2d and compares
+# them pixel for pixel.  The dumps are game data derived from the player's
+# own ROM: they are written into the build directory only, never here.
+#
+set(BW_G2D_SPECIES 25 6 94 150)
+set(BW_G2D_ORACLE_DIR ${CMAKE_CURRENT_BINARY_DIR}/oracle/rig)
+
+set(BW_G2D_ORACLE_FILES "")
+foreach(sp ${BW_G2D_SPECIES})
+    # rig_oracle.py names its output with a four-digit species number.
+    string(LENGTH "${sp}" _len)
+    math(EXPR _pad "4 - ${_len}")
+    set(_name "${sp}")
+    while(_pad GREATER 0)
+        set(_name "0${_name}")
+        math(EXPR _pad "${_pad} - 1")
+    endwhile()
+    list(APPEND BW_G2D_ORACLE_FILES ${BW_G2D_ORACLE_DIR}/${_name}_pose.rgba)
+endforeach()
+
+add_custom_command(
+    OUTPUT ${BW_G2D_ORACLE_FILES}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/rig_oracle.py
+            --aletheia-root ${ALETHEIA_ROOT}
+            --data-root ${BW_DATA_ROOT_ABS}
+            --out ${BW_G2D_ORACLE_DIR}
+            ${BW_G2D_SPECIES}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/rig_oracle.py
+            ${ALETHEIA_ROOT}/tools/assets/rig.py
+            ${ALETHEIA_ROOT}/tools/assets/narc.py
+            ${ALETHEIA_ROOT}/tools/assets/battle_sprite.py
+    COMMENT "Generating the g2d pixel oracle with aletheia's rig.py"
+    VERBATIM
+)
+add_custom_target(bw_g2d_oracle DEPENDS ${BW_G2D_ORACLE_FILES})
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -181,3 +246,11 @@ foreach(t test_text test_stats)
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t} ${BW_DATA_ROOT_ABS})
 endforeach()
+
+# The 2D engine test needs the oracle rather than the fixture header, and
+# takes the oracle directory as its second argument.
+add_executable(test_g2d ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_g2d.c)
+add_dependencies(test_g2d bw_g2d_oracle)
+target_include_directories(test_g2d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_g2d PRIVATE eidos)
+add_test(NAME test_g2d COMMAND test_g2d ${BW_DATA_ROOT_ABS} ${BW_G2D_ORACLE_DIR})
