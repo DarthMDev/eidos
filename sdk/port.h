@@ -124,6 +124,64 @@ void bw_close_personal_archive(void);
  */
 int bw_load_nature_table(void);
 
+/*
+ * `g_020A7820` is the signed watched-heap id src/matched/sub_02030A00.c
+ * gates the allocation audit on, an ARM9 data word at 0x020A7820.  Loaded
+ * out of the player's own extract/arm9_dec.bin; the port's own definition is
+ * -1 ("watch nothing") so a run with no image behaves like the retail one.
+ * Returns 0 on success, -1 if the ARM9 image is not readable.
+ */
+int bw_load_watch_id(void);
+
+/* ------------------------------------------------------------------ */
+/* The host's aligned blocks                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * malloc with an alignment, and its release.  The malloc base is stored in
+ * the word immediately before the pointer handed out, so a block may be
+ * freed knowing only the aligned pointer.  This is the one place the port
+ * takes memory from the host: sdk/os_alloc.c's SDK pair, and
+ * stubs/reimpl_02060CA0.c, the expanded-heap allocator that the matched raw
+ * allocator src/matched/sub_02030098.c calls, both go through it.
+ */
+void *bw_aligned_alloc(u32 size, u32 align);
+void  bw_aligned_free(void *p);
+
+/* ------------------------------------------------------------------ */
+/* The heap environment                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `g_EnvModule` at 0x02146954 is the game's heap manager, and every matched
+ * function in the heap layer reads it: the heap count at +8 bounds the id,
+ * the byte table at +4 maps a public heap id to a record index, the record
+ * array at +0 holds the arena handle the raw allocator allocates out of and
+ * the live-allocation count it increments, and the halfword at +0xe is the
+ * result code each of them writes (1 = id out of range, 2 = no such heap,
+ * 3 = exhausted, 0 = success).  src/matched/sub_02030098.c's header is the
+ * authority on all of it.
+ *
+ * On the DS the heap constructor at 0x0202FC48 fills the manager in.  That
+ * function is not decompiled, so there is no matched constructor for the
+ * port to call and it initialises the fields the matched code reads itself,
+ * which is what this does.  `heaps` heap ids become valid, each with its own
+ * arena handle; BW_HEAP_COUNT is the default.  Returns 0.
+ */
+#define BW_HEAP_COUNT 16u
+
+int  bw_heap_init(u32 heaps);
+
+/* Live allocations on one heap, as the manager counts them.  -1 if the id is
+ * out of range.  The count is incremented by the matched raw allocator and
+ * decremented by stubs/reimpl_020307B0.c, so a balanced test ends at zero. */
+long bw_heap_live_blocks(u32 heap_id);
+
+/* The release side of the counter the matched raw allocator increments.
+ * Called by stubs/reimpl_020307B0.c with the heap id it recovered from the
+ * block header. */
+void bw_heap_note_release(u32 heap_id);
+
 /* ------------------------------------------------------------------ */
 /* Panic                                                               */
 /* ------------------------------------------------------------------ */

@@ -9,16 +9,18 @@
  * the game's allocator honours the `align` argument and some matched code
  * relies on it.
  *
- * Two layers are shimmed here:
+ * What is shimmed here is the SDK pair OS_AllocFromHeap / OS_FreeToHeap and
+ * the host's aligned-block helper that the rest of the port allocates
+ * through.
  *
- *   OS_AllocFromHeap / OS_FreeToHeap   the SDK names
- *   func_02030734 / func_020307B0      the game's debug-allocator wrappers,
- *                                      which take the caller's __FILE__ and
- *                                      __LINE__ as the last two arguments
- *                                      (see any caller in src/matched/)
- *
- * The wrappers are a common hub: docs/HANDOFF.md lists eleven matched
- * forwarder thunks that do nothing but tail-call func_020307B0.
+ * The game's own allocation entry point is no longer shimmed here.
+ * sub_02030734, the raw allocator sub_02030098 and their bookkeeping are
+ * matched sources in the build now (CMakeLists.txt, "the heap layer"), so
+ * the port supplies only what they bottom out in: stubs/reimpl_02060CA0.c,
+ * the expanded-heap allocator the raw allocator calls, and
+ * stubs/reimpl_020307B0.c, its release counterpart.  Both go through the two
+ * helpers below, which is what makes an allocation and its release agree
+ * about where the malloc block really starts.
  */
 
 #include <stdlib.h>
@@ -33,7 +35,7 @@
  */
 #define BW_HEAP_HEADER 16u
 
-static void *aligned_alloc_with_header(u32 size, u32 align)
+void *bw_aligned_alloc(u32 size, u32 align)
 {
     unsigned char *base;
     unsigned char *user;
@@ -56,7 +58,7 @@ static void *aligned_alloc_with_header(u32 size, u32 align)
     return user;
 }
 
-static void aligned_free_with_header(void *p)
+void bw_aligned_free(void *p)
 {
     unsigned char *base;
 
@@ -89,29 +91,12 @@ void *OS_AllocFromHeap(u32 arena, void *heap, u32 size)
 {
     (void)arena;
     (void)heap;
-    return aligned_alloc_with_header(size, 4);
+    return bw_aligned_alloc(size, 4);
 }
 
 void OS_FreeToHeap(u32 arena, void *heap, void *block)
 {
     (void)arena;
     (void)heap;
-    aligned_free_with_header(block);
-}
-
-/* ------------------------------------------------------------------ */
-/* The game's debug-allocator wrappers                                  */
-/* ------------------------------------------------------------------ */
-
-void *func_02030734(u32 heap, u32 size, u32 align, const char *file, u32 line)
-{
-    (void)heap;
-    (void)file;
-    (void)line;
-    return aligned_alloc_with_header(size, align);
-}
-
-void func_020307B0(void *block)
-{
-    aligned_free_with_header(block);
+    bw_aligned_free(block);
 }

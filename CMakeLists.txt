@@ -103,6 +103,42 @@ set(BW_MATCHED_SOURCES
     ${ALETHEIA_ROOT}/src/matched/unit_02019C54.c   # one-entry memo over that read
     ${ALETHEIA_ROOT}/src/matched/unit_02019B04.c   # nature multiplier
     ${ALETHEIA_ROOT}/src/matched/sub_02018A7C.c    # the six-stat recalculation
+
+    # --- the heap layer --------------------------------------------------
+    #
+    # python tools/closure.py --seed-func sub_0203101C
+    #
+    # The whole chain from the game's allocation entry point down to the
+    # expanded-heap allocator it bottoms out in.  Every one of these is
+    # LP64-clean: none of them reaches a field of a pointer-bearing struct
+    # through a DS byte offset, and the one 0x1c that does appear is a block
+    # header with no pointers in it, so it is 0x1c on any target.
+    ${ALETHEIA_ROOT}/src/matched/unit_0202FBAC.c   # the four heap-record accessors
+    ${ALETHEIA_ROOT}/src/matched/sub_02030098.c    # the raw allocator
+    ${ALETHEIA_ROOT}/src/matched/sub_02030428.c    # heap id -> arena
+    ${ALETHEIA_ROOT}/src/matched/sub_0203046C.c    # heap id -> live block count
+    ${ALETHEIA_ROOT}/src/matched/sub_020304B8.c    # the block header's heap id
+    ${ALETHEIA_ROOT}/src/matched/sub_020304C0.c    # the block header's provenance record
+    ${ALETHEIA_ROOT}/src/matched/sub_02030734.c    # the allocation entry point
+    ${ALETHEIA_ROOT}/src/matched/sub_02030880.c    # stamp the provenance pair
+    ${ALETHEIA_ROOT}/src/matched/sub_020308B8.c    # read it back and validate it
+    ${ALETHEIA_ROOT}/src/matched/sub_02030958.c    # the out-of-memory reporter
+    ${ALETHEIA_ROOT}/src/matched/sub_02030984.c    # the watched-allocation audit
+    ${ALETHEIA_ROOT}/src/matched/sub_02030A00.c    # the watch filter
+
+    # --- tcbl.c, the game's task-callback list ---------------------------
+    #
+    # The scheduler engine/frame/ runs as the frame loop's step.  Four other
+    # EXACT files of this family (sub_02030EF0, sub_02030F34, func_02030F04,
+    # sub_02030FB4) are deliberately NOT here: each reaches a field of the
+    # node or the manager through a DS byte offset, and those structs store
+    # host pointers, so the offsets are wrong on an LP64 host.  README.md,
+    # "Why four matched files are out of the build", records the exact
+    # reason for each; stubs/reimpl_ files stand in and cite the matched
+    # source they replace.
+    ${ALETHEIA_ROOT}/src/matched/sub_0203101C.c    # the constructor
+    ${ALETHEIA_ROOT}/src/matched/sub_02030FC8.c    # build the free list
+    ${ALETHEIA_ROOT}/src/matched/sub_020310C4.c    # one pass of the runner
 )
 
 # ---------------------------------------------------------------------------
@@ -113,6 +149,9 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/fs.c            # FS_SeekFile/ReadFile/CloseFile
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi.c            # MI_CpuCopy/Fill family
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_alloc.c      # OS heap onto malloc
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_irq.c        # OS_DisableInterrupts/Restore/Terminate
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/gx.c            # the one GX name the heap layer reaches
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/tcbl.c          # the port's helper over tcbl.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/narc.c          # data root, NARC framing, ARM9 rodata
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/game_globals.c  # the ARM9 globals the matched code names
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/aliases.c       # sub_/func_ spelling forwarders
@@ -131,6 +170,24 @@ set(BW_STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02017E1C.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02017E40.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02018598.c
+
+    # --- the heap layer's floor ------------------------------------------
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060CA0.c  # expanded-heap alloc
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_020307B0.c  # and its release
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02030B50.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02060E6C.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02060E94.c
+
+    # --- tcbl.c's open functions, and the four LP64-displaced ones -------
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030F50.c  # reset a node
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030F70.c  # unlink a node
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_020311B8.c  # register a callback
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02031194.c  # destroy one node
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0203115C.c  # destroy every node
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030EF0.c  # row address
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030F34.c  # free-list push
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030F04.c  # free-list pop
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030FB4.c  # the work accessor
 )
 
 # ---------------------------------------------------------------------------
@@ -451,7 +508,7 @@ add_test(NAME test_bg COMMAND test_bg ${BW_DATA_ROOT_ABS} ${BW_BG_ORACLE_DIR})
 # expected pixel in them is computed on paper from the hardware rule under
 # test.  They are the counterweight to the oracle comparisons, which can
 # only ever show that two implementations agree.
-foreach(t test_affine test_bg_affine test_window test_frame)
+foreach(t test_affine test_bg_affine test_window test_frame test_tcbl)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)

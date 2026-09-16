@@ -58,6 +58,22 @@ void MI_CpuClear32(void *dst, u32 size)
 }
 
 /*
+ * MIi_CpuClear32 at 0x02082A7C, the internal form the game's allocation entry
+ * point reaches directly: src/matched/sub_02030734.c declares it
+ *
+ *     extern void MIi_CpuClear32(u32 data, void *dest, u32 size);
+ *
+ * and calls it as MIi_CpuClear32(0, p, size) when the caller asked for a
+ * cleared block.  The leading value argument is what makes this the `i`
+ * (internal) form rather than MI_CpuClear32(dst, size) above: same loop, one
+ * more parameter, and the argument order is the matched call site's.
+ */
+void MIi_CpuClear32(u32 data, void *dest, u32 size)
+{
+    MI_CpuFill32(dest, data, size);
+}
+
+/*
  * MIi_CpuClearFast at 0x02082AC0, called as func_02082AC0(value, dst, size).
  */
 void func_02082AC0(u32 value, void *dst, u32 size)

@@ -160,3 +160,156 @@ int bw_load_nature_table(void)
     memcpy(func_02019B04_Table, src, BW_NATURE_COUNT * BW_NATURE_STATS);
     return 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* g_EnvModule -- the heap manager at 0x02146954                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The struct declarations below are copied field for field from
+ * src/matched/sub_02030098.c, which is the widest view of the object any
+ * matched file in the closure takes (unit_0202FBAC.c declares the same
+ * object with only the first two members, and the two declarations agree on
+ * every offset they share).  Copying the shape rather than inventing one is
+ * what keeps the port and the matched code agreeing about where `count`,
+ * `error` and the per-record live-allocation counter are on an LP64 host,
+ * where the two leading pointers are eight bytes each and the DS's offsets
+ * do not apply to either side.
+ *
+ * The DS constructor at 0x0202FC48 is not decompiled ("not in this packet's
+ * cheap yield", unit_0202FBAC.c's header), so nothing matched can build this
+ * object and the port builds it: the fields the matched code reads, filled
+ * with values that make every heap id valid.
+ *
+ * The arena handle is the one thing the port does not reproduce.  On the DS
+ * it is an NNS expanded-heap handle and the raw allocator hands it to
+ * sub_02060CA0, which walks the heap's own free blocks.  Here it is a
+ * distinct non-null token per heap: stubs/reimpl_02060CA0.c takes memory
+ * from the host instead of from an arena and only needs the handle to be the
+ * "this heap exists" answer that sub_0202FBAC returns and sub_02030098
+ * tests.
+ */
+
+struct BwEnvEntry {
+    void *ptr00;
+    u32   field04;
+    u32   field08;
+    u16   field0c;   /* live allocations; sub_02030098 increments it */
+    u8    field0e;
+};
+
+struct BwEnvModule {
+    struct BwEnvEntry *entries;
+    u8                *ids;
+    u16                count;
+    u16                field0a;
+    u16                field0c;
+    u16                error;
+};
+
+struct BwEnvModule g_EnvModule;
+
+static struct BwEnvEntry g_heap_entries[BW_HEAP_COUNT];
+static u8                g_heap_ids[BW_HEAP_COUNT];
+static u32               g_heap_arena[BW_HEAP_COUNT];
+
+int bw_heap_init(u32 heaps)
+{
+    u32 i;
+
+    if (heaps == 0u || heaps > BW_HEAP_COUNT) {
+        heaps = BW_HEAP_COUNT;
+    }
+    memset(g_heap_entries, 0, sizeof(g_heap_entries));
+    for (i = 0; i < BW_HEAP_COUNT; i++) {
+        /*
+         * 0xff is the manager's "no such resource" marker: sub_0202FBAC
+         * returns 0 for it, which is the raw allocator's result code 2.
+         * Ids past `heaps` keep it so a test can see that arm.
+         */
+        g_heap_ids[i] = i < heaps ? (u8)i : (u8)0xff;
+        g_heap_arena[i] = 0x48454150u + i;          /* 'HEAP' + index */
+        g_heap_entries[i].ptr00 = &g_heap_arena[i];
+    }
+    g_EnvModule.entries = g_heap_entries;
+    g_EnvModule.ids = g_heap_ids;
+    g_EnvModule.count = (u16)heaps;
+    g_EnvModule.field0a = 0;
+    g_EnvModule.field0c = 0;
+    g_EnvModule.error = 0;
+    return 0;
+}
+
+long bw_heap_live_blocks(u32 heap_id)
+{
+    heap_id &= 0x7FFFu;
+    if (g_EnvModule.ids == NULL || heap_id >= (u32)g_EnvModule.count) {
+        return -1;
+    }
+    return (long)g_heap_entries[g_EnvModule.ids[heap_id]].field0c;
+}
+
+void bw_heap_note_release(u32 heap_id)
+{
+    u8 idx;
+
+    heap_id &= 0x7FFFu;
+    if (g_EnvModule.ids == NULL || heap_id >= (u32)g_EnvModule.count) {
+        return;
+    }
+    idx = g_EnvModule.ids[heap_id];
+    if (idx != 0xffu && g_heap_entries[idx].field0c != 0) {
+        g_heap_entries[idx].field0c--;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* g_020A7820 -- the watched-heap id                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * src/matched/sub_02030A00.c gates its whole body on this: a signed watch id
+ * where any negative value means "watch nothing", and a non-negative one
+ * names the single heap whose allocations are handed to the provenance audit
+ * sub_02030984.
+ *
+ * It is a data word inside the ARM9 image (0x020A7820 is below the image end
+ * at 0x020A9E80, so it is in .data and not in BSS), which is why it is
+ * loaded out of the player's own extract/arm9_dec.bin at run time rather
+ * than spelled out here, exactly like the nature table above.  The value the
+ * retail image carries is the "watch nothing" one; a port that failed to
+ * load the image would otherwise default to heap 0 and run the audit on
+ * every allocation, so the definition starts at -1 and the load only ever
+ * replaces it.
+ */
+#define BW_WATCH_ID_ADDRESS 0x020A7820u
+
+s32 g_020A7820 = -1;
+
+int bw_load_watch_id(void)
+{
+    const void *src = bw_arm9_rodata(BW_WATCH_ID_ADDRESS, 4);
+
+    if (src == NULL) {
+        return -1;
+    }
+    g_020A7820 = (s32)bw_rd32((const u8 *)src);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* sub_0203101C_File -- tcbl.c's allocation-site anchor                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * src/matched/sub_0203101C.c passes this as the fourth argument of every
+ * allocation it makes, and sub_02030880 stamps the first 0x12 bytes of it
+ * into the block header's provenance field.  It is not a __FILE__ literal:
+ * the addresses these sites pass are ARM9 data words, and aletheia's
+ * layout/file_anchors.txt names 0x020A7834 as the anchor of tcbl.c (the two
+ * rows for 0x020310C0 and 0x02031284).  So the text is a file name that
+ * aletheia's own metadata attests, and the port supplies it as text rather
+ * than copying bytes out of the image: the value reaches nothing but a
+ * provenance string that the release build never reads back.
+ */
+const char sub_0203101C_File[] = "tcbl.c";
