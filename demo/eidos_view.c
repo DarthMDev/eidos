@@ -10,26 +10,33 @@
  *           (members 1 and 2; tests/test_bg.c checks that same triple
  *           against the Python renderer pixel for pixel).
  *   bottom  one composed rig pose, species 25 by default, out of a/0/0/4
- *           through g2d_rig_load and g2d_compose_pose.
+ *           through g2d_rig_load and g2d_compose_pose, animated along its
+ *           own NANR timeline.
  *
- * Nothing here is game logic: no matched function runs in this loop yet.
- * What it proves is that the three layers meet -- the 2D engine's output
- * reaches a window at the DS's own frame rate, and the DS's commit-at-vblank
- * convention is the shape the loop already has.
+ * **The frame loop's step is game code now.**  The step function is
+ * src/matched/sub_020310C4.c, one pass of the game's task-callback list
+ * (aletheia's tcbl.c), over a list built by src/matched/sub_0203101C.c on
+ * the matched heap layer.  The demo registers exactly one task on it, and
+ * that task is what advances the animation clock and the sprite's position
+ * each frame.  So the picture moves because matched game code ran: the
+ * runner walked its list, found the node, fetched its work area through the
+ * matched work accessor's call site and dispatched.  sdk/tcbl.h says which
+ * functions in that path are matched and which the port supplies.
  *
- * The step/vblank split is not decoration.  The step function writes the
- * next frame's scroll and sprite position into `pending`; the vblank
- * callback copies them into `live`; the render callback reads only `live`.
- * That is what OAM and the BG registers do on hardware, and doing it this
- * way from the first frame is what keeps the matched code that eventually
- * replaces the step function from having to be rearranged around it.
+ * The step/vblank split is not decoration.  The task writes the next
+ * frame's scroll, sprite position and animation time into `pending`; the
+ * vblank callback copies them into `live`; the render callback reads only
+ * `live`.  That is what OAM and the BG registers do on hardware.
  *
  *     eidos_view [--data-root PATH] [--scale N] [--side-by-side] [--gap N]
- *                [--species N] [--frames N] [--shot PATH] [--no-audio]
+ *                [--species N] [--frames N] [--shot PATH]
+ *                [--shot-first PATH] [--no-audio]
  *
  * Escape quits; F12 writes a screenshot.  With --frames the run ends after
  * that many frames, which together with SDL_VIDEODRIVER=dummy is how
- * tests/test_view.c checks the picture with no display attached.
+ * tests/test_view.c checks the picture with no display attached;
+ * --shot-first writes a second screenshot right after the first frame, so
+ * the test can compare two frames and see that the bottom screen moved.
  */
 
 #include <stdio.h>
@@ -40,6 +47,7 @@
 #include "g2d.h"
 #include "platform.h"
 #include "port.h"
+#include "tcbl.h"
 
 #ifndef EIDOS_DEFAULT_DATA_ROOT
 #define EIDOS_DEFAULT_DATA_ROOT ""
@@ -53,6 +61,13 @@
 #define RIG_ARCHIVE    "a/0/0/4"
 #define RIG_BLOCK_SIZE 20u
 
+/* The game's task list: which heap it comes from, how deep its pool is, and
+ * the priority the one task sits at.  The pool is deeper than the demo needs
+ * so that the list is a list and not a special case of one. */
+#define VIEW_HEAP           1u
+#define VIEW_TASK_SLOTS     8u
+#define VIEW_ANIM_PRIORITY 64u
+
 #define SCREEN_W EIDOS_DS_SCREEN_WIDTH
 #define SCREEN_H EIDOS_DS_SCREEN_HEIGHT
 #define SCREEN_BYTES ((size_t)SCREEN_W * SCREEN_H * 4u)
@@ -62,7 +77,20 @@
 typedef struct DisplayRegs {
     s32 bg_hofs, bg_vofs;   /* BG0HOFS / BG0VOFS of the top screen */
     s32 obj_x, obj_y;       /* the bottom screen's single OAM entry */
+    u32 anim_t;             /* the NANR timeline position of the pose */
 } DisplayRegs;
+
+/*
+ * The task's work area, which lives inside the node the game's own list
+ * handed out and reaches the callback through the matched runner's call to
+ * the work accessor.  Sixteen bytes on this host; the list is built with
+ * room for it.
+ */
+typedef struct ViewTask {
+    struct View *view;
+    u32          t;       /* NANR frames elapsed */
+    u32          speed;   /* how many per DS frame */
+} ViewTask;
 
 typedef struct View {
     /* top screen */
@@ -79,6 +107,11 @@ typedef struct View {
     G2dRig     rig;
     G2dPose    pose;
     int        pose_ok;
+    u32        pose_t;      /* the timeline position `pose` was composed at */
+
+    /* the game's own scheduler, and the one task on it */
+    EidosTcblList *tasks;
+    EidosTcblNode *anim_node;
 
     DisplayRegs pending, live;
     u64 phase;
@@ -86,6 +119,11 @@ typedef struct View {
 
 static void view_free(View *v)
 {
+    if (v->tasks != NULL) {
+        bw_tcbl_free(v->tasks);
+        v->tasks = NULL;
+        v->anim_node = NULL;
+    }
     if (v->pose_ok) {
         g2d_pose_free(&v->pose);
     }
@@ -154,34 +192,73 @@ static int view_load(View *v, int species)
         return -1;
     }
     v->pose_ok = 1;
+    v->pose_t = 0;
 
     printf("top:    %s#%u, %ux%u, %u-colour palette\n", TITLE_ARCHIVE,
            TITLE_NSCR, v->nscr.width, v->nscr.height, v->pal.count);
-    printf("bottom: %s species %d, pose %ux%u\n", RIG_ARCHIVE, species,
-           v->pose.width, v->pose.height);
+    printf("bottom: %s species %d, pose %ux%u, %u NANR sequences\n",
+           RIG_ARCHIVE, species, v->pose.width, v->pose.height,
+           v->rig.has_nanr ? v->rig.nanr.num_sequences : 0u);
     return 0;
 }
 
+/*
+ * Recompose the pose at a new point on its NANR timeline.  The compositor
+ * sizes the canvas to the frame, so the pose is rebuilt rather than
+ * repainted; a rig pose is a few thousand pixels and this is once a frame.
+ */
+static void view_set_pose_time(View *v, u32 t)
+{
+    G2dPose next;
+
+    if (!v->pose_ok || t == v->pose_t) {
+        return;
+    }
+    if (g2d_compose_pose(&v->rig.ncgr, &v->rig.ncer,
+                         v->rig.has_nanr ? &v->rig.nanr : NULL,
+                         &v->rig.nmcr.groups[0], t, v->rig.palette.count,
+                         &next) != 0) {
+        return;   /* keep the frame we have rather than blanking the screen */
+    }
+    g2d_pose_free(&v->pose);
+    v->pose = next;
+    v->pose_t = t;
+}
+
 /* ------------------------------------------------------------------ */
-/* The three frame callbacks                                           */
+/* The one task on the game's own list                                 */
 /* ------------------------------------------------------------------ */
 
 /*
- * One frame of "logic".  It writes nothing the renderer reads: the values go
- * into `pending` and reach the picture only through the vblank commit.
+ * This is what the matched runner calls.  Both arguments come from matched
+ * code: `node` is the node the runner is holding, and `work` is what the
+ * work accessor answered for it at the runner's own call site
+ * (src/matched/sub_020310C4.c, `n->func(n, sub_02030FB4(n))`).
+ *
+ * It may write `pending` and nothing else: the picture is built from `live`,
+ * and the vblank callback is the only thing that moves one to the other.
  *
  * The bob is the engine's own fixed-point sine table rather than a float, so
  * the demo needs no libm and the motion is in the same arithmetic the affine
  * path uses: the angle is a 16-bit binary angle, one turn every 128 frames.
  */
-static void view_step(void *user)
+static void view_anim_task(EidosTcblNode *node, void *work)
 {
-    View *v = (View *)user;
+    ViewTask *w = (ViewTask *)work;
+    View *v;
     s32 s;
 
+    (void)node;
+    if (w == NULL || w->view == NULL) {
+        return;
+    }
+    v = w->view;
+
+    w->t += w->speed;
     v->phase++;
     s = g2d_sin_fx((u16)((v->phase * 512u) & 0xFFFFu));
 
+    v->pending.anim_t = w->t;
     v->pending.bg_hofs = 0;
     /* The screen resource is taller than the display (256 against 192):
      * scroll to the middle of it rather than showing the top. */
@@ -190,6 +267,60 @@ static void view_step(void *user)
     v->pending.obj_x = ((s32)SCREEN_W - (s32)v->pose.width) / 2;
     v->pending.obj_y = ((s32)SCREEN_H - (s32)v->pose.height) / 2
                        + (s * 6) / G2D_FX_ONE;
+}
+
+/*
+ * Build the game's task-callback list and put the animation task on it.
+ * Everything below the two bw_tcbl_ calls is matched: the constructor, the
+ * free-list build, the heap the pool comes from.
+ */
+static int view_start_tasks(View *v, u32 speed)
+{
+    ViewTask *w;
+
+    bw_heap_init(BW_HEAP_COUNT);
+
+    v->tasks = bw_tcbl_create(VIEW_HEAP, (u16)VIEW_HEAP, VIEW_TASK_SLOTS,
+                              (u32)sizeof(ViewTask));
+    if (v->tasks == NULL) {
+        fprintf(stderr, "eidos_view: the matched tcbl constructor failed\n");
+        return -1;
+    }
+
+    v->anim_node = bw_tcbl_register(v->tasks, view_anim_task,
+                                    (u32)sizeof(ViewTask), VIEW_ANIM_PRIORITY);
+    if (v->anim_node == NULL) {
+        fprintf(stderr, "eidos_view: could not register the animation task\n");
+        return -1;
+    }
+
+    w = (ViewTask *)bw_tcbl_work(v->anim_node);
+    memset(w, 0, sizeof(*w));
+    w->view = v;
+    w->t = 0;
+    w->speed = speed;
+
+    printf("tasks:  %u slots of %u work bytes on heap %u, "
+           "animation task at priority %u\n",
+           (unsigned)v->tasks->count, (unsigned)bw_tcbl_work_size(v->tasks),
+           (unsigned)VIEW_HEAP, (unsigned)VIEW_ANIM_PRIORITY);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* The three frame callbacks                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * One frame of logic, and it is game code: one pass of the task-callback
+ * list, src/matched/sub_020310C4.c.  The loop does not know what is on the
+ * list; the list decides.
+ */
+static void view_step(void *user)
+{
+    View *v = (View *)user;
+
+    bw_tcbl_run(v->tasks);
 }
 
 /* Vblank: the one place OAM and the BG registers may be written. */
@@ -205,6 +336,9 @@ static void view_render(void *user, u8 *top, u8 *bottom)
     G2dBgLayer layer;
     G2dObjEntry obj;
     G2dFrameDesc desc;
+
+    /* The committed animation time is the one the picture is built from. */
+    view_set_pose_time(v, v->live.anim_t);
 
     memset(&layer, 0, sizeof(layer));
     layer.nscr = &v->nscr;
@@ -243,9 +377,10 @@ static void usage(void)
 {
     printf("eidos_view [--data-root PATH] [--scale N] [--side-by-side]\n"
            "           [--gap N] [--species N] [--frames N] [--shot PATH]\n"
-           "           [--no-audio]\n"
+           "           [--shot-first PATH] [--anim-speed N] [--no-audio]\n"
            "\n"
-           "Escape quits, F12 writes a screenshot.\n");
+           "Escape quits, F12 writes a screenshot.  --shot-first writes one\n"
+           "after the first frame, so two frames can be compared.\n");
 }
 
 int main(int argc, char **argv)
@@ -257,8 +392,10 @@ int main(int argc, char **argv)
     View view;
     const char *data_root = NULL;
     const char *shot = NULL;
+    const char *shot_first = NULL;
     long frames = 0;
     int species = 25;
+    int anim_speed = 1;
     int audio = 1;
     u8 *top, *bottom;
     int i;
@@ -284,6 +421,10 @@ int main(int argc, char **argv)
             frames = strtol(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) {
             shot = argv[++i];
+        } else if (strcmp(argv[i], "--shot-first") == 0 && i + 1 < argc) {
+            shot_first = argv[++i];
+        } else if (strcmp(argv[i], "--anim-speed") == 0 && i + 1 < argc) {
+            anim_speed = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--no-audio") == 0) {
             audio = 0;
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -310,6 +451,10 @@ int main(int argc, char **argv)
     bw_set_data_root(data_root);
 
     if (view_load(&view, species) != 0) {
+        return 1;
+    }
+    if (view_start_tasks(&view, (u32)(anim_speed > 0 ? anim_speed : 1)) != 0) {
+        view_free(&view);
         return 1;
     }
 
@@ -350,6 +495,14 @@ int main(int argc, char **argv)
         eidos_frame_run_one(&loop);
         eidos_platform_present(plat, top, bottom);
 
+        if (shot_first != NULL && eidos_frame_count(&loop) == 1) {
+            if (eidos_platform_screenshot(plat, shot_first) == 0) {
+                printf("screenshot: %s (frame 1, animation t %u)\n",
+                       shot_first, (unsigned)view.pose_t);
+            } else {
+                rc = 1;
+            }
+        }
         if (eidos_platform_take_screenshot_request(plat)) {
             const char *path = shot != NULL ? shot : "eidos_view.bmp";
             if (eidos_platform_screenshot(plat, path) == 0) {
@@ -368,7 +521,8 @@ int main(int argc, char **argv)
         if (eidos_platform_screenshot(plat, shot) != 0) {
             rc = 1;
         } else {
-            printf("screenshot: %s (%u x %u)\n", shot, sw, sh);
+            printf("screenshot: %s (%u x %u, animation t %u)\n", shot, sw, sh,
+                   (unsigned)view.pose_t);
         }
     }
 

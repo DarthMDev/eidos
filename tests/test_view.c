@@ -14,6 +14,14 @@
  *   - the demo runs a few frames and exits 0,
  *   - the BMP it wrote is 24-bit, bottom-up, and exactly 256 x 384: the two
  *     DS screens stacked, at 1x,
+ *   - two screenshots, one after the first frame and one after the last,
+ *     differ on the bottom screen and are identical on the top.  That is
+ *     the check that game code ran: the bottom screen's pose is advanced
+ *     along its NANR timeline by a task on the game's own task-callback
+ *     list, and the frame loop's step is the matched runner
+ *     (src/matched/sub_020310C4.c) walking that list.  The top screen has
+ *     no task and must not move, which is what makes the bottom screen's
+ *     difference mean something rather than being "the demo redrew".
  *   - neither half is blank.  "Blank" is not just "all black": a compositor
  *     that ran and drew nothing produces a screen of one flat colour, the
  *     backdrop.  So each half has to carry several distinct colours and a
@@ -37,7 +45,19 @@
 #define SHOT_W 256u
 #define SHOT_H 384u
 
-#define DEMO_FRAMES "5"
+/*
+ * Twelve frames rather than five: the first screenshot is taken after frame
+ * 1, so the two shots are eleven NANR frames apart, which is well inside
+ * every sequence in species 25's rig (the shortest is eighteen frames) and
+ * comfortably past the point where two adjacent frames could be the same
+ * drawing.
+ */
+#define DEMO_FRAMES "12"
+
+/* How many pixels of the bottom screen have to move between the two shots
+ * before the animation counts as having happened.  One pose is about 2500
+ * pixels; the threshold is a small fraction of that. */
+#define MOVED_PIXELS 200u
 
 typedef struct Bmp {
     u32 width, height;
@@ -167,7 +187,33 @@ done:
     return 0;
 }
 
-static int run_demo(const char *exe, const char *data_root, const char *shot)
+/*
+ * How many pixels differ between the same rectangle of two images.  -1 if
+ * the two are not the same size, which is a failure in itself.
+ */
+static long half_diff(const Bmp *a, const Bmp *b, u32 y0, u32 rows)
+{
+    long n = 0;
+    u32 x, y;
+
+    if (a->width != b->width || a->height != b->height) {
+        return -1;
+    }
+    for (y = y0; y < y0 + rows; y++) {
+        for (x = 0; x < a->width; x++) {
+            size_t o = ((size_t)y * a->width + x) * 3u;
+            if (a->pixels[o] != b->pixels[o]
+                || a->pixels[o + 1] != b->pixels[o + 1]
+                || a->pixels[o + 2] != b->pixels[o + 2]) {
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
+static int run_demo(const char *exe, const char *data_root, const char *shot,
+                    const char *shot_first)
 {
     char cmd[2048];
     int rc;
@@ -178,13 +224,13 @@ static int run_demo(const char *exe, const char *data_root, const char *shot)
      * again. */
     rc = snprintf(cmd, sizeof(cmd),
                   "\"\"%s\" --data-root \"%s\" --frames " DEMO_FRAMES
-                  " --shot \"%s\" --no-audio\"",
-                  exe, data_root, shot);
+                  " --shot \"%s\" --shot-first \"%s\" --no-audio\"",
+                  exe, data_root, shot, shot_first);
 #else
     rc = snprintf(cmd, sizeof(cmd),
                   "\"%s\" --data-root \"%s\" --frames " DEMO_FRAMES
-                  " --shot \"%s\" --no-audio",
-                  exe, data_root, shot);
+                  " --shot \"%s\" --shot-first \"%s\" --no-audio",
+                  exe, data_root, shot, shot_first);
 #endif
     if (rc < 0 || rc >= (int)sizeof(cmd)) {
         printf("  command line does not fit\n");
@@ -202,8 +248,12 @@ static int run_demo(const char *exe, const char *data_root, const char *shot)
 int main(int argc, char **argv)
 {
     Bmp bmp;
+    Bmp first;
+    char shot_first[1024];
     const char *exe, *data_root, *shot;
+    int have_first = 0;
     int failed = 0;
+    int n;
 
     if (argc < 4) {
         printf("usage: %s <eidos_view> <data root> <output.bmp>\n", argv[0]);
@@ -213,12 +263,24 @@ int main(int argc, char **argv)
     data_root = argv[2];
     shot = argv[3];
 
+    n = snprintf(shot_first, sizeof(shot_first), "%s.first.bmp", shot);
+    if (n < 0 || n >= (int)sizeof(shot_first)) {
+        printf("  output path does not fit\n");
+        return 1;
+    }
+
     remove(shot);
-    if (run_demo(exe, data_root, shot) != 0) {
+    remove(shot_first);
+    if (run_demo(exe, data_root, shot, shot_first) != 0) {
         return 1;
     }
     if (bmp_load(&bmp, shot) != 0) {
         return 1;
+    }
+    have_first = bmp_load(&first, shot_first) == 0;
+    if (!have_first) {
+        printf("  FAIL the demo did not write the first-frame screenshot\n");
+        failed = 1;
     }
 
     printf("screenshot %s: %u x %u, %u bpp\n", shot, bmp.width, bmp.height,
@@ -231,6 +293,32 @@ int main(int argc, char **argv)
         failed |= half_is_blank(&bmp, 0, SHOT_H / 2u, "top screen");
         failed |= half_is_blank(&bmp, SHOT_H / 2u, SHOT_H / 2u,
                                 "bottom screen");
+    }
+
+    /*
+     * The two frames.  The bottom screen has to have moved, because a task
+     * on the game's own list advanced the pose along its NANR timeline and
+     * the matched runner is what called that task.  The top screen has no
+     * task and has to be identical, which is what rules out "the demo
+     * simply redrew everything differently".
+     */
+    if (have_first) {
+        long top = half_diff(&first, &bmp, 0, SHOT_H / 2u);
+        long bottom = half_diff(&first, &bmp, SHOT_H / 2u, SHOT_H / 2u);
+
+        printf("frame 1 against frame " DEMO_FRAMES
+               ": top %ld pixels differ, bottom %ld\n", top, bottom);
+        if (top != 0) {
+            printf("  FAIL the top screen has no task and must not move\n");
+            failed = 1;
+        }
+        if (bottom < (long)MOVED_PIXELS) {
+            printf("  FAIL the bottom screen moved by fewer than %u pixels; "
+                   "the task on the matched list did not animate it\n",
+                   MOVED_PIXELS);
+            failed = 1;
+        }
+        free(first.pixels);
     }
 
     free(bmp.pixels);
