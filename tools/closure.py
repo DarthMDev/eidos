@@ -266,6 +266,11 @@ class Index:
 
 
 def main(argv=None):
+    # Declared before ROOT is read as the --aletheia-root default: a global
+    # statement has to precede every use of the name in its function, and
+    # Python 3.11 rejects the other order outright rather than warning.
+    global ROOT
+
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--aletheia-root", default=ROOT,
                     help="path to the aletheia checkout (default: ../aletheia)")
@@ -279,7 +284,6 @@ def main(argv=None):
                     help="print the closure as a CMake source list")
     args = ap.parse_args(argv)
 
-    global ROOT
     ROOT = os.path.abspath(args.aletheia_root)
 
     idx = Index()
