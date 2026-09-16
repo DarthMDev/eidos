@@ -169,6 +169,121 @@ target_include_directories(eidos PUBLIC
 )
 
 # ---------------------------------------------------------------------------
+# SDL2, optional
+# ---------------------------------------------------------------------------
+#
+# SDL2 is needed only by engine/platform/ and by the eidos_view demo.  The
+# engine library, the shim, the stubs and every other test build and run
+# without it, so it is looked for rather than required, and everything that
+# depends on it is skipped when it is not there.
+#
+# Three places are tried, in this order:
+#
+#   1. third_party/SDL2-<version>/<triplet>, which `python tools/fetch_sdl.py`
+#      downloads from the official libsdl-org release and verifies against a
+#      recorded SHA-256.  This is the no-installer path on Windows and is the
+#      same pattern as the toolchain archives in aletheia's tools/.
+#   2. an SDL2 CMake package (find_package), which is what a system package
+#      manager installs.
+#   3. pkg-config's sdl2.pc.
+#
+option(EIDOS_SDL "Build the SDL2 platform layer and the eidos_view demo" ON)
+
+set(EIDOS_SDL_FOUND OFF)
+set(EIDOS_SDL_ORIGIN "")
+set(EIDOS_SDL_RUNTIME "")
+
+if(EIDOS_SDL)
+    # 1. the fetched tree
+    file(GLOB _sdl_trees "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL2-*")
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_sdl_triplet "x86_64-w64-mingw32")
+    else()
+        set(_sdl_triplet "i686-w64-mingw32")
+    endif()
+    foreach(_tree ${_sdl_trees})
+        set(_cand "${_tree}/${_sdl_triplet}")
+        if(EXISTS "${_cand}/include/SDL2/SDL.h"
+           AND EXISTS "${_cand}/lib/libSDL2.dll.a"
+           AND NOT EIDOS_SDL_FOUND)
+            add_library(eidos_sdl2 INTERFACE)
+            target_include_directories(eidos_sdl2 INTERFACE "${_cand}/include/SDL2")
+            # Only libSDL2 itself: engine/platform/platform.c defines
+            # SDL_MAIN_HANDLED and calls SDL_SetMainReady, so eidos keeps its
+            # own main() and needs neither SDL2main nor the mingw32 stub.
+            target_link_libraries(eidos_sdl2 INTERFACE "${_cand}/lib/libSDL2.dll.a")
+            set(EIDOS_SDL_FOUND ON)
+            set(EIDOS_SDL_ORIGIN "${_cand}")
+            if(EXISTS "${_cand}/bin/SDL2.dll")
+                set(EIDOS_SDL_RUNTIME "${_cand}/bin/SDL2.dll")
+            endif()
+        endif()
+    endforeach()
+
+    # 2. a system CMake package
+    if(NOT EIDOS_SDL_FOUND)
+        find_package(SDL2 QUIET)
+        if(SDL2_FOUND)
+            add_library(eidos_sdl2 INTERFACE)
+            if(TARGET SDL2::SDL2)
+                target_link_libraries(eidos_sdl2 INTERFACE SDL2::SDL2)
+            else()
+                target_include_directories(eidos_sdl2 INTERFACE ${SDL2_INCLUDE_DIRS})
+                target_link_libraries(eidos_sdl2 INTERFACE ${SDL2_LIBRARIES})
+            endif()
+            set(EIDOS_SDL_FOUND ON)
+            set(EIDOS_SDL_ORIGIN "system package")
+        endif()
+    endif()
+
+    # 3. pkg-config
+    if(NOT EIDOS_SDL_FOUND)
+        find_package(PkgConfig QUIET)
+        if(PKG_CONFIG_FOUND)
+            pkg_check_modules(SDL2PC QUIET sdl2)
+            if(SDL2PC_FOUND)
+                add_library(eidos_sdl2 INTERFACE)
+                target_include_directories(eidos_sdl2 INTERFACE ${SDL2PC_INCLUDE_DIRS})
+                target_link_libraries(eidos_sdl2 INTERFACE ${SDL2PC_LIBRARIES})
+                target_link_directories(eidos_sdl2 INTERFACE ${SDL2PC_LIBRARY_DIRS})
+                set(EIDOS_SDL_FOUND ON)
+                set(EIDOS_SDL_ORIGIN "pkg-config sdl2")
+            endif()
+        endif()
+    endif()
+endif()
+
+if(EIDOS_SDL_FOUND)
+    message(STATUS "SDL2: ${EIDOS_SDL_ORIGIN}")
+else()
+    message(STATUS "SDL2: not found; the platform layer and eidos_view are "
+                   "skipped (run python tools/fetch_sdl.py, or install SDL2)")
+endif()
+
+# ---------------------------------------------------------------------------
+# The platform layer
+# ---------------------------------------------------------------------------
+
+if(EIDOS_SDL_FOUND)
+    add_library(eidos_platform STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/platform.c
+    )
+    target_include_directories(eidos_platform PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
+    )
+    target_link_libraries(eidos_platform PUBLIC eidos eidos_sdl2)
+endif()
+
+# The matched files are compiled with the port's warning set but without the
+# ones that are inherent to reproducing a 2010 compiler's output: they declare
+# each extern locally with the prototype that call site needs, so prototypes
+# for the same function differ between translation units by design.
+if(NOT MSVC)
+    set_source_files_properties(${BW_MATCHED_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-missing-prototypes")
+endif()
+
+# ---------------------------------------------------------------------------
 # Generated fixtures
 # ---------------------------------------------------------------------------
 
