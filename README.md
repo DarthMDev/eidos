@@ -59,8 +59,11 @@ One file per SDK module:
 | `sdk/types.h` | the scalar vocabulary: u8..s64, fx32, BOOL, the fixed-point macros, endian-clean readers |
 | `sdk/port.h` | the port's own API: data root, archives, panic |
 | `sdk/fs.c` | FS: `FS_SeekFile`, `FS_ReadFile`, `FS_CloseFile` onto stdio |
-| `sdk/os_alloc.c` | OS heap: `OS_AllocFromHeap`/`OS_FreeToHeap` and the game's debug-allocator wrappers `func_02030734`/`func_020307B0`, onto malloc |
+| `sdk/os_alloc.c` | OS heap: `OS_AllocFromHeap`/`OS_FreeToHeap`, and the host's aligned-block helper the whole port allocates through |
+| `sdk/os_irq.c` | OS: `OS_DisableInterrupts`/`OS_RestoreInterrupts` as a saved flag, `OS_Terminate` as exit |
+| `sdk/gx.c` | GX: `GX_GetBankForBGExtPltt` and the address the heap layer's failure arm calls |
 | `sdk/mi.c` | MI: the `MI_CpuCopy*` / `MI_CpuFill*` family onto memcpy/memset |
+| `sdk/tcbl.c`, `sdk/tcbl.h` | the host layout of the game's task-callback list, and the port's thin helper over it |
 | `sdk/narc.c` | the data root, the NARC container reader, and the ARM9 rodata window |
 | `sdk/game_globals.c` | the ARM9 *objects* the matched code names (`g_Sink`, `g_0214652C`, `g_02146270`, `func_02019B04_Table`, the assert strings) |
 | `sdk/aliases.c` | forwarders for addresses two matched files spell two different ways |
@@ -488,13 +491,9 @@ counters advance at the vblank too, because on hardware that interrupt is
 what the OS counts: a step function therefore sees the number of the frame it
 is building, and a render function the one it is about to show.
 
-The game's own scheduler sits on top of this rather than inside it. aletheia's
-`src/matched/sub_0203101C.c` and `sub_020310C4.c` (tcbl.c) are the
-task-callback list: one pass of `sub_020310C4` walks every node and calls its
-callback, unlinking the ones that asked to die. That pass is what a caller
-registers as the step function once the list is constructible here; this
-layer does not reimplement it, because it is matched game code and will be
-linked, not rewritten.
+The game's own scheduler sits on top of this rather than inside it, and it is
+in the build now: `src/matched/sub_020310C4.c` (tcbl.c's runner) **is** the
+step function `demo/eidos_view` installs. See "The game's scheduler" below.
 
 **The OS tick is not 64 Hz.** `src/matched/func_02021444.c` (palanm.c) stamps
 its module state block with `OS_GetTick()`'s full `u64`, stored as one
@@ -512,6 +511,148 @@ clock exactly as a paced one does.
 `tests/test_frame.c` is synthetic: the callback order, that a value the step
 function writes reaches the renderer only through the vblank commit, that 32
 frames are exactly 280095 ticks, and the tick/millisecond conversions.
+
+## The game's scheduler, and the first matched code inside the frame
+
+`aletheia`'s tcbl.c is the game's task-callback list: a manager owning a
+fixed pool of nodes, a caller registering a callback with a priority and
+getting a node back, and one pass of a runner walking the live nodes in
+priority order and calling each callback with the node and its work area.
+That pass is what a DS game does once per frame, and it is now what
+`engine/frame/` calls as the step.
+
+**What runs through matched code now.** Everything in this list is
+`src/matched/`, compiled unchanged for the host and actually executed by
+`ctest`:
+
+- **The heap.** `sub_02030734`, the allocation entry point with 1163 callers
+  in the image, over `sub_02030098`, the only function in the game that takes
+  memory from a heap: the 0x7fff heap-id mask and its bit-15 direction flag,
+  the 0x1c-byte block header with the `0x194E` signature, the per-heap
+  live-allocation counter, and the three result codes. Around it
+  `sub_02030880` stamps the allocation-site provenance pair into the header,
+  `sub_020308B8` reads it back and validates it, `sub_02030A00` filters on
+  the watched-heap id and `sub_02030984` audits, `sub_02030428` /
+  `sub_0203046C` / `sub_020304B8` / `sub_020304C0` are the lookups, and
+  `unit_0202FBAC`'s four accessors resolve a heap id to its record.
+- **The task list's construction.** `sub_0203101C` allocates the 0x38-byte
+  manager and the node pool, stores the count, the work size and the home
+  heap, and self-links the sentinel; `sub_02030FC8` walks every row of the
+  pool into the free list.
+- **The runner.** `sub_020310C4`, one pass: clear the flag, call the node's
+  callback with the node and its work area, and either advance or unlink,
+  with the walk cursor published in the manager so a callback can destroy a
+  node from inside another one.
+
+`tests/test_tcbl.c` drives all of it with no SDL, no game data and no
+oracle: **48 checks**, including that the constructor's two allocations show
+up in the matched heap's own live-block count, that the pool is exactly as
+deep as it was asked for (which is only true if the matched free-list build
+reached every row), that the provenance the matched allocator stamped reads
+back as `tcbl.c` through the matched validator, that a pass over an empty
+list is a no-op, that three callbacks fire in priority order with their own
+work areas, that a node removed from outside a pass drops out of the order
+and can be re-registered at a new priority, that a node which destroys
+itself from inside its own callback still lets the rest of the pass finish
+and is gone from the next one, and that the heap balances back to zero.
+
+`demo/eidos_view` then puts one task on such a list and makes the frame
+loop's step `sub_020310C4`. The task advances the Pikachu pose along its
+NANR timeline and writes the scroll, the sprite position and the animation
+time into the pending register block; the vblank commits; the renderer
+recomposes the pose at the committed time. `tests/test_view.c` takes a
+screenshot after frame 1 and another after frame 12 and requires the bottom
+screen to have moved by at least 200 pixels while the top screen, which has
+no task, is **pixel-identical**. Measured: top 0, bottom 1223.
+
+### Why four matched files are out of the build
+
+This is the first place the port has had to leave an EXACT matched source
+out, and the reason is a property of the game's data rather than of any
+file: **the task-callback node and its manager are the first game-owned
+structs in the port that store pointers.**
+
+Portability rule 5 below says no pointer may be stored in a struct the
+game's layout owns, and until now the port could honour it, because the one
+such struct (`ArcFile`) is one the port itself fills in and it stores an
+index. A tcbl node cannot: its `prev`, `next`, `owner` and `func` are
+pointers the *game* writes. On the DS a pointer is four bytes and the node
+header is 0x18 with the manager at 0x38; on an LP64 host the same
+declarations produce a 40-byte node header and an 88-byte manager, and every
+field after the first pointer moves.
+
+That is harmless for a matched file that declares the whole struct, because
+its own compiler lays it out consistently and every other file in the family
+agrees. It is fatal for a matched file that reaches one field through
+explicit padding, and four of them do:
+
+| file | what it does | why it cannot run here |
+| --- | --- | --- |
+| `sub_02030EF0.c` | the pool row address | returns an address in a `u32`, and reads the table pointer at DS offset 0x14 (24 here) |
+| `sub_02030F34.c` | free-list push | reaches the free-list head through `char pad[0x34]`; it is at 80 here |
+| `func_02030F04.c` | free-list pop | the same `char pad[0x34]` |
+| `sub_02030FB4.c` | the work-area accessor | reads the owned-work pointer at +0x10 (28 here) and returns node + 0x18 (40 here) |
+
+Each one is byte-correct for the DS and nothing about it is wrong. They stay
+in aletheia untouched, they stay out of `CMakeLists.txt`, and a
+`stubs/reimpl_` file stands in, naming the matched source it replaces and
+transcribing its body against the struct rather than against the numbers.
+`sdk/tcbl.h` carries the host layout with the DS offsets beside it.
+
+Two related findings, both recorded in `sdk/tcbl.h` and both for the
+aletheia side rather than fixable here:
+
+- **The node's `+0x00` is declared `u32` in every matched tcbl file and holds
+  a pointer** (`sub_02030F50` stores the manager there). On an LP64 host that
+  `u32` is followed by four bytes of padding and the port widens the pair
+  into one 8-byte pointer, which works only because no matched file reads
+  either half.
+- **The node's `+0x10` is declared `u32` and holds a pointer too**: the work
+  block a node owns when its request does not fit inside the node. There is
+  no padding to borrow there, so the port refuses an oversize work request
+  rather than storing a truncated pointer. Every node on this host carries
+  its work area inside itself.
+
+And one arithmetic adjustment, which is the port's own and is confined to one
+line: `sub_0203101C` sizes the pool as `(((workSize + 3) & ~3) + 0x18) *
+count` with the DS node header written out as a literal. Rather than keep the
+constructor out of the build over one constant, `bw_tcbl_create` adds the
+difference between the two headers to the caller's work size before handing
+it over, so the rows the matched arithmetic produces come out exactly `40 +
+work` bytes apart and the last one ends exactly at the end of the table.
+
+### The heap environment, and what is under the allocator
+
+`g_EnvModule` at 0x02146954 is the heap manager, and the matched code reads
+it constantly: the heap count at +8 bounds the id, the byte table at +4 maps
+a public heap id to a record index, the record array at +0 holds the arena
+handle and the live-allocation count, and the halfword at +0xe is the result
+code every one of them writes. The DS constructor that fills it in
+(0x0202FC48) is not decompiled, so there is no matched constructor to call
+and `bw_heap_init` initialises the fields the matched code reads.
+
+Under the raw allocator sits `sub_02060CA0`, the expanded heap's allocation
+front, which is still open. Its 48 bytes settle the contract completely
+(round the request up to a word, take it off the head when the alignment
+argument is non-negative and off the tail when it is negative, align to the
+magnitude, answer null when it cannot), so `stubs/reimpl_02060CA0.c` is a
+reimplementation rather than an aborting stub, with `stubs/reimpl_020307B0.c`
+as its release counterpart. What is *not* reproduced is the arena: the block
+comes from the host allocator, so the head/tail distinction has no effect on
+the address. Nothing above that line can see the difference;
+`src/matched/sub_02030098.c`, the only caller, tests the result against null
+and nothing else.
+
+One host-only detail lives in those two files and nowhere else: **what is
+aligned is the payload, not the block.** The caller adds a 0x1c-byte header
+and hands out `block + 0x1c`, and 0x1c is not a multiple of eight, so an
+eight-aligned block would hand out a payload that is only four-aligned and
+every pointer in a task-callback node would be misaligned.
+
+The rest of the failure path is aborting stubs, and honestly so:
+`sub_02030B50` (the heap report, `MATCH` in aletheia's `src/pending/`),
+`sub_02060E6C` and `sub_02060E94` (the arena walk and dump) are reachable
+only after an allocation has already failed, one call before `OS_Terminate`.
 
 ## The platform layer
 
@@ -579,7 +720,8 @@ is written at 1x in the configured layout, as RGB24, so SDL writes a plain
 
 ```
 build/eidos_view --data-root <extract/data> [--scale N] [--side-by-side]
-                 [--gap N] [--species N] [--frames N] [--shot PATH] [--no-audio]
+                 [--gap N] [--species N] [--frames N] [--shot PATH]
+                 [--shot-first PATH] [--anim-speed N] [--no-audio]
 ```
 
 The top screen is `titledemo.narc` member 0, the 256x256 8bpp title screen
@@ -589,23 +731,28 @@ checks pixel for pixel against the Python renderer). The bottom screen is one
 composed rig pose out of `a/0/0/4`, species 25 by default. Both come from the
 player's own `extract/`; nothing is bundled.
 
-No matched game code runs in this loop yet. What the demo proves is that the
-three layers meet: the 2D engine's output reaches a window at the DS's own
-frame rate, through the commit-at-vblank convention. That convention is
-exercised rather than described. `view_step` writes the next frame's scroll
-and sprite position into a pending register block, `view_vblank` commits it,
-and `view_render` reads only the committed copy, which is what OAM and the BG
-registers do on hardware. The sprite's bob comes from the engine's own
-fixed-point sine table, so the demo needs no libm.
+**The frame loop's step is game code.** The demo builds a task-callback list
+through the matched constructor and registers one task on it; the step
+function is `src/matched/sub_020310C4.c`, one pass over that list, and the
+loop does not know what is on it. The task advances the pose along its NANR
+timeline and writes the next frame's scroll, sprite position and animation
+time into a pending register block; `view_vblank` commits it; `view_render`
+reads only the committed copy and recomposes the pose at the committed time,
+which is what OAM and the BG registers do on hardware. The sprite's bob comes
+from the engine's own fixed-point sine table, so the demo needs no libm.
 
 `tests/test_view.c` runs it headless. ctest sets `SDL_VIDEODRIVER=dummy` and
 `SDL_AUDIODRIVER=dummy` on the test, so the window, the textures, the pacer
 and `SDL_SaveBMP` all run on a machine with no display and no sound card;
 the test then parses the BMP: 256 x 384 at 24 bits, the two screens stacked
-at 1x, and neither half blank. The thresholds are deliberately low (eight
-distinct colours and five hundred pixels off the backdrop per half), because
-the bottom screen is one 48x52 sprite on a backdrop. What the picture *is*
-stays `test_bg`'s and `test_g2d`'s business, against the Python renderers.
+at 1x, and neither half blank. The thresholds for "not blank" are
+deliberately low (eight distinct colours and five hundred pixels off the
+backdrop per half), because the bottom screen is one 48x52 sprite on a
+backdrop. It then compares the screenshot taken after frame 1 with the one
+after frame 12: the bottom screen must have moved by at least 200 pixels and
+the top screen, which has no task, must be pixel-identical. Measured: top 0,
+bottom 1223. What the picture *is* stays `test_bg`'s and `test_g2d`'s
+business, against the Python renderers.
 
 ## Growing the source list
 
@@ -615,8 +762,20 @@ mechanically, not by guessing:
 ```
 python tools/closure.py --seed-func func_02018A7C
 python tools/closure.py --seed-func func_02018A7C --cmake
+python tools/closure.py --seed-func sub_0203101C
 python tools/closure.py --list-closed
 ```
+
+The `sub_0203101C` seed is the one the heap layer and the task-callback list
+came in on. Its report is what the current source list answers, name for
+name: 16 matched translation units, five `sdk` names (`MIi_CpuClear32`,
+`OS_DisableInterrupts`, `OS_RestoreInterrupts`, `OS_Terminate`,
+`sub_02030524`), five `open` ones (`sub_02030F50`, `sub_02030B50`,
+`sub_02060CA0`, `sub_02060E6C`, `sub_02060E94`) and three `data` ones
+(`g_EnvModule`, `g_020A7820`, `sub_0203101C_File`). Of the 16 matched units
+one, `sub_02030EF0.c`, is deliberately not in the build (see "Why four
+matched files are out of the build"), which is the one place the report and
+`CMakeLists.txt` disagree on purpose rather than by accident.
 
 `tools/closure.py` reads the manifest shards in aletheia's `layout/matched/`
 and the `extern` declarations and `symbols:` header blocks of the matched
@@ -782,6 +941,14 @@ conveniences, and both are recorded in that file's header:
   behaves correctly on every toolchain this port targets, and the alternative
   is editing a matched file.
 
+Two more, both about the task-callback list and both now load bearing.
+`sdk/tcbl.h` has the detail; in short, the node's `+0x00` and `+0x10` are
+declared `u32` in every matched tcbl file and both hold pointers on the DS.
+The port borrows the four bytes of LP64 padding behind `+0x00` to widen the
+first into a real pointer (safe: no matched file reads either half), and
+refuses the second outright, so no node on this host owns a separately
+allocated work area.
+
 A third, not yet load bearing: some matched sources declare
 `OS_AllocFromHeap` / `OS_FreeToHeap` with all-`u32` parameters, because on the
 DS a pointer is a u32 and the matcher only needs the relocation. On an LP64
@@ -834,13 +1001,33 @@ eight. A windowed run of `eidos_view --frames 60` takes one second of wall
 clock and reports 60 frames, 1002 ms of game time and no pacer
 resynchronisation, which is 60 / 59.8261 s to the millisecond.
 
+With the heap layer and the game's task-callback list added (2026-09-16):
+**ten tests pass** in 1.4 seconds. `test_tcbl` runs 48 checks over the
+matched constructor, the matched free-list build and the matched runner on
+the matched heap, and needs neither SDL nor game data; `test_view` now also
+checks that two frames of the demo differ on the bottom screen, which is the
+animation a task on that list drove, and not at all on the top screen.
+
 ## Planned Milestones
 
 - [ ] **Milestone 1**: Portability pass
-  - [ ] Fix pointer width assumptions (32-bit to 64-bit host)
-  - [ ] Endianness and struct packing compatibility
-  - [ ] Under-declared globals and compiler-specific extensions
-  - [ ] Warning-free builds on GCC, Clang, and MSVC
+  - [x] Fix pointer width assumptions (32-bit to 64-bit host): the first
+        game-owned structs that store pointers are in the build (the
+        task-callback node and its manager), the host layout is written
+        down beside the DS one in `sdk/tcbl.h`, the four matched accessors
+        that reach a field through a DS byte offset are identified and
+        stood in for, and the two `u32`-declared pointer fields are
+        recorded. See "Why four matched files are out of the build"
+  - [x] Endianness and struct packing compatibility: every read out of
+        `extract/` goes through `bw_rd16`/`bw_rd32`, `char` is signed on
+        every compiler the build supports, and no matched struct in the
+        source list is reached through a byte offset that the host lays
+        out differently
+  - [ ] Under-declared globals and compiler-specific extensions (two known
+        and recorded under "Known type mismatches", two more found in the
+        tcbl family; the sweep itself is not done)
+  - [ ] Warning-free builds on GCC, Clang, and MSVC (warning-free on the
+        pinned MinGW-w64 GCC today, with and without SDL2)
 - [ ] **Milestone 2**: Platform layer (SDL2)
   - [x] Window creation and input handling: an integer scale of the DS
         layout, stacked or side by side, a configurable SDL scancode table
@@ -850,13 +1037,14 @@ resynchronisation, which is 60 / 59.8261 s to the millisecond.
         mixer's own rate, with a silent callback until the sequencer exists;
         and the frame pacer on the exact 59.8261 Hz period with the
         remainder accumulated
-  - [ ] DS frame emulation loop: task list scheduler running at 60 Hz, vblank callbacks
-        (half done: `engine/frame/` is the vblank-driven loop, the
-        commit-at-vblank convention and the DS OS tick, with `sdk/os_tick.c`
-        answering `OS_GetTick`. What is missing is the *game's* scheduler
-        inside it: aletheia's tcbl.c is matched but its constructor's
-        closure, and the boot path that makes a list, are not in the build
-        yet)
+  - [x] DS frame emulation loop: task list scheduler running at 60 Hz,
+        vblank callbacks. `engine/frame/` is the vblank-driven loop, the
+        commit-at-vblank convention and the DS OS tick (`sdk/os_tick.c`
+        answers `OS_GetTick`), and the scheduler inside it is the game's
+        own: `src/matched/sub_0203101C.c` builds the list on the matched
+        heap layer and `src/matched/sub_020310C4.c` is the step function
+        `demo/eidos_view` installs. What is still missing is the boot path
+        that makes the *game's* lists rather than the demo's one
 - [ ] **Milestone 3**: 2D engine shim
   - [x] BG layers from tile and palette memory: NSCR screens, all four
         text screen sizes, 16- and 256-colour modes, scroll, priority and
