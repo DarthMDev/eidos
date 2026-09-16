@@ -148,6 +148,7 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/resources.c  # NCGR/NCLR/NCER/NANR/NMCR
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/compose.c    # the OBJ compositor
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/rig.c        # rig block loading
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg.c         # BG layers, the frame compositor
 )
 
 add_library(eidos STATIC
@@ -234,6 +235,69 @@ add_custom_command(
 add_custom_target(bw_g2d_oracle DEPENDS ${BW_G2D_ORACLE_FILES})
 
 # ---------------------------------------------------------------------------
+# The BG layer's pixel oracle
+# ---------------------------------------------------------------------------
+#
+# tools/bg_oracle.py imports aletheia's tools/assets/background.py the same
+# way, renders each screen below and writes the PNG, a raw RGBA dump and
+# screens.txt, the manifest naming the NCGR/NCLR sub-file its coverage rule
+# paired with each NSCR.  tests/test_bg.c renders the same three sub-files
+# through engine/g2d/bg.c and compares pixel for pixel.
+#
+# The eight screens are picked for coverage rather than for looks:
+#
+#   titledemo.narc#0   256x256  8bpp  the Diamond/Pearl title logo the asset
+#                                     lane identified; 255 distinct colours
+#   a/1/4/3#22         512x192  4bpp  the battle-background terrain layer
+#   a/1/3/7#26         256x256  4bpp  the "VS. RECORDER" UI banner
+#   a/0/4/6#11         256x512  4bpp  the menu window frame, the tall size
+#   a/0/3/4#17         512x256  8bpp  the wide size, in 256-colour mode
+#   a/1/5/9#108        512x512  4bpp  the largest screen size
+#   a/1/2/0#4          256x192  4bpp  55 distinct colours, the widest 4bpp
+#                                     palette spread found in the scan
+#   a/1/9/2#2          256x256  4bpp  29 distinct colours, the Wi-Fi grid
+#
+# so that all four hardware screen sizes, both colour modes and two
+# authoring sizes that are not hardware sizes at all are covered.
+#
+# The entries are quoted because an unquoted '#' starts a CMake comment.
+set(BW_BG_SCREENS
+    "titledemo.narc#0"
+    "a/1/4/3#22"
+    "a/1/3/7#26"
+    "a/0/4/6#11"
+    "a/0/3/4#17"
+    "a/1/5/9#108"
+    "a/1/2/0#4"
+    "a/1/9/2#2"
+)
+set(BW_BG_ORACLE_DIR ${CMAKE_CURRENT_BINARY_DIR}/oracle/bg)
+
+set(BW_BG_ORACLE_FILES ${BW_BG_ORACLE_DIR}/screens.txt)
+foreach(scr ${BW_BG_SCREENS})
+    string(REPLACE ".narc" "" _n "${scr}")
+    string(REPLACE "/" "_" _n "${_n}")
+    string(REPLACE "#" "_" _n "${_n}")
+    list(APPEND BW_BG_ORACLE_FILES ${BW_BG_ORACLE_DIR}/${_n}.rgba)
+endforeach()
+
+add_custom_command(
+    OUTPUT ${BW_BG_ORACLE_FILES}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bg_oracle.py
+            --aletheia-root ${ALETHEIA_ROOT}
+            --data-root ${BW_DATA_ROOT_ABS}
+            --out ${BW_BG_ORACLE_DIR}
+            ${BW_BG_SCREENS}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/bg_oracle.py
+            ${ALETHEIA_ROOT}/tools/assets/background.py
+            ${ALETHEIA_ROOT}/tools/assets/narc.py
+            ${ALETHEIA_ROOT}/tools/assets/battle_sprite.py
+    COMMENT "Generating the BG pixel oracle with aletheia's background.py"
+    VERBATIM
+)
+add_custom_target(bw_bg_oracle DEPENDS ${BW_BG_ORACLE_FILES})
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -254,3 +318,11 @@ add_dependencies(test_g2d bw_g2d_oracle)
 target_include_directories(test_g2d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_g2d PRIVATE eidos)
 add_test(NAME test_g2d COMMAND test_g2d ${BW_DATA_ROOT_ABS} ${BW_G2D_ORACLE_DIR})
+
+# The BG test reads its screen list out of the oracle's own manifest, so the
+# set of screens is changed in one place (BW_BG_SCREENS above).
+add_executable(test_bg ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bg.c)
+add_dependencies(test_bg bw_bg_oracle)
+target_include_directories(test_bg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_bg PRIVATE eidos)
+add_test(NAME test_bg COMMAND test_bg ${BW_DATA_ROOT_ABS} ${BW_BG_ORACLE_DIR})

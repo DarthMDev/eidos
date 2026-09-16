@@ -103,8 +103,8 @@ repository, and none is produced by a build.
 `engine/` is the fourth thing in this repository, and the first that is
 neither a shim over an SDK name nor game code: it is the host-side
 reimplementation of hardware the DS had and a PC does not. `engine/g2d/`
-is the OBJ (sprite/OAM) half of the 2D engine, a pure C99 library with no
-SDL dependency and no third-party code.
+is the 2D engine: the OBJ (sprite/OAM) half and the BG (tile layer) half,
+a pure C99 library with no SDL dependency and no third-party code.
 
 | file | what it does |
 | --- | --- |
@@ -113,6 +113,7 @@ SDL dependency and no third-party code.
 | `engine/g2d/resources.c` | NCLR palettes, NCGR character data, NCER cell banks, NANR cell animations, NMCR multi-cell node tables |
 | `engine/g2d/compose.c` | the compositor: one OAM's pixels, and a whole multi-cell pose, into palette indices and then into 32-bit RGBA |
 | `engine/g2d/rig.c` | loading one poseable multi-part sprite bundle out of a rig archive |
+| `engine/g2d/bg.c` | NSCR screens, text-mode BG layers with scroll and priority, and the frame compositor |
 
 What is covered: 4bpp and 8bpp character data, both `char_format`
 conventions (8x8 tiled and linear bitmap), the `0xFFFF` "unspecified
@@ -179,6 +180,119 @@ about format, and the DS does this in fixed point through the OAM affine
 parameters rather than in doubles, so matching rig.py's float path and
 matching the hardware may not be the same target. That is the first
 thing to settle when the affine path is written.
+
+### BG layers
+
+`engine/g2d/bg.c` is the second piece: the NSCR (screen / tile map)
+decoder, text-mode BG rasterisation over an NCGR/NCLR pair, and a frame
+compositor.
+
+What is covered: the SCRN chunk (screen size in pixels, the declared
+entry-array size, and the u16 screen entries with a 10-bit tile index,
+the two flip bits and the 4-bit palette row); 16-colour mode, where the
+entry's palette row selects one bank, and 256-colour mode, where the row
+field is ignored and the tile indexes the whole palette; character data
+addressed flat by `tile_index * bytes_per_tile`, which is how a screen
+entry addresses character memory and is independent of the CHAR
+sub-header's `tile_num_x/y` (a BG tileset's are routinely the `0xFFFF`
+sentinel); per-layer scroll (`BGxHOFS`/`BGxVOFS`) with hardware
+wraparound; per-layer priority; and a compositor that stacks up to four
+BG layers and an OBJ list into one 256x192 RGBA frame over the backdrop
+(colour 0 of the BG palette).
+
+Three rules are attested rather than assumed:
+
+- **The screen-entry layout is not row-major for the wide and tall
+  sizes.** `src/matched/func_02040EE0.c` is the game's own `(x, y)` to
+  entry-index helper and enumerates every size the BG system knows: a
+  16-wide map (the 128x128 affine size), the two 32-wide ones, 512x256
+  where the second 32x32 map follows the first, and 512x512 where four
+  are laid out in a 2x2 grid 0x400 entries apart. `g2d_bg_screen_index`
+  is that function transcribed, u16 truncation included.
+- **The BGxCNT bit assignment.** aletheia's `docs/notes/func_0203FCA0.c.txt`
+  (bg_sys.c's per-layer initialiser) pins it from the literal pool and
+  the store sequence: bits 0-1 priority, 2-4 character base, 7 the
+  16/256 colour mode, 8-12 screen base, 13 extended palette for a text
+  layer and wraparound for an affine one, 14-15 screen size. The layer
+  struct here carries exactly those fields.
+- **Index 0 is transparent in a frame, and opaque in a single-layer
+  render.** On hardware a BG tile pixel of palette index 0 lets the
+  layer behind (ultimately the backdrop) through, and
+  `g2d_frame_compose` does that. The asset lane's renderer paints index
+  0 as its palette colour, because it renders one layer on its own with
+  nothing behind it, and `g2d_bg_render` matches that so the oracle
+  comparison is exact. The two paths are one function apart on purpose.
+
+**The oracle.** `tests/test_bg.c` compares against
+`tools/assets/background.py`, the decompilation project's own NSCR
+renderer, the same way the OBJ half compares against `rig.py`.
+`tools/bg_oracle.py` imports it out of the sibling checkout, renders each
+screen and writes the PNG, a raw RGBA dump and `screens.txt`, a manifest
+recording which NCGR and NCLR sub-file background.py's coverage rule
+paired with each NSCR. The C test reads that manifest and renders the
+same three sub-files. The pairing heuristic is deliberately not under
+test and not reimplemented here: which sub-files belong together is a
+property of how the archives are laid out, not of the DS hardware, and
+aletheia's `docs/ASSETS.md` documents both the rule and its known gap.
+
+Eight screens are checked by ctest, picked for coverage rather than for
+looks, and all eight are pixel-identical:
+
+| screen | size | mode | what it is |
+| --- | --- | --- | --- |
+| `titledemo.narc#0` | 256x256 | 8bpp | the leftover Diamond/Pearl title logo, 255 distinct colours |
+| `a/1/4/3#22` | 512x192 | 4bpp | the battle-background terrain layer |
+| `a/1/3/7#26` | 256x256 | 4bpp | the "VS. RECORDER" UI banner |
+| `a/0/4/6#11` | 256x512 | 4bpp | a menu window frame, the tall size |
+| `a/0/3/4#17` | 512x256 | 8bpp | the wide size in 256-colour mode |
+| `a/1/5/9#108` | 512x512 | 4bpp | the largest screen size |
+| `a/1/2/0#4` | 256x192 | 4bpp | 55 distinct colours |
+| `a/1/9/2#2` | 256x256 | 4bpp | 29 distinct colours, the Wi-Fi grid |
+
+All four hardware screen sizes, both colour modes, and two authoring
+sizes that are not hardware sizes at all. What the oracle cannot see,
+because background.py renders one layer with no scroll, no priority and
+no backdrop, the test checks separately: the screen-entry layout at the
+boundaries that distinguish the four sizes, scroll wraparound (a full-map
+scroll samples identically, an 8-pixel scroll shifts by exactly one
+tile, a non-wrapping layer scrolled off its map samples nothing), the
+compositor's priority and transparency order against an independent
+`g2d_bg_sample` walk, and that an OBJ wins a priority tie against a BG.
+
+**Affine BGs are not needed yet, on the evidence available.**
+`func_0203FCA0` takes a layer type and gives layers 2, 3, 6 and 7 an
+inner switch over three of them: type 0 is text, types 1 and 2 are the
+two affine shapes (they build the same BGxCNT terms in a different
+order and take bit 13 from a different template field). So the BG system
+can configure an affine layer. But no matched call site in aletheia
+passes a non-zero type, every NSCR sub-file across the 20 archives the
+asset lane covers is a text-mode screen, and the title and developer
+splash screens identified there (`titledemo.narc#0` and `#17`) are plain
+text-mode screens that this engine already reproduces exactly. Affine
+BGs are therefore the next step rather than a gap in this one, and they
+share the open question the OBJ half's affine path has: the DS transforms
+in fixed point through the BG rotation/scaling parameters, so matching a
+Python float reference and matching the hardware are not the same target.
+
+**The one discrepancy, stated rather than hidden.** For a 512-pixel-wide
+or 512-pixel-tall map the VRAM screen order and a row-major reading of
+the entry array are different orders, and which one an NSCR file on disk
+is in is not settled by the evidence this repository has.
+`func_02040EE0` attests the VRAM order, and `background.py` reads every
+NSCR row-major at its own declared width. Two facts point at row-major
+being the authored order: several NSCR resources declare sizes that are
+not hardware screen sizes at all (`a/1/4/3#22` is 512x192, `a/0/3/3#29`
+is 448x192), where the VRAM order is not even defined, and the game has
+a helper whose whole job is to place an entry at `(x, y)` in VRAM, which
+is what an upload path that scatters a row-major authoring buffer into
+the hardware's map blocks needs. Neither is proof, and no rendered
+512-wide screen was found whose content decides it by eye. Both readings
+are implemented: `screen_size` takes a hardware size code and uses
+`g2d_bg_screen_index`, or `G2D_BG_SIZE_FLAT` and reads row-major at the
+NSCR's own dimensions. The oracle comparison uses the flat reading,
+because that is what the oracle does. Settling it needs the matched
+upload path (the caller of `func_02040EE0` that copies a screen resource
+into VRAM), which is not decompiled yet.
 
 ## Growing the source list
 
@@ -366,7 +480,9 @@ equivalents), with `ALETHEIA` pointing at the aletheia checkout:
 First run on this layout (2026-09-16), after the port moved into this
 repository: 32 objects, both tests pass (test_text 5/5 strings, test_stats
 3 species). With the 2D engine added (2026-09-16): 38 objects, three tests
-pass (test_g2d 4/4 species, pixel-identical to the oracle).
+pass (test_g2d 4/4 species, pixel-identical to the oracle). With the BG
+half added (2026-09-16): 39 objects, four tests pass (test_bg 8/8 screens
+pixel-identical, plus the scroll, priority and screen-layout checks).
 
 ## Planned Milestones
 
@@ -380,7 +496,10 @@ pass (test_g2d 4/4 species, pixel-identical to the oracle).
   - [ ] Audio device initialization and timing
   - [ ] DS frame emulation loop: task list scheduler running at 60 Hz, vblank callbacks
 - [ ] **Milestone 3**: 2D engine shim
-  - [ ] BG layers from tile and palette memory
+  - [x] BG layers from tile and palette memory: NSCR screens, all four
+        screen sizes, 16- and 256-colour modes, scroll, priority and the
+        BG/OBJ frame compositor (`engine/g2d/bg.c`, oracle-tested);
+        affine BG modes still open
   - [x] OAM sprites: priorities, flips, double-size placement, cell banks
         and multi-cell poses (`engine/g2d/`, oracle-tested); affine
         resampling still open
