@@ -2,6 +2,14 @@
  * sub_020311B8 -- register a callback on a task-callback list.
  * REIMPLEMENTATION, not a match.
  *
+ * **This file is the LP64 stand-in only.**  aletheia matched 0x020311B8 in
+ * wave 26 (src/matched/sub_020311B8.c, EXACT), and under ILP32 that source is
+ * what the build compiles: this file is left out of the library
+ * entirely.  It survives because the matched source declares the node's
+ * +0x00 and +0x10 as pointers while src/matched/sub_0203101C.c and
+ * src/matched/sub_020310C4.c declare them as u32, which is one struct on
+ * the DS and two different ones on a 64-bit host (sdk/tcbl.h).
+ *
  * This is the insert half of tcbl.c and the counterpart of the matched
  * runner src/matched/sub_020310C4.c.  It is 200 bytes, it is `open` in
  * aletheia's layout/worklist.json (packet pkt_0203115C), and the port needs

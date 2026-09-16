@@ -1,11 +1,17 @@
 /*
  * sdk/tcbl.c -- the port's thin helper over the game's task-callback list.
  *
- * Nothing here is game logic.  Every one of these functions is a call into
- * either a matched source or a stubs/reimpl_ file, plus the one piece of
- * arithmetic the host needs and the DS did not: the work-size bias that
- * makes the matched constructor's `+ 0x18` row stride come out right when a
- * node header is 40 bytes rather than 24.  sdk/tcbl.h documents both.
+ * Nothing here is game logic.  Every one of these functions is a call into a
+ * matched source, plus the one piece of arithmetic the host needs and the DS
+ * did not: the work-size bias that makes the matched constructor's `+ 0x18`
+ * row stride come out right when a node header is 40 bytes rather than 24.
+ * sdk/tcbl.h documents both.
+ *
+ * Under ILP32, the reference configuration, every callee below and every
+ * accessor underneath them is aletheia's own C: wave 26 closed the last of
+ * tcbl.c.  On an LP64 host nine of the twelve are stubs/reimpl_ files
+ * instead, because the family's own declarations of the node disagree about
+ * its size there.  sdk/tcbl.h has the whole of that argument.
  */
 
 #include <stdlib.h>
@@ -20,7 +26,7 @@ extern void *sub_020311B8(void *list, void (*func)(EidosTcblNode *, void *),
                           u32 work_size, u32 key);
 extern void  sub_02031194(void *node);
 extern void  sub_0203115C(void *list);
-extern void  func_020307B0(void *block);
+extern void  sub_020307B0(void *block);
 
 EidosTcblList *bw_tcbl_create(u32 heap, u16 home_heap, u32 count,
                               u32 work_size)
@@ -57,14 +63,17 @@ EidosTcblNode *bw_tcbl_register(EidosTcblList *list,
     }
     if (work_size > bw_tcbl_work_size(list)) {
         /*
-         * The DS would allocate a separate block here and store the pointer
-         * in the node's +0x10 word.  That word is a u32 in every matched
-         * declaration of the node, so on this host the pointer would be
-         * truncated.  Refusing is the only honest answer; see sdk/tcbl.h.
+         * The DS allocates a separate block here and stores the pointer in
+         * the node's +0x10 word, which is what src/matched/sub_020311B8.c
+         * does under ILP32.  On an LP64 host that word is the u32 the
+         * constructor and the runner declare, so the pointer would be
+         * truncated.  Refusing is the only honest answer there; see
+         * sdk/tcbl.h.  The guard is unconditional so that the port has one
+         * behaviour to test rather than two.
          */
         bw_panic("tcbl work area larger than the node", 0x020311B8,
                  "a node that owns its work block cannot be represented on "
-                 "an LP64 host: +0x10 is declared u32");
+                 "an LP64 host: +0x10 is declared u32 by the constructor");
         return NULL;
     }
     return (EidosTcblNode *)sub_020311B8(list, func, work_size, key);
@@ -104,6 +113,6 @@ void bw_tcbl_free(EidosTcblList *list)
         return;
     }
     bw_tcbl_destroy_all(list);
-    func_020307B0(list->table);
-    func_020307B0(list);
+    sub_020307B0(list->table);
+    sub_020307B0(list);
 }

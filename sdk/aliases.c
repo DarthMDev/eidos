@@ -38,3 +38,33 @@ void func_02034734(const char *expr, u32 line, const char *file, ...)
 {
     sub_02034734(expr, line, file);
 }
+
+/*
+ * 0x02060CA0, the expanded heap's allocation front door.
+ *
+ *   defined  as func_02060CA0 in src/matched/func_02060CA0.c
+ *   declared as sub_02060CA0  in src/matched/sub_02030098.c
+ */
+extern void *func_02060CA0(void *arena, u32 size, s32 align);
+
+void *sub_02060CA0(void *arena, u32 size, s32 align)
+{
+    return func_02060CA0(arena, size, align);
+}
+
+/*
+ * 0x02030F04, the task-callback free-list pop.
+ *
+ *   defined  as func_02030F04 in src/matched/func_02030F04.c under ILP32,
+ *                             and in stubs/reimpl_02030F04.c under LP64
+ *   declared as sub_02030F04  in src/matched/sub_020311B8.c
+ *
+ * The forwarder is the same either way, which is the point of resolving the
+ * pointer-width question by symbol rather than by call site.
+ */
+extern void *func_02030F04(void *list);
+
+void *sub_02030F04(void *list)
+{
+    return func_02030F04(list);
+}

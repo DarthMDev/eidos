@@ -184,10 +184,12 @@ int bw_load_nature_table(void)
  * The arena handle is the one thing the port does not reproduce.  On the DS
  * it is an NNS expanded-heap handle and the raw allocator hands it to
  * sub_02060CA0, which walks the heap's own free blocks.  Here it is a
- * distinct non-null token per heap: stubs/reimpl_02060CA0.c takes memory
- * from the host instead of from an arena and only needs the handle to be the
- * "this heap exists" answer that sub_0202FBAC returns and sub_02030098
- * tests.
+ * distinct non-null token per heap: stubs/reimpl_02060A08.c and
+ * stubs/reimpl_02060ABC.c, the two walks src/matched/func_02060CA0.c
+ * dispatches to, take memory from the host instead of from an arena, and the
+ * handle only needs to be the "this heap exists" answer that sub_0202FBAC
+ * returns and sub_02030098 tests.  Building a real one needs the heap
+ * environment constructor at 0x0202FC48, which is still open.
  */
 
 struct BwEnvEntry {
@@ -313,3 +315,15 @@ int bw_load_watch_id(void)
  * provenance string that the release build never reads back.
  */
 const char sub_0203101C_File[] = "tcbl.c";
+
+/*
+ * src/matched/sub_020311B8.c names the same word 0x020A7834 under its own
+ * file-local spelling, which is what a matched source does with an anchor it
+ * loads out of its own pool: the two rows layout/file_anchors.txt records for
+ * tcbl.c are 0x020310C0 (the constructor's) and 0x02031284 (the registrar's),
+ * one address.  The DS build resolves both names to it; a host linker sees
+ * two, so the registrar gets its own definition of the same string rather
+ * than a forwarder, because a `const char []` cannot be aliased the way
+ * sdk/aliases.c aliases a function.
+ */
+const char sub_020311B8_File[] = "tcbl.c";

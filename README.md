@@ -59,7 +59,7 @@ One file per SDK module:
 | `sdk/types.h` | the scalar vocabulary: u8..s64, fx32, BOOL, the fixed-point macros, endian-clean readers |
 | `sdk/port.h` | the port's own API: data root, archives, panic |
 | `sdk/fs.c` | FS: `FS_SeekFile`, `FS_ReadFile`, `FS_CloseFile` onto stdio |
-| `sdk/os_alloc.c` | OS heap: `OS_AllocFromHeap`/`OS_FreeToHeap`, and the host's aligned-block helper the whole port allocates through |
+| `sdk/os_alloc.c` | OS heap: `OS_AllocFromHeap`/`OS_FreeToHeap`, and the expanded heap's blocks, the one place the port takes memory from the host |
 | `sdk/os_irq.c` | OS: `OS_DisableInterrupts`/`OS_RestoreInterrupts` as a saved flag, `OS_Terminate` as exit |
 | `sdk/gx.c` | GX: `GX_GetBankForBGExtPltt` and the address the heap layer's failure arm calls |
 | `sdk/mi.c` | MI: the `MI_CpuCopy*` / `MI_CpuFill*` family onto memcpy/memset |
@@ -535,6 +535,17 @@ That pass is what a DS game does once per frame, and it is now what
   the watched-heap id and `sub_02030984` audits, `sub_02030428` /
   `sub_0203046C` / `sub_020304B8` / `sub_020304C0` are the lookups, and
   `unit_0202FBAC`'s four accessors resolve a heap id to its record.
+- **The release side of the heap**, new since wave 26. `sub_020307B0`, 904
+  branch references image-wide, is the counterpart of the allocation entry
+  point: `sub_02030A2C` runs the free-side watch filter, `sub_020309B8` the
+  free-side audit and `sub_02030344` the checked heap-id lookup under it,
+  and then the raw free walks back over the 0x1c-byte header. The port used
+  to reimplement the whole of that as one function.
+- **The expanded heap's front door.** `func_02060CA0`: round the request up
+  to a word, and take the block off the head of the arena for a non-negative
+  alignment or off its tail for a negative one, which is how the raw
+  allocator spells bit 15 of the public heap id. Its two callees are still
+  the port's; see "The heap environment" below.
 - **The task list's construction.** `sub_0203101C` allocates the 0x38-byte
   manager and the node pool, stores the count, the work size and the home
   heap, and self-links the sentinel; `sub_02030FC8` walks every row of the
@@ -543,9 +554,19 @@ That pass is what a DS game does once per frame, and it is now what
   callback with the node and its work area, and either advance or unlink,
   with the walk cursor published in the manager so a callback can destroy a
   node from inside another one.
+- **The rest of tcbl.c, under ILP32.** Wave 26 matched the five functions the
+  port used to supply -- `sub_020311B8` (register a callback in ascending key
+  order), `sub_02031194` (destroy one node, deferring to the runner when it
+  is the node being run), `sub_0203115C` (destroy every node), `sub_02030F50`
+  (reset a node) and `sub_02030F70` (unlink one and release its work block).
+  In the reference configuration **the whole of tcbl.c is aletheia's own C
+  and nothing of the task-callback list is a reimplementation.** On an LP64
+  host those five stay out, for a reason that is about the family's own
+  declarations rather than about what is decompiled; see "Why nine matched
+  files are out of the LP64 build" below.
 
 `tests/test_tcbl.c` drives all of it with no SDL, no game data and no
-oracle: **48 checks**, including that the constructor's two allocations show
+oracle: **49 checks**, including that the constructor's two allocations show
 up in the matched heap's own live-block count, that the pool is exactly as
 deep as it was asked for (which is only true if the matched free-list build
 reached every row), that the provenance the matched allocator stamped reads
@@ -556,6 +577,15 @@ and can be re-registered at a new priority, that a node which destroys
 itself from inside its own callback still lets the rest of the pass finish
 and is gone from the next one, and that the heap balances back to zero.
 
+**The ordering assertion no longer rests on a reimplementation.** "Three
+callbacks fire in priority order" used to be half a statement about matched
+code, the runner's forward walk, and half about the port's transcription of
+0x020311B8's listing. Under ILP32 both halves are matched now: the
+ascending-key insert is `src/matched/sub_020311B8.c` and the forward walk is
+`src/matched/sub_020310C4.c`. Nothing in the test had to change for that,
+which was the point of writing it against the behaviour rather than against
+the stand-in.
+
 `demo/eidos_view` then puts one task on such a list and makes the frame
 loop's step `sub_020310C4`. The task advances the Pikachu pose along its
 NANR timeline and writes the scroll, the sprite position and the animation
@@ -565,7 +595,7 @@ screenshot after frame 1 and another after frame 12 and requires the bottom
 screen to have moved by at least 200 pixels while the top screen, which has
 no task, is **pixel-identical**. Measured: top 0, bottom 1223.
 
-### Why four matched files are out of the LP64 build
+### Why nine matched files are out of the LP64 build
 
 This is the first place the port has had to leave an EXACT matched source
 out, and the reason is a property of the game's data rather than of any
@@ -604,25 +634,52 @@ Each one is byte-correct for the DS and nothing about it is wrong. They stay
 in aletheia untouched, and on an LP64 host a `stubs/reimpl_` file stands in,
 naming the matched source it replaces and transcribing its body against the
 struct rather than against the numbers. `sdk/tcbl.h` carries the host layout
-with the DS offsets beside it. Which of the two goes into the library is
-`EIDOS_TCBL_MATCHED_ACCESSORS`, whose default CMake decides from
-`CMAKE_SIZEOF_VOID_P`: on a 32-bit target the four matched sources are
-compiled as written and the stand-ins are left out, and the node and the
-manager come out at exactly `0x18` and `0x38`, the DS's own sizes.
+with the DS offsets beside it.
 
-Two related findings, both recorded in `sdk/tcbl.h` and both for the
-aletheia side rather than fixable here:
+**Wave 26 added five more to that list, and for a different reason.** The two
+findings the port had recorded as open questions -- the node's `+0x00` and
+its `+0x10` are declared `u32` in the tcbl files that were in the build and
+both of them hold pointers -- were answered by the five new EXACT sources,
+and the answer is that they are pointers: `src/matched/sub_02030F50.c`,
+`sub_02030F70.c` and `sub_020311B8.c` declare the node as six members with
+`struct Tcbl *owner` at `+0x00` and `void *work` at `+0x10`.
 
-- **The node's `+0x00` is declared `u32` in every matched tcbl file and holds
-  a pointer** (`sub_02030F50` stores the manager there). On an LP64 host that
-  `u32` is followed by four bytes of padding and the port widens the pair
-  into one 8-byte pointer, which works only because no matched file reads
-  either half.
-- **The node's `+0x10` is declared `u32` and holds a pointer too**: the work
-  block a node owns when its request does not fit inside the node. There is
-  no padding to borrow there, so the port refuses an oversize work request
-  rather than storing a truncated pointer. Every node on this host carries
-  its work area inside itself.
+That is a better declaration of the same object, and **on the DS and on any
+ILP32 target it *is* the same object**: 0x18 for the node and 0x38 for the
+manager either way. On an LP64 host it is not. The pointer form lays the node
+out at 48 bytes and the manager at 96; the `u32` form, which
+`src/matched/sub_0203101C.c` and `src/matched/sub_020310C4.c` still use,
+gives 40 and 88. The family has stopped agreeing with itself, and something
+has to pick one reading:
+
+- the constructor allocates `sizeof(struct Tcbl)` as *its own* compiler sees
+  it, so whatever it says the manager is, the manager is;
+- the runner walks the node with *its own* offsets on every frame.
+
+Both are in the build unconditionally, so the `u32` form is what an LP64
+build has to hold, and the five pointer-form sources join the four
+offset-reaching accessors outside it. **This is not a defect in either set of
+declarations**: each is byte-correct for the DS, which is the only target
+aletheia has to satisfy. It is the pointer-width policy earning its keep a
+second time, and the sharpest argument yet for ILP32 being the reference
+configuration -- there the port does not choose between two matched readings
+of one struct, it configures a target on which there is only one.
+
+Which of the two lists goes into the library is `EIDOS_TCBL_MATCHED`, whose
+default CMake decides from `CMAKE_SIZEOF_VOID_P`: on a 32-bit target the nine
+matched sources are compiled as written and the stand-ins are left out, and
+the node and the manager come out at exactly `0x18` and `0x38`, the DS's own
+sizes.
+
+One consequence is visible in behaviour rather than in layout. The node's
+`+0x10` is the work block a node owns when its request does not fit inside
+the node, and on an LP64 host there is no padding to borrow the way there is
+at `+0x00`. So the port refuses an oversize work request there rather than
+storing a truncated pointer, and every node on that host carries its work
+area inside itself; under ILP32 the matched registrar allocates the block
+from the list's home heap and the matched unlink releases it, exactly as the
+DS does. `sdk/tcbl.c` keeps the refusal in both configurations so that the
+port has one behaviour to test rather than two.
 
 And one arithmetic adjustment, which is the port's own and is confined to one
 line: `sub_0203101C` sizes the pool as `(((workSize + 3) & ~3) + 0x18) *
@@ -631,6 +688,13 @@ constructor out of the build over one constant, `bw_tcbl_create` adds the
 difference between the two headers to the caller's work size before handing
 it over, so the rows the matched arithmetic produces come out exactly `40 +
 work` bytes apart and the last one ends exactly at the end of the table.
+
+The table in this section lists the four accessors. The five wave-26 files
+are `sub_02030F50.c`, `sub_02030F70.c`, `sub_020311B8.c`, `sub_02031194.c`
+and `sub_0203115C.c`, and none of them reaches a field through a byte offset
+at all: every one declares the whole struct. They are out of the LP64 build
+purely because the struct they declare is not the struct the constructor
+allocates there.
 
 ### The heap environment, and what is under the allocator
 
@@ -642,19 +706,51 @@ code every one of them writes. The DS constructor that fills it in
 (0x0202FC48) is not decompiled, so there is no matched constructor to call
 and `bw_heap_init` initialises the fields the matched code reads.
 
-Under the raw allocator sits `sub_02060CA0`, the expanded heap's allocation
-front, which is still open. Its 48 bytes settle the contract completely
-(round the request up to a word, take it off the head when the alignment
-argument is non-negative and off the tail when it is negative, align to the
-magnitude, answer null when it cannot), so `stubs/reimpl_02060CA0.c` is a
-reimplementation rather than an aborting stub, with `stubs/reimpl_020307B0.c`
-as its release counterpart. What is *not* reproduced is the arena: the block
-comes from the host allocator, so the head/tail distinction has no effect on
-the address. Nothing above that line can see the difference;
+**Wave 26 matched the whole of the release side and the expanded heap's
+front door, and the host allocator path shrank but did not go away.** What is
+in the build now is `src/matched/sub_020307B0.c` (the release entry point),
+`sub_02030A2C.c` and `sub_020309B8.c` (the free-side watch filter and audit,
+the mirrors of `sub_02030A00` and `sub_02030984` on the allocation side),
+`sub_02030344.c` (the checked heap-id lookup under the audit) and
+`src/matched/func_02060CA0.c` (the expanded heap's allocation front: round
+the request up to a word, take it off the head for a non-negative alignment
+and off the tail for a negative one, align to the magnitude).
+
+**What stops the port dropping the host allocator is the arena, not the
+code.** `func_02060CA0`'s two callees are EXACT in aletheia too, and both walk
+a real region: `func_02060A08` walks the free list from the head and
+`func_02060ABC` from the tail, each keeping the smallest block that can hold
+the request once its data start is rounded, and each handing the winner to
+`func_02060888`, which carves the region out and moves it to the used list.
+Three things have to exist before any of that can run here, and all three
+lead back to one address:
+
+- **an arena.** `0x0202FC48`, the heap environment constructor, is the
+  function that builds one and fills `g_EnvModule`'s records in with it. It
+  is still open, so `sdk/game_globals.c` publishes a distinct non-null token
+  per heap rather than a handle, and there is no free list to walk.
+- **`func_02060888`**, the carve, which is what actually produces the pointer
+  and writes the block header the walk reads. Open.
+- **`sub_02030164`** on the release side, the raw free, and `sub_02060F90`,
+  the block-size query the audit uses. Both open.
+
+So `stubs/reimpl_02060A08.c` and `stubs/reimpl_02060ABC.c` stand in for the
+two walks and `stubs/reimpl_02030164.c` for the raw free, all three over
+`sdk/os_alloc.c`'s `bw_block_alloc` / `bw_block_free`. The head/tail
+distinction therefore has no effect on the address handed out, and that is
+the one observable difference from the DS: the direction flag exists so that
+long-lived allocations can be kept from fragmenting the low end of a fixed
+arena, and a host heap has neither a fixed arena nor that failure mode.
 `src/matched/sub_02030098.c`, the only caller, tests the result against null
 and nothing else.
 
-One host-only detail lives in those two files and nowhere else: **what is
+Net: three port files where there used to be two, one level further down,
+with the request rounding, the direction convention, the watch filtering, the
+audit and the whole of the release entry point now running matched. The line
+where the port begins is `func_02060888` and `0x0202FC48`, and it moves in
+one step when the heap constructor is decompiled.
+
+One host-only detail lives in `sdk/os_alloc.c` and nowhere else: **what is
 aligned is the payload, not the block.** The caller adds a 0x1c-byte header
 and hands out `block + 0x1c`, and 0x1c is not a multiple of eight, so an
 eight-aligned block would hand out a payload that is only four-aligned and
@@ -663,7 +759,9 @@ every pointer in a task-callback node would be misaligned.
 The rest of the failure path is aborting stubs, and honestly so:
 `sub_02030B50` (the heap report, `MATCH` in aletheia's `src/pending/`),
 `sub_02060E6C` and `sub_02060E94` (the arena walk and dump) are reachable
-only after an allocation has already failed, one call before `OS_Terminate`.
+only after an allocation has already failed, one call before `OS_Terminate`,
+and `sub_02060F90` only from the free-side audit, which the retail
+watched-heap id of -1 never enables.
 
 ## The platform layer
 
@@ -778,16 +876,38 @@ python tools/closure.py --list-closed
 ```
 
 The `sub_0203101C` seed is the one the heap layer and the task-callback list
-came in on. Its report is what the current source list answers, name for
-name: 16 matched translation units, five `sdk` names (`MIi_CpuClear32`,
-`OS_DisableInterrupts`, `OS_RestoreInterrupts`, `OS_Terminate`,
-`sub_02030524`), five `open` ones (`sub_02030F50`, `sub_02030B50`,
-`sub_02060CA0`, `sub_02060E6C`, `sub_02060E94`) and three `data` ones
-(`g_EnvModule`, `g_020A7820`, `sub_0203101C_File`). Of the 16 matched units
-one, `sub_02030EF0.c`, is in the build only where pointers are four bytes
-(see "Why four matched files are out of the LP64 build"), which is the one
-place the report and an LP64 `CMakeLists.txt` disagree on purpose rather than
-by accident. The ILP32 configuration answers the report exactly.
+came in on, and `sub_02030734` (the allocation entry point) and
+`sub_020311B8` (the registrar) are the other two the current source list is
+grown from. Re-run after wave 26 they report:
+
+- **`sub_0203101C`**: 20 matched translation units, five `sdk` names
+  (`MIi_CpuClear32`, `OS_DisableInterrupts`, `OS_RestoreInterrupts`,
+  `OS_Terminate`, `sub_02030524`), one `alias` (`sub_02060CA0`, defined as
+  `func_02060CA0`), four `open` ones (`func_02060888`, `sub_02030B50`,
+  `sub_02060E6C`, `sub_02060E94`) and three `data` ones (`g_EnvModule`,
+  `g_020A7820`, `sub_0203101C_File`).
+- **`sub_02030734`**: the same minus the three tcbl files.
+- **`sub_020311B8`**: adds `func_02030F04`, a second `alias`
+  (`sub_02030F04`) and the `data` name `sub_020311B8_File`, which is the
+  same ARM9 word `0x020A7834` as `sub_0203101C_File` under the registrar's
+  own spelling.
+- **`sub_0203115C`** and **`sub_020307B0`**: the release closure, which is
+  where `sub_02030344`, `sub_020309B8`, `sub_02030A2C` and the two open names
+  `sub_02030164` and `sub_02060F90` come from.
+
+`sub_02030F50` and `sub_02060CA0` have left the `open` lists entirely: both
+are matched now.
+
+**Two places the report and the build disagree, both on purpose.** Nine
+matched units (`sub_02030EF0`, `sub_02030F34`, `func_02030F04`,
+`sub_02030FB4`, `sub_02030F50`, `sub_02030F70`, `sub_020311B8`,
+`sub_02031194`, `sub_0203115C`) are in the build only where pointers are four
+bytes, see "Why nine matched files are out of the LP64 build". And
+`func_02060A08` / `func_02060ABC` are matched, so the closure walks through
+them and reports `func_02060888` as open; the port stops one level higher,
+at `func_02060CA0`, and stands in for those two itself, because they walk an
+arena the port has not got. The ILP32 configuration answers the rest of the
+report exactly.
 
 `tools/closure.py` also answers the pointer-width question over the whole
 corpus rather than one closure:
@@ -889,7 +1009,7 @@ for it. It was the port's only LP32 build until
 `cmake/ilp32-toolchain.cmake` arrived; the i686 configuration does the same
 thing for pointer width and can also run what it builds, so `--check` is now
 a second compiler's opinion rather than the only 32-bit evidence there is.
-Current state: 62 objects compiled clean, `test_text`, `test_stats` and
+Current state: 69 objects compiled clean, `test_text`, `test_stats` and
 `test_tcbl` linked.
 
 ## Pointer width, and the reference configuration
@@ -922,7 +1042,7 @@ different-ABI build and ctest runs the executables exactly as it does the
 
 `CMakeLists.txt` then reads `CMAKE_SIZEOF_VOID_P` and decides one thing:
 
-| `EIDOS_TCBL_MATCHED_ACCESSORS` | default on | the four accessors come from |
+| `EIDOS_TCBL_MATCHED` | default on | the nine tcbl sources come from |
 | --- | --- | --- |
 | ON | a 32-bit target | `${ALETHEIA_ROOT}/src/matched/`, compiled as written |
 | OFF | a 64-bit target | `stubs/reimpl_` |
@@ -932,10 +1052,10 @@ fatal error, not a link that silently truncates addresses.
 
 Measured on this machine, same tree, same tests:
 
-| configuration | node / manager | accessors | ctest | test_tcbl |
+| configuration | node / manager | the nine tcbl sources | ctest | test_tcbl |
 | --- | --- | --- | --- | --- |
 | LP64 (default) | 40 / 88 bytes | `stubs/reimpl_` | 10/10 | 49 checks, 0 failures |
-| ILP32 | 24 / 56 bytes | the matched four | 10/10 | 49 checks, 0 failures |
+| ILP32 | 24 / 56 bytes | matched, compiled as written | 10/10 | 49 checks, 0 failures |
 
 24 and 56 are `0x18` and `0x38`. `tests/test_tcbl.c` asserts both layouts
 rather than one, and on ILP32 it additionally asserts that
@@ -1098,7 +1218,7 @@ clock and reports 60 frames, 1002 ms of game time and no pacer
 resynchronisation, which is 60 / 59.8261 s to the millisecond.
 
 With the heap layer and the game's task-callback list added (2026-09-16):
-**ten tests pass** in 1.4 seconds. `test_tcbl` runs 48 checks over the
+**ten tests pass** in 1.4 seconds. `test_tcbl` runs 49 checks over the
 matched constructor, the matched free-list build and the matched runner on
 the matched heap, and needs neither SDL nor game data; `test_view` now also
 checks that two frames of the demo differ on the bottom screen, which is the
@@ -1108,9 +1228,9 @@ With the ILP32 configuration added (2026-09-16): the same tree configured
 with `cmake/ilp32-toolchain.cmake` against the `i686-w64-mingw32-gcc` in the
 same MinGW-w64 archive builds 96 targets warning-free, finds the i686 SDL2
 tree beside the x86_64 one, and passes the same **ten tests** in 1.2 seconds,
-with the four EXACT tcbl accessors compiled as written and the node and the
-manager at the DS's own `0x18` and `0x38`. `tools/hostbuild.py --check`
-makes the same choice for the ARM cross build and still compiles 62 objects
+with the nine pointer-width-dependent tcbl sources compiled as written and
+the node and the manager at the DS's own `0x18` and `0x38`. `tools/hostbuild.py --check`
+makes the same choice for the ARM cross build and still compiles 69 objects
 clean.
 
 ## Planned Milestones
@@ -1119,18 +1239,22 @@ clean.
   - [x] Fix pointer width assumptions (32-bit to 64-bit host): the first
         game-owned structs that store pointers are in the build (the
         task-callback node and its manager), the host layout is written
-        down beside the DS one in `sdk/tcbl.h`, the four matched accessors
-        that reach a field through a DS byte offset are identified and
-        stood in for, and the two `u32`-declared pointer fields are
-        recorded. See "Why four matched files are out of the LP64 build"
+        down beside the DS one in `sdk/tcbl.h`, the nine matched sources
+        that depend on a four-byte pointer are identified and stood in for,
+        and the two `u32`-declared pointer fields are answered by wave 26:
+        both really are pointers, and two matched declarations of the same
+        struct now disagree on an LP64 host. See "Why nine matched files
+        are out of the LP64 build"
   - [x] Settle the pointer-width policy: an ILP32 build configuration
-        (`cmake/ilp32-toolchain.cmake`) where the four matched accessors
+        (`cmake/ilp32-toolchain.cmake`) where the nine matched sources
         are compiled as written and the game's structs have the DS's own
         bytes, the LP64 build kept working through one CMake switch keyed
         on `sizeof(void *)`, and the cost of each route measured over the
         whole matched corpus by `tools/closure.py --pointer-audit`. ILP32
         is the reference configuration; `docs/pointer-width.md` records the
-        counts, the decision and what would reverse it
+        counts, the decision and what would reverse it. Wave 26 is the
+        first case the policy *decided* rather than merely survived: two
+        EXACT readings of one struct, one target on which they agree
   - [x] Endianness and struct packing compatibility: every read out of
         `extract/` goes through `bw_rd16`/`bw_rd32`, `char` is signed on
         every compiler the build supports, and no matched struct in the
@@ -1150,6 +1274,16 @@ clean.
         mixer's own rate, with a silent callback until the sequencer exists;
         and the frame pacer on the exact 59.8261 Hz period with the
         remainder accumulated
+  - [x] The game's own scheduler runs the frame: the whole of aletheia's
+        tcbl.c is in the build (construct, build the free list, register,
+        run one pass, destroy one node, destroy all, and the four
+        accessors), matched under ILP32, and `demo/eidos_view`'s step
+        function is `src/matched/sub_020310C4.c`
+  - [x] The heap the scheduler allocates from is matched end to end: the
+        allocation entry point, the raw allocator, the provenance stamp and
+        both audits, the release entry point and the expanded heap's front
+        door. What is left port-side is the arena, which needs the heap
+        environment constructor at `0x0202FC48`
   - [x] DS frame emulation loop: task list scheduler running at 60 Hz,
         vblank callbacks. `engine/frame/` is the vblank-driven loop, the
         commit-at-vblank convention and the DS OS tick (`sdk/os_tick.c`

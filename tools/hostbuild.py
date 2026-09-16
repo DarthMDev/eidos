@@ -46,18 +46,18 @@ def read_source_lists(aletheia_root, ilp32=False):
     """Pull BW_MATCHED_SOURCES, BW_SDK_SOURCES and BW_STUB_SOURCES out of
     CMakeLists.txt so the two builds can never drift apart.
 
-    The four tcbl accessors live in their own two lists there, because which
-    of them is compiled is decided by the target's pointer width (README.md,
-    "Pointer width, and the reference configuration").  `ilp32` makes the
-    same choice CMake's EIDOS_TCBL_MATCHED_ACCESSORS does: the matched
+    The nine pointer-width-dependent tcbl sources live in their own two
+    lists there, because which of them is compiled is decided by the target's
+    pointer width (README.md, "Pointer width, and the reference
+    configuration").  `ilp32` makes the
+    same choice CMake's EIDOS_TCBL_MATCHED does: the matched
     sources where a pointer is four bytes, the stubs/reimpl_ stand-ins
     otherwise.
     """
     with open(CMAKELISTS, encoding="utf-8") as fh:
         text = fh.read()
     out = []
-    accessors = ("BW_TCBL_ACCESSORS_MATCHED" if ilp32
-                 else "BW_TCBL_ACCESSORS_REIMPL")
+    accessors = "BW_TCBL_MATCHED" if ilp32 else "BW_TCBL_REIMPL"
     for var in ("BW_MATCHED_SOURCES", "BW_SDK_SOURCES", "BW_STUB_SOURCES",
                 accessors):
         m = re.search(r"set\(%s\s*(.*?)\n\)" % var, text, re.S)

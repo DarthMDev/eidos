@@ -140,13 +140,26 @@ int bw_load_watch_id(void);
 /*
  * malloc with an alignment, and its release.  The malloc base is stored in
  * the word immediately before the pointer handed out, so a block may be
- * freed knowing only the aligned pointer.  This is the one place the port
- * takes memory from the host: sdk/os_alloc.c's SDK pair, and
- * stubs/reimpl_02060CA0.c, the expanded-heap allocator that the matched raw
- * allocator src/matched/sub_02030098.c calls, both go through it.
+ * freed knowing only the aligned pointer.  This is what sdk/os_alloc.c's SDK
+ * pair OS_AllocFromHeap / OS_FreeToHeap goes through.
  */
 void *bw_aligned_alloc(u32 size, u32 align);
 void  bw_aligned_free(void *p);
+
+/*
+ * One block of the expanded heap the game's own allocator bottoms out in,
+ * and its release.  `size` is the whole block including the 0x1c-byte header
+ * src/matched/sub_02030098.c writes in front of the payload, and what comes
+ * back is the block, not the payload; `align` applies to the *payload*, i.e.
+ * to `block + 0x1c`, which is the one place the host and the DS have to be
+ * told apart.  sdk/os_alloc.c has the reasoning.
+ *
+ * Callers: stubs/reimpl_02060A08.c and stubs/reimpl_02060ABC.c, the two
+ * halves src/matched/func_02060CA0.c dispatches to, and
+ * stubs/reimpl_02030164.c, the raw free under src/matched/sub_020307B0.c.
+ */
+void *bw_block_alloc(u32 size, u32 align);
+void  bw_block_free(void *block);
 
 /* ------------------------------------------------------------------ */
 /* The heap environment                                                */
@@ -174,11 +187,11 @@ int  bw_heap_init(u32 heaps);
 
 /* Live allocations on one heap, as the manager counts them.  -1 if the id is
  * out of range.  The count is incremented by the matched raw allocator and
- * decremented by stubs/reimpl_020307B0.c, so a balanced test ends at zero. */
+ * decremented by stubs/reimpl_02030164.c, so a balanced test ends at zero. */
 long bw_heap_live_blocks(u32 heap_id);
 
 /* The release side of the counter the matched raw allocator increments.
- * Called by stubs/reimpl_020307B0.c with the heap id it recovered from the
+ * Called by stubs/reimpl_02030164.c with the heap id it recovered from the
  * block header. */
 void bw_heap_note_release(u32 heap_id);
 

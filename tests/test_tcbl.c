@@ -27,8 +27,21 @@
  *                                inside its own callback survives the rest
  *                                of the pass and is gone from the next one,
  *                                and that the cursor is null after a pass.
+ *   src/matched/sub_020311B8.c   the registrar.  Checked by: the pool being
+ *                                exactly `count` deep, three registrations
+ *                                out of key order firing in key order, and a
+ *                                re-registration landing between two
+ *                                survivors.
+ *   src/matched/sub_02031194.c   destroy one node, and
+ *   src/matched/sub_0203115C.c   destroy every node.  Checked by: a node
+ *                                removed from outside a pass dropping out of
+ *                                the order, a node destroying itself from
+ *                                inside its own callback, and the heap
+ *                                balancing back to zero after teardown.
+ *   src/matched/sub_02030F50.c   reset a node, and
+ *   src/matched/sub_02030F70.c   unlink one and release its work block.
  *   src/matched/sub_02030FB4.c   the work accessor the runner calls to
- *   (through the port's stand-in) build the callback's second argument.
+ *   (ILP32 only) build the callback's second argument.
  *   src/matched/sub_02030734.c   the allocation entry point, and under it
  *   src/matched/sub_02030098.c   the raw allocator, the provenance stamp
  *   src/matched/sub_02030880.c   and the audit filter.  Checked by: the
@@ -39,15 +52,22 @@
  *   src/matched/sub_0203046C.c   matched validator), and the live-block
  *   src/matched/unit_0202FBAC.c  count rising and falling.
  *
- * What does NOT rest on matched code, stated plainly: the *insert* is the
- * port's own, stubs/reimpl_020311B8.c, because 0x020311B8 is still open in
- * aletheia.  So "the callbacks fire in priority order" is half a statement
- * about matched code -- the runner walks the list forward from the sentinel
- * and dispatches, which is sub_020310C4 -- and half about the port's
- * transcription of the insert's listing.  Every other assertion here is
- * about matched behaviour only.  When 0x020311B8 is decompiled, the ordering
- * assertion becomes a statement about matched code and nothing in this file
- * has to change.
+ * **Under ILP32, the reference configuration, every line this test drives is
+ * aletheia's own C.**  The ordering assertion used to be half a statement
+ * about matched code -- the runner walking the list forward from the
+ * sentinel, which is sub_020310C4 -- and half about the port's transcription
+ * of 0x020311B8's listing.  Wave 26 matched the registrar, so in that
+ * configuration both halves are matched: the ascending-key insert and the
+ * forward walk that turns it into a priority order.  Nothing in this file
+ * had to change for that, which was the point of writing it against the
+ * behaviour rather than against the stand-in.
+ *
+ * On an LP64 host nine of tcbl.c's twelve functions are still stubs/reimpl_
+ * files, and the ordering assertion is still half the port's there.  The
+ * reason is not that they are undecompiled: it is that the family's own
+ * declarations of the node disagree about its size once a pointer is eight
+ * bytes (sdk/tcbl.h).  Both configurations run this whole test, so the two
+ * readings are checked against the same 49 assertions.
  */
 
 #include <stdio.h>
@@ -142,7 +162,7 @@ int main(void)
      * else, which is the whole of docs/pointer-width.md in two numbers: an
      * ILP32 target reproduces the DS's own 0x18 and 0x38 exactly, and an
      * LP64 one grows the node to 40 bytes and the manager to 88.  On ILP32
-     * the header bias is therefore zero, and the four EXACT accessors this
+     * the header bias is therefore zero, and the nine EXACT sources this
      * build is compiling as written are reaching the right fields. */
     if (sizeof(void *) == 4) {
         BW_CHECK_EQ("manager size (ILP32: the DS's own 0x38)",

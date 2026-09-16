@@ -15,20 +15,50 @@
  *   sub_0203101C   construct        MATCHED  src/matched/sub_0203101C.c
  *   sub_02030FC8   build free list  MATCHED  src/matched/sub_02030FC8.c
  *   sub_020310C4   one pass         MATCHED  src/matched/sub_020310C4.c
- *   sub_02030F50   reset a node     port     stubs/reimpl_02030F50.c
- *   sub_02030F70   unlink a node    port     stubs/reimpl_02030F70.c
- *   sub_02030EF0   row address      port     stubs/reimpl_02030EF0.c
- *   sub_02030F34   free-list push   port     stubs/reimpl_02030F34.c
- *   func_02030F04  free-list pop    port     stubs/reimpl_02030F04.c
- *   sub_02030FB4   work accessor    port     stubs/reimpl_02030FB4.c
- *   sub_020311B8   register         port     stubs/reimpl_020311B8.c
- *   sub_02031194   destroy          port     stubs/reimpl_02031194.c
- *   sub_0203115C   destroy all      port     stubs/reimpl_0203115C.c
+ *   sub_02030EF0   row address      ILP32 matched / LP64 stubs/reimpl_
+ *   sub_02030F34   free-list push   ILP32 matched / LP64 stubs/reimpl_
+ *   func_02030F04  free-list pop    ILP32 matched / LP64 stubs/reimpl_
+ *   sub_02030FB4   work accessor    ILP32 matched / LP64 stubs/reimpl_
+ *   sub_02030F50   reset a node     ILP32 matched / LP64 stubs/reimpl_
+ *   sub_02030F70   unlink a node    ILP32 matched / LP64 stubs/reimpl_
+ *   sub_020311B8   register         ILP32 matched / LP64 stubs/reimpl_
+ *   sub_02031194   destroy          ILP32 matched / LP64 stubs/reimpl_
+ *   sub_0203115C   destroy all      ILP32 matched / LP64 stubs/reimpl_
  *
- * The four in the middle are the port's own even though aletheia has EXACT
- * matched sources for them, and that is a finding rather than a preference.
- * See "Why four matched files are out of the build" in README.md; the short
- * form is below, because the struct in this header is the direct consequence.
+ * Wave 26 matched the five the port used to supply, so **under ILP32, the
+ * reference configuration, the whole of tcbl.c is aletheia's own C and
+ * nothing of the task-callback list is a reimplementation.**  On an LP64
+ * host nine of the twelve are the port's own, and that is a finding rather
+ * than a preference.  See "Why nine matched files are out of the LP64 build"
+ * in README.md; the short form is below, because the struct in this header
+ * is the direct consequence.
+ *
+ * ---------------------------------------------------------------------
+ * What wave 26 changed about that, and why it made LP64 worse not better
+ * ---------------------------------------------------------------------
+ *
+ * The five new sources declare the node as six members with `struct Tcbl
+ * *owner` at +0x00 and `void *work` at +0x10.  The three that were already
+ * in the build declare the same two fields as `u32 unk_00` and `u32 unk_10`,
+ * which is what a matcher writes for a word it does not have to interpret.
+ *
+ * **On the DS, and on any ILP32 target, those two declarations are the same
+ * object**: 0x18 for the node and 0x38 for the manager either way, so the
+ * whole family agrees and all twelve files compile as written.  On an LP64
+ * host they are not the same object at all -- the pointer form is 48 and 96
+ * bytes, the u32 form 40 and 88 -- and the family stops agreeing with
+ * itself.  Something has to pick one, and the constructor and the runner
+ * pick it: sub_0203101C allocates `sizeof(struct Tcbl)` as *its* compiler
+ * sees it and sub_020310C4 walks the node with *its* offsets, so the u32
+ * form is what an LP64 build has to hold, and the five pointer-form sources
+ * join the four offset-reaching accessors outside it.
+ *
+ * This is not a defect in either set of declarations: each is byte-correct
+ * for the DS, which is the only target that has to be satisfied in aletheia.
+ * It is the pointer-width policy earning its keep a second time, and it is
+ * the sharpest argument yet for ILP32 being the reference configuration:
+ * the port did not choose between two matched readings of the same struct,
+ * it configured a target on which there is only one.
  *
  * ---------------------------------------------------------------------
  * The layout, and the two places the DS's and the host's disagree
@@ -38,26 +68,34 @@
  * host compiler lays them out, which is what the matched code in this build
  * actually uses.  The DS offsets are in the right-hand column.
  *
+ * The struct below is the **u32 form**, the one src/matched/sub_0203101C.c
+ * and src/matched/sub_020310C4.c declare, because those two are in every
+ * configuration and decide the layout (see above).  Under ILP32 it is also
+ * the pointer form, byte for byte, which is why the five wave-26 sources
+ * compile against it as written there.
+ *
  *   node    host  DS
- *   owner      0  0x00   a pointer.  The matched files declare +0 as `u32
- *                        unk_00` and never read it; on an LP64 host that
- *                        u32 is followed by four bytes of padding, and the
- *                        port widens the pair into one 8-byte pointer.  The
- *                        only writer is sub_02030F50 and the only readers
- *                        are sub_02030F70 and sub_02031194, all three of
- *                        them port files, so nothing matched can see the
- *                        difference.
+ *   owner      0  0x00   a pointer to the manager.  sub_0203101C and
+ *                        sub_020310C4 declare +0 as `u32 unk_00` and never
+ *                        read it; on an LP64 host that u32 is followed by
+ *                        four bytes of padding, and the port widens the pair
+ *                        into one 8-byte pointer.  On ILP32 the five
+ *                        wave-26 sources declare it as the pointer it is.
  *   prev       8  0x04
  *   next      16  0x08
  *   key       24  0x0c   the priority the list is sorted ascending on
- *   work      28  0x10   **stays a u32.**  On the DS this is a pointer to a
- *                        separately allocated work area, null when the work
- *                        fits inside the node.  The matched declarations
- *                        spell it `u32`, which is exact on the DS and cannot
- *                        hold a host pointer, so the port never lets a node
- *                        own one: bw_tcbl_register refuses a request larger
- *                        than the list's per-node size rather than storing a
- *                        truncated pointer, and the field is always 0.
+ *   work      28  0x10   **stays a u32 on an LP64 host.**  It is a pointer
+ *                        to a separately allocated work area, null when the
+ *                        work fits inside the node, and src/matched/
+ *                        sub_020311B8.c declares it as one.  There is no
+ *                        padding to borrow here the way there is at +0, so
+ *                        the LP64 build cannot hold both readings: the port
+ *                        refuses an oversize work request rather than
+ *                        storing a truncated pointer, and every node on that
+ *                        host carries its work area inside itself.  Under
+ *                        ILP32 the field is four bytes either way and the
+ *                        matched registrar allocates the block as the DS
+ *                        does.
  *   func      32  0x14
  *   (work area follows)  40  0x18
  *
@@ -108,7 +146,7 @@ typedef struct EidosTcblNode {
     struct EidosTcblNode *prev;
     struct EidosTcblNode *next;
     u32                   key;
-    u32                   work;   /* always 0 on the host; see above */
+    u32                   work;   /* 0 on an LP64 host; see above */
     void                (*func)(struct EidosTcblNode *node, void *work);
 } EidosTcblNode;
 
@@ -158,8 +196,10 @@ u32 bw_tcbl_work_size(const EidosTcblList *list);
  * Register `func` at priority `key`, with `work_size` bytes of work area.
  * The list runs ascending on `key`, so a smaller key runs first and equal
  * keys keep registration order.  Returns the node, or NULL when the pool is
- * empty.  Panics if `work_size` exceeds the list's per-node size, because
- * the host cannot represent a node that owns a separate work block.
+ * empty.  Panics on an LP64 host if `work_size` exceeds the list's per-node
+ * size, because that host cannot represent a node that owns a separate work
+ * block; under ILP32 the matched registrar allocates one from the list's
+ * home heap and the matched unlink releases it, as the DS does.
  */
 EidosTcblNode *bw_tcbl_register(EidosTcblList *list,
                                 void (*func)(EidosTcblNode *, void *),

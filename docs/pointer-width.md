@@ -28,14 +28,20 @@ run on the build machine, and ctest drives them exactly as it does the
 `CMakeLists.txt` then reads `CMAKE_SIZEOF_VOID_P` and sets one option:
 
 ```
-option(EIDOS_TCBL_MATCHED_ACCESSORS ...)   # default: ON iff sizeof(void *) == 4
+option(EIDOS_TCBL_MATCHED ...)   # default: ON iff sizeof(void *) == 4
 ```
 
-ON puts the four EXACT tcbl accessors (`sub_02030EF0`, `sub_02030F34`,
-`func_02030F04`, `sub_02030FB4`) into the library straight out of aletheia's
-`src/matched/`, compiled as written, and leaves the `stubs/reimpl_` stand-ins
-out. OFF does the reverse, which is the state README.md's "Why four matched
-files are out of the build" describes. The symbols are the same either way,
+ON puts the nine EXACT tcbl sources that depend on a four-byte pointer into
+the library straight out of aletheia's `src/matched/`, compiled as written,
+and leaves the `stubs/reimpl_` stand-ins out. Four of them (`sub_02030EF0`,
+`sub_02030F34`, `func_02030F04`, `sub_02030FB4`) reach a field through a DS
+byte offset; the five wave 26 added (`sub_02030F50`, `sub_02030F70`,
+`sub_020311B8`, `sub_02031194`, `sub_0203115C`) declare the node's `+0x00`
+and `+0x10` as pointers where `sub_0203101C` and `sub_020310C4`, which are in
+every configuration, declare them as `u32` -- one struct on the DS and on any
+ILP32 target, two different ones on LP64. OFF does the reverse, which is the
+state README.md's "Why nine matched files are out of the LP64 build"
+describes. The symbols are the same either way,
 so nothing else in the build knows which it got. Turning the option on for a
 target whose pointers are 8 bytes is a configure-time fatal error rather than
 a link that silently truncates addresses.
@@ -126,7 +132,7 @@ and are the platform layer's business rather than a portability defect.
 ## The decision
 
 **ILP32 is the reference configuration for eidos until the field code is in.
-LP64 keeps building, through `EIDOS_TCBL_MATCHED_ACCESSORS=OFF` and the
+LP64 keeps building, through `EIDOS_TCBL_MATCHED=OFF` and the
 `stubs/reimpl_` stand-ins, and every test passes there too.**
 
 The trade-offs, one paragraph each.

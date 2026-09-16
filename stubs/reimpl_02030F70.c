@@ -2,6 +2,14 @@
  * sub_02030F70 -- unlink one task-callback node and return it to the free
  * list.  REIMPLEMENTATION, not a match.
  *
+ * **This file is the LP64 stand-in only.**  aletheia matched 0x02030F70 in
+ * wave 26 (src/matched/sub_02030F70.c, EXACT), and under ILP32 that source is
+ * what the build compiles: this file is left out of the library
+ * entirely.  It survives because the matched source declares the node's
+ * +0x00 and +0x10 as pointers while src/matched/sub_0203101C.c and
+ * src/matched/sub_020310C4.c declare them as u32, which is one struct on
+ * the DS and two different ones on a 64-bit host (sdk/tcbl.h).
+ *
  * Sixty-eight bytes, one branch, two calls (aletheia
  * asm/arm9/src/013_02030F70.s, 0x02030F70):
  *
@@ -12,7 +20,7 @@
  *     str   r1, [r4, #0x14]      node->func = 0
  *     cmp   r0, #0
  *     beq   .unlink
- *     bl    func_020307B0        release it if the node owns one
+ *     bl    sub_020307B0         release it if the node owns one
  *   .unlink:
  *     ldmib r4, {r0, r2}         r0 = node->prev, r2 = node->next
  *     str   r2, [r0, #8]         prev->next = next
@@ -52,7 +60,7 @@
 #include "stubs.h"
 #include "../sdk/tcbl.h"
 
-extern void func_020307B0(void *block);
+extern void sub_020307B0(void *block);
 extern void sub_02030F34(void *list, void *node);
 
 void sub_02030F70(void *node)
@@ -63,7 +71,7 @@ void sub_02030F70(void *node)
     if (n->work != 0u) {
         /* The original does not clear the field afterwards: every path that
          * hands the node out again writes +0x10 first. */
-        func_020307B0((void *)(uintptr_t)n->work);
+        sub_020307B0((void *)(uintptr_t)n->work);
     }
 
     n->prev->next = n->next;

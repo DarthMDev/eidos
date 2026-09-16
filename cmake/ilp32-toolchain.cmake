@@ -7,7 +7,7 @@
 # every game-owned struct in the build byte-identical in layout to the DS's
 # and lets the four EXACT tcbl accessors that reach a field through a DS byte
 # offset be compiled AS WRITTEN (see docs/pointer-width.md and the
-# EIDOS_TCBL_MATCHED_ACCESSORS option in CMakeLists.txt, which defaults to ON
+# EIDOS_TCBL_MATCHED option in CMakeLists.txt, which defaults to ON
 # exactly when this file, or anything else, has produced a 32-bit target).
 #
 #   cmake -S . -B build32 -G Ninja \
