@@ -457,3 +457,43 @@ foreach(t test_affine test_bg_affine test_window test_frame)
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# ---------------------------------------------------------------------------
+# eidos_view -- the demo, and the first visible output
+# ---------------------------------------------------------------------------
+#
+# The top screen is titledemo.narc member 0 over the NCGR/NCLR pair
+# background.py's coverage rule paired with it (members 1 and 2, the same
+# triple tests/test_bg.c checks pixel for pixel); the bottom screen is one
+# composed rig pose out of a/0/0/4.  Both come from the player's own extract/;
+# nothing is bundled.
+#
+# test_view runs it with SDL_VIDEODRIVER=dummy and SDL_AUDIODRIVER=dummy, so
+# ctest checks the picture on a machine with no display and no sound card.
+#
+if(EIDOS_SDL_FOUND)
+    add_executable(eidos_view ${CMAKE_CURRENT_SOURCE_DIR}/demo/eidos_view.c)
+    target_link_libraries(eidos_view PRIVATE eidos_platform)
+    target_compile_definitions(eidos_view PRIVATE
+        EIDOS_DEFAULT_DATA_ROOT="${BW_DATA_ROOT_ABS}")
+
+    # SDL2.dll has to sit next to the executable on Windows: there is no
+    # installer and nothing on PATH.
+    if(EIDOS_SDL_RUNTIME)
+        add_custom_command(TARGET eidos_view POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:eidos_view>"
+            COMMENT "Copying SDL2.dll next to eidos_view")
+    endif()
+
+    add_executable(test_view ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_view.c)
+    target_include_directories(test_view PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_view PRIVATE eidos)
+    add_dependencies(test_view eidos_view)
+    add_test(NAME test_view
+             COMMAND test_view $<TARGET_FILE:eidos_view> ${BW_DATA_ROOT_ABS}
+                     ${CMAKE_CURRENT_BINARY_DIR}/eidos_view.bmp)
+    set_tests_properties(test_view PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+endif()
