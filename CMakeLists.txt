@@ -53,6 +53,47 @@ endif()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 # ---------------------------------------------------------------------------
+# Pointer width
+# ---------------------------------------------------------------------------
+#
+# The DS is LP32.  Every struct the game's own layout owns was laid out by a
+# compiler with 4-byte pointers, and a matched source that reaches a field of
+# such a struct through an explicit byte offset is only correct on a target
+# that agrees.  docs/pointer-width.md measures how much matched code that is
+# and records the policy; the mechanism is this one switch.
+#
+# ON:  the four EXACT tcbl accessors (sub_02030EF0, sub_02030F34,
+#      func_02030F04, sub_02030FB4) are compiled AS WRITTEN, straight out of
+#      aletheia's src/matched/, and the stubs/reimpl_ stand-ins are left out
+#      of the library.  Correct only where sizeof(void *) == 4.
+# OFF: the stand-ins are compiled and the matched four stay out, which is the
+#      state README.md's "Why four matched files are out of the build"
+#      describes.
+#
+# The default is decided at configure time from the target's pointer width,
+# so `-DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake` is the whole of
+# what an ILP32 build has to say.
+#
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(_eidos_matched_accessors_default ON)
+else()
+    set(_eidos_matched_accessors_default OFF)
+endif()
+option(EIDOS_TCBL_MATCHED_ACCESSORS
+       "Compile the four EXACT tcbl accessors as written (needs 32-bit pointers)"
+       ${_eidos_matched_accessors_default})
+if(EIDOS_TCBL_MATCHED_ACCESSORS AND NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR
+        "EIDOS_TCBL_MATCHED_ACCESSORS=ON needs a target with 32-bit pointers; "
+        "this one has sizeof(void *) = ${CMAKE_SIZEOF_VOID_P}.  Configure with "
+        "-DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake, or leave the "
+        "option at its default.")
+endif()
+message(STATUS "Pointer width: ${CMAKE_SIZEOF_VOID_P} bytes; tcbl accessors: "
+               "${EIDOS_TCBL_MATCHED_ACCESSORS} (ON = the matched sources, "
+               "OFF = stubs/reimpl_)")
+
+# ---------------------------------------------------------------------------
 # Compiler settings
 # ---------------------------------------------------------------------------
 #
@@ -130,12 +171,12 @@ set(BW_MATCHED_SOURCES
     #
     # The scheduler engine/frame/ runs as the frame loop's step.  Four other
     # EXACT files of this family (sub_02030EF0, sub_02030F34, func_02030F04,
-    # sub_02030FB4) are deliberately NOT here: each reaches a field of the
-    # node or the manager through a DS byte offset, and those structs store
-    # host pointers, so the offsets are wrong on an LP64 host.  README.md,
-    # "Why four matched files are out of the build", records the exact
-    # reason for each; stubs/reimpl_ files stand in and cite the matched
-    # source they replace.
+    # sub_02030FB4) are not in this list: each reaches a field of the node or
+    # the manager through a DS byte offset, and those structs store host
+    # pointers, so the offsets are wrong wherever a pointer is not four
+    # bytes.  They are added below, or replaced by stubs/reimpl_ stand-ins,
+    # by EIDOS_TCBL_MATCHED_ACCESSORS.  README.md, "Why four matched files
+    # are out of the build", records the exact reason for each.
     ${ALETHEIA_ROOT}/src/matched/sub_0203101C.c    # the constructor
     ${ALETHEIA_ROOT}/src/matched/sub_02030FC8.c    # build the free list
     ${ALETHEIA_ROOT}/src/matched/sub_020310C4.c    # one pass of the runner
@@ -184,11 +225,28 @@ set(BW_STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_020311B8.c  # register a callback
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02031194.c  # destroy one node
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0203115C.c  # destroy every node
+)
+
+# The four accessors the pointer width decides between.  Exactly one of the
+# two lists enters the library; the symbols are the same either way, so
+# nothing above or below this line knows which it got.
+set(BW_TCBL_ACCESSORS_MATCHED
+    ${ALETHEIA_ROOT}/src/matched/sub_02030EF0.c    # row address
+    ${ALETHEIA_ROOT}/src/matched/sub_02030F34.c    # free-list push
+    ${ALETHEIA_ROOT}/src/matched/func_02030F04.c   # free-list pop
+    ${ALETHEIA_ROOT}/src/matched/sub_02030FB4.c    # the work accessor
+)
+set(BW_TCBL_ACCESSORS_REIMPL
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030EF0.c  # row address
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030F34.c  # free-list push
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030F04.c  # free-list pop
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030FB4.c  # the work accessor
 )
+if(EIDOS_TCBL_MATCHED_ACCESSORS)
+    list(APPEND BW_MATCHED_SOURCES ${BW_TCBL_ACCESSORS_MATCHED})
+else()
+    list(APPEND BW_STUB_SOURCES ${BW_TCBL_ACCESSORS_REIMPL})
+endif()
 
 # ---------------------------------------------------------------------------
 # The engine

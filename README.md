@@ -565,12 +565,19 @@ screenshot after frame 1 and another after frame 12 and requires the bottom
 screen to have moved by at least 200 pixels while the top screen, which has
 no task, is **pixel-identical**. Measured: top 0, bottom 1223.
 
-### Why four matched files are out of the build
+### Why four matched files are out of the LP64 build
 
 This is the first place the port has had to leave an EXACT matched source
 out, and the reason is a property of the game's data rather than of any
 file: **the task-callback node and its manager are the first game-owned
 structs in the port that store pointers.**
+
+It is also the question that settled the port's pointer-width policy, and
+the answer is that these four are out of the *LP64* build and in the ILP32
+one: `docs/pointer-width.md` has the measurement and the decision, and
+"Pointer width, and the reference configuration" below has the short form.
+Configured with `cmake/ilp32-toolchain.cmake` all four are compiled as
+written, straight out of aletheia, and every test still passes.
 
 Portability rule 5 below says no pointer may be stored in a struct the
 game's layout owns, and until now the port could honour it, because the one
@@ -594,10 +601,14 @@ explicit padding, and four of them do:
 | `sub_02030FB4.c` | the work-area accessor | reads the owned-work pointer at +0x10 (28 here) and returns node + 0x18 (40 here) |
 
 Each one is byte-correct for the DS and nothing about it is wrong. They stay
-in aletheia untouched, they stay out of `CMakeLists.txt`, and a
-`stubs/reimpl_` file stands in, naming the matched source it replaces and
-transcribing its body against the struct rather than against the numbers.
-`sdk/tcbl.h` carries the host layout with the DS offsets beside it.
+in aletheia untouched, and on an LP64 host a `stubs/reimpl_` file stands in,
+naming the matched source it replaces and transcribing its body against the
+struct rather than against the numbers. `sdk/tcbl.h` carries the host layout
+with the DS offsets beside it. Which of the two goes into the library is
+`EIDOS_TCBL_MATCHED_ACCESSORS`, whose default CMake decides from
+`CMAKE_SIZEOF_VOID_P`: on a 32-bit target the four matched sources are
+compiled as written and the stand-ins are left out, and the node and the
+manager come out at exactly `0x18` and `0x38`, the DS's own sizes.
 
 Two related findings, both recorded in `sdk/tcbl.h` and both for the
 aletheia side rather than fixable here:
@@ -773,9 +784,22 @@ name: 16 matched translation units, five `sdk` names (`MIi_CpuClear32`,
 `sub_02030524`), five `open` ones (`sub_02030F50`, `sub_02030B50`,
 `sub_02060CA0`, `sub_02060E6C`, `sub_02060E94`) and three `data` ones
 (`g_EnvModule`, `g_020A7820`, `sub_0203101C_File`). Of the 16 matched units
-one, `sub_02030EF0.c`, is deliberately not in the build (see "Why four
-matched files are out of the build"), which is the one place the report and
-`CMakeLists.txt` disagree on purpose rather than by accident.
+one, `sub_02030EF0.c`, is in the build only where pointers are four bytes
+(see "Why four matched files are out of the LP64 build"), which is the one
+place the report and an LP64 `CMakeLists.txt` disagree on purpose rather than
+by accident. The ILP32 configuration answers the report exactly.
+
+`tools/closure.py` also answers the pointer-width question over the whole
+corpus rather than one closure:
+
+```
+python tools/closure.py --pointer-audit
+```
+
+counts the matched sources that hold an address in an integer, hardcode a
+struct size or field offset, or cast between an integer and a pointer, and
+prints the file list behind each count. `docs/pointer-width.md` is that
+output plus the decision it supports.
 
 `tools/closure.py` reads the manifest shards in aletheia's `layout/matched/`
 and the `extern` declarations and `symbols:` header blocks of the matched
@@ -861,11 +885,73 @@ python tools/hostbuild.py --aletheia-root ../aletheia --check    # cross compile
 `tools/gcc-arm/`. It proves every source compiles clean and that the symbol
 closure is complete, because the link fails on the first missing name. It
 cannot run the tests: what comes out is an ARM ELF and there is no runner
-for it. It is also the port's only LP32 build, which is worth more than it
-used to be now that game-owned structs with pointers in them are in the
-source list: on that target a task-callback node is exactly 0x18 bytes again
-and `EIDOS_TCBL_HEADER_BIAS` is zero. Current state: 62 objects compiled
-clean, `test_text`, `test_stats` and `test_tcbl` linked.
+for it. It was the port's only LP32 build until
+`cmake/ilp32-toolchain.cmake` arrived; the i686 configuration does the same
+thing for pointer width and can also run what it builds, so `--check` is now
+a second compiler's opinion rather than the only 32-bit evidence there is.
+Current state: 62 objects compiled clean, `test_text`, `test_stats` and
+`test_tcbl` linked.
+
+## Pointer width, and the reference configuration
+
+**ILP32 is the reference configuration for eidos until the field code is in.
+LP64 keeps building and keeps passing every test.** `docs/pointer-width.md`
+is the measurement this is decided on and states the trade-offs; the short
+form is that on a 32-bit target every struct the game's layout owns has the
+DS's own bytes, and that 642 of the 1110 matched sources aletheia's manifest
+names (57.8%) carry at least one assumption that a pointer is four bytes.
+
+```
+cmake -S . -B build32 -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake \
+    -DALETHEIA_ROOT=../aletheia
+cmake --build build32
+ctest --test-dir build32 --output-on-failure
+```
+
+`cmake/ilp32-toolchain.cmake` looks for an i686 compiler driver, first in
+aletheia's `tools/gcc-host/` (the MinGW-w64 archive ships
+`i686-w64-mingw32-gcc` next to the x86_64 one, so `-DALETHEIA_ROOT` is the
+whole of what it needs) and then on PATH, and falls back to `-m32` on the
+default compiler. It does not set `CMAKE_SYSTEM_NAME`: this is a same-OS,
+different-ABI build and ctest runs the executables exactly as it does the
+64-bit ones. SDL2 is not a problem either, because the devel package
+`tools/fetch_sdl.py` unpacks carries an `i686-w64-mingw32` tree beside the
+64-bit one and `CMakeLists.txt` picks the triplet by pointer width;
+`-DEIDOS_SDL=OFF` is there for a host with no 32-bit SDL2.
+
+`CMakeLists.txt` then reads `CMAKE_SIZEOF_VOID_P` and decides one thing:
+
+| `EIDOS_TCBL_MATCHED_ACCESSORS` | default on | the four accessors come from |
+| --- | --- | --- |
+| ON | a 32-bit target | `${ALETHEIA_ROOT}/src/matched/`, compiled as written |
+| OFF | a 64-bit target | `stubs/reimpl_` |
+
+Turning it on for a target whose pointers are 8 bytes is a configure-time
+fatal error, not a link that silently truncates addresses.
+
+Measured on this machine, same tree, same tests:
+
+| configuration | node / manager | accessors | ctest | test_tcbl |
+| --- | --- | --- | --- | --- |
+| LP64 (default) | 40 / 88 bytes | `stubs/reimpl_` | 10/10 | 49 checks, 0 failures |
+| ILP32 | 24 / 56 bytes | the matched four | 10/10 | 49 checks, 0 failures |
+
+24 and 56 are `0x18` and `0x38`. `tests/test_tcbl.c` asserts both layouts
+rather than one, and on ILP32 it additionally asserts that
+`EIDOS_TCBL_HEADER_BIAS` is zero, which is the port's one piece of arithmetic
+that exists only to pay for pointer width.
+
+**The exit condition is a number, and it is tracked.** `python
+tools/closure.py --pointer-audit` counts the matched sources that hold an
+address in an integer, hardcode a struct size or field offset, or cast
+between an integer and a pointer. The largest category, 355 files, is
+explicit padding (`u8 pad[0x14]; u32 active;`), which is not a rule violation
+to be corrected but a field offset frozen into a source that does not yet
+know what those bytes are. It falls as waves decompile the structs around it,
+and when it is small enough to re-verify in a wave or two, LP64 becomes the
+reference and ILP32 becomes the fidelity cross-check. That has to happen
+before Milestone 9 in any case: macOS and iOS have no 32-bit.
 
 ## Portability rules
 
@@ -903,8 +989,14 @@ keep the 64-bit intermediate the DS runtime helper provides.
 never cast a `const u8 *` into a `const u32 *` and dereference it, which is a
 big-endian bug and an unaligned-access bug at once.
 
-**5. No pointer may be stored in a struct the game's layout owns.** The
-matched `struct ArcFile` is `u8 file[0x48]; u32 imageBase; u16 fatOffset;
+**5. No pointer may be stored in a struct the game's layout owns, in code
+the port itself writes.** This is a rule about the shim, not about matched
+code: a game-owned struct the game fills in with pointers (the task-callback
+node) is the game's business, and the answer to it is the pointer width the
+port is configured with, not a rule the port could impose. See "Pointer
+width, and the reference configuration" above and `docs/pointer-width.md`.
+Where the port owns the bytes it stores an index. The matched `struct
+ArcFile` is `u8 file[0x48]; u32 imageBase; u16 fatOffset;
 u16 count;`, four-byte aligned. The FS shim owns those 0x48 bytes and stores
 an *index* into a table of open `FILE *`, not the pointer, so the struct
 neither grows nor needs eight-byte alignment on a 64-bit host. `sdk/fs.c`
@@ -1012,6 +1104,15 @@ the matched heap, and needs neither SDL nor game data; `test_view` now also
 checks that two frames of the demo differ on the bottom screen, which is the
 animation a task on that list drove, and not at all on the top screen.
 
+With the ILP32 configuration added (2026-09-16): the same tree configured
+with `cmake/ilp32-toolchain.cmake` against the `i686-w64-mingw32-gcc` in the
+same MinGW-w64 archive builds 96 targets warning-free, finds the i686 SDL2
+tree beside the x86_64 one, and passes the same **ten tests** in 1.2 seconds,
+with the four EXACT tcbl accessors compiled as written and the node and the
+manager at the DS's own `0x18` and `0x38`. `tools/hostbuild.py --check`
+makes the same choice for the ARM cross build and still compiles 62 objects
+clean.
+
 ## Planned Milestones
 
 - [ ] **Milestone 1**: Portability pass
@@ -1021,7 +1122,15 @@ animation a task on that list drove, and not at all on the top screen.
         down beside the DS one in `sdk/tcbl.h`, the four matched accessors
         that reach a field through a DS byte offset are identified and
         stood in for, and the two `u32`-declared pointer fields are
-        recorded. See "Why four matched files are out of the build"
+        recorded. See "Why four matched files are out of the LP64 build"
+  - [x] Settle the pointer-width policy: an ILP32 build configuration
+        (`cmake/ilp32-toolchain.cmake`) where the four matched accessors
+        are compiled as written and the game's structs have the DS's own
+        bytes, the LP64 build kept working through one CMake switch keyed
+        on `sizeof(void *)`, and the cost of each route measured over the
+        whole matched corpus by `tools/closure.py --pointer-audit`. ILP32
+        is the reference configuration; `docs/pointer-width.md` records the
+        counts, the decision and what would reverse it
   - [x] Endianness and struct packing compatibility: every read out of
         `extract/` goes through `bw_rd16`/`bw_rd32`, `char` is signed on
         every compiler the build supports, and no matched struct in the

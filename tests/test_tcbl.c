@@ -136,9 +136,27 @@ int main(void)
 
     /* The host layout has to agree with what the matched constructor
      * allocates: it asks for sizeof(struct Tcbl) as its own compiler sees
-     * it, and every other matched file in the family sees the same. */
-    BW_CHECK_EQ("manager size", sizeof(EidosTcblList), 88);
-    BW_CHECK_EQ("node size", EIDOS_TCBL_NODE_HEADER, 40);
+     * it, and every other matched file in the family sees the same.
+     *
+     * Both sizes are decided by the target's pointer width and by nothing
+     * else, which is the whole of docs/pointer-width.md in two numbers: an
+     * ILP32 target reproduces the DS's own 0x18 and 0x38 exactly, and an
+     * LP64 one grows the node to 40 bytes and the manager to 88.  On ILP32
+     * the header bias is therefore zero, and the four EXACT accessors this
+     * build is compiling as written are reaching the right fields. */
+    if (sizeof(void *) == 4) {
+        BW_CHECK_EQ("manager size (ILP32: the DS's own 0x38)",
+                    sizeof(EidosTcblList), 0x38);
+        BW_CHECK_EQ("node size (ILP32: the DS's own 0x18)",
+                    EIDOS_TCBL_NODE_HEADER, EIDOS_TCBL_DS_NODE_HEADER);
+        BW_CHECK_EQ("no header bias to pay on an ILP32 target",
+                    EIDOS_TCBL_HEADER_BIAS, 0);
+    } else {
+        BW_CHECK_EQ("manager size", sizeof(EidosTcblList), 88);
+        BW_CHECK_EQ("node size", EIDOS_TCBL_NODE_HEADER, 40);
+        BW_CHECK_EQ("header bias the port pays on an LP64 target",
+                    EIDOS_TCBL_HEADER_BIAS, 40 - EIDOS_TCBL_DS_NODE_HEADER);
+    }
 
     bw_heap_init(BW_HEAP_COUNT);
     live_before = bw_heap_live_blocks(HEAP_ID);
