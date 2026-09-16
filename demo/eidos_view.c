@@ -29,7 +29,7 @@
  * `live`.  That is what OAM and the BG registers do on hardware.
  *
  *     eidos_view [--data-root PATH] [--scale N] [--side-by-side] [--gap N]
- *                [--species N] [--frames N] [--shot PATH]
+ *                [--species N] [--map N] [--frames N] [--shot PATH]
  *                [--shot-first PATH] [--no-audio]
  *
  * Escape quits; F12 writes a screenshot.  With --frames the run ends after
@@ -46,6 +46,7 @@
 #include "audio.h"
 #include "frame.h"
 #include "g2d.h"
+#include "g3d.h"
 #include "platform.h"
 #include "port.h"
 #include "tcbl.h"
@@ -68,6 +69,30 @@
 #define VIEW_HEAP           1u
 #define VIEW_TASK_SLOTS     8u
 #define VIEW_ANIM_PRIORITY 64u
+#define VIEW_CAM_PRIORITY  32u
+
+/*
+ * --map N: the top screen becomes the 3D layer.
+ *
+ * `a/0/0/8` is the overworld map, building and dungeon model archive
+ * aletheia's asset lane identified, and `a/0/1/4` the shared texture
+ * archive every one of those models draws from.  engine/g3d decodes the
+ * model's shapes into one geometry buffer once, and every frame the
+ * camera task orbits an eye around it and the renderer transforms and
+ * rasterises through the engine's own fixed-point pipeline.
+ *
+ * The 3D frame reaches the screen through g3d_compose_over(), which puts
+ * it *behind* an ordinary 2D frame: every pixel where the 2D frame would
+ * show its backdrop shows the 3D one instead.  That is the arrangement a
+ * DS game uses when BG0 carries the 3D output at the lowest priority.
+ * What it is not is a general BG0-is-3D hook inside g2d's own per-pixel
+ * stack; README.md's engine/g3d section says what that still needs.
+ */
+#define MAP_ARCHIVE "a/0/0/8"
+#define MAP_TEXTURES "a/0/1/4"
+#define MAP_FOVY   ((u16)(40u * 65536u / 360u))
+#define MAP_NEAR   (FX32_ONE / 2)
+#define MAP_FAR    (64 * FX32_ONE)
 
 #define SCREEN_W EIDOS_DS_SCREEN_WIDTH
 #define SCREEN_H EIDOS_DS_SCREEN_HEIGHT
@@ -79,6 +104,10 @@ typedef struct DisplayRegs {
     s32 bg_hofs, bg_vofs;   /* BG0HOFS / BG0VOFS of the top screen */
     s32 obj_x, obj_y;       /* the bottom screen's single OAM entry */
     u32 anim_t;             /* the NANR timeline position of the pose */
+    /* the 3D camera, committed at the vblank like everything else */
+    u16 cam_yaw;            /* a 16-bit binary angle around the model */
+    u16 cam_pitch;          /* likewise, clamped away from the poles   */
+    fx32 cam_dist;
 } DisplayRegs;
 
 /*
@@ -110,9 +139,22 @@ typedef struct View {
     int        pose_ok;
     u32        pose_t;      /* the timeline position `pose` was composed at */
 
-    /* the game's own scheduler, and the one task on it */
+    /* top screen, in --map mode */
+    int            map_on;
+    s32            map_index;
+    G3dModel       map;
+    int            map_loaded;
+    G3dTexArchive *map_tex;
+    G3dTarget      map_target;
+    int            map_target_ok;
+
+    /* the game's own scheduler, and the tasks on it */
     EidosTcblList *tasks;
     EidosTcblNode *anim_node;
+    EidosTcblNode *cam_node;
+
+    /* the platform, so the camera task can read the keypad */
+    EidosPlatform *plat;
 
     DisplayRegs pending, live;
     u64 phase;
@@ -124,6 +166,17 @@ static void view_free(View *v)
         bw_tcbl_free(v->tasks);
         v->tasks = NULL;
         v->anim_node = NULL;
+        v->cam_node = NULL;
+    }
+    if (v->map_target_ok) {
+        g3d_target_free(&v->map_target);
+    }
+    if (v->map_loaded) {
+        g3d_model_free(&v->map);
+    }
+    if (v->map_tex != NULL) {
+        g3d_texarchive_close(v->map_tex);
+        v->map_tex = NULL;
     }
     if (v->pose_ok) {
         g2d_pose_free(&v->pose);
@@ -204,6 +257,48 @@ static int view_load(View *v, int species)
 }
 
 /*
+ * --map N: decode one a/0/0/8 model and index the shared texture archive.
+ * Both are done once, here, and not per frame: the display lists are
+ * interpreted into a geometry buffer in model space, and every frame after
+ * this only transforms and rasterises it.
+ */
+static int view_load_map(View *v, s32 index)
+{
+    u32 total_polys = 0, textured = 0, i;
+
+    v->map_tex = g3d_texarchive_open(MAP_TEXTURES);
+    if (v->map_tex == NULL) {
+        fprintf(stderr, "eidos_view: cannot index %s\n", MAP_TEXTURES);
+        return -1;
+    }
+    if (g3d_model_load(&v->map, MAP_ARCHIVE, (u32)index, v->map_tex) != 0) {
+        fprintf(stderr, "eidos_view: %s#%ld has no decodable model\n",
+                MAP_ARCHIVE, (long)index);
+        return -1;
+    }
+    v->map_loaded = 1;
+    if (g3d_target_init(&v->map_target, SCREEN_W, SCREEN_H) != 0) {
+        return -1;
+    }
+    v->map_target_ok = 1;
+    v->map_on = 1;
+    v->map_index = index;
+
+    for (i = 0; i < v->map.n_shapes; i++) {
+        total_polys += v->map.shapes[i].n_polys;
+        if (v->map.shapes[i].texture[0] != '\0') {
+            textured++;
+        }
+    }
+    printf("top:    %s#%ld, model '%s', %u shapes (%u textured), "
+           "%u vertices, %u polygons, %u texture names indexed\n",
+           MAP_ARCHIVE, (long)index, v->map.name, v->map.n_shapes, textured,
+           v->map.geom.n_verts, total_polys,
+           g3d_texarchive_names(v->map_tex));
+    return 0;
+}
+
+/*
  * Recompose the pose at a new point on its NANR timeline.  The compositor
  * sizes the canvas to the frame, so the pose is rebuilt rather than
  * repainted; a rig pose is a few thousand pixels and this is once a frame.
@@ -271,6 +366,77 @@ static void view_anim_task(EidosTcblNode *node, void *work)
 }
 
 /*
+ * The camera, as a second task on the same list, at a higher priority than
+ * the animation so the matched runner reaches it first.  It writes the
+ * pending register block exactly as the animation task does: the eye is
+ * committed at the vblank and the renderer never sees a half-updated one.
+ *
+ * The arrows orbit, X and Y (or L and R) move in and out, and START puts
+ * the camera back where it started.  The angles are 16-bit binary angles,
+ * the same unit engine/g2d's sine table is indexed by.
+ */
+#define CAM_YAW_STEP   512u
+#define CAM_PITCH_STEP 256u
+#define CAM_PITCH_MIN  1024u   /* about 5.6 degrees above the horizon */
+#define CAM_PITCH_MAX  15360u  /* about 84 degrees, short of straight down */
+#define CAM_DIST_MIN   (2 * FX32_ONE)
+#define CAM_DIST_MAX   (40 * FX32_ONE)
+#define CAM_DIST_STEP  (FX32_ONE / 4)
+#define CAM_YAW_HOME   0u
+#define CAM_PITCH_HOME 6000u
+#define CAM_DIST_HOME  (11 * FX32_ONE)
+
+static void view_camera_task(EidosTcblNode *node, void *work)
+{
+    ViewTask *w = (ViewTask *)work;
+    View *v;
+    u32 buttons;
+    s32 pitch;
+
+    (void)node;
+    if (w == NULL || w->view == NULL) {
+        return;
+    }
+    v = w->view;
+    buttons = v->plat != NULL ? eidos_platform_buttons(v->plat) : 0u;
+
+    if (buttons & EIDOS_PAD_LEFT) {
+        v->pending.cam_yaw = (u16)(v->pending.cam_yaw - CAM_YAW_STEP);
+    }
+    if (buttons & EIDOS_PAD_RIGHT) {
+        v->pending.cam_yaw = (u16)(v->pending.cam_yaw + CAM_YAW_STEP);
+    }
+    pitch = (s32)v->pending.cam_pitch;
+    if (buttons & EIDOS_PAD_UP) {
+        pitch += (s32)CAM_PITCH_STEP;
+    }
+    if (buttons & EIDOS_PAD_DOWN) {
+        pitch -= (s32)CAM_PITCH_STEP;
+    }
+    if (pitch < (s32)CAM_PITCH_MIN) { pitch = (s32)CAM_PITCH_MIN; }
+    if (pitch > (s32)CAM_PITCH_MAX) { pitch = (s32)CAM_PITCH_MAX; }
+    v->pending.cam_pitch = (u16)pitch;
+
+    if (buttons & (EIDOS_PAD_X | EIDOS_PAD_L)) {
+        v->pending.cam_dist -= CAM_DIST_STEP;
+    }
+    if (buttons & (EIDOS_PAD_Y | EIDOS_PAD_R)) {
+        v->pending.cam_dist += CAM_DIST_STEP;
+    }
+    if (v->pending.cam_dist < CAM_DIST_MIN) {
+        v->pending.cam_dist = CAM_DIST_MIN;
+    }
+    if (v->pending.cam_dist > CAM_DIST_MAX) {
+        v->pending.cam_dist = CAM_DIST_MAX;
+    }
+    if (buttons & EIDOS_PAD_START) {
+        v->pending.cam_yaw = CAM_YAW_HOME;
+        v->pending.cam_pitch = CAM_PITCH_HOME;
+        v->pending.cam_dist = CAM_DIST_HOME;
+    }
+}
+
+/*
  * Build the game's task-callback list and put the animation task on it.
  * Everything below the two bw_tcbl_ calls is matched: the constructor, the
  * free-list build, the heap the pool comes from.
@@ -301,10 +467,28 @@ static int view_start_tasks(View *v, u32 speed)
     w->t = 0;
     w->speed = speed;
 
+    if (v->map_on) {
+        v->pending.cam_yaw = CAM_YAW_HOME;
+        v->pending.cam_pitch = CAM_PITCH_HOME;
+        v->pending.cam_dist = CAM_DIST_HOME;
+        v->live = v->pending;
+        v->cam_node = bw_tcbl_register(v->tasks, view_camera_task,
+                                       (u32)sizeof(ViewTask),
+                                       VIEW_CAM_PRIORITY);
+        if (v->cam_node == NULL) {
+            fprintf(stderr, "eidos_view: could not register the camera task\n");
+            return -1;
+        }
+        w = (ViewTask *)bw_tcbl_work(v->cam_node);
+        memset(w, 0, sizeof(*w));
+        w->view = v;
+    }
+
     printf("tasks:  %u slots of %u work bytes on heap %u, "
-           "animation task at priority %u\n",
+           "animation task at priority %u%s\n",
            (unsigned)v->tasks->count, (unsigned)bw_tcbl_work_size(v->tasks),
-           (unsigned)VIEW_HEAP, (unsigned)VIEW_ANIM_PRIORITY);
+           (unsigned)VIEW_HEAP, (unsigned)VIEW_ANIM_PRIORITY,
+           v->map_on ? ", camera task at priority 32" : "");
     return 0;
 }
 
@@ -341,6 +525,42 @@ static void view_render(void *user, u8 *top, u8 *bottom)
     /* The committed animation time is the one the picture is built from. */
     view_set_pose_time(v, v->live.anim_t);
 
+    if (v->map_on) {
+        /*
+         * The top screen is the 3D layer.  The eye orbits the model on the
+         * committed yaw, pitch and distance; the model matrix is identity,
+         * so the geometry buffer's own model space is world space, which is
+         * the same space tests/test_g3d.c compares against the oracle's OBJ.
+         */
+        G3dMtx view_m, proj;
+        G3dVec eye, at, up;
+        s32 cp = g2d_cos_fx(v->live.cam_pitch);
+        s32 sp = g2d_sin_fx(v->live.cam_pitch);
+        s32 cy = g2d_cos_fx(v->live.cam_yaw);
+        s32 sy = g2d_sin_fx(v->live.cam_yaw);
+        fx32 horiz = FX_MUL(v->live.cam_dist, cp);
+
+        at.x = 0; at.y = FX32_ONE / 2; at.z = 0;
+        up.x = 0; up.y = FX32_ONE;     up.z = 0;
+        eye.x = at.x + FX_MUL(horiz, sy);
+        eye.y = at.y + FX_MUL(v->live.cam_dist, sp);
+        eye.z = at.z + FX_MUL(horiz, cy);
+        g3d_mtx_lookat(&view_m, &eye, &up, &at);
+        g3d_mtx_perspective(&proj, MAP_FOVY, (fx32)(4 * FX32_ONE / 3),
+                            MAP_NEAR, MAP_FAR);
+
+        g3d_target_clear(&v->map_target, 0, 0, 40, 255);
+        g3d_render_model(&v->map_target, &v->map, &view_m, &proj, v->map_tex);
+
+        /* Through the compositor, not straight into the buffer: the 2D
+         * frame is empty here, so every pixel is its backdrop and the 3D
+         * layer behind it shows.  A real BG0 goes in `desc` beside it. */
+        memset(&desc, 0, sizeof(desc));
+        desc.backdrop_pal = &v->pal;
+        g3d_compose_over(&desc, &v->map_target, SCREEN_W, SCREEN_H, top);
+        goto bottom_screen;
+    }
+
     memset(&layer, 0, sizeof(layer));
     layer.nscr = &v->nscr;
     layer.ncgr = &v->ncgr;
@@ -358,6 +578,7 @@ static void view_render(void *user, u8 *top, u8 *bottom)
     desc.backdrop_pal = &v->pal;
     g2d_frame_compose_desc(&desc, SCREEN_W, SCREEN_H, top);
 
+bottom_screen:
     memset(&obj, 0, sizeof(obj));
     obj.pose = &v->pose;
     obj.pal = &v->rig.palette;
@@ -425,6 +646,7 @@ int main(int argc, char **argv)
     const char *shot_first = NULL;
     long frames = 0;
     int species = 25;
+    long map_index = -1;
     int anim_speed = 1;
     int audio = 1;
     long music_seq = -1;
@@ -449,6 +671,8 @@ int main(int argc, char **argv)
             cfg.layout = EIDOS_LAYOUT_SIDE_BY_SIDE;
         } else if (strcmp(argv[i], "--gap") == 0 && i + 1 < argc) {
             cfg.gap = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
+            map_index = strtol(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--species") == 0 && i + 1 < argc) {
             species = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
@@ -492,6 +716,10 @@ int main(int argc, char **argv)
     if (view_load(&view, species) != 0) {
         return 1;
     }
+    if (map_index >= 0 && view_load_map(&view, (s32)map_index) != 0) {
+        view_free(&view);
+        return 1;
+    }
     if (view_start_tasks(&view, (u32)(anim_speed > 0 ? anim_speed : 1)) != 0) {
         view_free(&view);
         return 1;
@@ -512,6 +740,7 @@ int main(int argc, char **argv)
         view_free(&view);
         return 1;
     }
+    view.plat = plat;
     printf("window: %d x %d at scale %d, frame period %llu ns "
            "(%s), audio %s\n",
            cfg.layout == EIDOS_LAYOUT_SIDE_BY_SIDE

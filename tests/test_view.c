@@ -31,6 +31,11 @@
  *     opaque ones are what "it drew something" means here.  What the picture
  *     *is* is not this test's business.
  *
+ *   - a second run with --map 120 puts one a/0/0/8 map model on the top
+ *     screen through engine/g3d, and that screen has to be non-blank and
+ *     to differ from the 2D run's top screen.  What the geometry *is* is
+ *     tests/test_g3d.c's business, against aletheia's own OBJ export.
+ *
  * This is a smoke test of the platform layer, not a pixel oracle: what the
  * picture *is* is checked by test_bg and test_g2d against the Python
  * renderers, pixel for pixel.
@@ -213,24 +218,27 @@ static long half_diff(const Bmp *a, const Bmp *b, u32 y0, u32 rows)
 }
 
 static int run_demo(const char *exe, const char *data_root, const char *shot,
-                    const char *shot_first)
+                    const char *shot_first, const char *extra)
 {
     char cmd[2048];
     int rc;
 
+    if (extra == NULL) {
+        extra = "";
+    }
 #ifdef _WIN32
     /* cmd.exe strips the outermost pair of quotes off a command line that
      * starts with one, so a quoted program path needs the whole line quoted
      * again. */
     rc = snprintf(cmd, sizeof(cmd),
                   "\"\"%s\" --data-root \"%s\" --frames " DEMO_FRAMES
-                  " --shot \"%s\" --shot-first \"%s\" --no-audio\"",
-                  exe, data_root, shot, shot_first);
+                  " --shot \"%s\" --shot-first \"%s\" --no-audio %s\"",
+                  exe, data_root, shot, shot_first, extra);
 #else
     rc = snprintf(cmd, sizeof(cmd),
                   "\"%s\" --data-root \"%s\" --frames " DEMO_FRAMES
-                  " --shot \"%s\" --shot-first \"%s\" --no-audio",
-                  exe, data_root, shot, shot_first);
+                  " --shot \"%s\" --shot-first \"%s\" --no-audio %s",
+                  exe, data_root, shot, shot_first, extra);
 #endif
     if (rc < 0 || rc >= (int)sizeof(cmd)) {
         printf("  command line does not fit\n");
@@ -271,7 +279,7 @@ int main(int argc, char **argv)
 
     remove(shot);
     remove(shot_first);
-    if (run_demo(exe, data_root, shot, shot_first) != 0) {
+    if (run_demo(exe, data_root, shot, shot_first, NULL) != 0) {
         return 1;
     }
     if (bmp_load(&bmp, shot) != 0) {
@@ -319,6 +327,61 @@ int main(int argc, char **argv)
             failed = 1;
         }
         free(first.pixels);
+    }
+
+    /*
+     * The 3D layer.  A second run with --map 120 puts one a/0/0/8 map
+     * model on the top screen through engine/g3d: the same display lists
+     * tests/test_g3d.c compares against aletheia's OBJ, transformed by the
+     * engine's own matrix stack and rasterised at 256x192.  What is checked
+     * here is that it reached the screen at all, which is the platform
+     * layer's business; what the geometry *is* is test_g3d's.
+     */
+    {
+        Bmp map_bmp;
+        char map_shot[1024];
+        char map_first[1024];
+
+        n = snprintf(map_shot, sizeof(map_shot), "%s.map.bmp", shot);
+        if (n > 0 && n < (int)sizeof(map_shot)) {
+            n = snprintf(map_first, sizeof(map_first), "%s.map.first.bmp",
+                         shot);
+        }
+        if (n <= 0 || n >= (int)sizeof(map_first)) {
+            printf("  FAIL the --map output path does not fit\n");
+            failed = 1;
+        } else {
+            remove(map_shot);
+            remove(map_first);
+            if (run_demo(exe, data_root, map_shot, map_first,
+                         "--map 120") != 0) {
+                failed = 1;
+            } else if (bmp_load(&map_bmp, map_shot) != 0) {
+                failed = 1;
+            } else {
+                printf("screenshot %s: %u x %u, %u bpp (--map 120)\n",
+                       map_shot, map_bmp.width, map_bmp.height, map_bmp.bits);
+                if (map_bmp.width != SHOT_W || map_bmp.height != SHOT_H) {
+                    printf("  FAIL the --map run's screenshot is the wrong "
+                           "size\n");
+                    failed = 1;
+                } else {
+                    long moved;
+
+                    failed |= half_is_blank(&map_bmp, 0, SHOT_H / 2u,
+                                            "top screen (3D)");
+                    moved = half_diff(&bmp, &map_bmp, 0, SHOT_H / 2u);
+                    printf("3D top screen differs from the 2D one on %ld "
+                           "pixels\n", moved);
+                    if (moved < (long)MOVED_PIXELS) {
+                        printf("  FAIL --map did not replace the top "
+                               "screen with the 3D layer\n");
+                        failed = 1;
+                    }
+                }
+                free(map_bmp.pixels);
+            }
+        }
     }
 
     free(bmp.pixels);
