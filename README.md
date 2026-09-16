@@ -111,9 +111,12 @@ a pure C99 library with no SDL dependency and no third-party code.
 | `engine/g2d/g2d.h` | the whole API, and the provenance of every rule it implements |
 | `engine/g2d/lzss.c` | BIOS LZ77 (0x10) / LZ11 (0x11) container decompression |
 | `engine/g2d/resources.c` | NCLR palettes, NCGR character data, NCER cell banks, NANR cell animations, NMCR multi-cell node tables |
+| `engine/g2d/affine.c` | the fixed-point sine table, the 8.8 PA/PB/PC/PD parameters, and the per-pixel inverse-mapped resample for OBJ and BG alike |
 | `engine/g2d/compose.c` | the compositor: one OAM's pixels, and a whole multi-cell pose, into palette indices and then into 32-bit RGBA |
 | `engine/g2d/rig.c` | loading one poseable multi-part sprite bundle out of a rig archive |
-| `engine/g2d/bg.c` | NSCR screens, text-mode BG layers with scroll and priority, and the frame compositor |
+| `engine/g2d/bg.c` | NSCR screens, text-mode BG layers with scroll and priority, and the per-pixel frame compositor |
+| `engine/g2d/bg_affine.c` | rotation/scaling BG layers: one-byte map entries, 8bpp tiles, the four square sizes, wraparound, the 20.8 reference point |
+| `engine/g2d/window.c` | WIN0/WIN1, the OBJ window, WININ/WINOUT layer masks, and the colour special effects (alpha, brightness up and down) |
 
 What is covered: 4bpp and 8bpp character data, both `char_format`
 conventions (8x8 tiled and linear bitmap), the `0xFFFF` "unspecified
@@ -402,6 +405,62 @@ open.** Settling it needs the matched upload path (the caller of
 decompiled yet; until then the engine defaults to what the game's own
 helper says and the other reading is one field away.
 
+### Windows and the colour special effects
+
+`engine/g2d/window.c` is the last piece of the 2D engine's per-pixel
+stage: two mechanisms that meet in the compositor.
+
+**The windows** decide, per pixel, which layers may contribute and
+whether the colour effect runs there. WIN0 and WIN1 are rectangles
+(WIN0H/WIN0V and WIN1H/WIN1V), each with its own half of WININ; the OBJ
+window is not a rectangle but the union of the pixels of the OBJs whose
+OAM mode selects it, which is the OBJ engine's business rather than the
+compositor's and reaches the window system as a mask the caller supplies;
+WINOUT's two halves cover the OBJ window and everything outside every
+window. Priority runs WIN0, WIN1, the OBJ window, outside, and the first
+region that contains the pixel decides it. With no window enabled at all
+the mask is every layer plus the effect, which is what the hardware does
+when DISPCNT's window bits are clear. A right or bottom edge that is past
+the screen, or before its own left or top edge, reads as the screen edge:
+X2 is eight bits on hardware and cannot express 256 at all, which is why
+a full-width window is written with X2 = 0 as often as with X2 = 255.
+
+**The colour effects** are BLDCNT's three: alpha blending between a first
+and a second target with BLDALPHA's EVA and EVB, brightness increase with
+BLDY's EVY, and brightness decrease with the same. The coefficients are
+sixteenths and saturate at 16. The rule the compositor enforces is the DS
+one, and it is the reason the compositor had to be rebuilt around
+per-pixel resolution: **the effect runs only where the topmost pixel
+belongs to the first target set, and alpha blending additionally only
+where the pixel directly beneath that one belongs to the second target
+set.** A second-target pixel two layers down is not blended with, and
+neither is one the window system hid at that pixel, and neither is
+anything when the window in force there has its effect bit clear. The
+backdrop is a target like any other and is what "directly beneath" means
+once the last layer has been passed.
+
+**The arithmetic is in five bits per channel**, not in the eight the
+palette is stored as. A colour is folded back to 5 bits, blended, clamped
+to 31 and expanded again; the fold `(c8 * 31 + 127) / 255` recovers the
+original 5-bit value for all 32 of them, which the test checks for every
+one. Blending in the 8-bit expansion instead would round differently from
+the hardware on essentially every blended pixel.
+
+**The tests** are synthetic, in `tests/test_window.c`: a frame of two
+flat-coloured 8bpp text BG layers over a backdrop, every expected pixel
+worked out in 5-bit channels on paper. It checks the window priority
+order (WIN0 over WIN1 over the OBJ window over the outside), the
+half-open edges, the past-the-screen edge rule, layers hidden by a window
+revealing the layer behind and then the backdrop, alpha blending at three
+coefficient pairs, saturation at 31, a coefficient above 16 reading as
+16, brightness up and down at three strengths, and the four ways the DS
+rule refuses to blend: a second target that is not in the frame, a second
+target that is two layers down, a window whose effect bit is clear, and a
+first target that is not the topmost pixel. It also checks the
+positive case that makes the "directly beneath" rule concrete: hiding BG1
+with a window makes the backdrop the layer directly beneath BG0, and the
+same blend that refused to run then runs.
+
 ## Growing the source list
 
 `CMakeLists.txt` carries a curated list of matched TUs. It is grown
@@ -591,6 +650,12 @@ repository: 32 objects, both tests pass (test_text 5/5 strings, test_stats
 pass (test_g2d 4/4 species, pixel-identical to the oracle). With the BG
 half added (2026-09-16): 39 objects, four tests pass (test_bg 8/8 screens
 pixel-identical, plus the scroll, priority and screen-layout checks).
+With the affine paths, the windows and the colour effects added
+(2026-09-16): 34 library objects, seven tests pass. `test_g2d` now checks
+six species, the four identity ones pixel-identical and the two affine
+ones measured against the oracle; `test_affine` (46 checks), `test_bg_affine`
+(48 checks) and `test_window` (66 checks) are synthetic and need neither
+game data nor an oracle.
 
 ## Planned Milestones
 
@@ -605,13 +670,22 @@ pixel-identical, plus the scroll, priority and screen-layout checks).
   - [ ] DS frame emulation loop: task list scheduler running at 60 Hz, vblank callbacks
 - [ ] **Milestone 3**: 2D engine shim
   - [x] BG layers from tile and palette memory: NSCR screens, all four
-        screen sizes, 16- and 256-colour modes, scroll, priority and the
-        BG/OBJ frame compositor (`engine/g2d/bg.c`, oracle-tested);
-        affine BG modes still open
-  - [x] OAM sprites: priorities, flips, double-size placement, cell banks
-        and multi-cell poses (`engine/g2d/`, oracle-tested); affine
-        resampling still open
-  - [ ] Windowing and alpha blending
+        text screen sizes, 16- and 256-colour modes, scroll, priority and
+        the BG/OBJ frame compositor (`engine/g2d/bg.c`, oracle-tested),
+        plus the rotation/scaling layers for BG2 and BG3: one-byte map
+        entries, 8bpp tiles, the four square sizes from 128 to 1024,
+        wraparound and the 20.8 reference point
+        (`engine/g2d/bg_affine.c`)
+  - [x] OAM sprites: priorities, flips, cell banks and multi-cell poses
+        (`engine/g2d/`, oracle-tested), with the affine path in the
+        hardware's fixed point: an fx32 sine table, the 8.8 PA/PB/PC/PD
+        parameters, the double-size reference point and the per-pixel
+        inverse-mapped texel fetch (`engine/g2d/affine.c`)
+  - [x] Windowing and alpha blending: WIN0/WIN1, the OBJ window,
+        WININ/WINOUT layer masks, and BLDCNT's alpha blend and the two
+        BLDY brightness effects, under the DS rule that an effect runs
+        only on the topmost pixel and blends only with the one directly
+        beneath it (`engine/g2d/window.c`)
   - [ ] Dual-screen rendering layout
   - [ ] Opening cinematic and title screen render correctly
 - [ ] **Milestone 4**: 3D engine shim

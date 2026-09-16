@@ -413,17 +413,29 @@ static int obj_sample(const G2dObjEntry *obj, s32 x, s32 y, u8 *out_index)
  * need; the backdrop is not in the list and is what shows when the list
  * runs out.
  */
+u32 g2d_frame_sample_bit(const G2dFrameSample *sample)
+{
+    if (sample->is_obj) {
+        return G2D_LAYER_OBJ;
+    }
+    return (sample->layer < 4u) ? (1u << sample->layer) : 0u;
+}
+
 u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
                     G2dFrameSample *out, u32 max)
 {
     u32 count = 0;
     u32 prio, i, bgi;
+    u32 allowed = g2d_window_mask(desc->windows, x, y);
 
     for (prio = 0; prio < 4u && count < max; prio++) {
         for (i = 0; i < desc->n_objs && count < max; i++) {
             const G2dObjEntry *obj = &desc->objs[i];
             u8 index;
 
+            if ((allowed & G2D_LAYER_OBJ) == 0) {
+                break;   /* the window hides every OBJ at this pixel */
+            }
             if (obj->priority != prio || !obj_sample(obj, x, y, &index)) {
                 continue;
             }
@@ -437,6 +449,9 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
             u8 index;
             u32 ci;
 
+            if (bgi < 4u && (allowed & (1u << bgi)) == 0) {
+                continue;   /* the window hides this BG at this pixel */
+            }
             if (bgi < desc->n_bgs) {
                 const G2dBgLayer *layer = &desc->bgs[bgi];
 
@@ -472,6 +487,28 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
     return count;
 }
 
+/*
+ * One pixel's colour before any effect, and which layer bit it belongs
+ * to.  `n` is what g2d_frame_stack returned and `i` is how deep to look:
+ * past the end of the stack is the backdrop, colour 0 of the BG palette.
+ */
+static void stack_color(const G2dFrameDesc *desc, const G2dFrameSample *stack,
+                        u32 n, u32 i, u8 rgb[3], u32 *bit)
+{
+    u8 px[4];
+
+    if (i < n) {
+        put_color(px, stack[i].pal, stack[i].color_index);
+        *bit = g2d_frame_sample_bit(&stack[i]);
+    } else {
+        put_color(px, desc->backdrop_pal, 0);
+        *bit = G2D_LAYER_BD;
+    }
+    rgb[0] = px[0];
+    rgb[1] = px[1];
+    rgb[2] = px[2];
+}
+
 void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
                             u8 *rgba)
 {
@@ -479,13 +516,49 @@ void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
 
     for (y = 0; y < height; y++) {
         for (x = 0; x < width; x++) {
-            u8 *px = rgba + ((size_t)y * width + x) * 4u;
-            G2dFrameSample top;
+            u8 *out = rgba + ((size_t)y * width + x) * 4u;
+            G2dFrameSample stack[2];
+            u8 top[3], below[3];
+            u32 top_bit, below_bit;
+            u32 n;
 
-            if (g2d_frame_stack(desc, (s32)x, (s32)y, &top, 1) != 0) {
-                put_color(px, top.pal, top.color_index);
+            n = g2d_frame_stack(desc, (s32)x, (s32)y, stack, 2);
+            stack_color(desc, stack, n, 0, top, &top_bit);
+
+            out[0] = top[0];
+            out[1] = top[1];
+            out[2] = top[2];
+            out[3] = 255;
+
+            if (desc->blend == NULL
+                || desc->blend->effect == G2D_BLEND_NONE) {
+                continue;
+            }
+            /*
+             * The DS rule, in the order the hardware applies it: the
+             * window at this pixel must allow the effect, the topmost
+             * pixel must belong to the first target set, and for alpha
+             * the pixel directly beneath it must belong to the second
+             * target set.  Nothing else blends.
+             */
+            if ((g2d_window_mask(desc->windows, (s32)x, (s32)y)
+                 & G2D_LAYER_EFFECT) == 0) {
+                continue;
+            }
+            if ((top_bit & desc->blend->first) == 0) {
+                continue;
+            }
+            if (desc->blend->effect == G2D_BLEND_ALPHA) {
+                stack_color(desc, stack, n, 1, below, &below_bit);
+                if ((below_bit & desc->blend->second) == 0) {
+                    continue;
+                }
+                g2d_blend_alpha(top, below, desc->blend->eva,
+                                desc->blend->evb, out);
             } else {
-                put_color(px, desc->backdrop_pal, 0);
+                g2d_blend_brightness(top, desc->blend->evy,
+                                     desc->blend->effect
+                                     == G2D_BLEND_BRIGHT_UP, out);
             }
         }
     }

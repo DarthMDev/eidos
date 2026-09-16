@@ -626,6 +626,97 @@ void g2d_frame_compose(const G2dBgLayer *bgs, u32 n_bgs,
  * being its own `bg_index`.  An OBJ therefore wins a priority tie against
  * any BG, which is what g2d_frame_compose already did.
  */
+/* ------------------------------------------------------------------ */
+/* Windows and the colour special effects                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The layer bits, in the hardware's order, shared by three registers:
+ * WININ/WINOUT use bits 0-5 to say which layers a region shows and bit 5
+ * to say whether the colour effect runs there; BLDCNT uses the same bits
+ * 0-5 for the first target and bits 8-13 for the second, with bit 5
+ * meaning the backdrop.  Two names for bit 5 because the two registers
+ * spend it differently.
+ */
+#define G2D_LAYER_BG0    0x01u
+#define G2D_LAYER_BG1    0x02u
+#define G2D_LAYER_BG2    0x04u
+#define G2D_LAYER_BG3    0x08u
+#define G2D_LAYER_OBJ    0x10u
+#define G2D_LAYER_BD     0x20u   /* BLDCNT: the backdrop                */
+#define G2D_LAYER_EFFECT 0x20u   /* WININ/WINOUT: run the colour effect */
+#define G2D_LAYER_ALL    0x3Fu
+
+/*
+ * One rectangular window: WIN0H/WIN0V or WIN1H/WIN1V, plus its half of
+ * WININ.  The region is [x1, x2) by [y1, y2).  The hardware reads a right
+ * or bottom edge that is past the screen, or before its own left or top
+ * edge, as the screen edge, and so does this: an x2 greater than
+ * G2D_SCREEN_WIDTH or less than x1 means "to the right edge", and the
+ * same for y2 against G2D_SCREEN_HEIGHT.
+ */
+typedef struct G2dWindow {
+    int enabled;
+    u32 x1, x2, y1, y2;
+    u32 layers;        /* the WININ half: layer bits, plus the effect bit */
+} G2dWindow;
+
+/*
+ * The window system.  Priority, highest first: WIN0, WIN1, the OBJ
+ * window, then outside every window.  With no window enabled at all,
+ * every layer shows everywhere and the colour effect runs everywhere,
+ * which is what the hardware does when DISPCNT's window bits are clear.
+ *
+ * The OBJ window is a region rather than a rectangle: on hardware it is
+ * the union of the pixels of the OBJs whose OAM mode selects it, which is
+ * the OBJ engine's business rather than the compositor's.  The caller
+ * supplies it as a width*height mask, non-zero inside.
+ */
+typedef struct G2dWindows {
+    G2dWindow win0, win1;
+    int       obj_enabled;
+    u32       obj_layers;      /* WINOUT bits 8-13 */
+    u32       outside_layers;  /* WINOUT bits 0-5  */
+    const u8 *obj_mask;        /* width*height, or NULL */
+    u32       mask_width, mask_height;
+} G2dWindows;
+
+/*
+ * The layer bits in force at (x, y): which layers may contribute and
+ * whether the colour effect runs.  `windows` may be NULL, which is
+ * G2D_LAYER_ALL everywhere.
+ */
+u32 g2d_window_mask(const G2dWindows *windows, s32 x, s32 y);
+
+/* BLDCNT bits 6-7. */
+#define G2D_BLEND_NONE        0u
+#define G2D_BLEND_ALPHA       1u
+#define G2D_BLEND_BRIGHT_UP   2u
+#define G2D_BLEND_BRIGHT_DOWN 3u
+
+/*
+ * BLDCNT, BLDALPHA and BLDY together.  The coefficients are the
+ * hardware's sixteenths: EVA and EVB are 0..16 (a register value above 16
+ * reads as 16) and so is EVY.
+ *
+ * The arithmetic is done in the 5 bits per channel the DS actually has,
+ * not in the 8-bit expansion the palette is stored as: a colour is folded
+ * back to 5 bits, blended, clamped to 31, and expanded again.  Anything
+ * else would round differently from the hardware on every blended pixel.
+ */
+typedef struct G2dBlend {
+    u32 effect;      /* a G2D_BLEND_* code   */
+    u32 first;       /* BLDCNT bits 0-5      */
+    u32 second;      /* BLDCNT bits 8-13     */
+    u32 eva, evb;    /* BLDALPHA, sixteenths */
+    u32 evy;         /* BLDY, sixteenths     */
+} G2dBlend;
+
+/* The three effects on 8-bit channels, through the 5-bit fold. */
+void g2d_blend_alpha(const u8 first[3], const u8 second[3],
+                     u32 eva, u32 evb, u8 out[3]);
+void g2d_blend_brightness(const u8 first[3], u32 evy, int up, u8 out[3]);
+
 typedef struct G2dFrameDesc {
     const G2dBgLayer       *bgs;
     u32                     n_bgs;
@@ -634,6 +725,8 @@ typedef struct G2dFrameDesc {
     const G2dObjEntry      *objs;
     u32                     n_objs;
     const G2dPalette       *backdrop_pal;
+    const G2dWindows       *windows;   /* NULL: no windowing      */
+    const G2dBlend         *blend;     /* NULL: no colour effect  */
 } G2dFrameDesc;
 
 void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
@@ -656,9 +749,18 @@ typedef struct G2dFrameSample {
  * of them; returns how many were written.  Entry 0 is the topmost pixel
  * and entry 1 the one directly beneath it.  The backdrop is not in the
  * list: an empty list means the backdrop shows.
+ *
+ * A layer the window system hides at this pixel contributes nothing, so
+ * what comes back is what the screen shows, which is also what the colour
+ * special effects have to be decided on: the DS blends only where the
+ * first-target pixel is the topmost one and the second-target pixel is
+ * the one directly beneath it.
  */
 u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
                     G2dFrameSample *out, u32 max);
+
+/* The G2D_LAYER_* bit one sample belongs to. */
+u32 g2d_frame_sample_bit(const G2dFrameSample *sample);
 
 /* ------------------------------------------------------------------ */
 /* Rig blocks (a/0/0/4 and its siblings)                               */
