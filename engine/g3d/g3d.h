@@ -1,0 +1,505 @@
+/*
+ * engine/g3d/g3d.h -- the DS 3D (geometry engine + rasteriser) shim.
+ *
+ * eidos's third host-side reimplementation of hardware the DS had and a
+ * PC does not, after engine/g2d/ (the 2D engine) and engine/audio/ (the
+ * ARM7 sound core).  Pure C99, no SDL, no third-party code, standard
+ * library only (and not even math.h: every number below is integer
+ * arithmetic on the hardware's own 20.12 fixed point).
+ *
+ * Where the behaviour comes from, in order of authority, and the file
+ * headers under engine/g3d/ repeat this per rule:
+ *
+ *   1. aletheia's asset lane.  tools/assets/nsbmd.py cracked the NSBMD /
+ *      NSBTX container, the Nitro resource dictionary (the patricia node
+ *      array, the {entrySize, namesOffset} sub-header, the trailing
+ *      16-byte name blob), the TEX0 texture record (a u16 offset in
+ *      8-byte units plus the upper half of TEXIMAGE_PARAM), the palette
+ *      record, and the MDL0 shape dictionary's two-base descriptor
+ *      layout; tools/assets/map_shapes.py cracked the render-command
+ *      bytecode (BINDMATERIAL 4 / DRAWSHAPE 5) and the material-name to
+ *      texture-name link.  aletheia's docs/ASSETS.md records each of
+ *      those and the gaps beside them.  This engine parses the same
+ *      structures in C and is tested against that lane's own OBJ export.
+ *   2. aletheia's matched sources.  src/matched/unit_02048AD0.c and
+ *      unit_02048BC4.c are g3d_light.c's accessor run and light-set
+ *      builder and fix the shape of the game's light object (three
+ *      VecFx32 at +0x20, +0x2C, +0x38 over a 0x1C-byte head); they are
+ *      what says the game's 3D vectors are VecFx32, i.e. three fx32 in
+ *      the 1.19.12 format sdk/types.h defines.  No matched source in
+ *      aletheia today contains the geometry engine's own arithmetic.
+ *   3. public NDS 3D hardware documentation: the geometry command set
+ *      and its parameter counts, the matrix modes and stack depths, the
+ *      vertex command encodings, TEXIMAGE_PARAM's bit layout, the
+ *      texture pixel formats, and POLYGON_ATTR's fields.
+ *
+ * Nothing here is derived from any other decompilation, port or emulator.
+ *
+ * WHAT IS ATTESTED AND WHAT IS NOT.  The parsing and the vertex pipeline
+ * are checked against an oracle: tests/test_g3d.c transforms every vertex
+ * of two real map models through this engine with an identity matrix
+ * stack and compares against the OBJ aletheia's own tools write.  The
+ * *rasteriser* has no oracle: there is no DS frame in this repository to
+ * compare against, and nothing here claims pixel-exactness with the
+ * hardware.  Every rule it follows is either documented hardware
+ * behaviour or is marked an approximation in raster.c's header and in
+ * README.md's engine/g3d section.
+ */
+
+#ifndef EIDOS_ENGINE_G3D_H
+#define EIDOS_ENGINE_G3D_H
+
+#include <stddef.h>
+
+#include "port.h"
+#include "types.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ------------------------------------------------------------------ */
+/* Fixed point and matrices                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The geometry engine's number is fx32: 1.19.12, sdk/types.h's own
+ * typedef, and the same one src/matched/unit_02048AD0.c's VecFx32 is
+ * three of.  FX_MUL keeps a 64-bit intermediate and shifts right by 12
+ * *arithmetically*, so a negative product truncates towards minus
+ * infinity, which is what an ARM `smull` + `mov lsr/asr` pair does and
+ * what portability rule 3 forbids routing through a float to "simplify".
+ *
+ * A matrix is row-major and vectors are rows: a point is transformed as
+ * v' = v * M, so M's fourth row is the translation.  That is the DS's
+ * own convention, and it is why MTX_MULT_* multiplies the parameter on
+ * the *left* of the current matrix (current = param * current): a
+ * command issued later ends up applied to the vertex earlier.
+ */
+typedef struct G3dVec {
+    fx32 x, y, z;
+} G3dVec;
+
+/* Row-major, m[row * 4 + col].  The 4x3 forms keep the implied fourth
+ * column (0, 0, 0, 1) explicit so one type covers both. */
+typedef struct G3dMtx {
+    fx32 m[16];
+} G3dMtx;
+
+void g3d_mtx_identity(G3dMtx *out);
+/* out = a * b, in fx32 with 64-bit intermediates. */
+void g3d_mtx_mul(G3dMtx *out, const G3dMtx *a, const G3dMtx *b);
+/* v' = v * m, with v's implied w == 1.  out_w receives the fourth term. */
+void g3d_mtx_xform(const G3dMtx *m, fx32 x, fx32 y, fx32 z,
+                   fx32 *ox, fx32 *oy, fx32 *oz, fx32 *ow);
+
+/* The DS's MTX_TRANS / MTX_SCALE as matrices, and the two camera helpers
+ * a caller needs that the hardware has SDK functions for rather than
+ * commands: a frustum (MTX_FRUSTUM) and a look-at (MTX_LOOKAT). */
+void g3d_mtx_translate(G3dMtx *out, fx32 x, fx32 y, fx32 z);
+void g3d_mtx_scale(G3dMtx *out, fx32 x, fx32 y, fx32 z);
+void g3d_mtx_frustum(G3dMtx *out, fx32 t, fx32 b, fx32 l, fx32 r,
+                     fx32 n, fx32 f);
+/* fovy is a 16-bit binary angle (65536 == one turn); the sine and cosine
+ * come from engine/g2d/affine.c's table, so the 3D engine adds no second
+ * trigonometry implementation to the port. */
+void g3d_mtx_perspective(G3dMtx *out, u16 fovy, fx32 aspect, fx32 n, fx32 f);
+void g3d_mtx_lookat(G3dMtx *out, const G3dVec *eye, const G3dVec *up,
+                    const G3dVec *at);
+
+/* ------------------------------------------------------------------ */
+/* The matrix stack                                                    */
+/* ------------------------------------------------------------------ */
+
+#define G3D_MTX_MODE_PROJECTION  0u
+#define G3D_MTX_MODE_POSITION    1u
+#define G3D_MTX_MODE_POSVEC      2u
+#define G3D_MTX_MODE_TEXTURE     3u
+
+/*
+ * The hardware's stacks: one entry for projection, one for texture, 31
+ * usable entries for position/vector (the 32nd is the overflow slot,
+ * which is why a push at 31 sets the error flag but still writes).  The
+ * error flag is sticky and readable, which is how a test can assert that
+ * a display list balanced its pushes and pops.
+ */
+#define G3D_POS_STACK_DEPTH 32u
+
+typedef struct G3dMtxStack {
+    u32   mode;
+    G3dMtx proj, pos, vec, tex;
+    G3dMtx proj_save, tex_save;
+    G3dMtx pos_stack[G3D_POS_STACK_DEPTH];
+    G3dMtx vec_stack[G3D_POS_STACK_DEPTH];
+    u32   sp;        /* position/vector stack pointer */
+    u32   error;     /* sticky over/underflow */
+    int   clip_dirty;
+    G3dMtx clip;     /* pos * proj, recomputed lazily */
+} G3dMtxStack;
+
+void g3d_mtx_stack_init(G3dMtxStack *st);
+void g3d_mtx_stack_set_mode(G3dMtxStack *st, u32 mode);
+void g3d_mtx_stack_push(G3dMtxStack *st);
+void g3d_mtx_stack_pop(G3dMtxStack *st, s32 count);
+void g3d_mtx_stack_store(G3dMtxStack *st, u32 slot);
+void g3d_mtx_stack_restore(G3dMtxStack *st, u32 slot);
+void g3d_mtx_stack_load_identity(G3dMtxStack *st);
+void g3d_mtx_stack_load(G3dMtxStack *st, const G3dMtx *m);
+void g3d_mtx_stack_mult(G3dMtxStack *st, const G3dMtx *m);
+const G3dMtx *g3d_mtx_stack_clip(G3dMtxStack *st);
+
+/* ------------------------------------------------------------------ */
+/* Textures                                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * GX texture formats, the TEXIMAGE_PARAM format field.  The survey
+ * tools/g3d_oracle.py runs over a/0/1/4 (the shared terrain and building
+ * texture archive every map model draws from) reports which of them
+ * actually occur; see README.md.  All seven decode here anyway, because
+ * a decoder that only handles what one archive happens to use is a trap
+ * for the next archive.
+ */
+#define G3D_TEXFMT_NONE   0u
+#define G3D_TEXFMT_A3I5   1u
+#define G3D_TEXFMT_PAL4   2u
+#define G3D_TEXFMT_PAL16  3u
+#define G3D_TEXFMT_PAL256 4u
+#define G3D_TEXFMT_COMP   5u   /* 4x4 texel compressed */
+#define G3D_TEXFMT_A5I3   6u
+#define G3D_TEXFMT_DIRECT 7u
+
+typedef struct G3dTexture {
+    u32 width, height;
+    u32 format;
+    u8 *rgba;    /* owned, width*height*4, R,G,B,A */
+} G3dTexture;
+
+void g3d_texture_free(G3dTexture *t);
+
+/* Bytes of texel data one (format, width, height) occupies.  Format 5
+ * carries 4 bytes of texel data and 2 bytes of index data per 4x4 block
+ * in one region, so it is (w/4)*(h/4)*6 rather than a bits-per-pixel
+ * product. */
+u32 g3d_texture_byte_size(u32 format, u32 width, u32 height);
+
+/*
+ * Decode one texture into RGBA.  `palette` is the raw BGR555 halfwords
+ * the texture's own palette record points at and `pal_bytes` its length;
+ * a direct-colour texture needs neither.  `color0_transparent` is
+ * TEXIMAGE_PARAM bit 29: colour 0 of a paletted format is transparent
+ * rather than its palette entry.  Returns 0 on success.
+ */
+int g3d_texture_decode(G3dTexture *out, u32 format, u32 width, u32 height,
+                       const u8 *texel, u32 texel_bytes,
+                       const u8 *palette, u32 pal_bytes,
+                       int color0_transparent);
+
+/* BGR555 to 8 bits per channel, the same c * 255 / 31 expansion
+ * engine/g2d uses for the 2D palettes. */
+void g3d_bgr555(u16 v, u8 *r, u8 *g, u8 *b);
+
+/* ------------------------------------------------------------------ */
+/* NSBMD / NSBTX containers                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A Nitro resource dictionary.  `entries` points into the caller's
+ * buffer; nothing here copies.  The per-entry record layout is the one
+ * aletheia's nsbmd.py cracked: `count + 1` four-byte patricia nodes,
+ * then a {u16 entry_size, u16 names_offset} sub-header at offset
+ * (count + 1) * 4 (which is exactly the dictionary header's third
+ * halfword), then count * entry_size bytes of records, then count
+ * sixteen-byte NUL-padded names.
+ */
+typedef struct G3dResDict {
+    const u8 *base;      /* the dictionary's first byte, borrowed */
+    u32 size;            /* total bytes, including the 8-byte header */
+    u32 count;
+    u32 entry_size;
+    const u8 *records;   /* count * entry_size bytes, borrowed */
+    const u8 *names;     /* count * 16 bytes, borrowed */
+} G3dResDict;
+
+int  g3d_dict_parse(G3dResDict *out, const u8 *buf, u32 size, u32 off);
+/* Copies at most 16 bytes plus a terminator into `out`. */
+void g3d_dict_name(const G3dResDict *d, u32 i, char out[17]);
+const u8 *g3d_dict_record(const G3dResDict *d, u32 i);
+
+typedef struct G3dTexRecord {
+    char name[17];
+    u32  offset;     /* byte offset into the TEX0 texel region */
+    u32  width, height;
+    u32  format;
+    u32  color0;     /* colour 0 is transparent */
+    u32  params;     /* the raw upper half of TEXIMAGE_PARAM */
+} G3dTexRecord;
+
+typedef struct G3dPalRecord {
+    char name[17];
+    u32  offset;     /* byte offset into the TEX0 palette region */
+} G3dPalRecord;
+
+/* A parsed TEX0 block.  Every pointer borrows the caller's buffer. */
+typedef struct G3dTex0 {
+    const u8 *base;
+    u32 size;
+    G3dResDict tex_dict, pal_dict;
+    const u8 *texel;  u32 texel_bytes;
+    const u8 *pal;    u32 pal_bytes;
+} G3dTex0;
+
+int g3d_tex0_parse(G3dTex0 *out, const u8 *block, u32 size);
+int g3d_tex0_texture(const G3dTex0 *t, u32 i, G3dTexRecord *out);
+int g3d_tex0_palette(const G3dTex0 *t, u32 i, G3dPalRecord *out);
+/*
+ * Decode texture `i` of a TEX0 block, resolving its palette the way
+ * aletheia's asset lane does: the `<name>_pl` naming convention when the
+ * palette dictionary has that exact name (a real link, confirmed 1:1
+ * across a/0/1/4's shared sets), otherwise the palette entry whose
+ * decoded indices all fall in range, tie-broken by how closely the
+ * format's index range matches the palette's colour count.  The material
+ * record that would name the palette outright is a structure nothing in
+ * this project has cracked; that gap is aletheia's, and it is repeated
+ * here rather than papered over.
+ */
+int g3d_tex0_decode(const G3dTex0 *t, u32 i, G3dTexture *out);
+
+/* The outer BMD0 / BTX0 container: find one block by magic. */
+const u8 *g3d_container_block(const u8 *data, u32 size, const char magic[4],
+                              u32 *block_size);
+
+/* ------------------------------------------------------------------ */
+/* Geometry: the display-list interpreter's output                     */
+/* ------------------------------------------------------------------ */
+
+typedef struct G3dVertex {
+    /* the vertex command's own output, before the position matrix */
+    fx32 ox, oy, oz;
+    /* clip space: (ox, oy, oz, 1) * position * projection */
+    fx32 x, y, z, w;
+    /* texture coordinates in s16.4 texel units, after the texture matrix */
+    s32  s, t;
+    u8   r, g, b;
+} G3dVertex;
+
+typedef struct G3dPoly {
+    u32 first;      /* first index in G3dGeom.idx */
+    u32 count;      /* 3 or 4 */
+    u32 attr;       /* POLYGON_ATTR in force at BEGIN_VTXS */
+    u32 teximage;   /* TEXIMAGE_PARAM in force */
+    u32 pltt_base;
+} G3dPoly;
+
+typedef struct G3dGeom {
+    G3dVertex *verts; u32 n_verts, cap_verts;
+    u32       *idx;   u32 n_idx,   cap_idx;
+    G3dPoly   *polys; u32 n_polys, cap_polys;
+} G3dGeom;
+
+void g3d_geom_init(G3dGeom *g);
+void g3d_geom_free(G3dGeom *g);
+
+/* ------------------------------------------------------------------ */
+/* Geometry: the command interpreter                                   */
+/* ------------------------------------------------------------------ */
+
+/* Primitive kinds, the BEGIN_VTXS parameter's low two bits. */
+#define G3D_PRIM_TRIANGLES  0u
+#define G3D_PRIM_QUADS      1u
+#define G3D_PRIM_TRISTRIP   2u
+#define G3D_PRIM_QUADSTRIP  3u
+
+typedef struct G3dGx {
+    G3dMtxStack mtx;
+    G3dGeom    *out;
+
+    fx32 cx, cy, cz;          /* the current vertex register */
+    s32  cs, ct;              /* the current texcoord, s16.4 texel units */
+    u8   cr, cg, cb;          /* the current colour, 8 bits per channel */
+    G3dVec normal;
+
+    u32  poly_attr;           /* the value in force */
+    u32  poly_attr_pending;   /* POLYGON_ATTR takes effect at BEGIN_VTXS */
+    u32  teximage, pltt_base;
+
+    u32  begin_mode;
+    int  batch_open;
+    u32  batch_first, batch_count;
+    u32  strip_v[4];          /* the last vertices, for strip assembly */
+
+    u32  commands;            /* commands executed, for the tests */
+    u32  vtx_cmd_count[8];    /* per vertex-command-opcode counters */
+} G3dGx;
+
+void g3d_gx_init(G3dGx *gx, G3dGeom *out);
+
+/*
+ * Run the command stream in `data[start .. )`.
+ *
+ * `soft_limit` stops decoding at the first command boundary at or past
+ * it *while no primitive batch is open*, and `hard_limit` stops
+ * unconditionally.  Both exist for the same reason aletheia's
+ * nsbmd.decode_shape_dl has them: a real MDL0 shape's declared dlSize
+ * sometimes ends a handful of bytes before its own last END_VTXS, so a
+ * hard cut at dlSize silently drops that shape's last batch while an
+ * unbounded run would walk into the next shape.  Pass `size` for both to
+ * decode a stream that really does end where it says it does.
+ *
+ * Returns the offset decoding stopped at.  Stops on the first
+ * unrecognised opcode byte, which is also how the stream's own end is
+ * detected (real display lists are followed by non-command bytes).
+ */
+u32 g3d_gx_run(G3dGx *gx, const u8 *data, u32 size, u32 start,
+               u32 soft_limit, u32 hard_limit);
+
+/*
+ * The locator aletheia's find_gx_stream is: the first four-byte-aligned
+ * offset in [start, size) from which at least `min_commands` commands
+ * decode without hitting an unrecognised opcode.  A real shape's byte
+ * range opens with a short non-command preamble this project has not
+ * identified; that gap is documented in aletheia's docs/ASSETS.md and is
+ * inherited here rather than guessed at.  Returns the offset, or `size`
+ * when no such run exists.
+ */
+u32 g3d_gx_find_stream(const u8 *data, u32 size, u32 start, u32 min_commands);
+
+/* ------------------------------------------------------------------ */
+/* Map models                                                          */
+/* ------------------------------------------------------------------ */
+
+typedef struct G3dShape {
+    u32  index;
+    u32  dl_offset, dl_size;    /* the descriptor's own two fields */
+    u32  material;              /* index into the material dictionary, or ~0 */
+    char texture[17];           /* the bare texture name, or "" */
+    u32  first_poly, n_polys;
+    u32  first_vert, n_verts;
+} G3dShape;
+
+/*
+ * One map model out of a/0/0/8, decoded shape by shape.  The sub-file is
+ * `header || BMD0 || per-tile grid || tail` and the BMD0 is found by its
+ * magic, which is the same strip aletheia's map_shapes.py does.
+ */
+typedef struct G3dModel {
+    char      name[17];
+    u8       *raw;         /* owned: the whole sub-file            */
+    u32       raw_size;
+    const u8 *mdl;         /* the model's data tail, inside raw    */
+    u32       mdl_size;
+    G3dShape *shapes; u32 n_shapes;
+    G3dGeom   geom;
+} G3dModel;
+
+/* The a/0/1/4 texture archive, indexed by texture name.  Sub-files are
+ * decoded lazily: the index is a name scan with no pixel work. */
+typedef struct G3dTexArchive G3dTexArchive;
+
+G3dTexArchive *g3d_texarchive_open(const char *rel_path);
+void           g3d_texarchive_close(G3dTexArchive *ar);
+u32            g3d_texarchive_names(const G3dTexArchive *ar);
+/* Returns a borrowed texture owned by the archive, or NULL. */
+const G3dTexture *g3d_texarchive_get(G3dTexArchive *ar, const char *name);
+
+/*
+ * Load map model `index` out of `rel_path` (a/0/0/8), decode every
+ * shape's display list into one G3dGeom, and resolve each shape's
+ * material to a texture name.  `ar` may be NULL, in which case the
+ * material dictionary is identified without the cross-check against real
+ * texture names and the texture names are still recorded.
+ */
+int  g3d_model_load(G3dModel *out, const char *rel_path, u32 index,
+                    const G3dTexArchive *ar);
+void g3d_model_free(G3dModel *m);
+
+/* ------------------------------------------------------------------ */
+/* The rasteriser                                                      */
+/* ------------------------------------------------------------------ */
+
+#define G3D_SCREEN_W 256u
+#define G3D_SCREEN_H 192u
+
+/*
+ * The render target: an RGBA buffer in exactly the byte order and at
+ * exactly the geometry g2d_frame_compose writes (R, G, B, A, row-major,
+ * top row first), so it can stand as BG0's pixels the way the 3D layer
+ * does on hardware, and a depth buffer beside it.
+ */
+typedef struct G3dTarget {
+    u32  width, height;
+    u8  *rgba;    /* owned */
+    s32 *depth;   /* owned; larger is further away */
+} G3dTarget;
+
+int  g3d_target_init(G3dTarget *t, u32 width, u32 height);
+void g3d_target_free(G3dTarget *t);
+/* Clear to one colour and to the far depth. */
+void g3d_target_clear(G3dTarget *t, u8 r, u8 g, u8 b, u8 a);
+
+#define G3D_DEPTH_FAR 0x7FFFFFFF
+
+/* POLYGON_ATTR fields. */
+#define G3D_ATTR_MODE(a)        (((a) >> 4) & 3u)
+#define G3D_ATTR_BACK(a)        (((a) >> 6) & 1u)
+#define G3D_ATTR_FRONT(a)       (((a) >> 7) & 1u)
+#define G3D_ATTR_ALPHA(a)       (((a) >> 16) & 0x1Fu)
+#define G3D_ATTR_ID(a)          (((a) >> 24) & 0x3Fu)
+#define G3D_POLY_MODE_MODULATE  0u
+#define G3D_POLY_MODE_DECAL     1u
+#define G3D_POLY_MODE_TOON      2u
+#define G3D_POLY_MODE_SHADOW    3u
+
+/* TEXIMAGE_PARAM fields this engine reads. */
+#define G3D_TEX_REPEAT_S(p)  (((p) >> 16) & 1u)
+#define G3D_TEX_REPEAT_T(p)  (((p) >> 17) & 1u)
+#define G3D_TEX_FLIP_S(p)    (((p) >> 18) & 1u)
+#define G3D_TEX_FLIP_T(p)    (((p) >> 19) & 1u)
+#define G3D_TEX_FORMAT(p)    (((p) >> 26) & 7u)
+
+/*
+ * Draw one convex polygon of `n` clip-space vertices (3 or 4).  The
+ * near-plane clip, the perspective divide, the viewport transform, the
+ * culling test, the edge walk, the depth test and the texture blend are
+ * all inside; `tex` may be NULL for an untextured polygon.
+ */
+void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
+                        u32 attr, u32 teximage, const G3dTexture *tex);
+
+/* Draw every polygon of a geometry buffer, looking a texture up per
+ * polygon through the callback (which may return NULL). */
+typedef const G3dTexture *(*G3dTexLookup)(void *user, u32 poly_index);
+void g3d_raster_geom(G3dTarget *t, const G3dGeom *g,
+                     G3dTexLookup lookup, void *user);
+
+/* Render a whole model with a camera: sets the matrix stack up, re-runs
+ * nothing (the geometry is already decoded in model space), transforms
+ * and rasterises.  `view` is the camera matrix, `proj` the projection. */
+void g3d_render_model(G3dTarget *t, const G3dModel *m,
+                      const G3dMtx *view, const G3dMtx *proj,
+                      G3dTexArchive *ar);
+
+/* ------------------------------------------------------------------ */
+/* Meeting the 2D compositor                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Compose a 2D frame over a 3D one, with the 3D layer at the back: every
+ * pixel where the 2D frame would show its backdrop shows the 3D frame
+ * instead.  That is the arrangement a DS game uses when BG0 carries the
+ * 3D output at the lowest priority, which is the overworld's.
+ *
+ * What it is not: a general BG0-is-3D hook.  A 2D BG layer *behind* the
+ * 3D layer, and the colour special effects blending with a 3D pixel, need
+ * the 3D layer inside g2d's own per-pixel stack rather than under it, and
+ * that is the piece of Milestone 4 this does not close.  `desc` is the
+ * ordinary G2dFrameDesc engine/g2d composes.
+ */
+void g3d_compose_over(const void *frame_desc, const G3dTarget *t,
+                      u32 width, u32 height, u8 *rgba);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* EIDOS_ENGINE_G3D_H */

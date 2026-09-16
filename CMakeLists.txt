@@ -310,6 +310,17 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/window.c     # windows, alpha and brightness
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/frame/frame.c    # the vblank frame loop and the OS tick
 
+    # engine/g3d/ -- the geometry engine and the software rasteriser, the
+    # host's stand-in for the DS 3D hardware.  No SDL here either: the
+    # parsing and the vertex pipeline are checked against aletheia's own
+    # OBJ export by tests/test_g3d.c, and the rasteriser writes an RGBA
+    # buffer in exactly the shape g2d_frame_compose does.
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/mtx.c        # 20.12 fixed point, the matrix stack
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/texture.c    # the seven GX texture formats
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/nsbmd.c      # NSBMD/NSBTX, dictionaries, shapes
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/gx.c         # the display-list interpreter
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/raster.c     # the software rasteriser
+
     # engine/audio/ -- the SDAT sequencer and mixer, the host's stand-in for
     # the ARM7 sound core.  No SDL here either: the platform layer's audio
     # callback calls into this, and tests/test_audio.c drives it headless
@@ -331,6 +342,7 @@ add_library(eidos STATIC
 target_include_directories(eidos PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/frame
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio
 )
@@ -626,6 +638,52 @@ add_custom_command(
 add_custom_target(bw_bg_oracle DEPENDS ${BW_BG_ORACLE_FILES})
 
 # ---------------------------------------------------------------------------
+# The 3D engine's geometry oracle
+# ---------------------------------------------------------------------------
+#
+# tools/g3d_oracle.py imports aletheia's tools/assets/nsbmd.py and
+# tools/assets/map_shapes.py (nothing is copied here, and aletheia is not
+# modified) and writes, per model, the per-shape textured OBJ that lane
+# exports, plus models.txt: the manifest naming each shape's texture and
+# the (width, height) the OBJ's `vt` lines were divided by, which is what
+# lets tests/test_g3d.c compare texture coordinates in the sixteenths of
+# a texel the TEXCOORD command actually carries.
+#
+# Two models, picked for coverage rather than for looks:
+#
+#   pl_00_00   a/0/0/8#120   an interior, 40 shapes, the model the asset
+#                            lane's own shape-dictionary crack was
+#                            confirmed against
+#   map24_23   a/0/0/8#0     an outdoor terrain chunk, 26 shapes
+#
+# The manifest also carries the texture-format survey over a/0/1/4, the
+# shared archive every map model draws from, which is what README.md's
+# engine/g3d section quotes for which formats actually occur.
+set(BW_G3D_MODELS pl_00_00:120 map24_23:0)
+set(BW_G3D_ORACLE_DIR ${CMAKE_CURRENT_BINARY_DIR}/oracle/g3d)
+set(BW_G3D_ORACLE_FILES
+    ${BW_G3D_ORACLE_DIR}/models.txt
+    ${BW_G3D_ORACLE_DIR}/pl_00_00.obj
+    ${BW_G3D_ORACLE_DIR}/map24_23.obj
+)
+
+add_custom_command(
+    OUTPUT ${BW_G3D_ORACLE_FILES}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/g3d_oracle.py
+            --aletheia-root ${ALETHEIA_ROOT}
+            --data-root ${BW_DATA_ROOT_ABS}
+            --out ${BW_G3D_ORACLE_DIR}
+            ${BW_G3D_MODELS}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/g3d_oracle.py
+            ${ALETHEIA_ROOT}/tools/assets/nsbmd.py
+            ${ALETHEIA_ROOT}/tools/assets/map_shapes.py
+            ${ALETHEIA_ROOT}/tools/assets/narc.py
+    COMMENT "Generating the g3d geometry oracle with aletheia's map_shapes.py"
+    VERBATIM
+)
+add_custom_target(bw_g3d_oracle DEPENDS ${BW_G3D_ORACLE_FILES})
+
+# ---------------------------------------------------------------------------
 # The audio engine's oracle
 # ---------------------------------------------------------------------------
 #
@@ -704,6 +762,21 @@ add_dependencies(test_bg bw_bg_oracle)
 target_include_directories(test_bg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_bg PRIVATE eidos)
 add_test(NAME test_bg COMMAND test_bg ${BW_DATA_ROOT_ABS} ${BW_BG_ORACLE_DIR})
+
+# The 3D engine test has two halves.  The geometry half reads the OBJ and
+# the manifest the oracle wrote and compares every vertex and every
+# texture coordinate of two real map models against this engine's own
+# display-list decode.  The raster half renders one of them from a fixed
+# camera into a BMP in the build directory and asserts non-trivial
+# content, plus a set of synthetic checks whose expected pixels are
+# computed on paper.  There is no DS frame to compare a picture against
+# and the test does not pretend otherwise.
+add_executable(test_g3d ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_g3d.c)
+add_dependencies(test_g3d bw_g3d_oracle)
+target_include_directories(test_g3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_g3d PRIVATE eidos)
+add_test(NAME test_g3d COMMAND test_g3d ${BW_DATA_ROOT_ABS} ${BW_G3D_ORACLE_DIR}
+                               ${CMAKE_CURRENT_BINARY_DIR}/g3d_house.bmp)
 
 # The audio test reads its sequence list out of the audio oracle's own
 # manifest, so the set of sequences is changed in one place
