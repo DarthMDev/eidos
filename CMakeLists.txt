@@ -150,6 +150,7 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/compose.c    # the OBJ compositor
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/rig.c        # rig block loading
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg.c         # BG layers, the frame compositor
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg_affine.c  # rotation/scaling BG layers
 )
 
 add_library(eidos STATIC
@@ -340,7 +341,7 @@ add_test(NAME test_bg COMMAND test_bg ${BW_DATA_ROOT_ABS} ${BW_BG_ORACLE_DIR})
 # expected pixel in them is computed on paper from the hardware rule under
 # test.  They are the counterweight to the oracle comparisons, which can
 # only ever show that two implementations agree.
-foreach(t test_affine)
+foreach(t test_affine test_bg_affine)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)

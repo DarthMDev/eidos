@@ -453,16 +453,107 @@ void g2d_bg_map_tiles(u32 size_code, u32 *tiles_wide, u32 *tiles_high);
 /* BG layers and the frame compositor                                  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The two readings of a 512-pixel-wide or 512-pixel-tall screen, behind a
+ * flag rather than behind a guess.  G2D_BG_ORDER_VRAM is what
+ * src/matched/func_02040EE0.c attests and is the default (the value zero,
+ * so a zeroed layer gets it): the second 32x32 map follows the first for
+ * 512x256, and four are laid out in a 2x2 grid for 512x512.
+ * G2D_BG_ORDER_ROW_MAJOR reads the same entry array row-major at the map's
+ * own tile width, which is what aletheia's background.py does for every
+ * NSCR on disk.  The flag is ignored for G2D_BG_SIZE_FLAT, which is
+ * row-major by construction, and the two readings coincide for every size
+ * except 512x256 and 512x512.  Which one an NSCR file on disk is actually
+ * in is not settled by the evidence this repository has; see README.md.
+ */
+#define G2D_BG_ORDER_VRAM      0u
+#define G2D_BG_ORDER_ROW_MAJOR 1u
+
 typedef struct G2dBgLayer {
     const G2dNscr    *nscr;
     const G2dNcgr    *ncgr;
     const G2dPalette *pal;
     u32 screen_size;   /* a G2D_BG_SIZE_* code, or G2D_BG_SIZE_FLAT */
+    u32 screen_order;  /* G2D_BG_ORDER_*; zero is the attested VRAM order */
     u32 priority;      /* BGxCNT bits 0-1; lower draws in front      */
     s32 hofs, vofs;    /* BGxHOFS / BGxVOFS, in pixels               */
     int wrap;          /* a hardware text layer always wraps its map */
     int enabled;
 } G2dBgLayer;
+
+/* ------------------------------------------------------------------ */
+/* Affine (rotation/scaling) BG layers                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A rotation/scaling BG, the shape BG2 and BG3 take when
+ * src/matched/func_0203FCA0.c's layer type is 1 or 2 rather than 0.  The
+ * differences from a text layer are all consequences of one thing: an
+ * affine layer's map entry is a single byte.
+ *
+ *   - one byte per tile, so 256 tiles addressable, no flip bits and no
+ *     palette row.  src/matched/func_02042E34.c is the game's own 8bpp
+ *     screen fill and writes exactly one byte per entry, against
+ *     func_02042ED8.c's u16 per entry for a text screen.
+ *   - the character data is 8bpp, 64 bytes per tile, indexing the whole
+ *     256-colour palette.
+ *   - the map is a plain tiles_wide * tiles_high array in map order.  The
+ *     512-wide text screen's block layout has no affine counterpart,
+ *     which is the other half of why func_02040EE0's size code 0 (the
+ *     16x16-tile, 128x128-pixel map) is a simple x + y * 16.
+ *   - four square sizes only: 128, 256, 512 and 1024 pixels.
+ *   - BGxCNT bit 13 is the wraparound flag rather than the extended
+ *     palette flag (func_0203FCA0 takes that bit from a different
+ *     template field for an affine layer than for a text one, which is
+ *     how the two shapes are told apart there).
+ *
+ * The transform is the same 8.8 matrix the OBJ engine uses, plus a 20.8
+ * reference point: the hardware's BGxPA..BGxPD and BGxX/BGxY.  For screen
+ * pixel (x, y) the sampled texture coordinate is
+ *
+ *     tx = (ref_x + PA * x + PB * y) >> 8
+ *     ty = (ref_y + PC * x + PD * y) >> 8
+ *
+ * with the fraction discarded, exactly as for an OBJ.  BGxX and BGxY are
+ * 28-bit signed on hardware and are sign-extended from 28 bits here.
+ */
+
+#define G2D_BG_AFF_SIZE_128  0u
+#define G2D_BG_AFF_SIZE_256  1u
+#define G2D_BG_AFF_SIZE_512  2u
+#define G2D_BG_AFF_SIZE_1024 3u
+
+/* Map side in tiles for an affine size code: 16, 32, 64, 128; 0 if bad. */
+u32 g2d_bg_affine_tiles(u32 size_code);
+
+typedef struct G2dBgAffineLayer {
+    const u8         *map;       /* borrowed, one byte per tile           */
+    u32               map_size;  /* bytes available at `map`              */
+    const G2dNcgr    *ncgr;      /* 8bpp character data                   */
+    const G2dPalette *pal;
+    u32 screen_size;   /* a G2D_BG_AFF_SIZE_* code                        */
+    u32 bg_index;      /* 2 or 3: which hardware layer this is            */
+    u32 priority;      /* BGxCNT bits 0-1                                 */
+    int wrap;          /* BGxCNT bit 13 for an affine layer               */
+    s32 ref_x, ref_y;  /* BGxX / BGxY, 20.8                               */
+    G2dAffine mtx;     /* BGxPA .. BGxPD, 8.8                             */
+    int enabled;
+} G2dBgAffineLayer;
+
+/*
+ * Sample one affine layer at screen pixel (sx, sy).  Returns 1 and writes
+ * the palette index (which is also the colour-table index: an affine map
+ * entry carries no palette row) when the layer covers that pixel, 0 when
+ * the transformed coordinate falls off a non-wrapping map or past the end
+ * of the map array.
+ */
+int g2d_bg_affine_sample(const G2dBgAffineLayer *layer, s32 sx, s32 sy,
+                         u8 *out_index, u32 *out_color_index);
+
+/* One affine layer on its own into a width*height RGBA buffer, the same
+ * convention as g2d_bg_render: uncovered pixels black, index 0 painted. */
+void g2d_bg_affine_render(const G2dBgAffineLayer *layer, u32 width, u32 height,
+                          u8 *rgba);
 
 /*
  * Sample one layer at screen pixel (sx, sy), after scrolling.  Returns 1
@@ -522,6 +613,52 @@ void g2d_frame_compose(const G2dBgLayer *bgs, u32 n_bgs,
                        const G2dObjEntry *objs, u32 n_objs,
                        const G2dPalette *backdrop_pal,
                        u32 width, u32 height, u8 *rgba);
+
+/*
+ * The same frame, described rather than passed as loose arrays, so the
+ * affine BGs (and, later, the windows and the colour special effects)
+ * have somewhere to go without changing every call site.
+ *
+ * Front-to-back order within one priority: the OBJ entries in forward
+ * list order (the earliest-emitted entry holds the lowest hardware OAM
+ * slot and draws in front), then the BG layers by ascending layer number,
+ * a text layer's number being its index in `bgs` and an affine layer's
+ * being its own `bg_index`.  An OBJ therefore wins a priority tie against
+ * any BG, which is what g2d_frame_compose already did.
+ */
+typedef struct G2dFrameDesc {
+    const G2dBgLayer       *bgs;
+    u32                     n_bgs;
+    const G2dBgAffineLayer *abgs;
+    u32                     n_abgs;
+    const G2dObjEntry      *objs;
+    u32                     n_objs;
+    const G2dPalette       *backdrop_pal;
+} G2dFrameDesc;
+
+void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
+                            u8 *rgba);
+
+/*
+ * One opaque contributor at one pixel.  `layer` is the OBJ entry's index
+ * for an OBJ and the BG layer number for a BG, which is what the colour
+ * special effects' target masks are keyed on.
+ */
+typedef struct G2dFrameSample {
+    const G2dPalette *pal;
+    u32 color_index;
+    int is_obj;
+    u32 layer;
+} G2dFrameSample;
+
+/*
+ * Every opaque contributor at pixel (x, y), front to back, at most `max`
+ * of them; returns how many were written.  Entry 0 is the topmost pixel
+ * and entry 1 the one directly beneath it.  The backdrop is not in the
+ * list: an empty list means the backdrop shows.
+ */
+u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
+                    G2dFrameSample *out, u32 max);
 
 /* ------------------------------------------------------------------ */
 /* Rig blocks (a/0/0/4 and its siblings)                               */

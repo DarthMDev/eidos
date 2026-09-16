@@ -279,7 +279,16 @@ int g2d_bg_sample(const G2dBgLayer *layer, s32 sx, s32 sy,
 
     tx = (u32)px / 8u;
     ty = (u32)py / 8u;
-    if (layer->screen_size == G2D_BG_SIZE_FLAT) {
+    /*
+     * The two readings of a 512-pixel-wide or 512-pixel-tall map, behind
+     * the layer's own flag.  G2D_BG_SIZE_FLAT is row-major by
+     * construction and ignores it; for a hardware size code the default
+     * (zero, G2D_BG_ORDER_VRAM) is the order func_02040EE0 attests, and
+     * G2D_BG_ORDER_ROW_MAJOR is background.py's reading of the same entry
+     * array.  The two coincide for every size but 512x256 and 512x512.
+     */
+    if (layer->screen_size == G2D_BG_SIZE_FLAT
+        || layer->screen_order == G2D_BG_ORDER_ROW_MAJOR) {
         entry_idx = ty * tw + tx;
     } else {
         entry_idx = g2d_bg_screen_index((int)tx, (int)ty, layer->screen_size);
@@ -360,54 +369,124 @@ static void put_color(u8 *px, const G2dPalette *pal, u32 ci)
     px[3] = 255;
 }
 
-static void draw_bg(const G2dBgLayer *layer, u32 width, u32 height, u8 *rgba)
-{
-    u32 x, y;
+/*
+ * The compositor resolves one pixel at a time rather than painting layer
+ * by layer.  Painting was enough while the answer was only "which colour
+ * ends on top"; the DS colour special effects need to know which layer
+ * that topmost pixel belongs to and which layer is directly beneath it,
+ * and that is a per-pixel question.  The order it walks is the painting
+ * order read front to back, so the picture is unchanged.
+ *
+ * Front-to-back within one priority: the OBJ entries in forward list
+ * order, then the BG layers by ascending layer number (a text layer's
+ * number is its index in `bgs`, an affine layer carries its own).
+ */
 
-    if (!layer->enabled || layer->nscr == NULL || layer->ncgr == NULL) {
-        return;
+#define G2D_MAX_BG_INDEX 8u
+
+static int obj_sample(const G2dObjEntry *obj, s32 x, s32 y, u8 *out_index)
+{
+    s32 px, py;
+    u8 index;
+
+    if (obj->pose == NULL || obj->pose->indices == NULL) {
+        return 0;
     }
-    for (y = 0; y < height; y++) {
-        for (x = 0; x < width; x++) {
+    px = x - obj->x;
+    py = y - obj->y;
+    if (px < 0 || py < 0
+        || (u32)px >= obj->pose->width || (u32)py >= obj->pose->height) {
+        return 0;
+    }
+    index = obj->pose->indices[(size_t)py * obj->pose->width + px];
+    if (index == 0) {
+        return 0;   /* palette index 0 is transparent for an OBJ too */
+    }
+    *out_index = index;
+    return 1;
+}
+
+/*
+ * Every opaque contributor at one pixel, front to back, at most `max` of
+ * them.  Returns how many were written.  Entry 0 is the topmost pixel and
+ * entry 1 is the one directly beneath it, which is all the colour effects
+ * need; the backdrop is not in the list and is what shows when the list
+ * runs out.
+ */
+u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
+                    G2dFrameSample *out, u32 max)
+{
+    u32 count = 0;
+    u32 prio, i, bgi;
+
+    for (prio = 0; prio < 4u && count < max; prio++) {
+        for (i = 0; i < desc->n_objs && count < max; i++) {
+            const G2dObjEntry *obj = &desc->objs[i];
+            u8 index;
+
+            if (obj->priority != prio || !obj_sample(obj, x, y, &index)) {
+                continue;
+            }
+            out[count].pal = obj->pal;
+            out[count].color_index = index;
+            out[count].is_obj = 1;
+            out[count].layer = i;
+            count++;
+        }
+        for (bgi = 0; bgi < G2D_MAX_BG_INDEX && count < max; bgi++) {
             u8 index;
             u32 ci;
 
-            if (!g2d_bg_sample(layer, (s32)x, (s32)y, &index, &ci)) {
-                continue;
+            if (bgi < desc->n_bgs) {
+                const G2dBgLayer *layer = &desc->bgs[bgi];
+
+                if (layer->enabled && layer->priority == prio
+                    && g2d_bg_sample(layer, x, y, &index, &ci) && index != 0) {
+                    out[count].pal = layer->pal;
+                    out[count].color_index = ci;
+                    out[count].is_obj = 0;
+                    out[count].layer = bgi;
+                    count++;
+                    continue;
+                }
             }
-            if (index == 0) {
-                continue;   /* transparent: the layer behind shows through */
+            for (i = 0; i < desc->n_abgs && count < max; i++) {
+                const G2dBgAffineLayer *layer = &desc->abgs[i];
+
+                if (!layer->enabled || layer->priority != prio
+                    || layer->bg_index != bgi) {
+                    continue;
+                }
+                if (g2d_bg_affine_sample(layer, x, y, &index, &ci)
+                    && index != 0) {
+                    out[count].pal = layer->pal;
+                    out[count].color_index = ci;
+                    out[count].is_obj = 0;
+                    out[count].layer = bgi;
+                    count++;
+                    break;
+                }
             }
-            put_color(rgba + ((size_t)y * width + x) * 4u, layer->pal, ci);
         }
     }
+    return count;
 }
 
-static void draw_obj(const G2dObjEntry *obj, u32 width, u32 height, u8 *rgba)
+void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
+                            u8 *rgba)
 {
-    u32 px, py;
+    u32 x, y;
 
-    if (obj->pose == NULL || obj->pose->indices == NULL) {
-        return;
-    }
-    for (py = 0; py < obj->pose->height; py++) {
-        s32 sy = obj->y + (s32)py;
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++) {
+            u8 *px = rgba + ((size_t)y * width + x) * 4u;
+            G2dFrameSample top;
 
-        if (sy < 0 || sy >= (s32)height) {
-            continue;
-        }
-        for (px = 0; px < obj->pose->width; px++) {
-            s32 sx = obj->x + (s32)px;
-            u8 index;
-
-            if (sx < 0 || sx >= (s32)width) {
-                continue;
+            if (g2d_frame_stack(desc, (s32)x, (s32)y, &top, 1) != 0) {
+                put_color(px, top.pal, top.color_index);
+            } else {
+                put_color(px, desc->backdrop_pal, 0);
             }
-            index = obj->pose->indices[(size_t)py * obj->pose->width + px];
-            if (index == 0) {
-                continue;
-            }
-            put_color(rgba + ((size_t)sy * width + sx) * 4u, obj->pal, index);
         }
     }
 }
@@ -417,32 +496,13 @@ void g2d_frame_compose(const G2dBgLayer *bgs, u32 n_bgs,
                        const G2dPalette *backdrop_pal,
                        u32 width, u32 height, u8 *rgba)
 {
-    u32 i;
-    int prio;
+    G2dFrameDesc desc;
 
-    /* The backdrop: colour 0 of the BG palette, opaque, everywhere. */
-    for (i = 0; i < width * height; i++) {
-        put_color(rgba + (size_t)i * 4u, backdrop_pal, 0);
-    }
-
-    for (prio = 3; prio >= 0; prio--) {
-        u32 n;
-
-        /* BGs of this priority, back to front: BG3 first, BG0 last. */
-        for (n = n_bgs; n > 0; n--) {
-            const G2dBgLayer *layer = &bgs[n - 1];
-
-            if ((u32)prio == layer->priority) {
-                draw_bg(layer, width, height, rgba);
-            }
-        }
-        /* Then the OBJs of this priority, so an OBJ wins the tie against
-         * a BG of equal priority.  Reverse list order keeps the OBJ
-         * half's rule that the lowest OAM slot draws in front. */
-        for (n = n_objs; n > 0; n--) {
-            if (objs[n - 1].priority == (u32)prio) {
-                draw_obj(&objs[n - 1], width, height, rgba);
-            }
-        }
-    }
+    memset(&desc, 0, sizeof(desc));
+    desc.bgs = bgs;
+    desc.n_bgs = n_bgs;
+    desc.objs = objs;
+    desc.n_objs = n_objs;
+    desc.backdrop_pal = backdrop_pal;
+    g2d_frame_compose_desc(&desc, width, height, rgba);
 }

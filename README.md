@@ -316,20 +316,59 @@ tile, a non-wrapping layer scrolled off its map samples nothing), the
 compositor's priority and transparency order against an independent
 `g2d_bg_sample` walk, and that an OBJ wins a priority tie against a BG.
 
-**Affine BGs are not needed yet, on the evidence available.**
+### Affine BG layers
+
 `func_0203FCA0` takes a layer type and gives layers 2, 3, 6 and 7 an
 inner switch over three of them: type 0 is text, types 1 and 2 are the
-two affine shapes (they build the same BGxCNT terms in a different
-order and take bit 13 from a different template field). So the BG system
-can configure an affine layer. But no matched call site in aletheia
-passes a non-zero type, every NSCR sub-file across the 20 archives the
-asset lane covers is a text-mode screen, and the title and developer
-splash screens identified there (`titledemo.narc#0` and `#17`) are plain
-text-mode screens that this engine already reproduces exactly. Affine
-BGs are therefore the next step rather than a gap in this one, and they
-share the open question the OBJ half's affine path has: the DS transforms
-in fixed point through the BG rotation/scaling parameters, so matching a
-Python float reference and matching the hardware are not the same target.
+two affine shapes (they build the same BGxCNT terms in a different order
+and take bit 13 from a different template field). `engine/g2d/bg_affine.c`
+is that second shape, for BG2 and BG3, sharing every piece of arithmetic
+with the OBJ affine path: the same 8.8 PA/PB/PC/PD, the same
+floor-truncating shift, the same discarded fraction. What differs is all
+downstream of one thing, that an affine map entry is a single byte:
+
+- **one byte per tile**, so 256 tiles addressable, no flip bits and no
+  palette row. `src/matched/func_02042E34.c` is the game's own 8bpp
+  screen fill and writes exactly one byte per entry, against
+  `func_02042ED8.c`'s u16 per entry for a text screen.
+- **8bpp character data**, 64 bytes per tile, indexing the whole
+  256-colour palette, so a sample's palette index and its colour-table
+  index are the same number.
+- **a plain `tiles_wide * tiles_high` map**. The 512-pixel text screen's
+  block layout has no affine counterpart, which is the other half of why
+  `func_02040EE0`'s size code 0 (the 16x16-tile, 128x128-pixel map) is a
+  simple `x + y * 16`.
+- **four square sizes**: 128, 256, 512 and 1024 pixels.
+- **BGxCNT bit 13 is wraparound** rather than the extended palette flag.
+  Every affine map side is a power of two, which is why the hardware can
+  wrap with a mask rather than a modulo, and why the engine does too.
+- **a 20.8 reference point**, BGxX/BGxY, 28-bit signed and sign-extended
+  from 28 bits here: a reference point that overflows wraps on hardware
+  rather than running away, and an affine layer that has been scrolling
+  for a long time is exactly where that would show.
+
+For screen pixel `(x, y)` the sampled texel is `tx = (ref_x + PA * x +
+PB * y) >> 8`, `ty = (ref_y + PC * x + PD * y) >> 8`, fraction discarded.
+
+**The compositor was rebuilt around this.** It now resolves one pixel at
+a time (`g2d_frame_stack`) rather than painting layer by layer. Painting
+was enough while the only question was which colour ends on top; an
+affine layer slots into the same priority order, and the colour special
+effects below need to know *which* layer the topmost pixel belongs to and
+which layer is directly beneath it, which is a per-pixel question. The
+order it walks is the painting order read front to back, so the picture
+is unchanged and the BG oracle test is untouched. `g2d_frame_compose`
+still exists, as a wrapper over `g2d_frame_compose_desc`.
+
+**The tests** are synthetic, in `tests/test_bg_affine.c`: a three-tile
+8bpp set (a gradient tile, a constant-100 tile, a constant-200 tile) over
+a 16x16 map, so every sample says both which tile it landed in and where
+inside it. It checks the four sizes, identity sampling, the 20.8
+reference point in whole pixels and in a fraction that must floor rather
+than truncate towards zero, a 2x scale, a quarter turn (where screen `y`
+walks the texture's `x` axis and any positive screen `x` lands at a
+negative texture `y`), wraparound on and off at all four edges, and that
+an affine layer takes part in the frame stack at its own layer number.
 
 **The one discrepancy, stated rather than hidden.** For a 512-pixel-wide
 or 512-pixel-tall map the VRAM screen order and a row-major reading of
@@ -343,13 +382,25 @@ is 448x192), where the VRAM order is not even defined, and the game has
 a helper whose whole job is to place an entry at `(x, y)` in VRAM, which
 is what an upload path that scatters a row-major authoring buffer into
 the hardware's map blocks needs. Neither is proof, and no rendered
-512-wide screen was found whose content decides it by eye. Both readings
-are implemented: `screen_size` takes a hardware size code and uses
-`g2d_bg_screen_index`, or `G2D_BG_SIZE_FLAT` and reads row-major at the
-NSCR's own dimensions. The oracle comparison uses the flat reading,
-because that is what the oracle does. Settling it needs the matched
-upload path (the caller of `func_02040EE0` that copies a screen resource
-into VRAM), which is not decompiled yet.
+512-wide screen was found whose content decides it by eye.
+
+**Both readings are implemented, behind a flag on the layer, and the
+default is the attested one.** `G2dBgLayer.screen_order` is
+`G2D_BG_ORDER_VRAM` (the value zero, so a zeroed layer gets it), which is
+`func_02040EE0` transcribed, or `G2D_BG_ORDER_ROW_MAJOR`, which reads the
+same entry array row-major at the map's own tile width the way
+`background.py` does. The flag is ignored for `G2D_BG_SIZE_FLAT`, which
+is row-major by construction and is the only reading available for a
+screen whose declared size is not a hardware size at all; that is what
+the oracle comparison uses, because it is what the oracle does. The two
+readings coincide for every size except 512x256 and 512x512, and
+`tests/test_bg_affine.c` pins the one place they differ: tile (32, 0) of
+a 512x256 map is entry 32 row-major and entry 1024 in VRAM order, and the
+test reads a different tile through each. **The question itself is still
+open.** Settling it needs the matched upload path (the caller of
+`func_02040EE0` that copies a screen resource into VRAM), which is not
+decompiled yet; until then the engine defaults to what the game's own
+helper says and the other reading is one field away.
 
 ## Growing the source list
 
