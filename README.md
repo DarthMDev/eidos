@@ -90,7 +90,17 @@ displacing any other.
 
 Alongside those three, **the engine**, under `engine/`, is the host-side
 stand-in for the DS hardware itself rather than for its SDK: see "The 2D
-engine, and the pixel oracle it is tested against" below.
+engine, and the pixel oracle it is tested against" below. It has three
+parts:
+
+| directory | what it is |
+| --- | --- |
+| `engine/g2d/` | the 2D engine: OBJ, BG, affine, windows and the colour effects, no SDL |
+| `engine/frame/` | the per-frame skeleton: the vblank convention and the DS OS tick, no SDL |
+| `engine/platform/` | the host: the SDL2 window, the keyboard, the audio device and the frame pacer |
+
+Only `engine/platform/` includes SDL2, and it is the only optional piece of
+the build.
 
 **Assets** come from the player's own ROM. aletheia's `tools/ndsrom.py
 extract` writes `extract/`, and eidos opens files under `extract/data` (the
@@ -461,6 +471,142 @@ positive case that makes the "directly beneath" rule concrete: hiding BG1
 with a window makes the backdrop the layer directly beneath BG0, and the
 same blend that refused to run then runs.
 
+## The frame skeleton
+
+`engine/frame/` is the per-frame shape the game will run on, and it contains
+no SDL: it is the DS's frame *convention*, not the host's window, so a
+headless test drives it exactly as the platform layer does.
+
+One iteration is **step, then vblank, then render**, and that order is
+attested by the hardware rather than chosen. The game's main loop runs
+during the visible period and builds the next picture into shadow copies of
+OAM and of the BG registers; the vblank interrupt is where those shadows may
+be committed, because the display is scanning the real ones out at any other
+time. A port that renders before it commits shows the previous frame's OAM,
+which is a one-frame lag on everything that moves. The frame and tick
+counters advance at the vblank too, because on hardware that interrupt is
+what the OS counts: a step function therefore sees the number of the frame it
+is building, and a render function the one it is about to show.
+
+The game's own scheduler sits on top of this rather than inside it. aletheia's
+`src/matched/sub_0203101C.c` and `sub_020310C4.c` (tcbl.c) are the
+task-callback list: one pass of `sub_020310C4` walks every node and calls its
+callback, unlinking the ones that asked to die. That pass is what a caller
+registers as the step function once the list is constructible here; this
+layer does not reimplement it, because it is matched game code and will be
+linked, not rewritten.
+
+**The OS tick is not 64 Hz.** `src/matched/func_02021444.c` (palanm.c) stamps
+its module state block with `OS_GetTick()`'s full `u64`, stored as one
+4-aligned `long long`, which fixes both the width and the unit. The SDK tick
+is the system clock divided by 64, **523655.97 Hz**; the 64 is the timer
+prescaler's divisor, not a frequency. One DS frame is 560190 / 64 = 8752
+ticks and 62/64 of another, so `engine/frame/frame.c` advances by 8752 and
+carries the remainder, adding a whole tick every 32 frames. Dropping it would
+run the game's clock half a second slow per hour. `sdk/os_tick.c` is
+`OS_GetTick` and `OS_GetTickLo` over that counter, so a tick difference the
+game measures is a whole number of frames' worth whatever the host was doing,
+and a headless run that steps frames without sleeping advances the game's
+clock exactly as a paced one does.
+
+`tests/test_frame.c` is synthetic: the callback order, that a value the step
+function writes reaches the renderer only through the vblank commit, that 32
+frames are exactly 280095 ticks, and the tick/millisecond conversions.
+
+## The platform layer
+
+`engine/platform/` is the only part of eidos that includes SDL2 and the only
+optional part of the build (`-DEIDOS_SDL=OFF`, or simply no SDL2 present:
+the engine library and every other test still build and pass).
+
+**The window** is an integer multiple of the DS layout: two 256x192 screens
+stacked vertically, which is the hardware's own arrangement, or side by side
+with `--side-by-side`, with a configurable gap. Integer scales only. The 2D
+engine places every pixel exactly, against a Python oracle, and a fractional
+scale would resample that; the render hint is nearest-neighbour for the same
+reason.
+
+**The keyboard** is a table of `SDL_Scancode` values, which are physical key
+positions rather than characters, so the defaults land on the same keys on a
+QWERTZ or AZERTY keyboard. A caller may pass its own table. The defaults:
+
+| DS | key | DS | key |
+| --- | --- | --- | --- |
+| d-pad | the arrow keys | START | Return |
+| A | X | B | Z |
+| X | S | Y | A |
+| L | Q | R | E |
+| SELECT | Right Shift, Backspace | | |
+
+Escape quits and F12 writes a screenshot; those two are the platform layer's
+own and are not in the table. The button word keeps the DS keypad's bit order
+(`KEYINPUT`, the SDK's `PAD_*`) but is active high, because every caller asks
+"is A down" and the inversion belongs at the one place that reads the
+register. No key may be bound to two buttons: the word is rebuilt from the
+whole table on every pump, which is also why a key held across a focus change
+cannot leave a bit stuck down.
+
+**The pacer runs at the DS's rate, not at 60 Hz.** A frame is 355 dots x 263
+lines x 6 clocks at 33513982 Hz = 560190 clocks, i.e. 59.8261 Hz and a period
+of 16715113 ns plus 3790034/33513982 of a nanosecond. The pacer keeps that
+exact rational period and accumulates the remainder, so the n-th frame is due
+at `round(n * 560190 * 10^9 / 33513982)` ns rather than n times a rounded
+constant: 16 ms would run 4.3 percent fast, and even 16666667 ns gains a
+frame every six minutes. A caller that falls more than four frames behind (a
+breakpoint, a suspended laptop) is resynchronised rather than made to run the
+backlog, and the count of those resynchronisations is readable. The renderer
+is created **without** `SDL_RENDERER_PRESENTVSYNC`: a 60.000 Hz or 144 Hz
+panel would otherwise pull the game off the DS's rate.
+
+**The audio device** is opened at 32768 Hz, stereo, signed 16-bit, which is
+the DS mixer's own output rate, so the eventual sequencer (Milestone 5) does
+not resample twice. The callback is silent for now and the buffer is 1024
+frames, 31 ms, under two DS frames. A machine with no sound device prints a
+line and runs silent rather than refusing to start.
+
+**The frame upload** is two 256x192 RGBA buffers into two streaming textures
+created as `SDL_PIXELFORMAT_ABGR8888`, which is the packed pixel `0xAABBGGRR`
+and therefore the byte order R, G, B, A that `g2d_frame_compose` writes.
+
+**The screenshot** (`SDL_SaveBMP`) is composed from the port's own
+last-uploaded buffers rather than read back out of the renderer: a read-back
+is driver-dependent and under the dummy video driver there is nothing to read
+back at all, while the shadow copies are exactly what the engine produced. It
+is written at 1x in the configured layout, as RGB24, so SDL writes a plain
+24-bit BMP that a test can parse with no image library.
+
+## eidos_view, the first visible output
+
+```
+build/eidos_view --data-root <extract/data> [--scale N] [--side-by-side]
+                 [--gap N] [--species N] [--frames N] [--shot PATH] [--no-audio]
+```
+
+The top screen is `titledemo.narc` member 0, the 256x256 8bpp title screen
+the asset lane identified, over the NCGR/NCLR pair `background.py`'s coverage
+rule paired with it (members 1 and 2, the same triple `tests/test_bg.c`
+checks pixel for pixel against the Python renderer). The bottom screen is one
+composed rig pose out of `a/0/0/4`, species 25 by default. Both come from the
+player's own `extract/`; nothing is bundled.
+
+No matched game code runs in this loop yet. What the demo proves is that the
+three layers meet: the 2D engine's output reaches a window at the DS's own
+frame rate, through the commit-at-vblank convention. That convention is
+exercised rather than described. `view_step` writes the next frame's scroll
+and sprite position into a pending register block, `view_vblank` commits it,
+and `view_render` reads only the committed copy, which is what OAM and the BG
+registers do on hardware. The sprite's bob comes from the engine's own
+fixed-point sine table, so the demo needs no libm.
+
+`tests/test_view.c` runs it headless. ctest sets `SDL_VIDEODRIVER=dummy` and
+`SDL_AUDIODRIVER=dummy` on the test, so the window, the textures, the pacer
+and `SDL_SaveBMP` all run on a machine with no display and no sound card;
+the test then parses the BMP: 256 x 384 at 24 bits, the two screens stacked
+at 1x, and neither half blank. The thresholds are deliberately low (eight
+distinct colours and five hundred pixels off the backdrop per half), because
+the bottom screen is one 48x52 sprite on a backdrop. What the picture *is*
+stays `test_bg`'s and `test_g2d`'s business, against the Python renderers.
+
 ## Growing the source list
 
 `CMakeLists.txt` carries a curated list of matched TUs. It is grown
@@ -498,14 +644,36 @@ script.
 Requirements: CMake 3.16+, a C99 compiler (GCC, Clang or MSVC), Python 3.11+
 for the fixture generator, a sibling checkout of aletheia, and an
 `extract/` (in the aletheia checkout, by default) produced from your own
-ROM. The standard library is the only dependency. SDL2 will be needed once
-there is something to draw; this lane needs none of it.
+ROM. The standard library is the only hard dependency; SDL2 is optional and
+is needed only for `engine/platform/` and the `eidos_view` demo.
+
+**SDL2 without an installer.** `tools/fetch_sdl.py` downloads the official
+MinGW-w64 development package of SDL **2.32.10** from the libsdl-org GitHub
+release, verifies it against the SHA-256 recorded in the script, and unpacks
+it into `third_party/` (gitignored, so neither the archive nor the tree it
+unpacks to is ever committed). Standard library only; a fresh clone needs
+nothing but Python to get SDL2:
+
+```
+python tools/fetch_sdl.py            # download, verify, extract
+python tools/fetch_sdl.py --check    # report what is already there
+```
+
+CMake looks in `third_party/` first, then for a system SDL2 CMake package,
+then for pkg-config's `sdl2.pc`, and prints which it found. With none of the
+three it says so and skips the platform layer and the demo: **every other
+target still builds, and every test but `test_view` still runs.**
+`-DEIDOS_SDL=OFF` forces that path, which is how the no-SDL build is checked.
+The version and the hash are pinned in the script rather than resolved at run
+time, because a recorded hash is the only part of a download a compromised
+mirror cannot satisfy; upgrading is two edits and a re-run.
 
 ```
 # in the aletheia checkout:
 python tools/ndsrom.py extract "<your-rom>.nds" -o extract
 
 # in this repository:
+python tools/fetch_sdl.py
 cmake -S . -B build -DALETHEIA_ROOT=../aletheia
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -657,6 +825,15 @@ ones measured against the oracle; `test_affine` (46 checks), `test_bg_affine`
 (48 checks) and `test_window` (66 checks) are synthetic and need neither
 game data nor an oracle.
 
+With the platform layer, the frame skeleton and the demo added
+(2026-09-16): 36 library objects plus the platform library, **nine tests
+pass** in 1.1 seconds, including `test_view`, which runs `eidos_view` under
+the dummy video and audio drivers and checks the BMP it wrote. The same tree
+configured with `-DEIDOS_SDL=OFF` builds warning-free and passes the other
+eight. A windowed run of `eidos_view --frames 60` takes one second of wall
+clock and reports 60 frames, 1002 ms of game time and no pacer
+resynchronisation, which is 60 / 59.8261 s to the millisecond.
+
 ## Planned Milestones
 
 - [ ] **Milestone 1**: Portability pass
@@ -665,9 +842,21 @@ game data nor an oracle.
   - [ ] Under-declared globals and compiler-specific extensions
   - [ ] Warning-free builds on GCC, Clang, and MSVC
 - [ ] **Milestone 2**: Platform layer (SDL2)
-  - [ ] Window creation and input handling
-  - [ ] Audio device initialization and timing
+  - [x] Window creation and input handling: an integer scale of the DS
+        layout, stacked or side by side, a configurable SDL scancode table
+        for the keypad and the frame upload of two RGBA buffers
+        (`engine/platform/`)
+  - [x] Audio device initialization and timing: 32768 Hz stereo s16, the DS
+        mixer's own rate, with a silent callback until the sequencer exists;
+        and the frame pacer on the exact 59.8261 Hz period with the
+        remainder accumulated
   - [ ] DS frame emulation loop: task list scheduler running at 60 Hz, vblank callbacks
+        (half done: `engine/frame/` is the vblank-driven loop, the
+        commit-at-vblank convention and the DS OS tick, with `sdk/os_tick.c`
+        answering `OS_GetTick`. What is missing is the *game's* scheduler
+        inside it: aletheia's tcbl.c is matched but its constructor's
+        closure, and the boot path that makes a list, are not in the build
+        yet)
 - [ ] **Milestone 3**: 2D engine shim
   - [x] BG layers from tile and palette memory: NSCR screens, all four
         text screen sizes, 16- and 256-colour modes, scroll, priority and
@@ -686,8 +875,13 @@ game data nor an oracle.
         BLDY brightness effects, under the DS rule that an effect runs
         only on the topmost pixel and blends only with the one directly
         beneath it (`engine/g2d/window.c`)
-  - [ ] Dual-screen rendering layout
-  - [ ] Opening cinematic and title screen render correctly
+  - [x] Dual-screen rendering layout: two 256x192 screens, stacked or side
+        by side, at an integer scale, each composed independently by
+        `g2d_frame_compose_desc` and uploaded as its own texture
+        (`engine/platform/`, `demo/eidos_view.c`)
+  - [ ] Opening cinematic and title screen render correctly (the title
+        screen's BG renders, checked pixel for pixel against the Python
+        renderer and shown by `eidos_view`; the cinematic is untouched)
 - [ ] **Milestone 4**: 3D engine shim
   - [ ] DS fixed-point geometry engine emulation
   - [ ] Matrix stack and vertex pipeline
