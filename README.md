@@ -1,6 +1,6 @@
 # eidos
 
-A native PC port of Pokémon Black (and eventually White), powered by the [aletheia](https://github.com/OukilIl/aletheia) decompilation project.
+A native PC port of Pokémon Black (and eventually White), powered by the [aletheia](https://github.com/Project-Holon/aletheia) decompilation project.
 
 ## Goal
 
@@ -8,10 +8,10 @@ Run Pokémon Black (and eventually White) natively on modern platforms (PC, macO
 
 ## Relationship with aletheia
 
-`eidos` is the native platform and runtime engine companion to [aletheia](https://github.com/OukilIl/aletheia).
+`eidos` is the native platform and runtime engine companion to [aletheia](https://github.com/Project-Holon/aletheia).
 
-- **[aletheia](https://github.com/OukilIl/aletheia)**: Focuses on clean-room reverse engineering, decompilation, and byte-matching accuracy against the original Nintendo DS ARM9 binary.
-- **[eidos](https://github.com/OukilIl/eidos)**: Consumes the matched C source code from aletheia, providing host platform abstraction (SDL2), 2D/3D hardware shims, native audio mixing, and file I/O.
+- **[aletheia](https://github.com/Project-Holon/aletheia)**: Focuses on clean-room reverse engineering, decompilation, and byte-matching accuracy against the original Nintendo DS ARM9 binary.
+- **[eidos](https://github.com/Project-Holon/eidos)**: Consumes the matched C source code from aletheia, providing host platform abstraction (SDL2), 2D/3D hardware shims, native audio mixing, and file I/O.
 
 `eidos` does not vendor any of aletheia's source: `ALETHEIA_ROOT` (see
 "Building" below) points at a sibling checkout, and every matched source,
