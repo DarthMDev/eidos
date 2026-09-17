@@ -1,6 +1,8 @@
 /*
- * sdk/narc.c -- the port's NARC reader, the data root, and the ARM9
- * rodata window.
+ * sdk/narc.c -- the port's NARC reader and the ARM9 rodata window.
+ *
+ * The data root and the mod overlay that a NitroFS path resolves through
+ * live in sdk/vfs.c; this file calls bw_data_path like every other loader.
  *
  * A NARC is the container every `a/N/M/K` NitroFS file in this game is:
  *
@@ -40,62 +42,6 @@
 #define NARC_MAGIC FOURCC('N', 'A', 'R', 'C')
 #define BTAF_MAGIC FOURCC('B', 'T', 'A', 'F')
 #define GMIF_MAGIC FOURCC('G', 'M', 'I', 'F')
-
-/* ------------------------------------------------------------------ */
-/* Data root                                                           */
-/* ------------------------------------------------------------------ */
-
-static char g_data_root[1024] = "extract/data";
-static int  g_data_root_set;
-
-void bw_set_data_root(const char *path)
-{
-    size_t n;
-
-    if (path == NULL || *path == '\0') {
-        return;
-    }
-    n = strlen(path);
-    if (n >= sizeof(g_data_root)) {
-        n = sizeof(g_data_root) - 1;
-    }
-    memcpy(g_data_root, path, n);
-    g_data_root[n] = '\0';
-    while (n > 0 && (g_data_root[n - 1] == '/' || g_data_root[n - 1] == '\\')) {
-        g_data_root[--n] = '\0';
-    }
-    g_data_root_set = 1;
-}
-
-const char *bw_data_root(void)
-{
-    if (!g_data_root_set) {
-        const char *env = getenv("BW_DATA_ROOT");
-
-        if (env != NULL && *env != '\0') {
-            bw_set_data_root(env);
-        } else {
-            g_data_root_set = 1;
-        }
-    }
-    return g_data_root;
-}
-
-int bw_data_path(char *out, size_t out_size, const char *rel)
-{
-    const char *root = bw_data_root();
-    size_t need = strlen(root) + 1 + strlen(rel) + 1;
-
-    if (need > out_size) {
-        return -1;
-    }
-    /*
-     * A forward slash is a valid separator on every host this targets,
-     * Windows included, so the NitroFS spelling is used verbatim.
-     */
-    sprintf(out, "%s/%s", root, rel);
-    return 0;
-}
 
 /* ------------------------------------------------------------------ */
 /* ARM9 rodata window                                                  */

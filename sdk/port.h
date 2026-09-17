@@ -19,7 +19,7 @@ extern "C" {
 #endif
 
 /* ------------------------------------------------------------------ */
-/* Data root                                                           */
+/* Data root, mod overlay, and path resolution                         */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -31,10 +31,30 @@ void        bw_set_data_root(const char *path);
 const char *bw_data_root(void);
 
 /*
+ * An optional mod overlay laid over the data root.  A NitroFS-relative path
+ * resolves to `<mod_root>/<rel>` when that file is readable and to
+ * `<data_root>/<rel>` otherwise, so a mod ships whole replacement files at
+ * the same layout as the extract tree.  Off by default; BW_MOD_ROOT in the
+ * environment turns it on, and an explicit call wins over that.
+ *
+ * This is file granular: it replaces a whole NitroFS file, not one member
+ * inside a NARC.  Member-level overlay (editing one decoded asset inside an
+ * archive without repacking it) is not implemented; README.md, "The file
+ * layer", says what that would need.
+ */
+void        bw_set_mod_root(const char *path);
+const char *bw_mod_root(void);
+
+/*
  * Join the data root and a NitroFS-relative path such as "a/0/1/6" into
- * `out`.  Returns 0 on success, -1 if it would not fit.
+ * `out`, consulting the mod overlay first.  Returns 0 on success, -1 if it
+ * would not fit.  The path written is the resolved one even when the file
+ * is absent; `bw_data_exists` is the reader that tells the two apart.
  */
 int bw_data_path(char *out, size_t out_size, const char *rel);
+
+/* 1 if the resolved path (overlay or base) is a readable file, else 0. */
+int bw_data_exists(const char *rel);
 
 /*
  * The decompressed ARM9 image, extract/arm9_dec.bin, and the address it is

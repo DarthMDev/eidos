@@ -688,7 +688,7 @@ two-node draw list and parent+child composition, every pixel and matrix
 entry on paper), the byte decode against `m_pc01_00_00`, `m_ph01_00_00`,
 `staffroll_b` and `batt_stage01`, and a real render of `pl_00_00` under a
 2-unit node pose override (21239 pixels covered, 10637 moved). Measured
-on this tree: `ctest` **12/12** and `test_g3d` **133 checks, 0
+on this tree: `ctest` **13/13** and `test_g3d` **133 checks, 0
 failures**, in both the LP64 and the ILP32 configuration.
 
 ### Meeting the 2D compositor
@@ -1696,7 +1696,7 @@ before (the node is the identity for both oracle models) plus the byte
 decode of `m_pc01_00_00`, `m_ph01_00_00`, `staffroll_b` and
 `batt_stage01`, the synthetic translation/scale/rotation/binding/
 composition cases, and a real render of `pl_00_00` under a node pose
-override. All twelve tests still pass in both configurations.
+override. All thirteen tests still pass in both configurations.
 `docs/g3d-nodes.md` records the byte evidence and the two remaining
 uninterpreted fields (the second flags byte and the packed rotation's
 header `u16`), neither needed for the transform.
@@ -1709,6 +1709,32 @@ with the nine pointer-width-dependent tcbl sources compiled as written and
 the node and the manager at the DS's own `0x18` and `0x38`. `tools/hostbuild.py --check`
 makes the same choice for the ARM cross build and still compiles 69 objects
 clean.
+
+## The file layer
+
+The port's data pipeline starts with `sdk/vfs.c`, the one place a
+NitroFS-relative path becomes a host path. It owns two roots: the data root
+`tools/ndsrom.py`'s `extract` wrote (the player's own ROM dump), and an
+optional **mod root** laid at the same relative layout. A path resolves to
+the overlay copy when a readable file exists there and to the base copy
+otherwise, so a mod ships whole replacement files and an absent one falls
+through. `BW_DATA_ROOT` and `BW_MOD_ROOT` set them from the environment, and
+an explicit `bw_set_data_root` / `bw_set_mod_root` call wins over both.
+
+What is implemented and tested: the two roots, their resolution order, the
+trailing-separator normalisation, and `bw_data_exists`. `tests/test_vfs.c`
+builds a base tree and a mod tree that disagree about one file and checks
+which copy wins, that the resolved path reads back, and that clearing the
+mod root restores base-only resolution (`test_vfs`, run by ctest, 13/13 in
+both pointer widths).
+
+What is not: the overlay is **file granular**. It replaces a whole NitroFS
+file (a whole NARC, or a raw asset), not one member inside a NARC. Editing
+one decoded asset inside an archive (the modding target above) needs the
+engine to load the decoded form and repack it, or a member-level side
+table, and neither exists yet. The other two items of the milestone are the
+first-run extractor and booting the game's own lists from the extracted
+tree; the second is gated on aletheia's boot path, which is not decompiled.
 
 ## Planned Milestones
 
@@ -1859,8 +1885,13 @@ clean.
         a sequence yet, so the SEQ id is still chosen by the demo
 - [ ] **Milestone 6**: Data pipeline & asset extraction
   - [ ] First-run asset extractor from legally dumped ROM
-  - [ ] File layer: VFS with mod overlay support
-  - [ ] Engine boots cleanly from extracted assets
+  - [ ] File layer: VFS with mod overlay support (the two roots, the
+        resolution order and `bw_data_exists` are implemented in `sdk/vfs.c`
+        and tested by `test_vfs`; the overlay is file granular, so
+        overriding one member inside a NARC is still open, see "The file
+        layer")
+  - [ ] Engine boots cleanly from extracted assets (needs aletheia's boot
+        path, which is not decompiled)
 - [ ] **Milestone 7**: Gameplay integration
   - [ ] Field system: player movement, warps, script VM, encounters
   - [ ] Battle system
