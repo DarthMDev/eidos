@@ -21,6 +21,13 @@
  *      texture-name link.  aletheia's docs/ASSETS.md records each of
  *      those and the gaps beside them.  This engine parses the same
  *      structures in C and is tested against that lane's own OBJ export.
+ *      The MDL0 node dictionary, its rotation/scale components, the
+ *      node hierarchy and the shape -> node binding are this engine's own
+ *      decode, from the ROM's bytes: neither aletheia's tools nor
+ *      docs/ASSETS.md decode nodes, so that decode is recorded in
+ *      docs/g3d-nodes.md with its evidence and is validated by
+ *      self-consistency (orthonormal rotations, acyclic in-range parents,
+ *      in-range draws), not by an oracle comparison.
  *   2. aletheia's matched sources.  src/matched/unit_02048AD0.c and
  *      unit_02048BC4.c are g3d_light.c's accessor run and light-set
  *      builder and fix the shape of the game's light object (three
@@ -375,7 +382,73 @@ typedef struct G3dShape {
     char texture[17];           /* the bare texture name, or "" */
     u32  first_poly, n_polys;
     u32  first_vert, n_verts;
+    /*
+     * The first node that draws this shape, or 0xFFFFFFFF when the render
+     * command list never draws it.  A shape may be drawn under several
+     * nodes (instanced), so the authoritative list is G3dModel.draws; this
+     * field is a convenience for a shape drawn exactly once.
+     */
+    u32  node;
 } G3dShape;
+
+/*
+ * One node of a model's node (bone) dictionary.  The dictionary itself is
+ * the same Nitro ResDict layout as the shape dictionary; its 4-byte
+ * records are offsets from the dictionary's own start to a variable-sized
+ * node record, and the records run back-to-back to the byte the model
+ * header names as the end of the node section.
+ *
+ * The record opens with a 4-byte header: a flags byte, a second flags
+ * byte, and a u16 that is part of the rotation.  The flags byte's low
+ * four bits are ACTIVE-LOW presence bits, and the components follow in
+ * this order:
+ *
+ *     bit 0 clear   translation, 12 bytes (3 x fx32)
+ *     bit 1 clear   rotation; its size is 16 bytes if bit 3 is clear, or
+ *                   4 bytes if bit 3 is set
+ *     bit 2 clear   scale, 24 bytes (3 x fx32 scale + 3 x fx32 inverse)
+ *     bit 3            selects the rotation form (see below)
+ *
+ * so a record is 4, 8, 16, 20, 28, 32, 40, 44 or 56 bytes.  That rule is
+ * validated self-consistently: across every model scanned the decoded
+ * component offsets land exactly on the next node record, and every
+ * reconstructed rotation matrix is orthonormal (1163 / 1163 nodes).
+ *
+ * THE ROTATION.  The full form (bit 3 clear) stores a rotation matrix
+ * explicitly: the third row's x is the header u16, its y and z are the
+ * first two halves of the 4-byte field, and the first two rows are the
+ * 12 following bytes as three s16 each, all in 1.0 = 4096.  The
+ * cross-check is direct: with 21 nodes that carry both the 4-byte field
+ * and the 12-byte rows, the 4-byte halves equal the third row of the
+ * matrix those rows imply, 21 of 21.  The packed form (bit 3 set) stores
+ * only the third row's y and z, always a unit pair, so the rotation is
+ * the one about x that takes z to that direction; identity is (0, 4096).
+ *
+ * THE SCALE.  The 24-byte component is three fx32 scale factors followed
+ * by their reciprocals: the second triple is round(2^24 / first), exact
+ * in 534 of 537 samples and within 9 units in the remaining one.
+ */
+typedef struct G3dModelNode {
+    char   name[17];
+    u8     flags;           /* the record's first byte, raw            */
+    u8     has_translation;
+    u8     has_rotation;
+    u8     has_scale;
+    u8     rotation_full;   /* 1 = 12-byte row pair stored, 0 = packed */
+    s32    parent;          /* parent index, or -1 for the root        */
+    u16    pivot;           /* header u16: rotation row2.x when full   */
+    G3dVec translation;     /* fx32, (0,0,0) if absent                 */
+    G3dVec scale;           /* fx32, (1,1,1) if absent                 */
+    G3dMtx rotation;        /* unit rotation matrix, fx32              */
+    G3dMtx local;           /* scale * rotation * translation          */
+    G3dMtx world;           /* local composed with the ancestors'       */
+} G3dModelNode;
+
+/* One draw of a shape under a node, in render-command order. */
+typedef struct G3dModelDraw {
+    u32 shape;
+    u32 node;
+} G3dModelDraw;
 
 /*
  * One map model out of a/0/0/8, decoded shape by shape.  The sub-file is
@@ -389,6 +462,8 @@ typedef struct G3dModel {
     const u8 *mdl;         /* the model's data tail, inside raw    */
     u32       mdl_size;
     G3dShape *shapes; u32 n_shapes;
+    G3dModelNode  *nodes; u32 n_nodes;   /* the node/bone dictionary */
+    G3dModelDraw  *draws; u32 n_draws;   /* the shape -> node binding */
     G3dGeom   geom;
 } G3dModel;
 
@@ -412,6 +487,32 @@ const G3dTexture *g3d_texarchive_get(G3dTexArchive *ar, const char *name);
 int  g3d_model_load(G3dModel *out, const char *rel_path, u32 index,
                     const G3dTexArchive *ar);
 void g3d_model_free(G3dModel *m);
+
+/*
+ * The node dictionary.  `g3d_model_node` returns a borrowed node, or NULL.
+ * `local` is scale * rotation * translation in row-vector order and
+ * `world` is `local` composed with the ancestors' matrices; that is what
+ * `g3d_render_model` applies to a shape's vertices, and the parent index
+ * comes from the render-command stream, not from the node record.
+ *
+ * `g3d_model_set_node_local` overwrites a node's local matrix (the pose a
+ * caller would drive from an animation), and `g3d_model_set_node_parent`
+ * sets the parent link.  `g3d_model_update_nodes` recomputes every
+ * `world` from the locals and the parent links: world = local *
+ * parent->world, so a point is transformed by the node's own matrix first
+ * and the ancestors' after.
+ *
+ * The draw list is the shape -> node binding the render-command stream
+ * carries: `g3d_model_draw_count` / `g3d_model_draw` read it, and a shape
+ * drawn under several nodes appears once per draw.
+ */
+u32                 g3d_model_node_count(const G3dModel *m);
+const G3dModelNode *g3d_model_node(const G3dModel *m, u32 i);
+void g3d_model_set_node_local(G3dModel *m, u32 i, const G3dMtx *local);
+void g3d_model_set_node_parent(G3dModel *m, u32 i, s32 parent);
+void g3d_model_update_nodes(G3dModel *m);
+u32                 g3d_model_draw_count(const G3dModel *m);
+const G3dModelDraw *g3d_model_draw(const G3dModel *m, u32 i);
 
 /* ------------------------------------------------------------------ */
 /* The rasteriser                                                      */

@@ -670,6 +670,424 @@ static void synthetic_matrices(void)
                 FX_MUL(-FX32_ONE, 1), -1);
 }
 
+/*
+ * The node transform pipeline, built by hand so every expected pixel and
+ * matrix entry is computed on paper, then driven through the same
+ * g3d_render_model path a loaded model uses.
+ *
+ * The object-space triangle is (0,0,0) (1,0,0) (0,1,0) fx32.  With view
+ * = projection = identity the viewport transform is sx = x * 128 + 128,
+ * sy = 96 - y * 96, so at identity it covers (128,96)-(256,96)-(128,0),
+ * i.e. x in [128,256] with the hypotenuse x = 128 + 128*y/96.
+ */
+static void make_triangle(G3dGeom *geom, G3dVertex verts[3], G3dPoly polys[1],
+                          u32 idx[3])
+{
+    u32 i;
+
+    memset(geom, 0, sizeof(*geom));
+    for (i = 0; i < 3u; i++) {
+        memset(&verts[i], 0, sizeof(verts[i]));
+        verts[i].w = FX32_ONE;
+        verts[i].r = verts[i].g = verts[i].b = 200;
+    }
+    verts[0].ox = 0;          verts[0].oy = 0;          verts[0].oz = 0;
+    verts[1].ox = FX32_ONE;   verts[1].oy = 0;          verts[1].oz = 0;
+    verts[2].ox = 0;          verts[2].oy = FX32_ONE;   verts[2].oz = 0;
+    idx[0] = 0; idx[1] = 1; idx[2] = 2;
+    polys[0].first = 0; polys[0].count = 3; polys[0].attr = ATTR_BOTH;
+    polys[0].teximage = 0; polys[0].pltt_base = 0;
+    geom->verts = verts; geom->n_verts = 3; geom->cap_verts = 3;
+    geom->idx = idx; geom->n_idx = 3; geom->cap_idx = 3;
+    geom->polys = polys; geom->n_polys = 1; geom->cap_polys = 1;
+}
+
+static void synthetic_nodes(void)
+{
+    G3dTarget t;
+    G3dMtx id, m;
+    G3dModel model;
+    G3dGeom geom;
+    G3dVertex verts[3];
+    G3dPoly polys[1];
+    u32 idx[3];
+    G3dShape shapes[1];
+    G3dModelNode nodes[2];
+    G3dModelDraw draws[2];
+
+    if (g3d_target_init(&t, G3D_SCREEN_W, G3D_SCREEN_H) != 0) {
+        printf("  FAIL cannot allocate a render target\n");
+        bw_failures++;
+        return;
+    }
+    g3d_mtx_identity(&id);
+    make_triangle(&geom, verts, polys, idx);
+
+    memset(shapes, 0, sizeof(shapes));
+    shapes[0].first_poly = 0; shapes[0].n_polys = 1;
+    shapes[0].first_vert = 0; shapes[0].n_verts = 3;
+    shapes[0].node = 0;
+
+    memset(nodes, 0, sizeof(nodes));
+    strcpy(nodes[0].name, "root");
+    strcpy(nodes[1].name, "child");
+    nodes[0].parent = -1;
+    nodes[1].parent = -1;
+    g3d_mtx_identity(&nodes[0].local); g3d_mtx_identity(&nodes[0].world);
+    g3d_mtx_identity(&nodes[1].local); g3d_mtx_identity(&nodes[1].world);
+
+    memset(&model, 0, sizeof(model));
+    model.geom = geom;
+    model.shapes = shapes; model.n_shapes = 1;
+    model.nodes = nodes; model.n_nodes = 1;
+    model.draws = draws; model.n_draws = 1;
+    draws[0].shape = 0; draws[0].node = 0;
+
+    /* Identity: (140,48) in, (200,48) out. */
+    g3d_target_clear(&t, 0, 0, 0, 255);
+    g3d_render_model(&t, &model, &id, &id, NULL);
+    BW_CHECK_EQ("nodes: identity covers (140,48)",
+                px_is(&t, 140, 48, 200, 200, 200), 1);
+    BW_CHECK_EQ("nodes: identity leaves (200,48) clear",
+                px_is(&t, 200, 48, 0, 0, 0), 1);
+
+    /* Translation +1/2 x moves it 64 px right: (200,48) in. */
+    g3d_mtx_translate(&m, FX32_ONE / 2, 0, 0);
+    g3d_model_set_node_local(&model, 0, &m);
+    g3d_model_update_nodes(&model);
+    BW_CHECK_EQ("nodes: +1/2 x reaches the world matrix",
+                nodes[0].world.m[12], FX32_ONE / 2);
+    g3d_target_clear(&t, 0, 0, 0, 255);
+    g3d_render_model(&t, &model, &id, &id, NULL);
+    BW_CHECK_EQ("nodes: the translation moves the triangle 64 px",
+                px_is(&t, 200, 48, 200, 200, 200), 1);
+    BW_CHECK_EQ("nodes: the untranslated pixel is clear",
+                px_is(&t, 140, 48, 0, 0, 0), 1);
+
+    /* Scale x2: the hypotenuse reaches x = 128 + 256*y/96, so (300,48)
+     * is now inside and (200,48) too. */
+    g3d_mtx_scale(&m, 2 * FX32_ONE, FX32_ONE, FX32_ONE);
+    g3d_model_set_node_local(&model, 0, &m);
+    g3d_model_update_nodes(&model);
+    g3d_target_clear(&t, 0, 0, 0, 255);
+    g3d_render_model(&t, &model, &id, &id, NULL);
+    BW_CHECK_EQ("nodes: a 2x x scale reaches past the identity hypotenuse",
+                px_is(&t, 200, 48, 200, 200, 200), 1);
+    BW_CHECK_EQ("nodes: the scaled triangle still ends before (300,48)",
+                px_is(&t, 300, 48, 0, 0, 0), 1);
+
+    /* Quarter turn about z: (0,0)(1,0)(0,1) -> (0,0)(0,1)(-1,0), which
+     * covers x in [128(1 - y/96), 128] at screen y, so at y = 48 it spans
+     * [63,128]: (100,48) is in and (60,48) and (200,48) are out. */
+    g3d_mtx_identity(&m);
+    m.m[0] = 0; m.m[1] = FX32_ONE; m.m[4] = -FX32_ONE; m.m[5] = 0;
+    g3d_model_set_node_local(&model, 0, &m);
+    g3d_model_update_nodes(&model);
+    g3d_target_clear(&t, 0, 0, 0, 255);
+    g3d_render_model(&t, &model, &id, &id, NULL);
+    BW_CHECK_EQ("nodes: a quarter turn about z covers (100,48)",
+                px_is(&t, 100, 48, 200, 200, 200), 1);
+    BW_CHECK_EQ("nodes: the quarter turn clears (60,48)",
+                px_is(&t, 60, 48, 0, 0, 0), 1);
+    BW_CHECK_EQ("nodes: the quarter turn clears (200,48)",
+                px_is(&t, 200, 48, 0, 0, 0), 1);
+
+    /*
+     * The draw list binds a shape to a node.  Two draws of the one shape:
+     * node 0 at the origin and node 1 translated +1/2 x, so (140,48) is
+     * covered by the first and (200,48) by the second and (300,48) by
+     * neither.
+     */
+    model.n_nodes = 2;
+    model.n_draws = 2;
+    draws[0].shape = 0; draws[0].node = 0;
+    draws[1].shape = 0; draws[1].node = 1;
+    g3d_mtx_identity(&m);
+    g3d_model_set_node_local(&model, 0, &m);
+    g3d_mtx_translate(&m, FX32_ONE / 2, 0, 0);
+    g3d_model_set_node_local(&model, 1, &m);
+    g3d_model_update_nodes(&model);
+    g3d_target_clear(&t, 0, 0, 0, 255);
+    g3d_render_model(&t, &model, &id, &id, NULL);
+    BW_CHECK_EQ("nodes: draw 0 is covered at (140,48)",
+                px_is(&t, 140, 48, 200, 200, 200), 1);
+    BW_CHECK_EQ("nodes: draw 1 is covered at (200,48)",
+                px_is(&t, 200, 48, 200, 200, 200), 1);
+    BW_CHECK_EQ("nodes: neither draw reaches (300,48)",
+                px_is(&t, 300, 48, 0, 0, 0), 1);
+
+    /*
+     * Parent and child.  world = local * parent->world in row-vector
+     * convention, so node 1 (local +1 y) under node 0 (local +1 x) has
+     * world translation (1, 1, 0).
+     */
+    g3d_mtx_translate(&m, FX32_ONE, 0, 0);
+    g3d_model_set_node_local(&model, 0, &m);
+    g3d_mtx_translate(&m, 0, FX32_ONE, 0);
+    g3d_model_set_node_local(&model, 1, &m);
+    g3d_model_set_node_parent(&model, 1, 0);
+    g3d_model_update_nodes(&model);
+    BW_CHECK_EQ("nodes: parent world x is its own local x",
+                nodes[0].world.m[12], FX32_ONE);
+    BW_CHECK_EQ("nodes: child world x is the parent's x",
+                nodes[1].world.m[12], FX32_ONE);
+    BW_CHECK_EQ("nodes: child world y is the child's own y",
+                nodes[1].world.m[13], FX32_ONE);
+
+    /* A self-parent link is refused: the node is left disconnected. */
+    g3d_model_set_node_parent(&model, 1, 1);
+    BW_CHECK_EQ("nodes: a self parent is refused", nodes[1].parent, -1);
+
+    g3d_target_free(&t);
+}
+
+static int rot_is_orthonormal(const G3dMtx *r)
+{
+    u32 a, b;
+    for (a = 0; a < 3u; a++) {
+        s64 len = 0, dot;
+        for (b = 0; b < 3u; b++) {
+            len += (s64)r->m[a * 4 + b] * r->m[a * 4 + b];
+        }
+        if (len < (s64)FX32_ONE * FX32_ONE * 999 / 1000 ||
+            len > (s64)FX32_ONE * FX32_ONE * 1001 / 1000) {
+            return 0;
+        }
+        for (b = a + 1u; b < 3u; b++) {
+            dot = (s64)r->m[a * 4 + 0] * r->m[b * 4 + 0] +
+                  (s64)r->m[a * 4 + 1] * r->m[b * 4 + 1] +
+                  (s64)r->m[a * 4 + 2] * r->m[b * 4 + 2];
+            if (dot > (s64)FX32_ONE * FX32_ONE / 100 ||
+                dot < -(s64)FX32_ONE * FX32_ONE / 100) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+/*
+ * The real-model node checks.  These are self-consistency, not an oracle:
+ * no tool in either project decodes nodes, so the expected numbers are
+ * read straight off the record bytes and the structural properties
+ * (orthonormal rotations, in-range acyclic parents, in-range draws) are
+ * checked over every node of the model.
+ */
+static void real_node_checks(void)
+{
+    G3dModel m;
+    const G3dModelNode *nd;
+    u32 i;
+
+    /* --- a/0/0/8#489 m_pc01_00_00: four nodes, a flat tree --- */
+    if (g3d_model_load(&m, "a/0/0/8", 489u, NULL) != 0) {
+        printf("  FAIL a/0/0/8#489 did not load for the node check\n");
+        bw_failures++; bw_checks++;
+        return;
+    }
+    BW_CHECK_EQ("nodes: m_pc01_00_00 has four nodes",
+                g3d_model_node_count(&m), 4);
+    BW_CHECK_EQ("nodes: node 0 is world_root",
+                strcmp(g3d_model_node(&m, 0)->name, "world_root"), 0);
+    BW_CHECK_EQ("nodes: node 1 is polySurface189",
+                strcmp(g3d_model_node(&m, 1)->name, "polySurface189"), 0);
+    BW_CHECK_EQ("nodes: node 0 has no translation",
+                g3d_model_node(&m, 0)->has_translation, 0);
+    BW_CHECK_EQ("nodes: node 1 y is -30",
+                g3d_model_node(&m, 1)->translation.y, -30 * 4096);
+    BW_CHECK_EQ("nodes: node 2 x is -254",
+                g3d_model_node(&m, 2)->translation.x, -254 * 4096);
+    BW_CHECK_EQ("nodes: node 2 z is -52",
+                g3d_model_node(&m, 2)->translation.z, -52 * 4096);
+    BW_CHECK_EQ("nodes: world_root is the root",
+                g3d_model_node(&m, 0)->parent, -1);
+    BW_CHECK_EQ("nodes: node 1's parent is the root",
+                g3d_model_node(&m, 1)->parent, 0);
+    {
+        int all_ortho = 1, draws_ok = g3d_model_draw_count(&m) > 0u;
+        for (i = 0; i < g3d_model_node_count(&m); i++) {
+            if (!rot_is_orthonormal(&g3d_model_node(&m, i)->rotation)) {
+                all_ortho = 0;
+            }
+        }
+        for (i = 0; i < g3d_model_draw_count(&m); i++) {
+            const G3dModelDraw *d = g3d_model_draw(&m, i);
+            if (d->shape >= m.n_shapes || d->node >= g3d_model_node_count(&m)) {
+                draws_ok = 0;
+            }
+        }
+        BW_CHECK_EQ("nodes: every m_pc01 rotation is orthonormal", all_ortho, 1);
+        BW_CHECK_EQ("nodes: every m_pc01 draw is in range", draws_ok, 1);
+    }
+    g3d_model_free(&m);
+
+    /* --- a/0/0/8#536 m_ph01_00_00: packed rotations --- */
+    if (g3d_model_load(&m, "a/0/0/8", 536u, NULL) != 0) {
+        printf("  FAIL a/0/0/8#536 did not load for the node check\n");
+        bw_failures++; bw_checks++;
+        return;
+    }
+    /* pCube4 is node 1, packed rotation bytes 98 0c de 09: row2 = (0,
+     * 0x0c98, 0x09de) and the rotation is the x-turn taking z there. */
+    nd = g3d_model_node(&m, 1);
+    BW_CHECK_EQ("nodes: m_ph01 pCube4 is the node expected",
+                strcmp(nd->name, "pCube4"), 0);
+    BW_CHECK_EQ("nodes: pCube4 rotation is packed", nd->rotation_full, 0);
+    BW_CHECK_EQ("nodes: pCube4 row1.z is 0x09de", nd->rotation.m[5], 0x09de);
+    BW_CHECK_EQ("nodes: pCube4 row1.y is -0x0c98", nd->rotation.m[6], -0x0c98);
+    BW_CHECK_EQ("nodes: pCube4 row2.y is 0x0c98", nd->rotation.m[9], 0x0c98);
+    BW_CHECK_EQ("nodes: pCube4 row2.z is 0x09de", nd->rotation.m[10], 0x09de);
+    /* polySurface157 is node 6, packed rotation bytes 00 00 00 10, i.e.
+     * row2 = (0, 0, 1): the identity. */
+    nd = g3d_model_node(&m, 6);
+    BW_CHECK_EQ("nodes: m_ph01 polySurface157 is the identity",
+                nd->rotation.m[0], FX32_ONE);
+    BW_CHECK_EQ("nodes: polySurface157 row1.y is 1", nd->rotation.m[5],
+                FX32_ONE);
+    BW_CHECK_EQ("nodes: polySurface157 row1.z is 0", nd->rotation.m[6], 0);
+    BW_CHECK_EQ("nodes: polySurface157 row2.y is 0", nd->rotation.m[9], 0);
+    BW_CHECK_EQ("nodes: polySurface157 row2.z is 1", nd->rotation.m[10],
+                FX32_ONE);
+    g3d_model_free(&m);
+
+    /* --- a/2/2/0#6 staffroll_b: full rotations and a real bone tree --- */
+    if (g3d_model_load(&m, "a/2/2/0", 6u, NULL) == 0) {
+        nd = g3d_model_node(&m, 5);   /* l_claw_thumb */
+        BW_CHECK_EQ("nodes: staffroll_b node 5 is l_claw_thumb",
+                    strcmp(nd->name, "l_claw_thumb"), 0);
+        BW_CHECK_EQ("nodes: l_claw_thumb rotation is full", nd->rotation_full, 1);
+        /* record 04 f8 66 0c | 9a8e0000 04e5ffff 580a0000 |
+         *        d0 f6 c6 fb | b208 190d 09fd 2a05 0000 250f */
+        BW_CHECK_EQ("nodes: l_claw_thumb row0.x is 0x08b2",
+                    nd->rotation.m[0], 0x08b2);
+        BW_CHECK_EQ("nodes: l_claw_thumb row0.y is 0x0d19",
+                    nd->rotation.m[1], 0x0d19);
+        BW_CHECK_EQ("nodes: l_claw_thumb row0.z is -0x02f7",
+                    nd->rotation.m[2], -0x02f7);
+        BW_CHECK_EQ("nodes: l_claw_thumb row1.x is 0x052a",
+                    nd->rotation.m[4], 0x052a);
+        BW_CHECK_EQ("nodes: l_claw_thumb row2.x is 0x0c66",
+                    nd->rotation.m[8], 0x0c66);
+        BW_CHECK_EQ("nodes: l_claw_thumb row2.y is -0x0930",
+                    nd->rotation.m[9], -0x0930);
+        BW_CHECK_EQ("nodes: l_claw_thumb row2.z is -0x043a",
+                    nd->rotation.m[10], -0x043a);
+        /* the tree: pelvis is the root, l_foot -> l_shin -> l_thigh ->
+         * pelvis, which is the biped the names describe */
+        BW_CHECK_EQ("nodes: staffroll_b pelvis is the root",
+                    g3d_model_node(&m, 0)->parent, -1);
+        BW_CHECK_EQ("nodes: staffroll_b l_thigh's parent is the pelvis",
+                    g3d_model_node(&m, 21)->parent, 0);
+        BW_CHECK_EQ("nodes: staffroll_b l_shin's parent is l_thigh",
+                    g3d_model_node(&m, 22)->parent, 21);
+        BW_CHECK_EQ("nodes: staffroll_b l_foot's parent is l_shin",
+                    g3d_model_node(&m, 23)->parent, 22);
+        BW_CHECK_EQ("nodes: staffroll_b head's parent is the neck",
+                    g3d_model_node(&m, 11)->parent, 10);
+        g3d_model_free(&m);
+    } else {
+        printf("  (a/2/2/0#6 staffroll_b not present; full-rotation check skipped)\n");
+    }
+
+    /* --- a/0/1/1#0 batt_stage01: the scale component --- */
+    if (g3d_model_load(&m, "a/0/1/1", 0u, NULL) == 0) {
+        nd = g3d_model_node(&m, 0);
+        BW_CHECK_EQ("nodes: batt_stage01 has a scale", nd->has_scale, 1);
+        BW_CHECK_EQ("nodes: batt_stage01 scale x is 1",
+                    nd->scale.x, FX32_ONE);
+        BW_CHECK_EQ("nodes: batt_stage01 scale y is 0x0962",
+                    nd->scale.y, 0x0962);
+        BW_CHECK_EQ("nodes: batt_stage01 scale z is 1",
+                    nd->scale.z, FX32_ONE);
+        g3d_model_free(&m);
+    } else {
+        printf("  (a/0/1/1#0 batt_stage01 not present; scale check skipped)\n");
+    }
+}
+
+/*
+ * A real multi-node model rendered through the full node pipeline.  There
+ * is no DS frame to compare against, so this checks two things that are
+ * about the pipeline rather than the pixels: the authored node transforms
+ * place geometry on the screen at all, and forcing every node to the
+ * identity changes the picture, which is the difference the binding and
+ * the transforms make.
+ */
+static void node_render_check(void)
+{
+    G3dModel m;
+    G3dTarget t;
+    G3dMtx view, proj, pose;
+    G3dVec eye, up, at;
+    u8 *before;
+    u32 i, n, covered = 0, diff = 0;
+
+    if (g3d_model_load(&m, "a/0/0/8", 120u, NULL) != 0) {
+        printf("  FAIL a/0/0/8#120 did not load for the node render check\n");
+        bw_failures++; bw_checks++;
+        return;
+    }
+    if (g3d_target_init(&t, G3D_SCREEN_W, G3D_SCREEN_H) != 0) {
+        printf("  FAIL cannot allocate a render target\n");
+        bw_failures++; bw_checks++;
+        g3d_model_free(&m);
+        return;
+    }
+    /* The same camera tests/test_g3d's house render uses. */
+    eye.x = 0; eye.y = 6 * FX32_ONE; eye.z = 9 * FX32_ONE;
+    at.x = 0;  at.y = FX32_ONE / 2;  at.z = 0;
+    up.x = 0;  up.y = FX32_ONE;      up.z = 0;
+    g3d_mtx_lookat(&view, &eye, &up, &at);
+    g3d_mtx_perspective(&proj, (u16)(40u * 65536u / 360u),
+                        (fx32)(4 * FX32_ONE / 3), FX32_ONE / 2,
+                        64 * FX32_ONE);
+
+    g3d_target_clear(&t, 0, 0, 40, 255);
+    g3d_render_model(&t, &m, &view, &proj, NULL);
+    n = t.width * t.height;
+    before = (u8 *)malloc(n * 4u);
+    if (before == NULL) {
+        g3d_target_free(&t);
+        g3d_model_free(&m);
+        return;
+    }
+    memcpy(before, t.rgba, n * 4u);
+    for (i = 0; i < n; i++) {
+        const u8 *p = t.rgba + i * 4u;
+        if (!(p[0] == 0 && p[1] == 0 && p[2] == 40)) {
+            covered++;
+        }
+    }
+
+    /*
+     * Overwrite the (single) node's pose with a two-unit translation and
+     * render again: this is the pose-override path a caller would drive an
+     * animation through, on a real model whose whole tree hangs off the
+     * node, so the picture has to move.
+     */
+    g3d_mtx_translate(&pose, 2 * FX32_ONE, 0, 0);
+    g3d_model_set_node_local(&m, 0, &pose);
+    g3d_model_update_nodes(&m);
+    g3d_target_clear(&t, 0, 0, 40, 255);
+    g3d_render_model(&t, &m, &view, &proj, NULL);
+    for (i = 0; i < n; i++) {
+        if (memcmp(before + i * 4u, t.rgba + i * 4u, 4u) != 0) {
+            diff++;
+        }
+    }
+    printf("  node render: pl_00_00 %u verts, %u draws; %u covered, "
+           "%u differ under a 2-unit node pose override\n",
+           m.geom.n_verts, g3d_model_draw_count(&m), covered, diff);
+    BW_CHECK_EQ("nodes: the authored nodes place geometry on screen",
+                covered > n / 4u, 1);
+    BW_CHECK_EQ("nodes: a node pose override moves the picture",
+                diff > 500u, 1);
+
+    free(before);
+    g3d_target_free(&t);
+    g3d_model_free(&m);
+}
+
 static void synthetic_texture_formats(void)
 {
     G3dTexture t;
@@ -873,6 +1291,25 @@ int main(int argc, char **argv)
         BW_CHECK_EQ("the shape count matches the oracle's",
                     model.n_shapes, spec->n_shapes);
 
+        /* The node dictionary: every a/0/0/8 model has at least one node,
+         * and the two the oracle uses have exactly one, so every shape is
+         * necessarily bound to it and it is the identity. */
+        BW_CHECK_EQ("the model has at least one node",
+                    g3d_model_node_count(&model) >= 1u, 1);
+        if (g3d_model_node_count(&model) == 1u) {
+            u32 k2;
+            int all_node0 = 1;
+            for (k2 = 0; k2 < model.n_shapes; k2++) {
+                if (model.shapes[k2].node != 0u) {
+                    all_node0 = 0;
+                }
+            }
+            BW_CHECK_EQ("a single-node model binds every shape to node 0",
+                        all_node0, 1);
+            BW_CHECK_EQ("its node is the identity (no translation)",
+                        g3d_model_node(&model, 0)->has_translation, 0);
+        }
+
         memset(&st, 0, sizeof(st));
         compare_model(spec, &obj, &model, &st);
         printf("  %u vertices, %u faces compared; worst position "
@@ -927,6 +1364,9 @@ int main(int argc, char **argv)
     synthetic_textured_quad();
     synthetic_matrices();
     synthetic_texture_formats();
+    real_node_checks();
+    synthetic_nodes();
+    node_render_check();
 
     g3d_texarchive_close(ar);
     BW_REPORT("test_g3d");

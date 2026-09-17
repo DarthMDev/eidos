@@ -27,7 +27,21 @@
  *     format that is easiest to get wrong;
  *   - the render-command bytecode: byte pairs (id, opcode) with opcode 4
  *     binding a material and opcode 5 drawing a shape with the material
- *     last bound.
+ *     last bound;
+ *   - the MDL0 node dictionary and node records.  The node dictionary is
+ *     the same ResDict layout as the shape dictionary and its 4-byte
+ *     records are offsets from the dictionary's own start to a
+ *     variable-sized node record, running back-to-back.  A record opens
+ *     with a 4-byte header: a flags byte whose low four bits are an
+ *     active-low presence mask (translation, rotation, scale), a second
+ *     flags byte, and a u16 that is part of a full rotation.  The
+ *     rotation is a third matrix row plus, when present, the first two
+ *     rows; the scale is three fx32 and their reciprocals; the
+ *     parent/child tree and the shape -> node binding are in the
+ *     render-command section that follows.  docs/g3d-nodes.md has the
+ *     byte evidence and the validation numbers, and this decode is
+ *     self-consistency-checked rather than oracle-checked because no
+ *     tool in either project decodes nodes.
  *
  * Two things are located by a self-consistency scan rather than by a
  * cracked pointer, and both gaps are aletheia's rather than this
@@ -786,8 +800,287 @@ void g3d_model_free(G3dModel *m)
     }
     g3d_geom_free(&m->geom);
     free(m->shapes);
+    free(m->nodes);
+    free(m->draws);
     free(m->raw);
     memset(m, 0, sizeof(*m));
+}
+
+/* ------------------------------------------------------------------ */
+/* The node dictionary                                                 */
+/* ------------------------------------------------------------------ */
+
+u32 g3d_model_node_count(const G3dModel *m)
+{
+    return m == NULL ? 0u : m->n_nodes;
+}
+
+const G3dModelNode *g3d_model_node(const G3dModel *m, u32 i)
+{
+    if (m == NULL || i >= m->n_nodes) {
+        return NULL;
+    }
+    return &m->nodes[i];
+}
+
+u32 g3d_model_draw_count(const G3dModel *m)
+{
+    return m == NULL ? 0u : m->n_draws;
+}
+
+const G3dModelDraw *g3d_model_draw(const G3dModel *m, u32 i)
+{
+    if (m == NULL || i >= m->n_draws) {
+        return NULL;
+    }
+    return &m->draws[i];
+}
+
+void g3d_model_set_node_local(G3dModel *m, u32 i, const G3dMtx *local)
+{
+    if (m == NULL || i >= m->n_nodes || local == NULL) {
+        return;
+    }
+    m->nodes[i].local = *local;
+}
+
+void g3d_model_set_node_parent(G3dModel *m, u32 i, s32 parent)
+{
+    if (m == NULL || i >= m->n_nodes) {
+        return;
+    }
+    if (parent < -1 || (u32)parent >= m->n_nodes || (u32)parent == i) {
+        parent = -1;
+    }
+    m->nodes[i].parent = parent;
+}
+
+void g3d_model_update_nodes(G3dModel *m)
+{
+    u32 i, rounds;
+
+    if (m == NULL) {
+        return;
+    }
+    /* A node's parent is only ever a lower index in every model seen, so
+     * one forward pass composes the whole tree.  The second pass over a
+     * bounded number of rounds is a guard for a caller that sets a link
+     * the other way round: it converges for a tree and leaves a cycle
+     * bounded rather than recursing forever. */
+    for (rounds = 0; rounds < m->n_nodes + 1u; rounds++) {
+        int changed = 0;
+
+        for (i = 0; i < m->n_nodes; i++) {
+            G3dModelNode *nd = &m->nodes[i];
+            G3dMtx w = nd->local;
+
+            if (nd->parent >= 0 && (u32)nd->parent < m->n_nodes &&
+                (u32)nd->parent != i) {
+                G3dMtx tmp;
+                g3d_mtx_mul(&tmp, &nd->local, &m->nodes[nd->parent].world);
+                if (memcmp(&tmp, &w, sizeof(w)) != 0) {
+                    changed = 1;
+                }
+                w = tmp;
+            }
+            if (memcmp(&w, &nd->world, sizeof(w)) != 0) {
+                changed = 1;
+            }
+            nd->world = w;
+        }
+        if (!changed) {
+            break;
+        }
+    }
+}
+
+static s32 node_s16(u32 v)
+{
+    v &= 0xFFFFu;
+    return (v & 0x8000u) ? (s32)v - 0x10000 : (s32)v;
+}
+
+static void node_build_local(G3dModelNode *nd)
+{
+    G3dMtx s;
+
+    g3d_mtx_scale(&s, nd->scale.x, nd->scale.y, nd->scale.z);
+    g3d_mtx_mul(&nd->local, &s, &nd->rotation);
+    nd->local.m[12] = nd->translation.x;
+    nd->local.m[13] = nd->translation.y;
+    nd->local.m[14] = nd->translation.z;
+    nd->local.m[15] = FX32_ONE;
+}
+
+/*
+ * Parse the node dictionary at `node_off`.  The record layout and the
+ * rotation and scale decodings are in g3d.h's G3dModelNode comment and in
+ * docs/g3d-nodes.md.  Returns 0 on success, -1 if the dictionary itself
+ * is not the expected shape.
+ */
+static int model_load_nodes(G3dModel *m, const u8 *tail, u32 tail_size,
+                            u32 node_off)
+{
+    G3dResDict d;
+    u32 i;
+
+    if (g3d_dict_parse(&d, tail, tail_size, node_off) != 0 || d.count == 0 ||
+        d.entry_size != 4u || d.records == NULL) {
+        return -1;
+    }
+    m->nodes = (G3dModelNode *)calloc(d.count, sizeof(G3dModelNode));
+    if (m->nodes == NULL) {
+        return -1;
+    }
+    m->n_nodes = d.count;
+
+    for (i = 0; i < d.count; i++) {
+        G3dModelNode *nd = &m->nodes[i];
+        u32 v = bw_rd32(d.records + i * 4u);
+        u32 a = node_off + v;
+        u32 o = 4u;
+
+        g3d_dict_name(&d, i, nd->name);
+        nd->parent = -1;
+        nd->scale.x = nd->scale.y = nd->scale.z = FX32_ONE;
+        nd->translation.x = nd->translation.y = nd->translation.z = 0;
+        g3d_mtx_identity(&nd->rotation);
+        if (a + 4u > tail_size) {
+            g3d_mtx_identity(&nd->local);
+            continue;
+        }
+        nd->flags = tail[a];
+        nd->pivot = bw_rd16(tail + a + 2u);
+        nd->has_translation = (u8)((nd->flags & 1u) ? 0u : 1u);
+        nd->has_rotation    = (u8)((nd->flags & 2u) ? 0u : 1u);
+        nd->has_scale       = (u8)((nd->flags & 4u) ? 0u : 1u);
+        nd->rotation_full   = (u8)((nd->flags & 8u) ? 0u : 1u);
+
+        if (nd->has_translation) {
+            if (a + o + 12u > tail_size) {
+                nd->has_translation = 0;
+            } else {
+                nd->translation.x = (fx32)(s32)bw_rd32(tail + a + o);
+                nd->translation.y = (fx32)(s32)bw_rd32(tail + a + o + 4u);
+                nd->translation.z = (fx32)(s32)bw_rd32(tail + a + o + 8u);
+                o += 12u;
+            }
+        }
+        if (nd->has_rotation) {
+            s32 ry, rz;
+
+            if (a + o + 4u > tail_size) {
+                nd->has_rotation = 0;
+            } else {
+                int full = nd->rotation_full && (a + o + 16u <= tail_size);
+
+                ry = node_s16(bw_rd16(tail + a + o));
+                rz = node_s16(bw_rd16(tail + a + o + 2u));
+                nd->rotation_full = (u8)full;
+                if (full) {
+                    /* third row's x is the header u16, y and z the 4-byte
+                     * field, and the two rows before it are the twelve
+                     * bytes that follow */
+                    const u8 *dd = tail + a + o + 4u;
+                    nd->rotation.m[0] = (fx32)node_s16(bw_rd16(dd));
+                    nd->rotation.m[1] = (fx32)node_s16(bw_rd16(dd + 2u));
+                    nd->rotation.m[2] = (fx32)node_s16(bw_rd16(dd + 4u));
+                    nd->rotation.m[4] = (fx32)node_s16(bw_rd16(dd + 6u));
+                    nd->rotation.m[5] = (fx32)node_s16(bw_rd16(dd + 8u));
+                    nd->rotation.m[6] = (fx32)node_s16(bw_rd16(dd + 10u));
+                    nd->rotation.m[8]  = (fx32)node_s16(nd->pivot);
+                    nd->rotation.m[9]  = (fx32)ry;
+                    nd->rotation.m[10] = (fx32)rz;
+                } else {
+                    /* packed form: the third row is (0, ry, rz) and the
+                     * rotation is the one about x that takes z to it */
+                    nd->rotation.m[0] = FX32_ONE;
+                    nd->rotation.m[5] = (fx32)rz;
+                    nd->rotation.m[6] = -(fx32)ry;
+                    nd->rotation.m[9] = (fx32)ry;
+                    nd->rotation.m[10] = (fx32)rz;
+                }
+                o += full ? 16u : 4u;
+            }
+        }
+        if (nd->has_scale) {
+            if (a + o + 24u > tail_size) {
+                nd->has_scale = 0;
+            } else {
+                nd->scale.x = (fx32)(s32)bw_rd32(tail + a + o);
+                nd->scale.y = (fx32)(s32)bw_rd32(tail + a + o + 4u);
+                nd->scale.z = (fx32)(s32)bw_rd32(tail + a + o + 8u);
+                /* the second triple is round(2^24 / scale) and is the
+                 * inverse the format carries; the scale is the first */
+            }
+        }
+        node_build_local(nd);
+    }
+    return 0;
+}
+
+/*
+ * Parse the render-command stream that follows the node data.  It carries
+ * two things this engine needs:
+ *
+ *   - the node hierarchy: a record `[0x26|0x66|0x46] <node> <parent> ...`
+ *     names a node and its parent.  A node whose parent is itself is the
+ *     root.  Across the scanned corpus every parent is in range and the
+ *     graph is acyclic.
+ *   - the shape -> node binding: opcode 0x04 (and its 0x24 / 0x44 variants)
+ *     binds a material and opcode 0x05 draws the shape, under whatever node
+ *     record was last seen.  A shape is instanced once per draw.
+ */
+static int model_load_render(G3dModel *m, const u8 *tail, u32 tail_size,
+                             u32 start, u32 end)
+{
+    u32 i, cap = 0;
+    s32 cur = -1;
+
+    if (end > tail_size) {
+        end = tail_size;
+    }
+    for (i = start; i + 1u < end; ) {
+        u8 b = tail[i];
+        u8 nb = tail[i + 1u];
+
+        if ((b == 0x26u || b == 0x66u || b == 0x46u) && nb < m->n_nodes) {
+            u32 parent = (i + 2u < end) ? tail[i + 2u] : 0xFFu;
+            if (parent < m->n_nodes && parent != nb) {
+                m->nodes[nb].parent = (s32)parent;
+            }
+            cur = (s32)nb;
+            i += 1u;
+            continue;
+        }
+        if ((nb == 0x04u || nb == 0x24u || nb == 0x44u) ||
+            (nb == 0x2bu)) {
+            i += 2u;
+            continue;
+        }
+        if (nb == 0x05u && b < m->n_shapes && cur >= 0) {
+            if (m->n_draws == cap) {
+                u32 ncap = cap ? cap * 2u : 32u;
+                G3dModelDraw *p = (G3dModelDraw *)realloc(
+                    m->draws, ncap * sizeof(*p));
+                if (p == NULL) {
+                    return -1;
+                }
+                m->draws = p;
+                cap = ncap;
+            }
+            m->draws[m->n_draws].shape = b;
+            m->draws[m->n_draws].node = (u32)cur;
+            m->n_draws++;
+            if (m->shapes[b].node == 0xFFFFFFFFu) {
+                m->shapes[b].node = (u32)cur;
+            }
+            i += 2u;
+            continue;
+        }
+        i += 1u;
+    }
+    return 0;
 }
 
 int g3d_model_load(G3dModel *out, const char *rel_path, u32 index,
@@ -901,6 +1194,7 @@ int g3d_model_load(G3dModel *out, const char *rel_path, u32 index,
 
         sh->index = i;
         sh->material = 0xFFFFFFFFu;
+        sh->node = 0xFFFFFFFFu;
         sh->first_poly = out->geom.n_polys;
         sh->first_vert = out->geom.n_verts;
         if (addr + SHAPE_DESC_SIZE > tail_size) {
@@ -942,6 +1236,18 @@ int g3d_model_load(G3dModel *out, const char *rel_path, u32 index,
 
         sh->n_polys = out->geom.n_polys - sh->first_poly;
         sh->n_verts = out->geom.n_verts - sh->first_vert;
+    }
+
+    /* The node dictionary is the first ResDict in the data tail; the
+     * hierarchy and the shape -> node binding are in the render-command
+     * stream that follows it, between the model header's +4 and +8
+     * offsets. */
+    if (model_load_nodes(out, tail, tail_size, dict_offs[0]) == 0) {
+        u32 sbc = bw_rd32(tail + 4u);
+        u32 sbc_end = bw_rd32(tail + 8u);
+
+        (void)model_load_render(out, tail, tail_size, sbc, sbc_end);
+        g3d_model_update_nodes(out);
     }
     return 0;
 }

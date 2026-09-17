@@ -530,13 +530,65 @@ void g3d_raster_geom(G3dTarget *t, const G3dGeom *g,
 /* One whole model                                                     */
 /* ------------------------------------------------------------------ */
 
-typedef struct ModelTexUser {
-    const G3dTexture **per_poly;
-} ModelTexUser;
-
-static const G3dTexture *model_tex(void *user, u32 poly)
+/* Draw one shape under one node: transform the shape's object-space
+ * vertices by the node's world matrix and then the camera and rasterise
+ * its polygons with the shape's texture.  `xf` is a scratch copy of the
+ * geometry whose ox/oy/oz stay object space and whose x/y/z/w are rewritten
+ * for this draw. */
+static void draw_shape(G3dTarget *t, const G3dModel *m, G3dGeom *xf,
+                       const G3dMtx *clip, u32 shape, u32 node,
+                       G3dTexArchive *ar)
 {
-    return ((ModelTexUser *)user)->per_poly[poly];
+    const G3dShape *sh;
+    const G3dMtx *nm;
+    const G3dTexture *tex;
+    u32 i;
+
+    if (shape >= m->n_shapes) {
+        return;
+    }
+    sh = &m->shapes[shape];
+    nm = (node < m->n_nodes) ? &m->nodes[node].world : NULL;
+    tex = (ar != NULL && sh->texture[0] != '\0')
+              ? g3d_texarchive_get(ar, sh->texture)
+              : NULL;
+
+    for (i = 0; i < sh->n_verts; i++) {
+        u32 vi = sh->first_vert + i;
+        fx32 ox = xf->verts[vi].ox;
+        fx32 oy = xf->verts[vi].oy;
+        fx32 oz = xf->verts[vi].oz;
+        fx32 mw;
+
+        if (vi >= m->geom.n_verts) {
+            break;
+        }
+        if (nm != NULL) {
+            g3d_mtx_xform(nm, ox, oy, oz, &ox, &oy, &oz, &mw);
+            (void)mw;
+        }
+        g3d_mtx_xform(clip, ox, oy, oz, &xf->verts[vi].x, &xf->verts[vi].y,
+                      &xf->verts[vi].z, &xf->verts[vi].w);
+    }
+    for (i = 0; i < sh->n_polys; i++) {
+        u32 pi = sh->first_poly + i;
+        const G3dPoly *poly;
+        G3dVertex v[4];
+        u32 k;
+
+        if (pi >= m->geom.n_polys) {
+            break;
+        }
+        poly = &m->geom.polys[pi];
+        if (poly->count < 3u || poly->count > 4u) {
+            continue;
+        }
+        for (k = 0; k < poly->count; k++) {
+            v[k] = xf->verts[m->geom.idx[poly->first + k]];
+        }
+        g3d_raster_polygon(t, v, poly->count, poly->attr, poly->teximage,
+                           tex);
+    }
 }
 
 void g3d_render_model(G3dTarget *t, const G3dModel *m,
@@ -545,9 +597,7 @@ void g3d_render_model(G3dTarget *t, const G3dModel *m,
 {
     G3dMtx clip;
     G3dGeom xf;
-    const G3dTexture **per_poly;
-    ModelTexUser user;
-    u32 i, s;
+    u32 i, d;
 
     if (m->geom.n_verts == 0 || m->geom.n_polys == 0) {
         return;
@@ -556,35 +606,34 @@ void g3d_render_model(G3dTarget *t, const G3dModel *m,
 
     xf = m->geom;
     xf.verts = (G3dVertex *)malloc((size_t)m->geom.n_verts * sizeof(G3dVertex));
-    per_poly = (const G3dTexture **)calloc(m->geom.n_polys,
-                                           sizeof(*per_poly));
-    if (xf.verts == NULL || per_poly == NULL) {
-        free(xf.verts);
-        free(per_poly);
+    if (xf.verts == NULL) {
         return;
     }
     for (i = 0; i < m->geom.n_verts; i++) {
         xf.verts[i] = m->geom.verts[i];
-        g3d_mtx_xform(&clip, xf.verts[i].ox, xf.verts[i].oy, xf.verts[i].oz,
-                      &xf.verts[i].x, &xf.verts[i].y, &xf.verts[i].z,
-                      &xf.verts[i].w);
     }
-    for (s = 0; s < m->n_shapes; s++) {
-        const G3dShape *sh = &m->shapes[s];
-        const G3dTexture *tex = (ar != NULL && sh->texture[0] != '\0')
-                                    ? g3d_texarchive_get(ar, sh->texture)
-                                    : NULL;
-        for (i = 0; i < sh->n_polys; i++) {
-            if (sh->first_poly + i < m->geom.n_polys) {
-                per_poly[sh->first_poly + i] = tex;
-            }
+    /*
+     * The render-command stream is the authority on what is drawn and under
+     * which node; a shape instanced under several nodes is drawn once per
+     * node with that node's (and its ancestors') matrix.  A model whose
+     * stream carried no draw list falls back to every shape at its own
+     * display-list origin, which is the behaviour this engine had before
+     * the node dictionary was read.
+     */
+    if (m->n_draws > 0u) {
+        for (d = 0; d < m->n_draws; d++) {
+            draw_shape(t, m, &xf, &clip, m->draws[d].shape,
+                       m->draws[d].node, ar);
+        }
+    } else {
+        for (i = 0; i < m->n_shapes; i++) {
+            draw_shape(t, m, &xf, &clip, i,
+                       m->shapes[i].node == 0xFFFFFFFFu ? ~0u
+                                                        : m->shapes[i].node,
+                       ar);
         }
     }
-    user.per_poly = per_poly;
-    g3d_raster_geom(t, &xf, model_tex, &user);
-
     free(xf.verts);
-    free(per_poly);
 }
 
 /* ------------------------------------------------------------------ */

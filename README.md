@@ -487,7 +487,7 @@ its rasteriser. Pure C99, no SDL, no third-party code, and not even
 | --- | --- |
 | `engine/g3d/g3d.h` | the whole API, and the provenance of every rule it implements |
 | `engine/g3d/mtx.c` | fx32 matrices, the four matrix modes, the position/vector stack, and frustum, perspective and look-at |
-| `engine/g3d/nsbmd.c` | NSBMD/NSBTX containers, Nitro resource dictionaries, TEX0 records, the MDL0 shape dictionary, the render-command bytecode, the a/0/1/4 texture index |
+| `engine/g3d/nsbmd.c` | NSBMD/NSBTX containers, Nitro resource dictionaries, TEX0 records, the MDL0 shape dictionary and node dictionary, the render-command bytecode, the a/0/1/4 texture index |
 | `engine/g3d/texture.c` | all seven GX texture pixel formats |
 | `engine/g3d/gx.c` | the display-list interpreter: the packed command word, the whole opcode table, every vertex encoding, strip assembly |
 | `engine/g3d/raster.c` | the 256x192 software rasteriser, and the meeting point with the 2D compositor |
@@ -635,7 +635,59 @@ brightnesses, and the repeat wrap), the matrix stack (identity, that
 `MTX_MULT` puts the parameter on the *left* so a later command is applied
 to the vertex earlier, push/pop, the underflow flag, and that `FX_MUL`
 truncates towards minus infinity), and the texture byte sizes and two
-format decodes. **68 checks, 0 failures.**
+format decodes. The node half is described under "The node dictionary"
+below. **133 checks, 0 failures.**
+
+### The node dictionary, and the transforms it carries
+
+The engine reads the MDL0 **node (bone) dictionary**, the first Nitro
+ResDict in a model's data tail, and decodes the whole transform: its
+4-byte records are offsets from the dictionary's own start to a
+variable-sized node record, and the records run back to back to the byte
+the model header names as the start of the render-command section. The
+record's flags byte is an **active-low presence mask** for a
+**translation** (12 bytes of `fx32`), a **rotation** (16 or 4 bytes) and
+a **scale** (24 bytes), with the flags' bit 3 selecting the rotation
+form. So a record is one of 4, 8, 16, 20, 28, 32, 40, 44 or 56 bytes,
+and the decoded lengths land on the section end in **all 740 models
+scanned**. `docs/g3d-nodes.md` carries the full byte evidence.
+
+- **Rotation.** The 4-byte field is two `s16`, the y and z of the
+  rotation matrix's third row (1.0 = 4096). The full form stores the
+  other two rows as six more `s16` and the third row's x as the record
+  header's second halfword (sign-extended `s16`); on the 21 nodes that carry both, the 4-byte halves
+  match the third row of the stored rows **21 of 21**. The packed form
+  stores only the third row's y and z, always a unit pair, and the
+  rotation is the x-turn taking z to it. Every reconstructed matrix is
+  orthonormal: **1163 / 1163** nodes.
+- **Scale.** The 24 bytes are three `fx32` scale factors followed by their
+  reciprocals, `round(2^24 / scale)` in **534 of 537** samples.
+- **Hierarchy.** The render-command section carries a
+  `[0x26|0x66|0x46] <node> <parent> ...` record per node; `parent ==
+  node` is the root. Every parent is in range and the graph acyclic in
+  **670 / 670** models, and `staffroll_b`'s tree is exactly the biped its
+  bone names describe (`l_foot -> l_shin -> l_thigh -> pelvis`, and so
+  on).
+- **Binding.** Opcodes `0x04`/`0x24`/`0x44` bind a material and `0x05`
+  draws a shape under the last node record, so a shape drawn under
+  several nodes is instanced. Every drawn shape binds to a node that
+  exists, **0 bad bindings**, and 636 of 670 models draw all their
+  shapes; a shape the render commands do not name is simply not drawn.
+
+The two models the geometry oracle uses have exactly **one node each**,
+whose record is the 4-byte identity (`flags 0x07`), so the transform
+applied is the identity and the oracle comparison and the house render
+are what they were. `g3d_render_model` now follows the draw list,
+applying each shape's node world matrix and its ancestors' before the
+camera; `g3d_model_set_node_local` / `g3d_model_set_node_parent` /
+`g3d_model_update_nodes` drive a pose from outside. `tests/test_g3d.c`
+checks the synthetic pipeline (translation, scale, quarter turn, a
+two-node draw list and parent+child composition, every pixel and matrix
+entry on paper), the byte decode against `m_pc01_00_00`, `m_ph01_00_00`,
+`staffroll_b` and `batt_stage01`, and a real render of `pl_00_00` under a
+2-unit node pose override (21239 pixels covered, 10637 moved). Measured
+on this tree: `ctest` **12/12** and `test_g3d` **133 checks, 0
+failures**, in both the LP64 and the ILP32 configuration.
 
 ### Meeting the 2D compositor
 
@@ -654,17 +706,16 @@ than under it. That is the piece of Milestone 4 this does not close.
 
 ### What is not decoded, and is the next step
 
-- **The node and bone table.** A model's own node dictionary, the packed
-  rotation forms a joint's matrix is stored in, and the per-shape matrix
-  binding are not decoded: every shape is drawn in the space its own
-  display list leaves it in, which is exactly what aletheia's OBJ export
-  does too, so the oracle comparison is unaffected and the picture is a
-  map chunk whose parts are each at their own authored origin. For the
-  static map models this is enough to render; it is not enough for an
-  animated model, and it is what the next 3D wave has to crack. The
-  render-command bytecode has opcodes beside the two (`4` bind material,
-  `5` draw shape) the asset lane identified, and they are where the
-  matrix binding will be.
+- **The node and bone table, closed.** The node dictionary's record
+  layout, its **translation**, its **packed and full rotations** and its
+  **scale**, the **parent/child tree** and the **shape -> node binding**
+  are all decoded and self-consistency-checked (see "The node
+  dictionary" above and `docs/g3d-nodes.md`): 1163/1163 orthonormal
+  rotations, 534/537 exact reciprocal scales, 670/670 in-range acyclic
+  parents, 0 bad shape bindings. `g3d_render_model` applies each shape's
+  node and ancestor transforms. What remains inside this area is only
+  the second flags byte, the flags' bits 4-7, and the header `u16`'s
+  meaning for a packed rotation; none is needed for the transform.
 - **Lighting.** The four light slots, the diffuse/ambient and
   specular/emission material registers and the shininess table are
   consumed with the right parameter counts so the stream stays aligned,
@@ -1616,7 +1667,7 @@ checks that two frames of the demo differ on the bottom screen, which is the
 animation a task on that list drove, and not at all on the top screen.
 
 With the 3D engine added (2026-09-17): five more library objects, all of
-them `engine/g3d/`, and **twelve tests pass** in 1.7 seconds. `test_g3d` runs 68 checks: the geometry half
+them `engine/g3d/`, and **twelve tests pass** in 1.7 seconds. `test_g3d` ran 68 checks at that point: the geometry half
 against the OBJ aletheia's `map_shapes.py` exports (7798 vertices and
 2354 faces over two map models, worst deviation 5.000e-07), and the
 raster half against hand-computed pixels plus a content check on a
@@ -1624,6 +1675,24 @@ rendered frame. `test_view` also runs `eidos_view --map 120` headless and
 checks the 3D layer reached the top screen. The same tree configured
 with `cmake/ilp32-toolchain.cmake` passes the same twelve, and
 `-DEIDOS_SDL=OFF` builds warning-free and passes the other eleven.
+
+With the node dictionary fully decoded (2026-09-17): `nsbmd.c` reads the
+MDL0 node dictionary, its translation, its packed and full rotations and
+its scale, and the render-command section's node hierarchy and shape ->
+node binding. The record layout is checked across 740 models, rotations
+are orthonormal in 1163/1163 nodes, reciprocal scales are exact in
+534/537, parents are in range and acyclic in 670/670, and every drawn
+shape binds to a node that exists. `g3d_render_model` follows the draw
+list applying each shape's node and ancestor transforms. `test_g3d` is
+now **133 checks, 0 failures**: the same geometry and raster numbers as
+before (the node is the identity for both oracle models) plus the byte
+decode of `m_pc01_00_00`, `m_ph01_00_00`, `staffroll_b` and
+`batt_stage01`, the synthetic translation/scale/rotation/binding/
+composition cases, and a real render of `pl_00_00` under a node pose
+override. All twelve tests still pass in both configurations.
+`docs/g3d-nodes.md` records the byte evidence and the two remaining
+uninterpreted fields (the second flags byte and the packed rotation's
+header `u16`), neither needed for the transform.
 
 With the ILP32 configuration added (2026-09-16): the same tree configured
 with `cmake/ilp32-toolchain.cmake` against the `i686-w64-mingw32-gcc` in the
@@ -1752,10 +1821,12 @@ clean.
         open until there is a frame to compare against
   - [ ] Overworld and map chunks render correctly: a map chunk renders,
         textured, from the player's own archives, and `eidos_view
-        --map N` orbits it. What is missing is the node and bone table,
-        so every shape sits at its own authored origin rather than at
-        the one a joint matrix would put it at, and lighting, which is
-        parsed and not interpreted
+        --map N` orbits it. The node dictionary's full SRT, its
+        parent/child tree and the per-shape node binding are decoded and
+        applied, so a multi-node model's parts sit at the positions and
+        orientations its joint matrices put them at
+        (`docs/g3d-nodes.md`); what is still missing is lighting, which
+        is parsed and not interpreted, and a pixel oracle
 - [ ] **Milestone 5**: Audio
   - [x] SDAT sequencer and mixer (replacing ARM7 audio core): the SDAT
         container, SBNK instrument tables, SWAR/SWAV waves, the SSEQ
