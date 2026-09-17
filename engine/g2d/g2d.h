@@ -717,11 +717,35 @@ void g2d_blend_alpha(const u8 first[3], const u8 second[3],
                      u32 eva, u32 evb, u8 out[3]);
 void g2d_blend_brightness(const u8 first[3], u32 evy, int up, u8 out[3]);
 
+/*
+ * A 3D layer as one stackable layer.  This is the piece g3d_compose_over
+ * does not close: that helper only puts a 3D frame behind a whole 2D frame
+ * at the backdrop, whereas here the 3D output is an ordinary layer at its
+ * own priority and hardware layer number, so a 2D BG can sit in front of or
+ * behind it and the colour effects can blend with a 3D pixel.  g2d does not
+ * depend on g3d for this: the layer is a raw RGBA buffer in the geometry
+ * g3d writes, and whatever produced it is the caller's business.
+ *
+ * The hardware 3D layer is a full framebuffer, not a sprite, so it covers
+ * every pixel of its buffer and `bg_index` is the layer it occupies: the
+ * caller must not also supply a text or affine BG at that index (the 3D
+ * layer wins that slot in g2d_frame_stack).  A pixel outside the buffer, or
+ * a layer the window hides, contributes nothing.
+ */
+typedef struct G2dLayer3d {
+    const u8 *rgba;    /* width*height*4, R,G,B,A, opaque */
+    u32 width, height;
+    u32 priority;      /* 0..3, like a BG; lower draws in front */
+    u32 bg_index;      /* 0..3: the hardware layer number it occupies */
+    int enabled;
+} G2dLayer3d;
+
 typedef struct G2dFrameDesc {
     const G2dBgLayer       *bgs;
     u32                     n_bgs;
     const G2dBgAffineLayer *abgs;
     u32                     n_abgs;
+    const G2dLayer3d       *g3d;       /* NULL: no 3D layer       */
     const G2dObjEntry      *objs;
     u32                     n_objs;
     const G2dPalette       *backdrop_pal;
@@ -741,6 +765,8 @@ typedef struct G2dFrameSample {
     const G2dPalette *pal;
     u32 color_index;
     int is_obj;
+    int is_3d;          /* rgb[] holds the pixel; pal/color_index unused */
+    u8  rgb[3];
     u32 layer;
 } G2dFrameSample;
 

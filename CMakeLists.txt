@@ -793,7 +793,7 @@ add_test(NAME test_audio COMMAND test_audio ${BW_DATA_ROOT_ABS} ${BW_AUDIO_ORACL
 # expected pixel in them is computed on paper from the hardware rule under
 # test.  They are the counterweight to the oracle comparisons, which can
 # only ever show that two implementations agree.
-foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_vfs)
+foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_vfs test_compose3d)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)

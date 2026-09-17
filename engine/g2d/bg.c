@@ -442,6 +442,7 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
             out[count].pal = obj->pal;
             out[count].color_index = index;
             out[count].is_obj = 1;
+            out[count].is_3d = 0;
             out[count].layer = i;
             count++;
         }
@@ -452,6 +453,34 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
             if (bgi < 4u && (allowed & (1u << bgi)) == 0) {
                 continue;   /* the window hides this BG at this pixel */
             }
+            /*
+             * The 3D layer occupies one hardware layer number.  It is
+             * opaque over its whole buffer, so it emits one sample and
+             * takes the slot: no text or affine layer at this index is
+             * consulted.
+             */
+            if (desc->g3d != NULL && desc->g3d->enabled
+                && desc->g3d->priority == prio
+                && desc->g3d->bg_index == bgi) {
+                if (desc->g3d->rgba != NULL
+                    && x >= 0 && y >= 0
+                    && (u32)x < desc->g3d->width
+                    && (u32)y < desc->g3d->height) {
+                    const u8 *src = desc->g3d->rgba
+                        + ((size_t)(u32)y * desc->g3d->width + (u32)x) * 4u;
+
+                    out[count].pal = NULL;
+                    out[count].color_index = 0;
+                    out[count].is_obj = 0;
+                    out[count].is_3d = 1;
+                    out[count].rgb[0] = src[0];
+                    out[count].rgb[1] = src[1];
+                    out[count].rgb[2] = src[2];
+                    out[count].layer = bgi;
+                    count++;
+                }
+                continue;
+            }
             if (bgi < desc->n_bgs) {
                 const G2dBgLayer *layer = &desc->bgs[bgi];
 
@@ -460,6 +489,7 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
                     out[count].pal = layer->pal;
                     out[count].color_index = ci;
                     out[count].is_obj = 0;
+                    out[count].is_3d = 0;
                     out[count].layer = bgi;
                     count++;
                     continue;
@@ -477,6 +507,7 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
                     out[count].pal = layer->pal;
                     out[count].color_index = ci;
                     out[count].is_obj = 0;
+                    out[count].is_3d = 0;
                     out[count].layer = bgi;
                     count++;
                     break;
@@ -498,6 +529,13 @@ static void stack_color(const G2dFrameDesc *desc, const G2dFrameSample *stack,
     u8 px[4];
 
     if (i < n) {
+        if (stack[i].is_3d) {
+            rgb[0] = stack[i].rgb[0];
+            rgb[1] = stack[i].rgb[1];
+            rgb[2] = stack[i].rgb[2];
+            *bit = g2d_frame_sample_bit(&stack[i]);
+            return;
+        }
         put_color(px, stack[i].pal, stack[i].color_index);
         *bit = g2d_frame_sample_bit(&stack[i]);
     } else {

@@ -233,7 +233,7 @@ ancestors') before the camera.
   camera (21239 of 49152 pixels covered) and the same model under a
   2-unit node pose override, which moves 10637 pixels.
 
-Measured on this tree: `ctest` **13 / 13** and `test_g3d` **133 checks,
+Measured on this tree: `ctest` **14 / 14** and `test_g3d` **133 checks,
 0 failures**, in both the LP64 and the ILP32 configuration.
 
 ## 8. What is not decoded

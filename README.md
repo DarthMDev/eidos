@@ -688,7 +688,7 @@ two-node draw list and parent+child composition, every pixel and matrix
 entry on paper), the byte decode against `m_pc01_00_00`, `m_ph01_00_00`,
 `staffroll_b` and `batt_stage01`, and a real render of `pl_00_00` under a
 2-unit node pose override (21239 pixels covered, 10637 moved). Measured
-on this tree: `ctest` **13/13** and `test_g3d` **133 checks, 0
+on this tree: `ctest` **14/14** and `test_g3d` **133 checks, 0
 failures**, in both the LP64 and the ILP32 configuration.
 
 ### Meeting the 2D compositor
@@ -701,10 +701,16 @@ would show its backdrop shows the 3D frame instead, which is the
 arrangement a DS game uses when BG0 carries the 3D output at the lowest
 priority, and is the overworld's.
 
-**What that is not** is a general BG0-is-3D hook. A 2D BG layer *behind*
-the 3D one, and the colour special effects blending with a 3D pixel, need
-the 3D layer inside `g2d_frame_stack`'s own per-pixel resolution rather
-than under it. That is the piece of Milestone 4 this does not close.
+**The general hook exists, as `G2dLayer3d`.** The 3D output can instead be
+a layer inside `g2d_frame_stack`, at its own priority and hardware layer
+number, so it takes its place in the same per-pixel order as the BGs and
+OBJs: a 2D BG can sit in front of or behind it, a window can hide it, and
+the colour effects blend with a 3D pixel (the topmost-pixel and
+directly-beneath rules apply to it like any layer). `g2d` stays independent
+of `g3d`: the descriptor is a plain RGBA buffer, and `g3d_compose_over` is
+kept for the common case it already covered. `tests/test_compose3d.c`
+checks the stack, priority, window and blend cases synthetically (18
+checks).
 
 ### What is not decoded, and is the next step
 
@@ -1696,7 +1702,7 @@ before (the node is the identity for both oracle models) plus the byte
 decode of `m_pc01_00_00`, `m_ph01_00_00`, `staffroll_b` and
 `batt_stage01`, the synthetic translation/scale/rotation/binding/
 composition cases, and a real render of `pl_00_00` under a node pose
-override. All thirteen tests still pass in both configurations.
+override. All fourteen tests still pass in both configurations.
 `docs/g3d-nodes.md` records the byte evidence and the two remaining
 uninterpreted fields (the second flags byte and the packed rotation's
 header `u16`), neither needed for the transform.
