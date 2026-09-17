@@ -657,9 +657,11 @@ scanned**. `docs/g3d-nodes.md` carries the full byte evidence.
   other two rows as six more `s16` and the third row's x as the record
   header's second halfword (sign-extended `s16`); on the 21 nodes that carry both, the 4-byte halves
   match the third row of the stored rows **21 of 21**. The packed form
-  stores only the third row's y and z, always a unit pair, and the
-  rotation is the x-turn taking z to it. Every reconstructed matrix is
-  orthonormal: **1163 / 1163** nodes.
+  stores only two components, always a unit pair; the engine completes
+  it as the x-turn, but that completion is an **assumption, not a
+  verified decode** (no packed/full twin exists in the corpus to fix the
+  missing component: 0 such twins across 740 models). See
+  `docs/g3d-nodes.md`, "The packed form".
 - **Scale.** The 24 bytes are three `fx32` scale factors followed by their
   reciprocals, `round(2^24 / scale)` in **534 of 537** samples.
 - **Hierarchy.** The render-command section carries a
@@ -706,16 +708,21 @@ than under it. That is the piece of Milestone 4 this does not close.
 
 ### What is not decoded, and is the next step
 
-- **The node and bone table, closed.** The node dictionary's record
-  layout, its **translation**, its **packed and full rotations** and its
-  **scale**, the **parent/child tree** and the **shape -> node binding**
-  are all decoded and self-consistency-checked (see "The node
-  dictionary" above and `docs/g3d-nodes.md`): 1163/1163 orthonormal
-  rotations, 534/537 exact reciprocal scales, 670/670 in-range acyclic
-  parents, 0 bad shape bindings. `g3d_render_model` applies each shape's
-  node and ancestor transforms. What remains inside this area is only
-  the second flags byte, the flags' bits 4-7, and the header `u16`'s
-  meaning for a packed rotation; none is needed for the transform.
+- **The node and bone table, almost closed.** The node dictionary's
+  record layout, its **translation**, its **full rotation**, its **scale**,
+  the **parent/child tree** and the **shape -> node binding** are decoded
+  and cross-checked (see "The node dictionary" above and
+  `docs/g3d-nodes.md`): 21/21 full rotations cross-product exact, 534/537
+  exact reciprocal scales, 670/670 in-range acyclic parents, 0 bad shape
+  bindings. `g3d_render_model` applies each shape's node and ancestor
+  transforms. **The packed rotation is provisional**: only two of its
+  components are stored (a verified unit pair) and the third-row
+  completion is assumed, with no packed/full twin in the corpus to fix it
+  (0 across 740 models). Also uninterpreted: the second flags byte, the
+  flags' bits 4-7, and the header halfword's meaning for a packed
+  rotation. The packed completion is the one transform piece not on byte
+  evidence; the paired BCA0 animation or the ARM9 matrix builder would
+  settle it.
 - **Lighting.** The four light slots, the diffuse/ambient and
   specular/emission material registers and the shininess table are
   consumed with the right parameter counts so the stream stays aligned,

@@ -101,19 +101,31 @@ halves equal the third row of the matrix the two stored rows imply, and
 giving `row0 = (0x08b2, 0x0d19, -0x02f7)`, `row1 = (0x052a, 0, 0x0f25)`,
 `row2 = (0x0c66, -0x0930, -0x043a)`, all unit and mutually orthogonal.
 
-**The packed form (bit 3 set).** Only the third row's y and z are stored.
-Across 217 such nodes, `(Rlow, Rhigh)/4096` is always a **unit** pair, so
-the third row is `(0, y, z)`, and the rotation is the one about x that
-takes z there: `row0 = (1,0,0)`, `row1 = (0, z, -y)`, `row2 = (0, y, z)`.
-`(0, 4096)` is the identity and decodes to it. This is the only
-orthonormal completion with a zero row2.x that is well defined when the
-third row is along y, which it is for real nodes (e.g. `C3_00_01`), and
-the look-at completions are not: a fixed up vector in the yz-plane is
-degenerate for those.
+**The packed form (bit 3 set).** Only two of the three components are
+stored, and across 217 such nodes `(Rlow, Rhigh)/4096` is always a
+**unit** pair. What those two components *are* is not settled by the node
+data. The engine reads them as the third row's y and z and completes the
+matrix as the x-turn that takes z there (`row0 = (1,0,0)`,
+`row1 = (0, z, -y)`, `row2 = (0, y, z)`), so `(0, 4096)` is the
+identity. **This completion is an assumption, not a verified decode.**
+Two searches were run and neither supports it:
 
-**Validation.** Reconstructing the matrix for every node of the corpus
-and checking row lengths and pairwise dots gives **1163 / 1163
-orthonormal**.
+- across all 740 models scanned, **0** joints are packed in one model and
+  full in another (rotation form is fixed per joint), so there is no twin
+  whose full matrix could fix the missing component;
+- of the 21 full rotations only 2 have `row2.x == 0`, and neither of
+  those has `row0 == (1,0,0)`, so the zero-roll family the completion
+  assumes is not what the full form actually uses.
+
+What would settle it: the paired BCA0 joint animation's frame 0 for a
+packed joint (the companions exist, `staffroll_b`/`staffroll_w` in
+`a/2/2/0`), or the ARM9 routine that expands a node record into a matrix.
+
+**Validation.** The full form's rows are orthonormal and reconstruct to a
+consistent matrix (**1163 / 1163 orthonormal over the whole corpus,
+21 / 21 cross-product exact to 1 LSB**), but that says nothing about the
+packed form: the completion above is orthonormal by construction, so
+orthonormality cannot test it.
 
 Readings that were tried and falsified as the reading of the 4-byte
 field, with why:
@@ -225,6 +237,12 @@ Measured on this tree: `ctest` **12 / 12** and `test_g3d` **133 checks,
 0 failures**, in both the LP64 and the ILP32 configuration.
 
 ## 8. What is not decoded
+
+- **The packed rotation's missing component and its roll completion.** The
+  two stored components are a verified unit pair, but their meaning and
+  the reconstruction of the third row are assumed (see "The packed form"
+  above); a packed joint's orientation is therefore provisional. This is
+  the one part of the transform that is not on byte evidence.
 
 Two things in the render-command stream are recorded but not interpreted,
 and neither is needed for the transform or the visibility:
