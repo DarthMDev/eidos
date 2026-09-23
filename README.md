@@ -1515,6 +1515,30 @@ a second compiler's opinion rather than the only 32-bit evidence there is.
 Current state: 69 objects compiled clean, `test_text`, `test_stats` and
 `test_tcbl` linked.
 
+### Checking every configuration at once
+
+```
+python tools/check.py                 # every configuration this machine can build
+python tools/check.py --only gcc-ilp32 asan-ilp32
+python tools/check.py --data-root ../aletheia/extract/data
+```
+
+configures, builds and tests each configuration in its own directory and
+fails on a build error, a failed test **or a single compiler warning**:
+GCC and Clang at both pointer widths, AddressSanitizer + UBSan at both, and
+the no-SDL build. A configuration whose compiler or 32-bit runtime is not
+installed is reported as skipped with the reason. On this tree, with no
+game data (Linux, GCC 13.3, Clang 18.1): all seven ok, 0 warnings, 9 of 9
+enabled tests passing in each, the data-driven ones disabled.
+
+Two portability fixes came out of the first Clang run: `sdk/os_alloc.c`
+computed alignment by subtracting a null pointer, which is undefined and
+now goes through `uintptr_t`; and `cmake/ilp32-toolchain.cmake` used to add
+`-m32` only when it picked the compiler itself, so naming one
+(`-DCMAKE_C_COMPILER=clang`) silently produced a 64-bit build. A named
+compiler now gets `-m32` too, and a configure that asked for ILP32 and got
+8-byte pointers is a fatal error.
+
 ## Pointer width, and the reference configuration
 
 **ILP32 is the reference configuration for eidos until the field code is in.
@@ -1857,7 +1881,9 @@ pointer widths.**
         and recorded under "Known type mismatches", two more found in the
         tcbl family; the sweep itself is not done)
   - [ ] Warning-free builds on GCC, Clang, and MSVC (warning-free on the
-        pinned MinGW-w64 GCC today, with and without SDL2)
+        pinned MinGW-w64 GCC, on Linux GCC 13 and Clang 18 at both pointer
+        widths, and under ASan/UBSan, all checked by `tools/check.py`;
+        MSVC not yet tried)
 - [ ] **Milestone 2**: Platform layer (SDL2)
   - [x] Window creation and input handling: an integer scale of the DS
         layout, stacked or side by side, a configurable SDL scancode table

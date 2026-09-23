@@ -104,6 +104,12 @@ endif()
 # so `-DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake` is the whole of
 # what an ILP32 build has to say.
 #
+if(EIDOS_ILP32_REQUESTED AND NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR
+        "cmake/ilp32-toolchain.cmake was given but the compiler produces "
+        "${CMAKE_SIZEOF_VOID_P}-byte pointers.  Is the 32-bit runtime installed "
+        "(gcc-multilib on Debian/Ubuntu), or does CMAKE_C_FLAGS override -m32?")
+endif()
 if(CMAKE_SIZEOF_VOID_P EQUAL 4)
     set(_eidos_tcbl_matched_default ON)
 else()

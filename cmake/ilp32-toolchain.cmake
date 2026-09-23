@@ -26,7 +26,11 @@
 #      Clang both take it; it needs the 32-bit runtime libraries installed,
 #      which is a separate package on most Linux distributions.
 #
-# Setting CMAKE_C_COMPILER explicitly on the command line overrides both.
+# Setting CMAKE_C_COMPILER explicitly on the command line skips the search:
+# a named i686/i586 driver is taken as it is, and any other named compiler
+# (clang, gcc, cc) gets -m32 exactly as the default one would.  A configure
+# that still ends up with 8-byte pointers is a fatal error in CMakeLists.txt
+# (EIDOS_ILP32_REQUESTED), never a silent 64-bit build.
 #
 # CMAKE_SYSTEM_NAME is deliberately not set: this is a same-OS, different-ABI
 # build, not a cross build, and the resulting executables run and are tested
@@ -76,3 +80,15 @@ if(NOT CMAKE_C_COMPILER)
         set(CMAKE_MODULE_LINKER_FLAGS_INIT "-m32")
     endif()
 endif()
+
+if(CMAKE_C_COMPILER AND NOT EIDOS_ILP32_C_COMPILER)
+    get_filename_component(_ilp32_named "${CMAKE_C_COMPILER}" NAME)
+    if(NOT _ilp32_named MATCHES "i[3-6]86")
+        set(CMAKE_C_FLAGS_INIT "-m32")
+        set(CMAKE_EXE_LINKER_FLAGS_INIT "-m32")
+        set(CMAKE_SHARED_LINKER_FLAGS_INIT "-m32")
+        set(CMAKE_MODULE_LINKER_FLAGS_INIT "-m32")
+    endif()
+endif()
+
+set(EIDOS_ILP32_REQUESTED ON)

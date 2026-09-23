@@ -55,7 +55,7 @@ void *bw_aligned_alloc(u32 size, u32 align)
         return NULL;
     }
     user = base + BW_HEAP_HEADER;
-    user += (align - ((size_t)(user - (unsigned char *)0) % align)) % align;
+    user += (align - (size_t)((uintptr_t)user % align)) % align;
     memcpy(user - sizeof(unsigned char *), &base, sizeof(unsigned char *));
     return user;
 }
@@ -124,7 +124,7 @@ void *bw_block_alloc(u32 size, u32 align)
     }
 
     payload = base + BW_BLOCK_GUARD + BW_BLOCK_HEADER;
-    misalign = (size_t)(payload - (unsigned char *)0) % (size_t)align;
+    misalign = (size_t)((uintptr_t)payload % (uintptr_t)align);
     if (misalign != 0) {
         payload += (size_t)align - misalign;
     }
