@@ -1531,6 +1531,17 @@ installed is reported as skipped with the reason. On this tree, with no
 game data (Linux, GCC 13.3, Clang 18.1): all seven ok, 0 warnings, 9 of 9
 enabled tests passing in each, the data-driven ones disabled.
 
+**Windows** is in the matrix too, cross-compiled with MinGW-w64
+(`mingw-x64`, `mingw-x86`); with Wine installed the x64 tests run as real
+`.exe` files through `CMAKE_CROSSCOMPILING_EMULATOR`, and on this machine
+all ten pass there, including `test_extract`'s oracle comparison. That run
+found that `eidos_extract` took its paths from `argv`, which Windows gives
+in the ANSI code page rather than UTF-8, so a ROM under a folder named with
+an accent would not open; it now reads the wide command line. It also found
+that `cmake/ilp32-toolchain.cmake` preferred `i686-w64-mingw32-gcc` on
+every host, so a Linux machine with MinGW installed got a Windows cross
+compiler for its "32-bit" build; the search is now split by host OS.
+
 Two portability fixes came out of the first Clang run: `sdk/os_alloc.c`
 computed alignment by subtracting a null pointer, which is undefined and
 now goes through `uintptr_t`; and `cmake/ilp32-toolchain.cmake` used to add

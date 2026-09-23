@@ -22,6 +22,8 @@ The configurations:
     asan-lp64     AddressSanitizer + UBSan, 64-bit
     asan-ilp32    the same, 32-bit
     nosdl-lp64    -DEIDOS_SDL=OFF: the build a machine without SDL2 gets
+    mingw-x64     Windows x64 with MinGW-w64, tests under wine64 if present
+    mingw-x86     Windows x86, the same, tests under a 32-bit wine if present
 
 Without game data the data-driven tests are registered as disabled and are
 reported in the count; pass --data-root to run them.  Standard library only.
@@ -53,7 +55,22 @@ CONFIGS = {
                                        "-DCMAKE_C_FLAGS=-m32 " + SAN,
                                        "-DCMAKE_EXE_LINKER_FLAGS=-m32 " + SAN]),
     "nosdl-lp64":  dict(cc=None, args=["-DEIDOS_SDL=OFF"]),
+    # Windows, cross-compiled with MinGW-w64.  The tests run under Wine
+    # when it is installed (wine64 for x64; a 32-bit Wine for x86), and the
+    # configuration is a warning-free compile and link check otherwise.
+    "mingw-x64":   dict(cc="x86_64-w64-mingw32-gcc", cross="wine64",
+                        args=["-DCMAKE_SYSTEM_NAME=Windows", "-DEIDOS_SDL=OFF"]),
+    "mingw-x86":   dict(cc="i686-w64-mingw32-gcc", cross="wine",
+                        args=["-DCMAKE_SYSTEM_NAME=Windows", "-DEIDOS_SDL=OFF"]),
 }
+
+
+def find_wine(name):
+    """A Wine loader for `name` ("wine64" or "wine"), or None."""
+    for cand in (shutil.which(name), "/usr/lib/wine/" + name):
+        if cand and os.path.exists(cand):
+            return cand
+    return None
 
 
 def run(cmd, log, cwd=None):
@@ -89,14 +106,19 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
     if data_root:
         cmd.append("-DBW_DATA_ROOT=" + os.path.abspath(data_root))
     cmd += cfg["args"]
+    wine = find_wine(cfg["cross"]) if cfg.get("cross") else None
+    if wine:
+        cmd.append("-DCMAKE_CROSSCOMPILING_EMULATOR=" + wine)
     cfg_log = os.path.join(bdir, "check-configure.log")
     if run(cmd, cfg_log) != 0:
         text = tail(cfg_log)
         # A 32-bit configuration on a host without the 32-bit runtime fails
         # in CMake's own compiler check; that is a missing package, not a
         # defect in the tree.
-        if "ilp32" in name and ("-m32" in text or "cannot find" in text
-                                or "pointers" in text):
+        # Only CMake's own compiler check counts: the port's guard ("asked
+        # for ILP32, got 8-byte pointers") is a real failure, and matching
+        # it here once hid a toolchain bug as a skip.
+        if "ilp32" in name and "is not able to compile" in text:
             res.update(status="skip", note="no 32-bit runtime (gcc-multilib?)")
         else:
             res["note"] = "configure failed, see " + cfg_log
@@ -111,6 +133,11 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
     if rc != 0:
         res["note"] = "build failed, see " + build_log
         print(tail(build_log))
+        return res
+
+    if cfg.get("cross") and not wine:
+        res["status"] = "ok" if res["warnings"] == 0 else "FAIL"
+        res["note"] = "built only: no %s to run the tests" % cfg["cross"]
         return res
 
     test_log = os.path.join(bdir, "check-test.log")

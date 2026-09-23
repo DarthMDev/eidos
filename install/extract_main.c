@@ -17,6 +17,40 @@
 
 #include "install.h"
 
+#ifdef _WIN32
+#include <stdlib.h>
+#include <windows.h>
+#include <shellapi.h>
+
+/*
+ * On Windows `argv` is in the ANSI code page (1252 on a Western install),
+ * not UTF-8, so a ROM in "C:\\Users\\Andre\\Téléchargements" would arrive
+ * as bytes install/ cannot open.  Take the command line as UTF-16 and hand
+ * the library UTF-8, which is what every bw_ path function expects.
+ */
+static char **utf8_argv(int *argc)
+{
+    LPWSTR *w = CommandLineToArgvW(GetCommandLineW(), argc);
+    char **out;
+    int i;
+
+    if (w == NULL) {
+        return NULL;
+    }
+    out = (char **)calloc((size_t)*argc + 1, sizeof(char *));
+    for (i = 0; out != NULL && i < *argc; i++) {
+        int n = WideCharToMultiByte(CP_UTF8, 0, w[i], -1, NULL, 0, NULL, NULL);
+        out[i] = (char *)malloc((size_t)n);
+        if (out[i] == NULL) {
+            return NULL;
+        }
+        WideCharToMultiByte(CP_UTF8, 0, w[i], -1, out[i], n, NULL, NULL);
+    }
+    LocalFree(w);
+    return out;
+}
+#endif
+
 static void progress(void *ctx, u32 done, u32 total, const char *what)
 {
     static int last = -1;
@@ -40,6 +74,15 @@ int main(int argc, char **argv)
     char err[512];
     int any = 0;
     int a = 1;
+
+#ifdef _WIN32
+    {
+        char **u = utf8_argv(&argc);
+        if (u != NULL) {
+            argv = u;
+        }
+    }
+#endif
 
     if (a < argc && strcmp(argv[a], "--any") == 0) {
         any = 1;

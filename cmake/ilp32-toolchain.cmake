@@ -53,8 +53,17 @@ if(NOT CMAKE_C_COMPILER)
         endif()
     endforeach()
 
+    # Only drivers that target the host's own OS: on a Linux machine that
+    # also has MinGW installed, i686-w64-mingw32-gcc is a cross compiler to
+    # Windows, and taking it would build .exe files ctest cannot run (and
+    # did, until this was split by host).
+    if(CMAKE_HOST_WIN32)
+        set(_ilp32_names i686-w64-mingw32-gcc)
+    else()
+        set(_ilp32_names i686-linux-gnu-gcc i586-linux-gnu-gcc)
+    endif()
     find_program(EIDOS_ILP32_C_COMPILER
-        NAMES i686-w64-mingw32-gcc i686-linux-gnu-gcc i586-linux-gnu-gcc
+        NAMES ${_ilp32_names}
         HINTS ${_ilp32_hints}
         DOC "A C compiler driver whose default target has 32-bit pointers")
 

@@ -916,6 +916,10 @@ target_include_directories(eidos_install PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk)
 add_executable(eidos_extract ${CMAKE_CURRENT_SOURCE_DIR}/install/extract_main.c)
 target_link_libraries(eidos_extract PRIVATE eidos_install)
+if(WIN32)
+    # CommandLineToArgvW, for UTF-8 paths on the command line.
+    target_link_libraries(eidos_extract PRIVATE shell32)
+endif()
 
 # A synthetic cartridge and aletheia's own extraction of it, generated from a
 # fixed seed (no game data): tools/synth_rom.py.
