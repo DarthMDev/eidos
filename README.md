@@ -1125,69 +1125,97 @@ allocates there.
 ### The heap environment, and what is under the allocator
 
 `g_EnvModule` at 0x02146954 is the heap manager, and the matched code reads
-it constantly: the heap count at +8 bounds the id, the byte table at +4 maps
-a public heap id to a record index, the record array at +0 holds the arena
-handle and the live-allocation count, and the halfword at +0xe is the result
-code every one of them writes. The DS constructor that fills it in
-(0x0202FC48) is not decompiled, so there is no matched constructor to call
-and `bw_heap_init` initialises the fields the matched code reads.
+it constantly: the id-table length at +8 bounds the id, the byte table at +4
+maps a public heap id to an entry index, the entry array at +0 holds each
+heap's handle and its live-allocation count, and the halfword at +0xe is the
+result code every one of them writes.
 
-**Wave 26 matched the whole of the release side and the expanded heap's
-front door, and the host allocator path shrank but did not go away.** What is
-in the build now is `src/matched/sub_020307B0.c` (the release entry point),
-`sub_02030A2C.c` and `sub_020309B8.c` (the free-side watch filter and audit,
-the mirrors of `sub_02030A00` and `sub_02030984` on the allocation side),
-`sub_02030344.c` (the checked heap-id lookup under the audit) and
-`src/matched/func_02060CA0.c` (the expanded heap's allocation front: round
-the request up to a word, take it off the head for a non-negative alignment
-and off the tail for a negative one, align to the magnitude).
+**In the reference configuration the whole heap is the game's own, down to
+the arena.** aletheia has since matched the heap environment constructor
+(`sub_0202FC48`) and everything under it, so with `EIDOS_HEAP_MATCHED` on
+(the default wherever pointers are four bytes) the port builds the manager
+the way the game's boot does and allocation runs matched to the bottom:
 
-**What stops the port dropping the host allocator is the arena, not the
-code.** `func_02060CA0`'s two callees are EXACT in aletheia too, and both walk
-a real region: `func_02060A08` walks the free list from the head and
-`func_02060ABC` from the tail, each keeping the smallest block that can hold
-the request once its data start is rounded, and each handing the winner to
-`func_02060888`, which carves the region out and moves it to the used list.
-Three things have to exist before any of that can run here, and all three
-lead back to one address:
+- **the constructor**, `src/matched/sub_0202FC48.c`: the entry table (the
+  caller's heaps plus 0x18 spares, 16 bytes each), the id table (clamped up
+  to the entry count, every byte 0xff) and one region per heap, all taken off
+  arena 0, each region turned into a NitroSystem expanded heap by
+  `func_02060C5C` / `func_02060814` / `func_020606D0`, which also puts it on
+  the root heap list;
+- **allocation**, `func_02060CA0` into `func_02060A08` (first fit from the
+  head of the free list) or `func_02060ABC` (from the tail, for a heap id
+  with bit 15 set), and the carve that splits the chosen block, leaving any
+  remainder of 0x14 bytes or more as a new free block;
+- **release**, `func_02030164` (the raw free: signature 0x194E to 0x194D,
+  the live counter down) into the expanded heap's free, which returns the
+  region with `func_02060B6C`, merging it with a free neighbour on either
+  side;
+- **child heaps**, `sub_0202FDC4` and `func_0202FED8`: a region allocated
+  from a parent heap and bound to the first unused spare entry, which is
+  what the game's boot does with `func_0203064C(1, 7, 0x25000)`
+  (`src/matched/sub_0200545C.c`). `bw_heap_create_child` is that call;
+- **the queries** the audits use: free bytes (`func_02060E6C`), the largest
+  allocatable block (`func_02060E94`), a block's size (`func_02060F90`).
 
-- **an arena.** `0x0202FC48`, the heap environment constructor, is the
-  function that builds one and fills `g_EnvModule`'s records in with it. It
-  is still open, so `sdk/game_globals.c` publishes a distinct non-null token
-  per heap rather than a handle, and there is no free list to walk.
-- **`func_02060888`**, the carve, which is what actually produces the pointer
-  and writes the block header the walk reads. Open.
-- **`sub_02030164`** on the release side, the raw free, and `sub_02060F90`,
-  the block-size query the audit uses. Both open.
+What the port supplies is the arena and the heap sizes. `sdk/os_arena.c` is
+`OS_AllocFromArenaLo` (`sub_02086788`) over one region the port allocates
+itself, sized by `bw_heap_init_sizes` to exactly what the constructor will
+take. The sizes are the port's because the game's own table (`d_0209D8A0`
+on TWL, `d_0209D8B0` on NTR, two heaps and 0xAD ids) is ARM9 rodata in the
+player's image; the boot path is where that table gets read.
 
-So `stubs/reimpl_02060A08.c` and `stubs/reimpl_02060ABC.c` stand in for the
-two walks and `stubs/reimpl_02030164.c` for the raw free, all three over
-`sdk/os_alloc.c`'s `bw_block_alloc` / `bw_block_free`. The head/tail
-distinction therefore has no effect on the address handed out, and that is
-the one observable difference from the DS: the direction flag exists so that
-long-lived allocations can be kept from fragmenting the low end of a fixed
-arena, and a host heap has neither a fixed arena nor that failure mode.
-`src/matched/sub_02030098.c`, the only caller, tests the result against null
-and nothing else.
+**Two findings about the matched sources, both handled in the port layer.**
 
-Net: three port files where there used to be two, one level further down,
-with the request rounding, the direction convention, the watch filtering, the
-audit and the whole of the release entry point now running matched. The line
-where the port begins is `func_02060888` and `0x0202FC48`, and it moves in
-one step when the heap constructor is decompiled.
+- *Two names, one object.* `func_020606A8.c` names the root heap list
+  `g_02146B64` where `func_020606D0.c` says `sRootList`, and
+  `func_0202FED8.c` names the manager `g_02146954` where everything else says
+  `g_EnvModule`. The DS links by address and gets one object; a host links
+  by name and would get two. CMake compiles each of those two files with its
+  spelling `#define`d to the other's, so the files are untouched and the
+  object is shared.
+- *A frame-layout dependence.* `func_02060888.c` (the carve) and
+  `func_02060E30.c` (the free) declare `int end; int start;`, let
+  `func_02060764(&start, blk)` write a two-word region, and read the second
+  word as `end` (and pass `&end - 1` as the region). That is right exactly
+  when the compiler puts `end` in the word above `start`, which mwccarm does,
+  and is out of bounds in C. Under GCC the carve read a word it never wrote
+  and gave the first split block a garbage size; `test_heap` caught it on
+  the first allocation. `stubs/reimpl_02060888.c` and
+  `stubs/reimpl_02060E30.c` are the two bodies with the pair declared as an
+  array and nothing else changed. They are the only two files in the corpus
+  with the `&local - 1` shape. Declaring the pair as an array in aletheia
+  would make both portable, if match.py agrees that the bytes survive; that
+  is aletheia's call.
 
-One host-only detail lives in `sdk/os_alloc.c` and nowhere else: **what is
-aligned is the payload, not the block.** The caller adds a 0x1c-byte header
-and hands out `block + 0x1c`, and 0x1c is not a multiple of eight, so an
-eight-aligned block would hand out a payload that is only four-aligned and
-every pointer in a task-callback node would be misaligned.
+**On an LP64 host** none of this can run (an expanded-heap block header is
+0x10 bytes with two pointers in it, and every file in the chain does its
+address arithmetic in `int`), so `EIDOS_HEAP_MATCHED` is off there:
+`sdk/game_globals.c` fills in the fields the upper layers read with a token
+per heap, and `stubs/reimpl_02060A08.c`, `stubs/reimpl_02060ABC.c` and
+`stubs/reimpl_02030164.c` take blocks from the host allocator. The manager's
+contract (ids, result codes, the live counter, alignment) is the same, and
+`test_heap` checks it in both configurations; the addresses are not, and the
+arena checks run only under ILP32.
 
-The rest of the failure path is aborting stubs, and honestly so:
-`sub_02030B50` (the heap report, `MATCH` in aletheia's `src/pending/`),
-`sub_02060E6C` and `sub_02060E94` (the arena walk and dump) are reachable
-only after an allocation has already failed, one call before `OS_Terminate`,
-and `sub_02060F90` only from the free-side audit, which the retail
-watched-heap id of -1 never enables.
+**`tests/test_heap.c`** needs no game data. Every expected number is worked
+out on paper from the rules above and each check names its source: the
+arena used to the byte (27 entries, a 28-byte id table and three regions),
+the heap heads at the region starts with their 'EXPH' signature and a single
+free block of region - 0x38 - 0x10 bytes, a head allocation placed right
+after the first header and a tail one ending at the heap's end with its tail
+bit set, both merges on free, first fit into a hole, the 0x14-byte
+remainder rule in both directions, the exact fit that empties the free list
+and the word more that fails with result 3, a region under 0x4c bytes that
+the constructor turns into "no heap", child heaps from the head and the tail
+of a parent (on the parent's child list, not the root list) and all four of
+their failure codes including the 0x18-spare limit, and fifty interleaved
+blocks over three heaps that never overlap and all come back. **206 checks
+under ILP32, 89 under LP64, 0 failures**, and clean under AddressSanitizer
+and UBSan in both.
+
+The out-of-memory report (`sub_02030B50`) stays a stub: it is EXACT in
+aletheia, but its closure reaches the game's debug print (`func_0209128C`,
+open), and it runs one call before `OS_Terminate`.
 
 ## The platform layer
 

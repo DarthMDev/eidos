@@ -2,6 +2,14 @@
  * func_02060ABC -- the tail-end half of the expanded-heap allocator.
  * REIMPLEMENTATION, not a match.
  *
+ * LP64 ONLY now.  aletheia has matched the heap environment constructor at
+ * 0x0202FC48 and the expanded heap under it, and where EIDOS_HEAP_MATCHED is
+ * on (32-bit pointers, the reference configuration) the matched source is
+ * compiled in this file's place.  On an LP64 host the expanded heap cannot
+ * run (README.md, "The heap environment"), so this stays that host's heap
+ * floor.  The text below is from before the constructor was matched and
+ * records why the stand-in was written the way it was.
+ *
  * The mirror of stubs/reimpl_02060A08.c and out of the build for exactly the
  * same two reasons: aletheia has src/matched/func_02060ABC.c EXACT, and it
  * walks the free list from the *tail* through each block's `prev` link,

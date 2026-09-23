@@ -77,10 +77,11 @@ void bw_aligned_free(void *p)
 
 /*
  * What the two halves of the expanded-heap allocator hand back, and what the
- * raw free gives up again.  The port has no arena -- the heap environment
- * constructor at 0x0202FC48 is still open, so there is no region for
- * src/matched/func_02060A08.c's free-list walk to walk -- so the block comes
- * from malloc and the head/tail distinction has no effect on the address.
+ * raw free gives up again, on an LP64 host.  Under ILP32 (EIDOS_HEAP_MATCHED)
+ * none of this is used: the heap is the game's own NitroSystem expanded heap
+ * built in sdk/os_arena.c's region.  On LP64 the expanded heap cannot run,
+ * so the block comes from malloc and the head/tail distinction has no
+ * effect on the address.
  * Nothing above this line can see the difference: the direction flag exists
  * so that long-lived allocations can be kept from fragmenting the low end of
  * a fixed arena, and a host heap has neither a fixed arena nor that failure

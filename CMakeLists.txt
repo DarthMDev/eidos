@@ -119,6 +119,28 @@ if(EIDOS_TCBL_MATCHED AND NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
         "-DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake, or leave the "
         "option at its default.")
 endif()
+
+# The same question for the heap's floor.  ON puts the NitroSystem expanded
+# heap into the build as written: the heap environment constructor
+# (sub_0202FC48), heap creation, the free-list walks and the carve, the
+# coalescing free and the child-heap binder, and leaves out the stand-ins
+# that take blocks from the host allocator instead.  The expanded heap's
+# block header is 0x10 bytes with two pointers in it and every one of these
+# files does its address arithmetic in int, so ON needs 32-bit pointers
+# exactly as EIDOS_TCBL_MATCHED does.
+option(EIDOS_HEAP_MATCHED
+       "Compile the expanded heap and the heap constructor as written (needs 32-bit pointers)"
+       ${_eidos_tcbl_matched_default})
+if(EIDOS_HEAP_MATCHED AND NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(FATAL_ERROR
+        "EIDOS_HEAP_MATCHED=ON needs a target with 32-bit pointers; "
+        "this one has sizeof(void *) = ${CMAKE_SIZEOF_VOID_P}.  Configure with "
+        "-DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake, or leave the "
+        "option at its default.")
+endif()
+message(STATUS "Pointer width: ${CMAKE_SIZEOF_VOID_P} bytes; heap floor: "
+               "${EIDOS_HEAP_MATCHED} (ON = the matched expanded heap, "
+               "OFF = host blocks)")
 message(STATUS "Pointer width: ${CMAKE_SIZEOF_VOID_P} bytes; tcbl sources: "
                "${EIDOS_TCBL_MATCHED} (ON = the matched nine, "
                "OFF = stubs/reimpl_)")
@@ -202,13 +224,10 @@ set(BW_MATCHED_SOURCES
     ${ALETHEIA_ROOT}/src/matched/sub_02030A00.c    # the watch filter
     ${ALETHEIA_ROOT}/src/matched/sub_02030A2C.c    # the free-side watch filter
 
-    # The expanded heap's front door.  Its two callees (func_02060A08 and
-    # func_02060ABC) are EXACT in aletheia too, and they stay out: both walk
-    # an arena's free list and hand the winner to the still-open
-    # func_02060888, and the port has no arena, because the heap environment
-    # constructor at 0x0202FC48 is still open.  What this file contributes on
-    # its own is the request rounding and the sign-of-the-alignment
-    # direction convention, which is arena-independent.
+    # The expanded heap's front door: round the request and pick the end of
+    # the heap by the sign of the alignment.  Arena-independent, so it is in
+    # every configuration; what it dispatches to is decided by
+    # EIDOS_HEAP_MATCHED below.
     ${ALETHEIA_ROOT}/src/matched/func_02060CA0.c   # round the request, pick the end
 
     # --- tcbl.c, the game's task-callback list ---------------------------
@@ -242,6 +261,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/fs.c            # FS_SeekFile/ReadFile/CloseFile
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi.c            # MI_CpuCopy/Fill family
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_alloc.c      # OS heap onto malloc
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_arena.c      # OS_AllocFromArenaLo, the heaps' arena
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_irq.c        # OS_DisableInterrupts/Restore/Terminate
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/gx.c            # the one GX name the heap layer reaches
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/tcbl.c          # the port's helper over tcbl.c
@@ -265,20 +285,69 @@ set(BW_STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02017E40.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02018598.c
 
-    # --- the heap layer's floor ------------------------------------------
-    #
-    # Everything above the arena is matched now.  What is left here is the
-    # arena itself, and it stays the port's until the heap environment
-    # constructor at 0x0202FC48 is decompiled: without it there is no region
-    # for a free-list walk to walk and no block header for a free to read.
+    # The out-of-memory report.  EXACT in aletheia, and its closure reaches
+    # the game's debug print (func_0209128C, open) and a module of report
+    # strings; it runs one call before OS_Terminate, after an allocation has
+    # already failed, so it stays a stub.
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02030B50.c
+)
+
+# --- the heap layer's floor ----------------------------------------------
+#
+# python tools/closure.py --seed-func sub_0202FC48
+# python tools/closure.py --seed-func sub_0202FDC4
+# python tools/closure.py --seed-func func_02030164
+#
+# Exactly one of the two lists enters the library, by EIDOS_HEAP_MATCHED.
+#
+# Two EXACT files in this chain are not compiled as written even under
+# ILP32: func_02060888.c (the carve) and func_02060E30.c (the free) let
+# func_02060764 write a two-word region starting at one scalar local and
+# then read the second word through the *next* declared local (`end`, and
+# `&end - 1`), which is right under mwccarm's frame layout and nowhere
+# else.  stubs/reimpl_02060888.c and stubs/reimpl_02060E30.c are their
+# bodies with the pair declared as an array; README.md, "The heap
+# environment", has the finding.
+set(BW_HEAP_MATCHED
+    ${ALETHEIA_ROOT}/src/matched/sub_0202FC48.c    # the heap environment constructor
+    ${ALETHEIA_ROOT}/src/matched/sub_0202FDC4.c    # carve a child heap from a parent
+    ${ALETHEIA_ROOT}/src/matched/func_0202FED8.c   # bind it to a spare entry
+    ${ALETHEIA_ROOT}/src/matched/func_02060C5C.c   # create an expanded heap over a region
+    ${ALETHEIA_ROOT}/src/matched/func_02060814.c   # the expanded heap's head
+    ${ALETHEIA_ROOT}/src/matched/func_020606D0.c   # the common heap head, root list
+    ${ALETHEIA_ROOT}/src/matched/func_020606A8.c   # the list that contains a heap
+    ${ALETHEIA_ROOT}/src/matched/unit_02060614.c   # list walk, find by address
+    ${ALETHEIA_ROOT}/src/matched/func_02060468.c   # init a list
+    ${ALETHEIA_ROOT}/src/matched/func_02060480.c   # first append
+    ${ALETHEIA_ROOT}/src/matched/func_020604AC.c   # append
+    ${ALETHEIA_ROOT}/src/matched/func_020607E8.c   # write a block header
+    ${ALETHEIA_ROOT}/src/matched/func_02060764.c   # a block's extent
+    ${ALETHEIA_ROOT}/src/matched/func_02060790.c   # unlink a block
+    ${ALETHEIA_ROOT}/src/matched/func_020607B8.c   # link a block after another
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060888.c  # the carve (see above)
+    ${ALETHEIA_ROOT}/src/matched/func_02060A08.c   # the head-end walk
+    ${ALETHEIA_ROOT}/src/matched/func_02060ABC.c   # the tail-end walk
+    ${ALETHEIA_ROOT}/src/matched/func_02030164.c   # the raw free
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060E30.c  # the expanded heap's free (see above)
+    ${ALETHEIA_ROOT}/src/matched/func_02060B6C.c   # return a region, coalescing
+    ${ALETHEIA_ROOT}/src/matched/func_02060E6C.c   # total free bytes
+    ${ALETHEIA_ROOT}/src/matched/func_02060E94.c   # largest allocatable block
+    ${ALETHEIA_ROOT}/src/matched/func_02091588.c   # abs, under the above
+    ${ALETHEIA_ROOT}/src/matched/func_02060F90.c   # an allocated block's size
+)
+set(BW_HEAP_REIMPL
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060A08.c  # the head-end walk
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060ABC.c  # the tail-end walk
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030164.c  # the raw free
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02030B50.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02060E6C.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02060E94.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02060F90.c
 )
+if(EIDOS_HEAP_MATCHED)
+    list(APPEND BW_MATCHED_SOURCES ${BW_HEAP_MATCHED})
+else()
+    list(APPEND BW_STUB_SOURCES ${BW_HEAP_REIMPL})
+endif()
 
 # The nine files the pointer width decides between.  Exactly one of the two
 # lists enters the library; the symbols are the same either way, so nothing
@@ -363,6 +432,13 @@ add_library(eidos STATIC
     ${BW_STUB_SOURCES}
     ${BW_ENGINE_SOURCES}
 )
+# Port code that has to know which heap floor it is sitting on (the
+# initialiser, the forwarders, the tests) reads this.
+if(EIDOS_HEAP_MATCHED)
+    target_compile_definitions(eidos PUBLIC EIDOS_HEAP_MATCHED=1)
+else()
+    target_compile_definitions(eidos PUBLIC EIDOS_HEAP_MATCHED=0)
+endif()
 target_include_directories(eidos PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d
@@ -565,10 +641,28 @@ endif()
 # The matched files are compiled with the port's warning set but without the
 # ones that are inherent to reproducing a 2010 compiler's output: they declare
 # each extern locally with the prototype that call site needs, so prototypes
-# for the same function differ between translation units by design.
+# for the same function differ between translation units by design, and a
+# local that is never read is sometimes what fixes the register allocation
+# (src/matched/func_02060814.c's `feature`).
 if(NOT MSVC)
     set_source_files_properties(${BW_MATCHED_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-missing-prototypes")
+        COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
+endif()
+
+# Two matched files name one DS object under two different names: the DS
+# build links both relocations to one address, a host linker would make two
+# objects.  Each is compiled with its spelling defined to the other file's,
+# which renames the reference at build time and leaves the file itself
+# untouched (portability rule 1).  closure.py lists both pairs as `data`
+# names at the same address.
+#
+#   0x02146B64  sRootList (func_020606D0.c)   g_02146B64 (func_020606A8.c)
+#   0x02146954  g_EnvModule (everywhere)      g_02146954 (func_0202FED8.c)
+if(EIDOS_HEAP_MATCHED)
+    set_source_files_properties(${ALETHEIA_ROOT}/src/matched/func_020606A8.c
+        PROPERTIES COMPILE_DEFINITIONS "g_02146B64=sRootList")
+    set_source_files_properties(${ALETHEIA_ROOT}/src/matched/func_0202FED8.c
+        PROPERTIES COMPILE_DEFINITIONS "g_02146954=g_EnvModule")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -880,7 +974,7 @@ eidos_data_test(test_audio bw_audio_oracle)
 # expected pixel in them is computed on paper from the hardware rule under
 # test.  They are the counterweight to the oracle comparisons, which can
 # only ever show that two implementations agree.
-foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_vfs test_compose3d)
+foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_heap test_vfs test_compose3d)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)

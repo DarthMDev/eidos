@@ -21,6 +21,7 @@ the aletheia checkout (--aletheia-root, default ../aletheia).
 
     python tools/hostbuild.py                  # find a native compiler, build, run
     python tools/hostbuild.py --check          # cross compile + link only
+    python tools/hostbuild.py --m32            # the same, ILP32 (-m32)
     python tools/hostbuild.py --probe          # say what is available, do nothing
 """
 
@@ -39,7 +40,9 @@ PORT = ROOT
 CMAKELISTS = os.path.join(PORT, "CMakeLists.txt")
 DEFAULT_ALETHEIA_ROOT = os.path.normpath(os.path.join(ROOT, "..", "aletheia"))
 
-TESTS = ["test_text", "test_stats", "test_tcbl"]
+TESTS = ["test_text", "test_stats", "test_tcbl", "test_heap"]
+# The two that compile the generated fixture header in, and so need game data.
+DATA_TESTS = {"test_text", "test_stats"}
 
 
 def read_source_lists(aletheia_root, ilp32=False):
@@ -58,8 +61,10 @@ def read_source_lists(aletheia_root, ilp32=False):
         text = fh.read()
     out = []
     accessors = "BW_TCBL_MATCHED" if ilp32 else "BW_TCBL_REIMPL"
+    # The heap floor is the same decision (EIDOS_HEAP_MATCHED).
+    heap = "BW_HEAP_MATCHED" if ilp32 else "BW_HEAP_REIMPL"
     for var in ("BW_MATCHED_SOURCES", "BW_SDK_SOURCES", "BW_STUB_SOURCES",
-                accessors):
+                accessors, heap):
         m = re.search(r"set\(%s\s*(.*?)\n\)" % var, text, re.S)
         if not m:
             raise SystemExit("hostbuild.py: %s not found in CMakeLists.txt" % var)
@@ -70,6 +75,21 @@ def read_source_lists(aletheia_root, ilp32=False):
             line = line.replace("${ALETHEIA_ROOT}", aletheia_root)
             line = line.replace("${CMAKE_CURRENT_SOURCE_DIR}", PORT)
             out.append(os.path.normpath(line))
+    return out
+
+
+def read_per_file_defines(aletheia_root):
+    """The per-source COMPILE_DEFINITIONS CMakeLists.txt sets (the two
+    build-time renames of a data name spelled two ways), as
+    {normalised source path: ["-DNAME=VALUE", ...]}."""
+    with open(CMAKELISTS, encoding="utf-8") as fh:
+        text = fh.read()
+    out = {}
+    for m in re.finditer(r'set_source_files_properties\((\S+)\s+PROPERTIES\s+'
+                         r'COMPILE_DEFINITIONS\s+"([^"]+)"\)', text):
+        src = m.group(1).replace("${ALETHEIA_ROOT}", aletheia_root)
+        src = os.path.normpath(src.replace("${CMAKE_CURRENT_SOURCE_DIR}", PORT))
+        out[src] = ["-D" + d for d in m.group(2).split(";") if d]
     return out
 
 
@@ -129,18 +149,27 @@ def gen_fixtures(builddir, aletheia_root, data_root):
 
 
 def build(cc, kind, builddir, aletheia_root, data_root, link, run_tests,
-          ilp32=False):
+          ilp32=False, m32=()):
     # The cross check builds for arm-none-eabi, which is LP32; a native
     # build here is whatever this Python's host is, which on every machine
     # the port is developed on is LP64.
     sources = read_source_lists(aletheia_root, ilp32=ilp32)
-    gen_fixtures(builddir, aletheia_root, data_root)
+    per_file = read_per_file_defines(aletheia_root) if ilp32 else {}
+    tests = list(TESTS)
+    if os.path.isdir(os.path.join(data_root, "a")):
+        gen_fixtures(builddir, aletheia_root, data_root)
+    else:
+        print("[*] no game data at %s: %s skipped" % (
+            data_root, ", ".join(sorted(DATA_TESTS))))
+        tests = [t for t in tests if t not in DATA_TESTS]
+        os.makedirs(builddir, exist_ok=True)
 
     if kind == "msvc":
         raise SystemExit("hostbuild.py: the MSVC path is not implemented; "
                          "use CMake, which knows how to drive cl.exe")
 
-    warn = ["-std=c99", "-Wall", "-Wextra", "-fsigned-char"]
+    warn = ["-std=c99", "-Wall", "-Wextra", "-fsigned-char",
+            "-DEIDOS_HEAP_MATCHED=%d" % (1 if ilp32 else 0)] + list(m32)
     # The same include directories CMakeLists.txt puts on the eidos
     # target: the shim, the 2D engine and the frame skeleton each have
     # headers the port's own sources reach by bare name.
@@ -151,14 +180,16 @@ def build(cc, kind, builddir, aletheia_root, data_root, link, run_tests,
     failed = 0
     for src in sources:
         obj = os.path.join(builddir, os.path.splitext(os.path.basename(src))[0] + ".o")
-        extra = ["-Wno-unused-parameter"] if os.sep + "matched" + os.sep in src else []
+        extra = (["-Wno-unused-parameter", "-Wno-unused-variable"]
+                 if os.sep + "matched" + os.sep in src else [])
+        extra += per_file.get(os.path.normpath(src), [])
         rc = run([cc] + warn + inc + extra + ["-c", src, "-o", obj])
         if rc != 0:
             failed += 1
             print("hostbuild.py: FAILED to compile %s" % src)
         else:
             objs.append(obj)
-    for t in TESTS:
+    for t in tests:
         src = os.path.join(PORT, "tests", t + ".c")
         obj = os.path.join(builddir, t + ".o")
         rc = run([cc] + warn + inc + ["-I", builddir, "-c", src, "-o", obj])
@@ -167,15 +198,18 @@ def build(cc, kind, builddir, aletheia_root, data_root, link, run_tests,
             print("hostbuild.py: FAILED to compile %s" % src)
     if failed:
         return 1
-    print("[*] %d objects compiled clean" % (len(objs) + len(TESTS)))
+    print("[*] %d objects compiled clean" % (len(objs) + len(tests)))
 
     if not link:
         return 0
 
     # Only the basename: the directory can contain "gcc" too (tools/gcc-arm).
     cc_dir, cc_base = os.path.split(cc)
-    ar = os.path.join(cc_dir, cc_base.replace("gcc", "ar").replace("clang", "ar"))
-    if not os.path.exists(ar) and shutil.which("ar"):
+    # A driver called plain `cc` has no "gcc" or "clang" in its name to swap,
+    # and the swap would hand back the compiler itself as the archiver.
+    ar_base = cc_base.replace("gcc", "ar").replace("clang", "ar")
+    ar = os.path.join(cc_dir, ar_base) if ar_base != cc_base else ""
+    if (not ar or not os.path.exists(ar)) and shutil.which("ar"):
         ar = shutil.which("ar")
     lib = os.path.join(builddir, "libeidos.a")
     if os.path.exists(lib):
@@ -185,10 +219,10 @@ def build(cc, kind, builddir, aletheia_root, data_root, link, run_tests,
 
     extra_link = ["--specs=nosys.specs"] if "arm-none-eabi" in cc else []
     rc_all = 0
-    for t in TESTS:
+    for t in tests:
         exe = os.path.join(builddir, t + (".elf" if extra_link else ""))
         obj = os.path.join(builddir, t + ".o")
-        p = subprocess.run([cc, "-std=c99"] + extra_link + [obj, lib, "-o", exe],
+        p = subprocess.run([cc, "-std=c99"] + list(m32) + extra_link + [obj, lib, "-o", exe],
                            capture_output=True, text=True)
         bad = [ln for ln in p.stderr.splitlines()
                if "undefined reference" in ln or "multiple definition" in ln]
@@ -206,7 +240,7 @@ def build(cc, kind, builddir, aletheia_root, data_root, link, run_tests,
         print("[*] link closure complete; not running (cross-built binary)")
         return 0
 
-    for t in TESTS:
+    for t in tests:
         exe = os.path.join(builddir, t)
         print("---- %s ----" % t)
         if run([exe, data_root]) != 0:
@@ -224,6 +258,9 @@ def main(argv=None):
     ap.add_argument("--check", action="store_true",
                     help="compile and link with the cross compiler; do not run")
     ap.add_argument("--probe", action="store_true", help="report tools and exit")
+    ap.add_argument("--m32", action="store_true",
+                    help="native build with -m32: the ILP32 reference "
+                         "configuration (the matched tcbl and heap sources)")
     args = ap.parse_args(argv)
 
     aletheia_root = os.path.abspath(args.aletheia_root)
@@ -247,9 +284,10 @@ def main(argv=None):
         print("              try `--check` for a cross compile-and-link pass,")
         print("              or install a compiler and use CMake.")
         return 2
-    print("[*] native build with %s" % cc)
+    print("[*] native build with %s%s" % (cc, " -m32" if args.m32 else ""))
     return build(cc, kind, args.build_dir, aletheia_root, data_root,
-                link=True, run_tests=True)
+                link=True, run_tests=True, ilp32=args.m32,
+                m32=("-m32",) if args.m32 else ())
 
 
 if __name__ == "__main__":

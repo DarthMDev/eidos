@@ -168,34 +168,36 @@ int bw_load_nature_table(void)
 /*
  * The struct declarations below are copied field for field from
  * src/matched/sub_02030098.c, which is the widest view of the object any
- * matched file in the closure takes (unit_0202FBAC.c declares the same
- * object with only the first two members, and the two declarations agree on
- * every offset they share).  Copying the shape rather than inventing one is
- * what keeps the port and the matched code agreeing about where `count`,
- * `error` and the per-record live-allocation counter are on an LP64 host,
- * where the two leading pointers are eight bytes each and the DS's offsets
- * do not apply to either side.
+ * matched file in the build takes; src/matched/sub_0202FC48.c, the
+ * constructor, names the three halfwords at +8 idCount, resCount and
+ * entryCount, and every declaration of the object in the corpus agrees on
+ * the offsets it shares.  Copying the shape rather than inventing one is what
+ * keeps the port and the matched code agreeing about where the fields are on
+ * an LP64 host, where the two leading pointers are eight bytes each.
  *
- * The DS constructor at 0x0202FC48 is not decompiled ("not in this packet's
- * cheap yield", unit_0202FBAC.c's header), so nothing matched can build this
- * object and the port builds it: the fields the matched code reads, filled
- * with values that make every heap id valid.
+ * Two ways of filling it in, decided by EIDOS_HEAP_MATCHED (CMakeLists.txt):
  *
- * The arena handle is the one thing the port does not reproduce.  On the DS
- * it is an NNS expanded-heap handle and the raw allocator hands it to
- * sub_02060CA0, which walks the heap's own free blocks.  Here it is a
- * distinct non-null token per heap: stubs/reimpl_02060A08.c and
- * stubs/reimpl_02060ABC.c, the two walks src/matched/func_02060CA0.c
- * dispatches to, take memory from the host instead of from an arena, and the
- * handle only needs to be the "this heap exists" answer that sub_0202FBAC
- * returns and sub_02030098 tests.  Building a real one needs the heap
- * environment constructor at 0x0202FC48, which is still open.
+ *  - ON, which needs 32-bit pointers.  The game's own constructor builds it:
+ *    src/matched/sub_0202FC48.c takes the entry table, the id table and one
+ *    region per heap out of arena 0 (sdk/os_arena.c) and turns every region
+ *    into a NitroSystem expanded heap, and the entry's +0 is that heap's
+ *    handle.  Allocation and release then run matched to the bottom: the
+ *    free-list walks, the carve, the coalescing free.  The port chooses only
+ *    how big each heap is, because the table the game passes
+ *    (src/matched/sub_0200545C.c: d_0209D8A0 on TWL, d_0209D8B0 on NTR) is
+ *    ARM9 rodata and lives in the player's own image.
+ *  - OFF, the LP64 configuration.  The expanded heap cannot run there (its
+ *    block header is 0x10 bytes with two pointers in it), so the port fills
+ *    in the fields the matched upper layers read, with a distinct non-null
+ *    token as each heap's handle, and stubs/reimpl_02060A08.c,
+ *    stubs/reimpl_02060ABC.c and stubs/reimpl_02030164.c take blocks from
+ *    the host allocator instead of from an arena.
  */
 
 struct BwEnvEntry {
-    void *ptr00;
-    u32   field04;
-    u32   field08;
+    void *ptr00;     /* the heap handle */
+    u32   field04;   /* a child heap's parent id (func_0202FED8) */
+    u32   field08;   /* a child heap's region (func_0202FED8) */
     u16   field0c;   /* live allocations; sub_02030098 increments it */
     u8    field0e;
 };
@@ -203,52 +205,206 @@ struct BwEnvEntry {
 struct BwEnvModule {
     struct BwEnvEntry *entries;
     u8                *ids;
-    u16                count;
-    u16                field0a;
-    u16                field0c;
+    u16                count;    /* sub_0202FC48: idCount, the id bound */
+    u16                field0a;  /* sub_0202FC48: resCount, the first spare */
+    u16                field0c;  /* sub_0202FC48: entryCount */
     u16                error;
 };
 
 struct BwEnvModule g_EnvModule;
 
-static struct BwEnvEntry g_heap_entries[BW_HEAP_COUNT];
-static u8                g_heap_ids[BW_HEAP_COUNT];
-static u32               g_heap_arena[BW_HEAP_COUNT];
+#if EIDOS_HEAP_MATCHED
+
+/*
+ * The NitroSystem root heap list, 0x02146B60/0x02146B64.  func_020606D0 (the
+ * heap-head initialiser) appends every new top-level heap to it and
+ * func_020606A8 looks a heap's parent up in it by address.  The second of
+ * those names the list `g_02146B64` where the first says `sRootList`; the
+ * DS links both to one word by address, a host links by name, so
+ * CMakeLists.txt compiles func_020606A8.c with `g_02146B64` defined to
+ * `sRootList` and this is the one object both see.
+ */
+struct BwFndList {
+    void *head;
+    void *tail;
+    u16   count;
+    u16   offset;
+};
+
+struct BwFndList sRootList;
+int              sRootListInitialized;
+
+/* The resource record sub_0202FC48 reads, per heap. */
+struct BwEnvRes {
+    u32 size;
+    u32 unk_04;
+};
+
+extern int sub_0202FC48(const struct BwEnvRes *res, u16 count, u16 idCount,
+                        u32 extra);
+extern int sub_0202FDC4(u32 src, u32 dst, u32 size);
+
+int bw_heap_init_sizes(const u32 *sizes, u32 heaps, u32 id_count)
+{
+    struct BwEnvRes res[BW_HEAP_MAX];
+    u32 i;
+    u32 total;
+    u32 spares;
+
+    if (heaps == 0u || heaps > BW_HEAP_MAX) {
+        return -1;
+    }
+    /* The constructor reserves 0x18 spare entries past the caller's heaps
+     * (the child heaps func_0202FED8 binds) and clamps the id table up to
+     * cover them. */
+    spares = heaps + 0x18u;
+    if (id_count < spares) {
+        id_count = spares;
+    }
+    if (id_count > 0xFFFFu) {
+        return -1;
+    }
+
+    /* The whole arena: the entry table (16 bytes per entry), the id table,
+     * each heap's region and the four-byte rounding of every one of them. */
+    total = spares * 16u + ((id_count + 3u) & ~3u);
+    for (i = 0; i < heaps; i++) {
+        res[i].size = (sizes[i] + 3u) & ~3u;
+        res[i].unk_04 = 0;
+        total += res[i].size;
+    }
+    if (bw_arena_reset(total) != 0) {
+        return -1;
+    }
+
+    /* A fresh boot: no heap exists, so the root list is empty and not yet
+     * initialised.  Without this a second init would find the previous
+     * run's heaps, which occupied the same addresses, still on the list. */
+    memset(&sRootList, 0, sizeof(sRootList));
+    sRootListInitialized = 0;
+    memset(&g_EnvModule, 0, sizeof(g_EnvModule));
+
+    return sub_0202FC48(res, (u16)heaps, (u16)id_count, 0) ? 0 : -1;
+}
 
 int bw_heap_init(u32 heaps)
 {
+    u32 sizes[BW_HEAP_MAX];
     u32 i;
 
-    if (heaps == 0u || heaps > BW_HEAP_COUNT) {
+    if (heaps == 0u || heaps > BW_HEAP_MAX) {
         heaps = BW_HEAP_COUNT;
     }
+    for (i = 0; i < heaps; i++) {
+        sizes[i] = BW_HEAP_DEFAULT_SIZE;
+    }
+    return bw_heap_init_sizes(sizes, heaps, heaps);
+}
+
+int bw_heap_create_child(u32 parent, u32 child, u32 size)
+{
+    return sub_0202FDC4(parent, child, size) ? 0 : -1;
+}
+
+void *bw_heap_handle(u32 heap_id)
+{
+    u8 idx;
+
+    heap_id &= 0x7FFFu;
+    if (g_EnvModule.ids == NULL || heap_id >= (u32)g_EnvModule.count) {
+        return NULL;
+    }
+    idx = g_EnvModule.ids[heap_id];
+    return idx == 0xffu ? NULL : g_EnvModule.entries[idx].ptr00;
+}
+
+#else /* !EIDOS_HEAP_MATCHED */
+
+static struct BwEnvEntry g_heap_entries[BW_HEAP_MAX];
+static u8                g_heap_ids[BW_HEAP_MAX];
+static u32               g_heap_arena[BW_HEAP_MAX];
+
+int bw_heap_init_sizes(const u32 *sizes, u32 heaps, u32 id_count)
+{
+    u32 i;
+
+    (void)sizes;   /* host blocks come from malloc; a heap has no size */
+    if (heaps == 0u || heaps > BW_HEAP_MAX) {
+        return -1;
+    }
+    if (id_count < heaps) {
+        id_count = heaps;
+    }
+    if (id_count > BW_HEAP_MAX) {
+        id_count = BW_HEAP_MAX;
+    }
     memset(g_heap_entries, 0, sizeof(g_heap_entries));
-    for (i = 0; i < BW_HEAP_COUNT; i++) {
+    for (i = 0; i < BW_HEAP_MAX; i++) {
         /*
          * 0xff is the manager's "no such resource" marker: sub_0202FBAC
          * returns 0 for it, which is the raw allocator's result code 2.
-         * Ids past `heaps` keep it so a test can see that arm.
+         * Ids past `heaps` keep it, as they do after sub_0202FC48.
          */
         g_heap_ids[i] = i < heaps ? (u8)i : (u8)0xff;
         g_heap_arena[i] = 0x48454150u + i;          /* 'HEAP' + index */
-        g_heap_entries[i].ptr00 = &g_heap_arena[i];
+        g_heap_entries[i].ptr00 = i < heaps ? (void *)&g_heap_arena[i] : NULL;
     }
     g_EnvModule.entries = g_heap_entries;
     g_EnvModule.ids = g_heap_ids;
-    g_EnvModule.count = (u16)heaps;
-    g_EnvModule.field0a = 0;
-    g_EnvModule.field0c = 0;
+    g_EnvModule.count = (u16)id_count;
+    g_EnvModule.field0a = (u16)heaps;
+    g_EnvModule.field0c = (u16)heaps;
     g_EnvModule.error = 0;
     return 0;
 }
 
+int bw_heap_init(u32 heaps)
+{
+    if (heaps == 0u || heaps > BW_HEAP_MAX) {
+        heaps = BW_HEAP_COUNT;
+    }
+    return bw_heap_init_sizes(NULL, heaps, heaps);
+}
+
+/* Child heaps are sub-regions of a parent's arena; there is no arena here. */
+int bw_heap_create_child(u32 parent, u32 child, u32 size)
+{
+    (void)parent;
+    (void)child;
+    (void)size;
+    return -1;
+}
+
+void *bw_heap_handle(u32 heap_id)
+{
+    heap_id &= 0x7FFFu;
+    if (g_EnvModule.ids == NULL || heap_id >= (u32)g_EnvModule.count
+        || g_EnvModule.ids[heap_id] == 0xffu) {
+        return NULL;
+    }
+    return g_EnvModule.entries[g_EnvModule.ids[heap_id]].ptr00;
+}
+
+#endif /* EIDOS_HEAP_MATCHED */
+
 long bw_heap_live_blocks(u32 heap_id)
 {
+    u8 idx;
+
     heap_id &= 0x7FFFu;
     if (g_EnvModule.ids == NULL || heap_id >= (u32)g_EnvModule.count) {
         return -1;
     }
-    return (long)g_heap_entries[g_EnvModule.ids[heap_id]].field0c;
+    idx = g_EnvModule.ids[heap_id];
+    if (idx == 0xffu) {
+        return -1;
+    }
+    return (long)g_EnvModule.entries[idx].field0c;
+}
+
+u32 bw_heap_error(void)
+{
+    return g_EnvModule.error;
 }
 
 void bw_heap_note_release(u32 heap_id)
@@ -260,8 +416,8 @@ void bw_heap_note_release(u32 heap_id)
         return;
     }
     idx = g_EnvModule.ids[heap_id];
-    if (idx != 0xffu && g_heap_entries[idx].field0c != 0) {
-        g_heap_entries[idx].field0c--;
+    if (idx != 0xffu && g_EnvModule.entries[idx].field0c != 0) {
+        g_EnvModule.entries[idx].field0c--;
     }
 }
 

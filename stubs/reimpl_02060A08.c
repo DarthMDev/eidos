@@ -2,6 +2,14 @@
  * func_02060A08 -- the head-end half of the expanded-heap allocator.
  * REIMPLEMENTATION, not a match.
  *
+ * LP64 ONLY now.  aletheia has matched the heap environment constructor at
+ * 0x0202FC48 and the expanded heap under it, and where EIDOS_HEAP_MATCHED is
+ * on (32-bit pointers, the reference configuration) the matched source is
+ * compiled in this file's place.  On an LP64 host the expanded heap cannot
+ * run (README.md, "The heap environment"), so this stays that host's heap
+ * floor.  The text below is from before the constructor was matched and
+ * records why the stand-in was written the way it was.
+ *
  * aletheia has this one EXACT (src/matched/func_02060A08.c) and the port
  * still cannot use it, for a reason that is about data rather than about
  * code: it walks an arena.  The matched source declares the heap handle as

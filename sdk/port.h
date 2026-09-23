@@ -174,9 +174,11 @@ void  bw_aligned_free(void *p);
  * to `block + 0x1c`, which is the one place the host and the DS have to be
  * told apart.  sdk/os_alloc.c has the reasoning.
  *
- * Callers: stubs/reimpl_02060A08.c and stubs/reimpl_02060ABC.c, the two
- * halves src/matched/func_02060CA0.c dispatches to, and
- * stubs/reimpl_02030164.c, the raw free under src/matched/sub_020307B0.c.
+ * Callers, on an LP64 host only: stubs/reimpl_02060A08.c and
+ * stubs/reimpl_02060ABC.c, the two halves src/matched/func_02060CA0.c
+ * dispatches to, and stubs/reimpl_02030164.c, the raw free under
+ * src/matched/sub_020307B0.c.  Under ILP32 the matched expanded heap takes
+ * blocks from its own arena instead.
  */
 void *bw_block_alloc(u32 size, u32 align);
 void  bw_block_free(void *block);
@@ -195,20 +197,58 @@ void  bw_block_free(void *block);
  * 3 = exhausted, 0 = success).  src/matched/sub_02030098.c's header is the
  * authority on all of it.
  *
- * On the DS the heap constructor at 0x0202FC48 fills the manager in.  That
- * function is not decompiled, so there is no matched constructor for the
- * port to call and it initialises the fields the matched code reads itself,
- * which is what this does.  `heaps` heap ids become valid, each with its own
- * arena handle; BW_HEAP_COUNT is the default.  Returns 0.
+ * On the DS the heap constructor at 0x0202FC48 fills the manager in, and
+ * where EIDOS_HEAP_MATCHED is on (the 32-bit reference configuration) it
+ * does here too: src/matched/sub_0202FC48.c builds `heaps` NitroSystem
+ * expanded heaps inside the port's arena (sdk/os_arena.c) and every
+ * allocation walks a real free list.  On an LP64 host the port fills the
+ * fields in itself and blocks come from the host allocator
+ * (sdk/game_globals.c has both).
+ *
+ * bw_heap_init makes `heaps` heap ids valid (BW_HEAP_COUNT if 0 or out of
+ * range), each BW_HEAP_DEFAULT_SIZE bytes.  bw_heap_init_sizes takes one
+ * size per heap and the id-table length, which is the shape of the game's
+ * own call (src/matched/sub_0200545C.c passes 2 heaps and 0xAD ids).  Both
+ * return 0, or -1 if the constructor failed (bw_heap_error() then holds the
+ * index of the heap that did not fit).  Calling either again starts over.
  */
-#define BW_HEAP_COUNT 16u
+#define BW_HEAP_COUNT        16u
+#define BW_HEAP_MAX          64u
+#define BW_HEAP_DEFAULT_SIZE 0x40000u
 
 int  bw_heap_init(u32 heaps);
+int  bw_heap_init_sizes(const u32 *sizes, u32 heaps, u32 id_count);
+
+/* A heap carved out of another one: src/matched/sub_0202FDC4.c, which the
+ * game's boot calls as func_0203064C(1, 7, 0x25000).  `child` may carry bit
+ * 15, which takes the region from the parent's tail.  0 on success, -1 on
+ * failure with the manager's result code in bw_heap_error().  Only where
+ * EIDOS_HEAP_MATCHED is on; elsewhere it always fails. */
+int  bw_heap_create_child(u32 parent, u32 child, u32 size);
+
+/* The heap handle behind a public id (the expanded heap's head under
+ * EIDOS_HEAP_MATCHED, a token otherwise), or NULL. */
+void *bw_heap_handle(u32 heap_id);
+
+/* The manager's result halfword at +0xe, as the last matched call left it. */
+u32  bw_heap_error(void);
 
 /* Live allocations on one heap, as the manager counts them.  -1 if the id is
- * out of range.  The count is incremented by the matched raw allocator and
- * decremented by stubs/reimpl_02030164.c, so a balanced test ends at zero. */
+ * out of range or names no heap.  The count is incremented by the matched raw
+ * allocator and decremented by the raw free, so a balanced test ends at
+ * zero. */
 long bw_heap_live_blocks(u32 heap_id);
+
+/*
+ * The arena the heaps are built in, EIDOS_HEAP_MATCHED only
+ * (sdk/os_arena.c).  bw_arena_reset discards the old arena and allocates a
+ * fresh one of `size` bytes (0 frees it); bw_heap_init_sizes calls it with
+ * exactly what the constructor will take.
+ */
+int  bw_arena_reset(u32 size);
+u32  bw_arena_used(void);
+u32  bw_arena_size(void);
+int  bw_arena_contains(const void *p);
 
 /* The release side of the counter the matched raw allocator increments.
  * Called by stubs/reimpl_02030164.c with the heap id it recovered from the

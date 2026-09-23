@@ -1,6 +1,14 @@
 /*
  * sub_02060E6C -- the expanded heap's first-block query.  NOT MATCHED.
  *
+ * LP64 ONLY now.  aletheia has matched the heap environment constructor at
+ * 0x0202FC48 and the expanded heap under it, and where EIDOS_HEAP_MATCHED is
+ * on (32-bit pointers, the reference configuration) the matched source is
+ * compiled in this file's place.  On an LP64 host the expanded heap cannot
+ * run (README.md, "The heap environment"), so this stays that host's heap
+ * floor.  The text below is from before the constructor was matched and
+ * records why the stand-in was written the way it was.
+ *
  * One caller, src/matched/sub_02030958.c, the out-of-memory reporter: it
  * takes the arena handle sub_02030428 resolved, walks it with this function
  * and dumps it with sub_02060E94, discarding both answers.  It belongs to
