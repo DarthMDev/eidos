@@ -185,6 +185,7 @@ set(BW_MATCHED_SOURCES
     ${ALETHEIA_ROOT}/src/matched/func_0204944C.c   # read a range inside a member
     ${ALETHEIA_ROOT}/src/matched/func_02048D00.c   # open by id, read whole member, close
     ${ALETHEIA_ROOT}/src/matched/func_02048F4C.c   # the two-argument front of it
+    ${ALETHEIA_ROOT}/src/matched/unit_02048DDC.c   # open an archive by id; resolve a member
     ${ALETHEIA_ROOT}/src/matched/sub_02034734.c    # the assert sink the readers call
 
     # --- message text ----------------------------------------------------
@@ -279,8 +280,6 @@ set(BW_SDK_SOURCES
 set(BW_STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02045A98.c  # end-of-string code unit
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204960C.c  # archive stream seek
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02048DDC.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02048E34.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02017E1C.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02017E40.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02018598.c
@@ -974,7 +973,7 @@ eidos_data_test(test_audio bw_audio_oracle)
 # expected pixel in them is computed on paper from the hardware rule under
 # test.  They are the counterweight to the oracle comparisons, which can
 # only ever show that two implementations agree.
-foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_heap test_vfs test_compose3d)
+foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_heap test_vfs test_arcid test_compose3d)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)

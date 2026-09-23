@@ -1790,6 +1790,42 @@ table, and neither exists yet. The other two items of the milestone are the
 first-run extractor and booting the game's own lists from the extracted
 tree; the second is gated on aletheia's boot path, which is not decompiled.
 
+### Archives by id, the way the game opens them
+
+Every asset the game loads goes through one family of matched readers that
+take an **archive id** rather than a path: `func_02048DDC` opens archive N
+through the name table the boot installs (`func_02048CEC(0x020A6C58, 0xEB)`
+in `src/matched/sub_0200545C.c`: 235 ARM9 addresses of the strings
+`a/0/0/0` to `a/2/3/4`), `func_02048E34` resolves one member's extent out of
+the NARC's own tables, and `func_02048D00` / `func_02048F4C` read a member
+into a buffer. `src/matched/unit_02048DDC.c` is now in the build (it was the
+last stub under the two readers already there), and the port supplies the
+bottom of it:
+
+- `bw_arc_install_table` is the boot's call: it points `g_02146A68` at the
+  table inside the ARM9 image. The object is declared the way the reader
+  declares it (`u32 * volatile`), so it works at either pointer width, and
+  the entries stay DS addresses.
+- the open-by-path SDK call at 0x02078C18 resolves such an address through
+  the ARM9 window to its string and the string through the file layer, **mod
+  overlay first**, so a mod's replacement archive is what the game's own
+  readers see. aletheia's `layout/symbols_sdk.txt` labels 0x02078C18
+  `CRYPTOi__BN_lshift1` and the matched file calls it by that name; the call
+  site (a freshly initialised file object, a path address, then seeks and
+  reads) says it is `FS_OpenFile`. The port defines it under the name the
+  matched file uses and records the mislabel in `sdk/fs.c`.
+- `bw_arm9_set_image` installs an ARM9 image from memory, for a caller that
+  already holds it (the first-run extractor, a test).
+
+`tests/test_arcid.c` needs no game data: it writes three NARCs and a mod
+copy of one, and a synthetic ARM9 image with its own three-entry table, then
+reads every member by id through the matched readers and checks every byte
+against what it wrote and against `sdk/narc.c`'s reader, which shares no
+code with the matched one. It also covers D00's byte-offset mode, the
+out-of-range member reaching the game's assert sink, the mod overlay winning
+and falling through, and the open shim's refusals. **82 checks in both
+pointer widths.**
+
 ## Planned Milestones
 
 - [ ] **Milestone 1**: Portability pass

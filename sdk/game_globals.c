@@ -80,6 +80,49 @@ const char func_02049578_File[] = "arc_tool.c";
 const char func_02049578_Msg[]  = "member index out of range";
 const char func_0204944C_File[] = "arc_tool.c";
 const char func_0204944C_Msg[]  = "member index out of range";
+const char func_02048DDC_File[] = "arc_tool.c";
+const char func_02048DDC_Msg[]  = "member index out of range";
+
+/* ------------------------------------------------------------------ */
+/* g_02146A68 -- the archive name table                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * func_02048DDC opens an archive by id through this: +0 is the table, +4 the
+ * entry count, +8 a flag selecting the (dead) memory arm.  The game installs
+ * it once at boot with func_02048CEC(0x020A6C58, 0xEB)
+ * (src/matched/sub_0200545C.c), and the table is 235 ARM9 addresses of
+ * "a/x/y/z" strings, entry N being N's three decimal digits (aletheia's
+ * docs/ASSETS.md).
+ *
+ * The shape is src/matched/unit_02048DDC.c's, the reader's: `u32 * volatile
+ * unk00`.  src/matched/unit_02048C58.c, the writer, declares the same object
+ * as three u32, which is the same bytes only where a pointer is four; the
+ * writer is not in the build, and bw_arc_install_table does its one store
+ * against the reader's layout, so this works at either pointer width.  The
+ * entries themselves stay DS addresses (u32) on every host, which is what
+ * the open-by-path shim in sdk/fs.c expects.
+ */
+struct BwArcTable {
+    const u32 *volatile table;
+    u32                 count;
+    u32                 memory;
+};
+
+struct BwArcTable g_02146A68;
+
+int bw_arc_install_table(u32 address, u32 count)
+{
+    const void *t = bw_arm9_rodata(address, count * 4u);
+
+    if (t == NULL || count == 0u) {
+        return -1;
+    }
+    g_02146A68.table = (const u32 *)t;
+    g_02146A68.count = count;
+    g_02146A68.memory = 0;
+    return 0;
+}
 
 /* ------------------------------------------------------------------ */
 /* g_02146270 -- the one-entry personal-record memo                     */

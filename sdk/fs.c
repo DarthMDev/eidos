@@ -205,3 +205,85 @@ void func_02078A80(void *file)
 {
     (void)FS_CloseFile(file);
 }
+
+/* ------------------------------------------------------------------ */
+/* Opening by NitroFS path, as the game does                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * FS_InitFile at 0x020788AC: bind a fresh, closed file object.  The SDK
+ * clears the object's list links and state; the port's object is its own
+ * record, and a cleared one is a closed one, so a read before a successful
+ * open panics in record_of() rather than reading a stale slot.
+ */
+void FS_InitFile(void *file)
+{
+    memset(file, 0, BW_FSFILE_SIZE);
+}
+
+/*
+ * The SDK's open-by-path at 0x02078C18.  aletheia's layout/symbols_sdk.txt
+ * names that address CRYPTOi__BN_lshift1, which is what libmatch.py's
+ * signature scan said, and src/matched/unit_02048DDC.c calls it under that
+ * name.  The name is a mislabel: the call site is
+ *
+ *     FS_InitFile(arc);
+ *     CRYPTOi__BN_lshift1(arc, g_02146A68.unk00[id]);
+ *
+ * with a just-initialised file object and an entry of the game's archive
+ * name table, whose 235 entries are the ARM9 addresses of the strings
+ * "a/0/0/0" to "a/2/3/4" (aletheia's docs/ASSETS.md, "the table"), and the
+ * object is then read with FS_SeekFile / FS_ReadFile.  That is FS_OpenFile
+ * with the path given as an address, which is what the port implements.
+ *
+ * The address is an address in the DS image, not a host pointer: the table
+ * is the ARM9 image's own (sdk/game_globals.c, bw_arc_install_table), so the
+ * string is found through the ARM9 window, and the NitroFS path is then
+ * resolved through the file layer, mod overlay first.  Returns 1 on success
+ * and 0 on failure, as FS_OpenFile does; the one matched caller ignores the
+ * result, and a failed open leaves the object closed, so its first read
+ * panics naming the operation.
+ */
+#define BW_FS_PATH_MAX 256u
+
+u32 CRYPTOi__BN_lshift1(void *file, u32 path_address)
+{
+    char rel[BW_FS_PATH_MAX];
+    char host[1100];
+    const char *s;
+    u32 i;
+
+    FS_InitFile(file);
+    for (i = 0; i < BW_FS_PATH_MAX; i++) {
+        s = (const char *)bw_arm9_rodata(path_address + i, 1);
+        if (s == NULL) {
+            return 0;                   /* not an address in the image */
+        }
+        rel[i] = *s;
+        if (*s == '\0') {
+            break;
+        }
+    }
+    if (i == BW_FS_PATH_MAX || i == 0) {
+        return 0;                       /* unterminated, or empty */
+    }
+    if (bw_data_path(host, sizeof(host), rel) != 0) {
+        return 0;
+    }
+    return bw_fs_open(file, host) == 0 ? 1u : 0u;
+}
+
+/*
+ * FS_CreateFileFromMemory at 0x0207A940.  func_02048DDC's other arm, taken
+ * only when the archive table's +8 flag is set, which nothing in the image
+ * does (unit_02048DDC.c's header); the port has no memory-backed file
+ * object, so reaching it is a closure error and says so.
+ */
+void FS_CreateFileFromMemory(void *file, u32 start, u32 size)
+{
+    (void)file;
+    (void)start;
+    (void)size;
+    bw_panic("FS_CreateFileFromMemory", 0x0207A940,
+             "the archive table's memory arm is dead code in the retail image");
+}

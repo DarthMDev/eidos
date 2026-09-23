@@ -103,6 +103,23 @@ static void load_arm9(void)
     g_arm9_size = (u32)end;
 }
 
+void bw_arm9_set_image(const void *image, u32 size)
+{
+    free(g_arm9);
+    g_arm9 = NULL;
+    g_arm9_size = 0;
+    g_arm9_tried = 1;
+    if (image == NULL || size == 0) {
+        return;
+    }
+    g_arm9 = (u8 *)malloc(size);
+    if (g_arm9 == NULL) {
+        return;
+    }
+    memcpy(g_arm9, image, size);
+    g_arm9_size = size;
+}
+
 const void *bw_arm9_rodata(u32 address, u32 size)
 {
     u32 off;

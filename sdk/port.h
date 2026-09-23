@@ -73,6 +73,27 @@ int bw_data_exists(const char *rel);
  */
 const void *bw_arm9_rodata(u32 address, u32 size);
 
+/*
+ * Replace the ARM9 image with a copy of `size` bytes at `image` (loaded at
+ * BW_ARM9_LOAD_ADDRESS), instead of reading extract/arm9_dec.bin.  For a
+ * caller that already holds the image (the first-run extractor, a test with
+ * a synthetic one).  NULL or 0 clears it.  Pointers bw_arm9_rodata returned
+ * before the call are invalid after it.
+ */
+void bw_arm9_set_image(const void *image, u32 size);
+
+/*
+ * Install the game's archive name table, which is what the boot's
+ * func_02048CEC(0x020A6C58, 0xEB) does: `count` ARM9 addresses of NitroFS
+ * paths at ARM9 address `address`.  After it, the matched archive readers
+ * that take an archive id (func_02048DDC and everything above it) open
+ * files through the file layer, mod overlay included.  0, or -1 if the range
+ * is not inside the ARM9 image.
+ */
+int bw_arc_install_table(u32 address, u32 count);
+#define BW_ARC_TABLE_ADDRESS 0x020A6C58u
+#define BW_ARC_TABLE_COUNT   0xEBu
+
 /* ------------------------------------------------------------------ */
 /* Archives                                                            */
 /* ------------------------------------------------------------------ */
