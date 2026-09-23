@@ -901,6 +901,38 @@ add_custom_command(
 add_custom_target(bw_audio_oracle DEPENDS ${BW_AUDIO_ORACLE_FILES})
 
 # ---------------------------------------------------------------------------
+# The installer core: identify and extract the player's ROM (install/)
+# ---------------------------------------------------------------------------
+#
+# Plain C99 and the standard library, no SDL and nothing of the game: the
+# part of the first-run wizard that is the same on every platform.
+add_library(eidos_install STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/sha1.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/blz.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/ndsrom.c
+)
+target_include_directories(eidos_install PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/install
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk)
+add_executable(eidos_extract ${CMAKE_CURRENT_SOURCE_DIR}/install/extract_main.c)
+target_link_libraries(eidos_extract PRIVATE eidos_install)
+
+# A synthetic cartridge and aletheia's own extraction of it, generated from a
+# fixed seed (no game data): tools/synth_rom.py.
+set(BW_SYNTH_DIR ${CMAKE_CURRENT_BINARY_DIR}/synth)
+add_custom_command(
+    OUTPUT ${BW_SYNTH_DIR}/synth.nds ${BW_SYNTH_DIR}/oracle_files.txt
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/synth_rom.py
+            --aletheia-root ${ALETHEIA_ROOT} --out ${BW_SYNTH_DIR}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/synth_rom.py
+            ${ALETHEIA_ROOT}/tools/ndsrom.py
+            ${ALETHEIA_ROOT}/tools/blz.py
+    COMMENT "Generating the synthetic cartridge and its ndsrom.py extraction"
+    VERBATIM
+)
+add_custom_target(bw_synth DEPENDS ${BW_SYNTH_DIR}/synth.nds)
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -985,6 +1017,12 @@ foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_heap 
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+add_executable(test_extract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract.c)
+target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_extract PRIVATE eidos_install)
+add_dependencies(test_extract bw_synth)
+add_test(NAME test_extract COMMAND test_extract ${BW_SYNTH_DIR})
 
 # ---------------------------------------------------------------------------
 # eidos_view -- the demo, and the first visible output

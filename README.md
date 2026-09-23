@@ -1850,6 +1850,40 @@ out-of-range member reaching the game's assert sink, the mod overlay winning
 and falling through, and the open shim's refusals. **82 checks in both
 pointer widths.**
 
+## The first-run extractor (install/)
+
+The end state is an installer: the player gives it their own ROM (and,
+optionally later, a DSi BIOS) and gets a playable game on Windows, macOS,
+Linux, Android or iOS. `install/` is the part of that which is the same on
+every platform, plain C99 with no SDL and nothing of the game:
+
+- `bw_rom_identify`: the header (title, game code, unit code) and a
+  streamed SHA-1 of the whole image, checked against the dump aletheia is
+  built against (`install/sha1.c`, FIPS vectors in the test);
+- `bw_rom_extract`: the tree aletheia's `tools/ndsrom.py extract` writes
+  (`data/` NitroFS files, ARM9/ARM7, FNT/FAT, both overlay tables and their
+  files, orphans, the banner, the DSi regions) plus `arm9_dec.bin`, the ARM9
+  decompressed by `install/blz.c` exactly as `tools/blz.py` does, which is
+  what the port reads its ARM9 tables from. `eidos_manifest.json` records
+  what was extracted; ndsrom.py's rebuild bookkeeping is not written.
+- the ROM is untrusted input: every offset is checked, the whole plan is
+  validated (bounds, overlaps, a cyclic FNT) before a single file is
+  written, names are sanitised exactly as ndsrom.py sanitises them, and
+  paths are UTF-8 on every platform (the wide API on Windows).
+
+`eidos_extract <rom.nds> [out_dir]` is the command-line front end.
+
+**`tests/test_extract.c`** needs no game data. `tools/synth_rom.py` builds
+a synthetic DSi-enhanced cartridge from a fixed seed (nested directories,
+names that need sanitising, overlays in both tables, an orphan, an empty
+FAT slot, a zero-length file, an animated banner, both digest tables, a
+residue blob, an ARM9 packed by aletheia's own `blz.py`) and runs aletheia's
+`ndsrom.py extract` on it. The C extractor's output is compared with that
+**file for file by SHA-1: 27 of 27 identical**. Around it: the SHA-1 and
+BLZ vectors, 17 name cases, 16 broken images each refused with the right
+message and nothing written, and 300 randomly damaged images (43 extracted,
+257 refused, none crashing, run under ASan by `tools/check.py`). 83 checks.
+
 ## Planned Milestones
 
 - [ ] **Milestone 1**: Portability pass
@@ -2000,7 +2034,11 @@ pointer widths.**
   - [ ] The game's own sound calls reach it: nothing in `src/matched/` plays
         a sequence yet, so the SEQ id is still chosen by the demo
 - [ ] **Milestone 6**: Data pipeline & asset extraction
-  - [ ] First-run asset extractor from legally dumped ROM
+  - [ ] First-run asset extractor from legally dumped ROM (the core is in:
+        `install/` identifies and extracts the ROM into ndsrom.py's layout
+        plus `arm9_dec.bin`, identical to aletheia's tools on a synthetic
+        cartridge; the per-platform wizard, the readable-format conversion
+        of DISTRIBUTION.md and a run against the real ROM are not)
   - [ ] File layer: VFS with mod overlay support (the two roots, the
         resolution order and `bw_data_exists` are implemented in `sdk/vfs.c`
         and tested by `test_vfs`; the overlay is file granular, so

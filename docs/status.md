@@ -39,7 +39,27 @@ is only partly done, it says which part.
   pixel. `g3d`-independent (the layer is a raw RGBA buffer); `test_compose3d`
   is the synthetic check. `g3d_compose_over` remains for the backdrop case.
 
+- **The game's own heap, down to the arena** (ILP32): aletheia matched the
+  heap constructor (0x0202FC48) and the expanded heap; they run as written
+  under `EIDOS_HEAP_MATCHED` (`test_heap`, 206 checks). Two EXACT files
+  (`func_02060888`, `func_02060E30`) depend on mwccarm's frame layout and
+  are transcribed in `stubs/`; worth fixing on the aletheia side.
+- **Archives by id**: `unit_02048DDC` is in; the game's readers open
+  archives through the name table and the file layer, mod overlay first
+  (`test_arcid`).
+- **First-run extractor core** (`install/`, `eidos_extract`): identical to
+  aletheia's ndsrom.py + blz.py on a synthetic cartridge (`test_extract`).
+- **Builds with no game data**, and `tools/check.py` runs GCC and Clang at
+  both pointer widths, ASan+UBSan and no-SDL, warning-free.
+
 ## Open, no decompilation dependency
+
+- **The installer front ends**: the per-platform wizard around `install/`
+  (ROM picker, progress, data root location per DISTRIBUTION.md), the
+  optional DSi BIOS input, and a first run against the real ROM.
+- **The Pokemon record layer** (`func_02017E1C`/`E40`, `func_02018598`) is
+  matched in aletheia, but its closure is 81 files with 3 open functions
+  and ARM9 rodata tables; it needs game data to test meaningfully.
 
 - **Milestone 4, 3D gaps**: the texture matrix (`TEXIMAGE_PARAM` bits 30-31)
   and the toon/highlight polygon modes are unimplemented; lighting registers
@@ -53,9 +73,6 @@ is only partly done, it says which part.
   approximations (affine per-span texture interpolation, a conventional
   top-left fill rule) stay unverified. A frame captured from an emulator
   would close it.
-- **Milestone 6, first-run asset extractor**: the headline item of the
-  milestone. Not written; it either orchestrates aletheia's `tools/` or
-  reimplements the unpack, which is a design decision not yet made.
 - **Milestone 6, member-level mod overlay**: overriding one member inside a
   NARC (an editable decoded asset) needs the engine to load the decoded form
   and repack it, or a member-level side table. Only whole-file overlay
@@ -70,10 +87,11 @@ is only partly done, it says which part.
 
 ## Blocked on aletheia (needs decompiled game code)
 
-- **Milestone 2, boot from the game's own lists**: the port builds the task
-  list and allocates from the matched heap, but the lists a real boot makes
-  come from game code. Specific blockers named in README.md: the heap
-  environment constructor at `0x0202FC48` (the arena), and the boot path.
+- **Milestone 2, boot from the game's own lists**: the heap constructor is
+  matched and in (ILP32), and aletheia now has the boot's own init matched
+  (`sub_0200545C`: heaps, child heap 7, the archive table). What is still
+  open is its wider closure and the overlays (field, battle, title), which
+  aletheia has barely started (12 files in 4 of 237 overlays).
 - **Milestone 3, opening cinematic**: needs the cinematic's own code.
 - **Milestone 5, audio accuracy**: the ADSR curve, the volume and pan laws,
   Tie, portamento, modulation and the pitch wheel are documented
