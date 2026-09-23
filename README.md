@@ -1437,6 +1437,26 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+**Without game data.** The fixtures and the four oracles are generated from
+the extracted ROM at build time, so a tree with no `extract/` used to fail
+its build at the first of them. Configure now checks whether the data root
+holds a NitroFS tree and sets `EIDOS_DATA_TESTS` from the answer. With no
+data the whole library, the demo and every test executable that does not
+compile a generated header in still build, the seven synthetic tests run,
+and the seven data-driven ones (`test_text`, `test_stats`, `test_g2d`,
+`test_bg`, `test_g3d`, `test_audio`, `test_view`) are registered as
+disabled, so ctest lists them as `Not Run (Disabled)` rather than dropping
+them from the count. `-DEIDOS_DATA_TESTS=ON` forces the data path.
+
+Configure also compiles and links a one-line SDL2 program before it trusts
+an SDL2 it found. On a 64-bit Linux host configured with the ILP32
+toolchain file, pkg-config reports the 64-bit SDL2, which does not build
+under `-m32`; the probe turns that into "SDL2 not found for this target"
+and the platform layer is skipped, instead of a compile error half way
+through the build. libm is asked for the same way, by linking a call to
+`pow` with `-lm` for the target being built, because `find_library` answers
+for the host's default ABI and under `-m32` found no libm at all.
+
 `ALETHEIA_ROOT` defaults to `../aletheia` (a sibling checkout next to this
 repository) and is documented in `CMakeLists.txt`; pass it explicitly when
 your aletheia checkout lives somewhere else, for example

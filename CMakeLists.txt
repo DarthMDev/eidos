@@ -52,6 +52,29 @@ endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+# Whether the player's extracted assets are there at all.  The fixture
+# generator and the four oracles read them at build time, and seven tests
+# read them at run time; without them the build still has to succeed and
+# every synthetic test still has to run, so those pieces are switched on
+# only when the data root holds a NitroFS tree.  A test that needs data and
+# has none is registered DISABLED rather than left out, so ctest names it
+# ("Not Run (Disabled)") instead of it silently vanishing from the count.
+if(EXISTS "${BW_DATA_ROOT_ABS}/a" AND IS_DIRECTORY "${BW_DATA_ROOT_ABS}/a")
+    set(_eidos_data_default ON)
+else()
+    set(_eidos_data_default OFF)
+endif()
+option(EIDOS_DATA_TESTS
+       "Generate the fixtures and oracles and run the tests that need extracted game data"
+       ${_eidos_data_default})
+if(EIDOS_DATA_TESTS)
+    message(STATUS "Game data: ${BW_DATA_ROOT_ABS}; data-driven tests enabled")
+else()
+    message(STATUS "Game data: none at ${BW_DATA_ROOT_ABS}; the data-driven tests "
+                   "are built where they can be and registered as disabled "
+                   "(pass -DBW_DATA_ROOT=<extract/data> to enable them)")
+endif()
+
 # ---------------------------------------------------------------------------
 # Pointer width
 # ---------------------------------------------------------------------------
@@ -353,9 +376,16 @@ target_include_directories(eidos PUBLIC
 # toolchain that keeps the maths functions in a separate library it has to
 # be named; where they are in libc, find_library simply finds nothing and
 # this is a no-op.
-find_library(BW_LIBM m)
-if(BW_LIBM)
-    target_link_libraries(eidos PUBLIC ${BW_LIBM})
+#
+# find_library is not the right question: it searches the host's default
+# library directories whatever the target ABI is, so under -m32 on a 64-bit
+# Linux host it answers for the wrong libm (or for none at all, and the link
+# fails on pow/round/ceil).  Asking the compiler whether `-lm` links a call
+# to pow() answers it for the target being built.
+include(CheckLibraryExists)
+check_library_exists(m pow "" BW_HAVE_LIBM)
+if(BW_HAVE_LIBM)
+    target_link_libraries(eidos PUBLIC m)
 endif()
 
 # engine/audio is required to agree with its Python oracle *exactly* (see
@@ -433,6 +463,8 @@ if(EIDOS_SDL)
             # SDL_MAIN_HANDLED and calls SDL_SetMainReady, so eidos keeps its
             # own main() and needs neither SDL2main nor the mingw32 stub.
             target_link_libraries(eidos_sdl2 INTERFACE "${_cand}/lib/libSDL2.dll.a")
+            set(_sdl_probe_incs "${_cand}/include/SDL2")
+            set(_sdl_probe_libs "${_cand}/lib/libSDL2.dll.a")
             set(EIDOS_SDL_FOUND ON)
             set(EIDOS_SDL_ORIGIN "${_cand}")
             if(EXISTS "${_cand}/bin/SDL2.dll")
@@ -448,9 +480,12 @@ if(EIDOS_SDL)
             add_library(eidos_sdl2 INTERFACE)
             if(TARGET SDL2::SDL2)
                 target_link_libraries(eidos_sdl2 INTERFACE SDL2::SDL2)
+                set(_sdl_probe_libs SDL2::SDL2)
             else()
                 target_include_directories(eidos_sdl2 INTERFACE ${SDL2_INCLUDE_DIRS})
                 target_link_libraries(eidos_sdl2 INTERFACE ${SDL2_LIBRARIES})
+                set(_sdl_probe_incs ${SDL2_INCLUDE_DIRS})
+                set(_sdl_probe_libs ${SDL2_LIBRARIES})
             endif()
             set(EIDOS_SDL_FOUND ON)
             set(EIDOS_SDL_ORIGIN "system package")
@@ -467,10 +502,42 @@ if(EIDOS_SDL)
                 target_include_directories(eidos_sdl2 INTERFACE ${SDL2PC_INCLUDE_DIRS})
                 target_link_libraries(eidos_sdl2 INTERFACE ${SDL2PC_LIBRARIES})
                 target_link_directories(eidos_sdl2 INTERFACE ${SDL2PC_LIBRARY_DIRS})
+                set(_sdl_probe_incs ${SDL2PC_INCLUDE_DIRS})
+                set(_sdl_probe_libs ${SDL2PC_LINK_LIBRARIES})
                 set(EIDOS_SDL_FOUND ON)
                 set(EIDOS_SDL_ORIGIN "pkg-config sdl2")
             endif()
         endif()
+    endif()
+endif()
+
+# A package that was found is not necessarily one this target can link: on
+# a 64-bit Linux host configured with cmake/ilp32-toolchain.cmake, pkg-config
+# happily reports the 64-bit SDL2, whose headers then fail to compile under
+# -m32 (the multiarch SDL_config.h forwards to a per-ABI header that is not
+# installed) or whose library fails to link.  Try it, at this target's
+# pointer width, before committing to it.
+if(EIDOS_SDL_FOUND)
+    include(CheckCSourceCompiles)
+    # try_compile takes imported targets and plain paths, not the ordinary
+    # INTERFACE target above, so the probe is handed what went into it.
+    set(CMAKE_REQUIRED_INCLUDES ${_sdl_probe_incs})
+    set(CMAKE_REQUIRED_LIBRARIES ${_sdl_probe_libs})
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_c_source_compiles("
+#define SDL_MAIN_HANDLED
+#include <SDL.h>
+int main(void) { SDL_SetMainReady(); return SDL_Init(0) == 0 ? 0 : 1; }
+" EIDOS_SDL_LINKS)
+    unset(CMAKE_REQUIRED_INCLUDES)
+    unset(CMAKE_REQUIRED_LIBRARIES)
+    unset(CMAKE_REQUIRED_QUIET)
+    if(NOT EIDOS_SDL_LINKS)
+        message(STATUS "SDL2: ${EIDOS_SDL_ORIGIN} found, but a test program "
+                       "does not compile and link against it for this "
+                       "target (${CMAKE_SIZEOF_VOID_P}-byte pointers)")
+        set(EIDOS_SDL_FOUND OFF)
+        set(EIDOS_SDL_ORIGIN "")
     endif()
 endif()
 
@@ -740,29 +807,49 @@ add_custom_target(bw_audio_oracle DEPENDS ${BW_AUDIO_ORACLE_FILES})
 
 enable_testing()
 
+# The two fixture tests compile the generated header in, so without game
+# data there is nothing to build them against; they are still registered, as
+# disabled, so the count stays honest.
 foreach(t test_text test_stats)
-    add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c ${BW_FIXTURES})
-    add_dependencies(${t} bw_fixtures)
-    target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-    target_link_libraries(${t} PRIVATE eidos)
-    add_test(NAME ${t} COMMAND ${t} ${BW_DATA_ROOT_ABS})
+    if(EIDOS_DATA_TESTS)
+        add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c ${BW_FIXTURES})
+        add_dependencies(${t} bw_fixtures)
+        target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+        target_link_libraries(${t} PRIVATE eidos)
+        add_test(NAME ${t} COMMAND ${t} ${BW_DATA_ROOT_ABS})
+    else()
+        add_test(NAME ${t} COMMAND ${CMAKE_COMMAND} -E false)
+        set_tests_properties(${t} PROPERTIES DISABLED TRUE)
+    endif()
 endforeach()
+
+# The oracle tests read their oracle at run time rather than compiling it
+# in, so they are built in every configuration (a compile error in one is
+# still caught without game data) and only their oracle and their ctest
+# entry depend on the data being there.
+function(eidos_data_test name)
+    if(EIDOS_DATA_TESTS)
+        add_dependencies(${name} ${ARGV1})
+    else()
+        set_tests_properties(${name} PROPERTIES DISABLED TRUE)
+    endif()
+endfunction()
 
 # The 2D engine test needs the oracle rather than the fixture header, and
 # takes the oracle directory as its second argument.
 add_executable(test_g2d ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_g2d.c)
-add_dependencies(test_g2d bw_g2d_oracle)
 target_include_directories(test_g2d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_g2d PRIVATE eidos)
 add_test(NAME test_g2d COMMAND test_g2d ${BW_DATA_ROOT_ABS} ${BW_G2D_ORACLE_DIR})
+eidos_data_test(test_g2d bw_g2d_oracle)
 
 # The BG test reads its screen list out of the oracle's own manifest, so the
 # set of screens is changed in one place (BW_BG_SCREENS above).
 add_executable(test_bg ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bg.c)
-add_dependencies(test_bg bw_bg_oracle)
 target_include_directories(test_bg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_bg PRIVATE eidos)
 add_test(NAME test_bg COMMAND test_bg ${BW_DATA_ROOT_ABS} ${BW_BG_ORACLE_DIR})
+eidos_data_test(test_bg bw_bg_oracle)
 
 # The 3D engine test has two halves.  The geometry half reads the OBJ and
 # the manifest the oracle wrote and compares every vertex and every
@@ -773,21 +860,21 @@ add_test(NAME test_bg COMMAND test_bg ${BW_DATA_ROOT_ABS} ${BW_BG_ORACLE_DIR})
 # computed on paper.  There is no DS frame to compare a picture against
 # and the test does not pretend otherwise.
 add_executable(test_g3d ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_g3d.c)
-add_dependencies(test_g3d bw_g3d_oracle)
 target_include_directories(test_g3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_g3d PRIVATE eidos)
 add_test(NAME test_g3d COMMAND test_g3d ${BW_DATA_ROOT_ABS} ${BW_G3D_ORACLE_DIR}
                                ${CMAKE_CURRENT_BINARY_DIR}/g3d_house.bmp)
+eidos_data_test(test_g3d bw_g3d_oracle)
 
 # The audio test reads its sequence list out of the audio oracle's own
 # manifest, so the set of sequences is changed in one place
 # (BW_AUDIO_SEQS above), and writes its own note dump next to the oracle's
 # so a failure leaves both files on disk to diff by hand.
 add_executable(test_audio ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audio.c)
-add_dependencies(test_audio bw_audio_oracle)
 target_include_directories(test_audio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_audio PRIVATE eidos)
 add_test(NAME test_audio COMMAND test_audio ${BW_DATA_ROOT_ABS} ${BW_AUDIO_ORACLE_DIR})
+eidos_data_test(test_audio bw_audio_oracle)
 
 # The synthetic engine tests need neither game data nor an oracle: every
 # expected pixel in them is computed on paper from the hardware rule under
@@ -838,4 +925,7 @@ if(EIDOS_SDL_FOUND)
                      ${CMAKE_CURRENT_BINARY_DIR}/eidos_view.bmp)
     set_tests_properties(test_view PROPERTIES
         ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+    if(NOT EIDOS_DATA_TESTS)
+        set_tests_properties(test_view PROPERTIES DISABLED TRUE)
+    endif()
 endif()

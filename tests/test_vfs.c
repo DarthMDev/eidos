@@ -36,6 +36,7 @@
 #else
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #define BW_MKDIR(p) mkdir((p), 0777)
 #define BW_RMDIR(p) rmdir(p)
 #endif
