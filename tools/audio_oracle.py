@@ -44,7 +44,68 @@ def load_oracle(aletheia_root):
     import sdat        # noqa: E402
     import sbnk        # noqa: E402
     import sseqsynth   # noqa: E402
+    if not jump_reading_is_payload_relative(sseqsynth):
+        follow_jumps_from_payload(sseqsynth)
     return sdat, sbnk, sseqsynth
+
+
+def _probe_notes(synth):
+    """Run the oracle's interpreter on a nine-byte payload behind a header
+    of 0xFF bytes: Jump +5, TrackEnd, then a note.  Reading the Jump target
+    from the payload reaches the note; reading it as a file offset lands in
+    the header's 0xFF and ends the track with no note.  A Call probe is the
+    same with Call +5 and the note followed by Return, TrackEnd."""
+    head = bytes([0xFF]) * 0x1C
+    jump = head + bytes([0x94, 5, 0, 0, 0xFF, 60, 100, 48, 0xFF])
+    call = head + bytes([0x95, 5, 0, 0, 0xFF, 60, 100, 48, 0xFD])
+    out = []
+    for data in (jump, call):
+        notes, _tempos, _end = synth.run_track(data, 0x1C, 0x1C)
+        out.append(len(notes))
+    return out
+
+
+def jump_reading_is_payload_relative(synth):
+    """Whether this sseqsynth.py already reads Jump and Call targets from
+    the payload.  aletheia commit 1609c2263 moved OpenTrack to the payload
+    reading; its run_track still takes Jump and Call targets as file
+    offsets.  Measured on the game's SDAT, all 9,945 Jump and Call targets
+    are command boundaries under the payload reading and 4,710 under the
+    file one, and 211 of the 864 sequences that decode play different notes,
+    SEQ_BGM_GYM among them (1,322 note events against 2,510)."""
+    try:
+        return _probe_notes(synth) == [1, 1]
+    except TypeError:
+        return False
+
+
+def follow_jumps_from_payload(synth):
+    """Make the imported oracle add data_offset to Jump and Call targets,
+    the one-line change its run_track still lacks, and nothing else.  The
+    decoder is wrapped for the duration of each run_track call only.  The
+    probe above turns this off by itself once aletheia carries the fix."""
+    import sseq as sseqmod
+    orig_run = synth.run_track
+    orig_decode = sseqmod.decode_event
+
+    def run_track(data, start_pc, data_offset):
+        def decode(d, pc):
+            ev, new_pc = orig_decode(d, pc)
+            if ev.get("op") in ("Jump", "Call"):
+                ev = dict(ev)
+                ev["offset"] = ev["offset"] + data_offset
+            return ev, new_pc
+        sseqmod.decode_event = decode
+        try:
+            return orig_run(data, start_pc, data_offset)
+        finally:
+            sseqmod.decode_event = orig_decode
+
+    synth.run_track = run_track
+    if _probe_notes(synth) != [1, 1]:
+        raise SystemExit("audio_oracle: could not correct the oracle's Jump/Call reading")
+    print("[*] oracle: Jump/Call targets read from the payload (aletheia's "
+          "run_track still reads them as file offsets)")
 
 
 def g17(x):

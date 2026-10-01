@@ -2,16 +2,21 @@
  * sdk/arm7/snd.h -- the ARM7's sound driver, as the ARM9's SND library sees
  * it: command lists over PXI tag 7, answers in shared memory.
  *
- * Two files, split so the transport has no dependency on the engine:
+ * Split so the transport has no dependency on the driver:
  *
  *   snd.c         the PXI responder.  It turns a FIFO word into the command
  *                 list the ARM9 built, hands each command to the installed
  *                 driver, and advances finishCommandTag after every list.
  *                 With no driver it only counts (what test_pxi links).
- *   snd_driver.c  the driver: executes the commands on engine/audio and
- *                 keeps SNDSharedWork current (player status, channel
- *                 status, tick counters), fires the SND alarms back to the
- *                 ARM9, and fills SNDDriverInfo on request.
+ *   snd_driver.c  the driver: executes the commands, keeps SNDSharedWork
+ *                 current (player, channel and capture status, tick
+ *                 counters, sequence variables), fires the SND alarms back
+ *                 to the ARM9, and fills SNDDriverInfo on request.
+ *   snd_seq.c     the sequencer the driver plays sequences with: players,
+ *                 the shared track pool, channels allocated by priority,
+ *                 envelopes, LFOs, sweeps (sdk/arm7/snd_seq.h).
+ *   snd_hw.c      the sound hardware both write: 16 channels, 2 captures,
+ *                 the mixer (sdk/arm7/snd_hw.h).
  *
  * Every layout here is the ARM9 SDK's own, read from the DWARF of
  * libsnd.TWL.HYB.a (snd_command.o, snd_work.o, snd_bank.o) with aletheia's
@@ -144,12 +149,7 @@ void bw_arm7_snd_step(void);
 /* The driver (snd_driver.c)                                           */
 /* ------------------------------------------------------------------ */
 
-/* How much of a sequence the driver prepares (engine/audio's max_seconds):
- * the note list and the level probe stop there, and a looping sequence
- * restarts from its top at that point or at its own end, whichever is first. */
-#define BW_SND_SEQ_MAX_SECONDS 180.0
-
-/* Install the engine/audio driver into the transport (idempotent).  The
+/* Install the driver into the transport (idempotent).  The
  * eidos library does this at ARM7 power-on unless a port installed its own
  * driver first; tests call it directly. */
 void bw_snd_driver_attach(void);
@@ -188,9 +188,9 @@ void bw_snd_bind_shared(void *shared_work);
 typedef struct BwSndStats {
     u32 commands;               /* commands executed                       */
     u32 by_id[BW_SND_CMD_COUNT];
-    u32 ignored;                /* recognised, deliberately not modelled   */
+    u32 ignored;                /* not a command this driver knows         */
     u32 bad_address;            /* a pointer argument that did not resolve */
-    u32 bad_sequence;           /* a sequence the engine refused           */
+    u32 notes_dropped;          /* note-ons that found no free channel     */
     u32 alarms_fired;
     u32 alarms_dropped;         /* more firings between two steps than fit */
     u64 frames;                 /* driver clock, in BW_AUDIO_RATE frames   */
@@ -200,20 +200,28 @@ void bw_snd_stats(BwSndStats *out);
 /* A player's state as the driver holds it (0-15).                         */
 typedef struct BwSndPlayerState {
     int    active, prepared, paused;
-    int    loops;               /* restarts at its end (a looping SSEQ)    */
-    u64    tick;
+    int    loops;               /* it has jumped back or repeated a loop   */
+    u64    tick;                /* ticks played since its start            */
     s16    player_fader;        /* SNDPlayer.extFader, 1/10 dB             */
+    u16    tempo;               /* SNDPlayer.tempo, BPM                    */
     u16    tempo_ratio;         /* SNDPlayer.tempo_ratio, 256 = 1.0        */
     u8     volume;              /* SNDPlayer.volume                        */
     u8     prio;                /* SNDPlayer.prio                          */
-    double gain;                /* what the mix applies                    */
+    u32    tracks;              /* track numbers it has allocated          */
+    u32    channels;            /* hardware channels its notes hold        */
 } BwSndPlayerState;
 int bw_snd_player_state(int player, BwSndPlayerState *out);
 
 /* 0-127, the MASTER_VOLUME command; 127 at power-on.                       */
 int bw_snd_master_volume(void);
+/* The MASTER_PAN override, 0-127, or -1 when channels keep their own.     */
+int bw_snd_master_pan(void);
 /* Channels the ARM9 has locked (LOCK_CHANNEL / UNLOCK_CHANNEL).           */
 u32 bw_snd_locked_channels(void);
+/* A hardware channel's SOUNDxCNT image (sdk/arm7/snd_hw.h).               */
+u32 bw_snd_channel_cnt(int ch);
+/* A hardware channel's timer period.                                      */
+u32 bw_snd_channel_timer(int ch);
 
 #ifdef __cplusplus
 }

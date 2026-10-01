@@ -558,10 +558,13 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/mixer.c    # one voice: resample, ADSR, PSG
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/player.c   # render and stream a sequence
 
-    # The ARM7's sound driver over engine/audio: SND commands from tag 7,
-    # the shared work, the alarms (sdk/arm7/snd.h).  Not in BW_PXI_SOURCES:
-    # the transport (sdk/arm7/snd.c) links without it, and test_pxi does.
+    # The ARM7's sound driver: SND commands from tag 7, the shared work, the
+    # alarms (sdk/arm7/snd.h), the sequencer (snd_seq.c) and the sound
+    # hardware model (snd_hw.c).  Not in BW_PXI_SOURCES: the transport
+    # (sdk/arm7/snd.c) links without them, and test_pxi does.
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_driver.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_seq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_hw.c
 )
 
 add_library(eidos STATIC
@@ -651,6 +654,8 @@ set(BW_AUDIO_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/mixer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/player.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_driver.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_seq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_hw.c
 )
 if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT MSVC)
     check_c_compiler_flag("-msse2 -mfpmath=sse" BW_HAVE_SSE2_MATH)
@@ -1090,9 +1095,9 @@ add_test(NAME test_audio COMMAND test_audio ${BW_DATA_ROOT_ABS} ${BW_AUDIO_ORACL
 eidos_data_test(test_audio bw_audio_oracle)
 
 # The ARM7 sound driver through the PXI wire (sdk/arm7/snd.h): synthetic
-# command lists against engine/audio driven directly, needing no data; and
-# the same with real sequences copied into main RAM from the SDAT, which
-# needs the data root.
+# command lists exercising the sequencer, the shared channels and the
+# hardware model, needing no data; and real sequences and a real wave
+# copied into main RAM from the SDAT, which needs the data root.
 add_executable(test_snd ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_snd.c)
 target_include_directories(test_snd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_snd PRIVATE eidos)
