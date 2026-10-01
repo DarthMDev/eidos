@@ -282,6 +282,18 @@ set(BW_OVERLAY_TABLE ${CMAKE_CURRENT_BINARY_DIR}/overlay_table.c)
 set(BW_BUILD_SOURCE_LIST ${CMAKE_CURRENT_BINARY_DIR}/eidos_sources.txt)
 file(GLOB BW_OVERLAY_SHARDS ${ALETHEIA_ROOT}/layout/matched/ov*/*.json)
 
+# The IPC FIFO model and the ARM7 behind it (sdk/pxi.h, sdk/arm7/arm7.h).
+set(BW_PXI_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/pxi.c           # FIFO pair, IPCSYNC, PXI_InitFifo, the IRQ 18 handler
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/arm7.c     # ARM7 power-on and step, OS tag 12, OS lock sync
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/pm.c       # power manager, tag 8
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/rtc.c      # real-time clock, tag 5
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/ctrdg.c    # Slot-2, tag 13
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/card.c     # Slot-1 pull-out, tag 14
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/fs.c       # Slot-1 backup requests, tag 11
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd.c      # sound command lists, tag 7
+)
+
 set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/fs.c            # the ROM file system onto the extract
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/overlay.c       # overlays: compiled in, checked on load
@@ -300,6 +312,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/dsmem.c         # the DS address space: registry, regions, I/O, VRAM
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/host_vm.c       # reserve/commit for main RAM (the one OS-specific file)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/panic.c
+    ${BW_PXI_SOURCES}
 )
 
 # One symbol per file, on purpose: a static-library member is only pulled in
@@ -1114,6 +1127,113 @@ add_test(NAME test_overlay_refuses
     COMMAND ${CMAKE_COMMAND} -DCMD=$<TARGET_FILE:test_overlay> -DARG1=--load -DARG2=9
             "-DEXPECT=PANIC in FS_LoadOverlay at 0x02155160: overlay 9 [(]0x02155160[.][.]0x021A8260[)] is not in this build: first missing function [A-Za-z_0-9]+ at 0x021"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_panic.cmake)
+
+# --- PXI and the ARM7 -------------------------------------------------------
+#
+# test_pxi drives the FIFO model and every ARM7 responder from the game's own
+# matched ARM9 SDK code, so it compiles a set of aletheia's matched sources
+# itself.  It is built from its own source list rather than against the
+# eidos library: tests/pxi_doubles.c stands in for the address space and for
+# the CPU stand-in's interrupt delivery (both other lanes' files), and the
+# two must not meet the real ones in one link.
+#
+# TEST-ONLY: until tools/dsaddr.py's build hook is in, the matched sources
+# are copied into the build tree with their fixed-address casts rewritten
+# by the two regular expressions below, the textual rewrite docs/boot.md
+# describes, restricted to the shapes these files use.  Replace this block's
+# rewrite with the dsaddr hook when it lands.
+set(BW_PXI_TEST_MATCHED
+    arm9/func_02088498.c                # PXI_Init
+    arm9_sdk/PXI_SendWordByFifo.c
+    arm9_sdk/PXI_SetFifoRecvCallback.c
+    arm9_sdk/func_020885EC.c            # PXI_IsCallbackReady
+    arm9_sdk/OS_SetIrqFunction.c
+    arm9_sdk/OS_EnableIrqMask.c
+    arm9_sdk/OS_ResetRequestIrqMask.c
+    arm9_sdk/func_02087B78.c            # the OS's PXI init
+    arm9_sdk/OSi_SendToPxi.c
+    arm9_sdk/func_02084A38.c            # OSi_CommonCallback
+    arm9_sdk/func_02084B90.c            # OS_InitLock
+    arm9_sdk/func_02084AB0.c            # OSi_SyncWithOtherProc
+    arm9_sdk/PMi_SendPxiData.c
+    arm9_sdk/PMi_TryToSendPxiData.c
+    arm9_sdk/PM_SendUtilityCommandAsync.c
+    arm9_sdk/PMi_CallCallbackAndUnlock.c
+    arm9_sdk/func_0208B840.c            # PMi_DummyCallback
+    arm9_sdk/func_02088788.c            # RTC_Init
+    arm9_sdk/RtcCommonCallback.c
+    arm9_sdk/RtcBCD2HEX.c
+    arm9_sdk/RTC_GetDayOfWeek.c
+    arm9_sdk/RTCi_WriteRawStatus2Async.c
+    arm9_sdk/func_02088F2C.c            # RtcSendPxiCommand
+    arm9_sdk/func_02088944.c            # RTC_GetDateTimeAsync
+    arm9_sdk/func_020911A0.c            # CTRDG_DummyInit
+    arm9_sdk/func_02091150.c            # CTRDGi_SendtoPxi
+    arm9_sdk/func_020911D4.c            # CTRDGi_DummyCallback
+    arm9_sdk/func_020763BC.c            # CARDi_OnFifoRecv
+    arm9_sdk/func_02089ED8.c            # SND RequestCommandProc
+)
+# pm.o's init and callback view its .bss through 4-byte-pointer offsets
+# (and under a second name, s_02153000), so they join only on ILP32.
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    list(APPEND BW_PXI_TEST_MATCHED
+        arm9_sdk/func_0208B8B0.c        # PM_Init
+        arm9_sdk/func_0208B950.c        # PMi_CommonCallback
+        arm9_sdk/PMi_WaitBusy.c
+        arm9_sdk/PM_SendUtilityCommand.c
+        arm9_sdk/PM_GetAmp.c)
+    set(_bw_pxi_pm_matched 1)
+else()
+    set(_bw_pxi_pm_matched 0)
+endif()
+set(_bw_pxi_gen ${CMAKE_CURRENT_BINARY_DIR}/test_pxi_matched)
+set(_bw_pxi_test_sources)
+foreach(_rel ${BW_PXI_TEST_MATCHED})
+    set(_src ${ALETHEIA_ROOT}/src/matched/${_rel})
+    get_filename_component(_name ${_rel} NAME)
+    set(_dst ${_bw_pxi_gen}/${_name})
+    file(READ ${_src} _text)
+    # (T *)0x0NNNNNNN  ->  ((T *)bw_ds_ptr(0x0NNNNNNNu))
+    string(REGEX REPLACE
+        "\\(([A-Za-z_][A-Za-z0-9_ ]*\\*)\\)(0x0[2-7][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])[uUlL]*"
+        "((\\1)bw_ds_ptr(\\2u))" _text "${_text}")
+    # (T *)(0x0NNNNNNN + 0xNN)  ->  ((T *)bw_ds_ptr(0x0NNNNNNNu + 0xNN))
+    string(REGEX REPLACE
+        "\\(([A-Za-z_][A-Za-z0-9_ ]*\\*)\\)\\((0x0[2-7][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])[uUlL]*( *\\+ *0x[0-9A-Fa-f]+)\\)"
+        "((\\1)bw_ds_ptr(\\2u\\3))" _text "${_text}")
+    set(_text "void *bw_ds_ptr(unsigned int);\n#line 1 \"${_src}\"\n${_text}")
+    if(EXISTS ${_dst})
+        file(READ ${_dst} _old)
+    else()
+        set(_old "")
+    endif()
+    if(NOT _old STREQUAL _text)
+        file(WRITE ${_dst} "${_text}")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_src})
+    list(APPEND _bw_pxi_test_sources ${_dst})
+endforeach()
+if(NOT MSVC)
+    set_source_files_properties(${_bw_pxi_test_sources} PROPERTIES
+        COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
+endif()
+add_executable(test_pxi
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pxi.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/pxi_doubles.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi.c
+    ${BW_PXI_SOURCES}
+    ${_bw_pxi_test_sources})
+target_include_directories(test_pxi PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_definitions(test_pxi PRIVATE BW_TEST_PM_MATCHED=${_bw_pxi_pm_matched})
+if(_bw_pxi_pm_matched)
+    # One object, two names (see "Two matched files name one DS object").
+    set_source_files_properties(${_bw_pxi_gen}/func_0208B8B0.c
+                                ${_bw_pxi_gen}/func_0208B950.c
+        PROPERTIES COMPILE_DEFINITIONS "s_02153000=g_02153000")
+endif()
+add_test(NAME test_pxi COMMAND test_pxi)
+set_tests_properties(test_pxi PROPERTIES TIMEOUT 30)
 
 add_executable(test_extract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract.c)
 target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
