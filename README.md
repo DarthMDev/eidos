@@ -132,6 +132,7 @@ a pure C99 library with no SDL dependency and no third-party code.
 | `engine/g2d/bg.c` | NSCR screens, text-mode BG layers with scroll and priority, and the per-pixel frame compositor |
 | `engine/g2d/bg_affine.c` | rotation/scaling BG layers: one-byte map entries, 8bpp tiles, the four square sizes, wraparound, the 20.8 reference point |
 | `engine/g2d/window.c` | WIN0/WIN1, the OBJ window, WININ/WINOUT layer masks, and the colour special effects (alpha, brightness up and down) |
+| `engine/g2d/hwcompose.c` | both screens from the DS 2D hardware state (registers, palette RAM, OAM, VRAM through the bank mapping) instead of from asset files |
 
 What is covered: 4bpp and 8bpp character data, both `char_format`
 conventions (8x8 tiled and linear bitmap), the `0xFFFF` "unspecified
@@ -475,6 +476,67 @@ first target that is not the topmost pixel. It also checks the
 positive case that makes the "directly beneath" rule concrete: hiding BG1
 with a window makes the backdrop the layer directly beneath BG0, and the
 same blend that refused to run then runs.
+
+### Both screens from the hardware state
+
+Everything above draws what a parsed asset file says. Once the game's own
+code runs, the picture is no longer described by files but by what that
+code wrote into the 2D hardware: DISPCNT and the BG, window and blend
+registers, palette RAM, OAM, and VRAM through the bank mapping
+(`sdk/dsmem.h`). `engine/g2d/hwcompose.c` reads that state and builds the
+same layer descriptions the asset path builds, then runs the same
+`g2d_frame_compose_desc`, so every rule the two share is one piece of
+code:
+
+- a text BG is a `G2dBgLayer` over a map read out of VRAM at the screen
+  base and a tile view into VRAM at the character base (DISPCNT's 64 KB
+  bases on the main engine plus BGxCNT's), in the VRAM entry order
+  `func_02040EE0` attests;
+- an affine BG is a `G2dBgAffineLayer`, BGxPA..PD and BGxX/BGxY straight
+  from the registers;
+- the 3D layer is the `G2dLayer3d` at BG0 that g2d already composes;
+- WIN0/WIN1/WININ/WINOUT and BLDCNT/BLDALPHA/BLDY become `G2dWindows` and
+  `G2dBlend`, and MASTER_BRIGHT is applied last with BLDY's arithmetic.
+
+Two things needed the compositor to grow. Layer shapes no asset type
+expresses (an extended rotation/scaling BG with 16-bit entries, 256-colour
+and direct-colour bitmap BGs, a 256-colour text BG through an extended
+palette) are resolved from VRAM into a `G2dLayerRaster`, an RGBA layer
+with transparency that the stack walks like any BG. And a
+semi-transparent OBJ (OAM mode 1) is now a flag on `G2dObjEntry`: it is a
+first target whatever BLDCNT says and alpha blends whenever the pixel
+directly beneath it is a second target.
+
+OBJs are not passed one entry per OAM slot, because that is not what the
+hardware does: it renders every OBJ into one OBJ pixel per screen position
+first (lower priority value wins, then lower OAM index) and only then
+sets that one pixel against the BGs, so two OBJs never blend with each
+other. hwcompose builds that line buffer (1D and 2D tile mapping, the 1D
+boundary, flips, affine and double-size through `g2d_obj_affine_render`,
+4bpp, 8bpp and extended palettes, the OBJ window from mode 2) and hands it
+over as non-overlapping full-screen poses. POWCNT1 bit 15 decides which
+engine is on which screen. Display mode 0 and forced blank are white,
+display mode 2 shows bank A..D directly. BG mode 6's large bitmap, mode
+7, main memory display, bitmap OBJs and mosaic are reported through
+`G2D_HW_UNSUP_*` flags rather than drawn wrong; the display capture is
+out of scope.
+
+**The tests**, `tests/test_hwcompose.c`, bring a clearly marked test-only
+backing for `sdk/dsmem.h` and write registers, palette, OAM and VRAM
+byte by byte. The synthetic half checks hand-computed pixels for BG
+priority and scroll wrap, OBJ against BG and OBJ against OBJ, hidden
+OBJs, negative X and wrapped Y, flips, 1D and 2D mapping and the 1D
+boundary, affine OBJs at identity and 2x in double size, WIN0 over WIN1,
+the OBJ window, alpha and brightness and the effect bit, the
+semi-transparent OBJ, affine BGs with and without wrap, the extended
+affine BG, both bitmap BGs, BG and OBJ extended palettes through banks E
+and I, the 3D layer, master brightness on each engine, the screen swap
+and display modes. With game data, the title screen (`titledemo.narc`
+0/1/2) and the species 25 pose are put into VRAM, palette RAM and OAM the
+way the SDK would, and must come out **pixel-identical** to the asset
+path drawing the same content from the files: the title scrolled on the
+main engine, the pose on the sub engine, and both together under WIN0
+and an OBJ-over-BG0 alpha blend. All three are identical.
 
 ## The 3D engine, and the geometry oracle it is tested against
 

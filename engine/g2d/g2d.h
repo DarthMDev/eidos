@@ -588,6 +588,7 @@ typedef struct G2dObjEntry {
     const G2dPalette *pal;
     s32 x, y;
     u32 priority;      /* attr2 bits 10-11 */
+    int semi;          /* attr0 bits 10-11 == 1: a semi-transparent OBJ   */
 } G2dObjEntry;
 
 #define G2D_SCREEN_WIDTH  256u
@@ -740,6 +741,27 @@ typedef struct G2dLayer3d {
     int enabled;
 } G2dLayer3d;
 
+/*
+ * A pre-resolved layer: one RGBA buffer standing for one hardware BG at its
+ * own priority and layer number, where alpha 0 is transparent and anything
+ * else is an opaque pixel of that colour.  This is how a layer shape the
+ * text and affine samplers above do not decode (an extended rotation/scaling
+ * BG with 16-bit map entries, a 256-colour or direct-colour bitmap BG, a
+ * text BG through an extended palette) still takes part in the per-pixel
+ * stack: engine/g2d/hwcompose.c resolves it from the hardware's own bytes
+ * and hands it over here, and from then on it is an ordinary BG for the
+ * priority walk, the windows and the colour effects.  Like the 3D layer it
+ * takes its layer number's slot: no text or affine layer at that index is
+ * consulted while it is enabled.
+ */
+typedef struct G2dLayerRaster {
+    const u8 *rgba;    /* width*height*4, R,G,B,A; A == 0 is transparent */
+    u32 width, height;
+    u32 priority;      /* 0..3 */
+    u32 bg_index;      /* 0..3 */
+    int enabled;
+} G2dLayerRaster;
+
 typedef struct G2dFrameDesc {
     const G2dBgLayer       *bgs;
     u32                     n_bgs;
@@ -751,6 +773,8 @@ typedef struct G2dFrameDesc {
     const G2dPalette       *backdrop_pal;
     const G2dWindows       *windows;   /* NULL: no windowing      */
     const G2dBlend         *blend;     /* NULL: no colour effect  */
+    const G2dLayerRaster   *rasters;   /* pre-resolved BG layers  */
+    u32                     n_rasters;
 } G2dFrameDesc;
 
 void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
@@ -766,6 +790,7 @@ typedef struct G2dFrameSample {
     u32 color_index;
     int is_obj;
     int is_3d;          /* rgb[] holds the pixel; pal/color_index unused */
+    int is_raster;      /* likewise, out of a G2dLayerRaster            */
     u8  rgb[3];
     u32 layer;
 } G2dFrameSample;
@@ -787,6 +812,87 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
 
 /* The G2D_LAYER_* bit one sample belongs to. */
 u32 g2d_frame_sample_bit(const G2dFrameSample *sample);
+
+/* ------------------------------------------------------------------ */
+/* Both screens from the hardware state (engine/g2d/hwcompose.c)       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Everything above draws from parsed asset files.  Once the game's own code
+ * runs, the picture is not described by files any more but by what that
+ * code wrote into the DS's 2D hardware: the register file, the palette RAM,
+ * OAM and VRAM through the bank mapping.  hwcompose.c reads that state and
+ * builds the same layer descriptions the asset path builds (G2dBgLayer,
+ * G2dBgAffineLayer, G2dObjEntry, G2dWindows, G2dBlend, G2dLayer3d), then
+ * runs the same per-pixel compositor, so the two paths cannot disagree on
+ * any rule they share.  What the asset layers cannot express is resolved
+ * into a G2dLayerRaster from the hardware's own bytes.
+ *
+ * The state is passed as plain host pointers rather than read through
+ * sdk/dsmem.h directly, so the renderer is a pure function of bytes and can
+ * be driven by a test with no address space behind it.
+ * g2d_hw_state_from_dsmem() fills one from the live address space.
+ *
+ * VRAM is passed as 16 KB pages of each engine's BG and OBJ windows, which
+ * is the granularity of every VRAM bank mapping (bank I is 16 KB, F and G
+ * are 16 KB and map at 16 KB offsets).  A NULL page reads as zero, which is
+ * what unmapped VRAM reads as on hardware.
+ */
+#define G2D_HW_MAIN       0
+#define G2D_HW_SUB        1
+#define G2D_HW_PAGE_SIZE  0x4000u
+#define G2D_HW_BG_PAGES   32u     /* main BG window, 512 KB; sub uses 8  */
+#define G2D_HW_OBJ_PAGES  16u     /* main OBJ window, 256 KB; sub uses 8 */
+#define G2D_HW_EXTPAL_SLOT_SIZE 0x2000u   /* 16 x 256 colours, BGR555    */
+
+typedef struct G2dHwState {
+    const u8 *io;    /* the register file from 0x04000000, >= 0x1070 bytes */
+    const u8 *pal;   /* palette RAM from 0x05000000, 2 KB                 */
+    const u8 *oam;   /* OAM from 0x07000000, 2 KB                         */
+    const u8 *bg_page[2][G2D_HW_BG_PAGES];    /* 0x06000000 / 0x06200000 */
+    const u8 *obj_page[2][G2D_HW_OBJ_PAGES];  /* 0x06400000 / 0x06600000 */
+    const u8 *bg_extpal[2][4];   /* the four BG extended palette slots   */
+    const u8 *obj_extpal[2];     /* the OBJ extended palette             */
+    const u8 *lcdc_bank[4];      /* banks A..D, for display mode 2       */
+} G2dHwState;
+
+/*
+ * What a frame used that this renderer does not draw, per engine, so a
+ * caller can say so rather than show a silently wrong picture.  The
+ * affected layer or OBJ is left out; everything else is drawn.
+ */
+#define G2D_HW_UNSUP_BG_MODE      0x01u  /* BG mode 6 (large screen), 7   */
+#define G2D_HW_UNSUP_DISPLAY_MODE 0x02u  /* main memory display, or a     */
+                                         /* VRAM display on the sub engine */
+#define G2D_HW_UNSUP_BITMAP_OBJ   0x04u  /* OBJ mode 3                    */
+#define G2D_HW_UNSUP_MOSAIC       0x08u  /* mosaic is ignored, not drawn  */
+#define G2D_HW_UNSUP_NO_3D        0x10u  /* BG0 is 3D but no 3D frame     */
+
+/*
+ * One engine's screen into a 256x192 RGBA buffer (R, G, B, A, every pixel
+ * opaque: what eidos_platform_present uploads).  `rgba3d` is the 3D
+ * engine's 256x192 output for the main engine's BG0 in 3D mode, or NULL;
+ * it is ignored for the sub engine.  `unsupported` may be NULL.  Returns 0,
+ * or -1 when a working buffer could not be allocated.
+ */
+int g2d_hw_render_engine(const G2dHwState *hw, int engine, const u8 *rgba3d,
+                         u8 *rgba, u32 *unsupported);
+
+/*
+ * Both screens.  POWCNT1 bit 15 decides which engine is on which screen,
+ * as on hardware: set puts the main engine on the top screen.
+ * `unsupported`, when not NULL, receives the main engine's flags in [0]
+ * and the sub engine's in [1].
+ */
+int g2d_hw_render(const G2dHwState *hw, const u8 *rgba3d,
+                  u8 *top, u8 *bottom, u32 unsupported[2]);
+
+/* The live DS address space (sdk/dsmem.h) as a G2dHwState. */
+void g2d_hw_state_from_dsmem(G2dHwState *hw);
+
+/* g2d_hw_render over g2d_hw_state_from_dsmem. */
+int g2d_hw_render_dsmem(const u8 *rgba3d, u8 *top, u8 *bottom,
+                        u32 unsupported[2]);
 
 /* ------------------------------------------------------------------ */
 /* Rig blocks (a/0/0/4 and its siblings)                               */
