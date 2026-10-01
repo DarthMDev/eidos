@@ -701,6 +701,21 @@ void *bw_ds_try_ptr(u32 addr)
     }
 }
 
+/*
+ * tools/dsaddr.py declares this function in every rewritten matched file
+ * as `void *bw_ds_ptr(unsigned int);`, because a matched translation unit
+ * has its own u32 typedef and cannot include dsmem.h.  The two spellings
+ * must name one type.  Repeating the tool's declaration here, after
+ * dsmem.h's, makes every build of the port check it: a redeclaration with
+ * an incompatible parameter type is a constraint violation, so a target
+ * where uint32_t is not unsigned int fails to compile this file instead of
+ * miscalling the function.  The size check states the ILP32 assumption
+ * the declaration relies on in words a diagnostic can show.
+ */
+void *bw_ds_ptr(unsigned int addr);
+typedef char bw_u32_is_unsigned_int[(sizeof(u32) == sizeof(unsigned int)
+                                     && (u32)-1 == (unsigned int)-1) ? 1 : -1];
+
 void *bw_ds_ptr(u32 addr)
 {
     void *p;
