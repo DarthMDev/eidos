@@ -67,12 +67,14 @@ if(MSVC)
         #   C4029  declared parameter list differs      C4098 void returns a value
         #   C4204/C4221 non-constant initialisers       C4005 macro redefinition
         #   C4456/C4457/C4459 a local hiding another local, a parameter, a global
+        #   C4210  a function declared inside a body    C4218 no type, int assumed
+        #   C4306  cast to a wider pointer              C4702 unreachable code
         list(APPEND EIDOS_OVL_MATCHED_OPTIONS
             /wd4431 /wd4013 /wd4102 /wd4057 /wd4047 /wd4024 /wd4133 /wd4018
             /wd4389 /wd4146 /wd4706 /wd4701 /wd4703 /wd4715 /wd4127 /wd4310
             /wd4305 /wd4312 /wd4311 /wd4152 /wd4054 /wd4055 /wd4113 /wd4028
             /wd4090 /wd4029 /wd4098 /wd4204 /wd4221 /wd4005 /wd4295 /wd4334
-            /wd4456 /wd4457 /wd4459)
+            /wd4456 /wd4457 /wd4459 /wd4210 /wd4218 /wd4306 /wd4702)
     endif()
 else()
     set(EIDOS_OVL_MATCHED_OPTIONS

@@ -1312,6 +1312,12 @@ def write_overlay_header(link, st, path):
         "#ifndef BW_OVL_%s_H" % ov.tag.upper(),
         "#define BW_OVL_%s_H" % ov.tag.upper(),
         "",
+        "/* A few SDK files mark a prototype __attribute__((pure)); cl.exe has",
+        " * no __attribute__, and the mark changes nothing the host relies on. */",
+        "#if defined(_MSC_VER) && !defined(__clang__) && !defined(__attribute__)",
+        "#define __attribute__(x)",
+        "#endif",
+        "",
         "/* Names inside the overlay's window 0x%08X..0x%08X. */" % (ov.lo, ov.hi),
     ]
     for n in sorted(st.renames):
@@ -1674,11 +1680,12 @@ def write_report(link, path):
         for x in st.relocs:
             rk[x["kind"]] = rk.get(x["kind"], 0) + 1
         p("%s  0x%08X..0x%08X  units %d  excluded %d  defined %d  stubs %d  data %s  "
-          "relocs %s  code literals %d  implicit decls %d" % (
+          "relocs %s  code literals %d  implicit decls %d  private copies %d" % (
               st.ov.tag, st.ov.lo, st.ov.hi, len(st.units), len(st.excluded), len(st.at),
               len(st.stubs), " ".join("%s=%d" % kv for kv in sorted(kinds.items())) or "0",
               " ".join("%s=%d" % kv for kv in sorted(rk.items())) or "0",
-              len(st.code_literals), sum(len(u.protos) for u in st.units)))
+              len(st.code_literals), sum(len(u.protos) for u in st.units),
+              sum(len(u.private) for u in st.units)))
     for oid in link.ids:
         st = link.state[oid]
         for rel, why in st.excluded:
@@ -1689,6 +1696,10 @@ def write_report(link, path):
         for n in sorted(st.objects):
             p("  %s host object %s at %s: a matched file uses the name as a member, tag, "
               "local or in an initialiser" % (st.ov.tag, n, hx(st.objects[n]["addr"])))
+        for u in st.units:
+            for n in sorted(u.private):
+                p("  %s private copy %s in %s (%s owns it)" % (
+                    st.ov.tag, n, u.rel, st.defs[n].rel))
         for v, s in sorted(st.code_literals.items()):
             p("  %s code literal 0x%08X -> %s" % (st.ov.tag, v, s))
     for n in sorted(link.tramps):

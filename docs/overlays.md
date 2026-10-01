@@ -51,6 +51,14 @@ address spelled into the name, else `layout/symbols_sdk.txt` (the overlay's
 own region first). Which names a file defines, declares and calls is read
 the same way the boot link reads the ARM9 sources.
 
+One definition per name. A few matched files define, besides the function
+their manifest entry claims, neighbours that another file claims too (a
+unit kept next to the single-function files split out of it); mwcc's link
+took one. The owner of a name is the file whose entry claims it, else the
+first file defining it; every other file's copy is renamed to a name of
+its own (`ov010_func_0215A690__ov010_func_0215A684`) by that file's
+header, and that file's own calls use its copy. The report counts them.
+
 Two things a host compiler needs that mwcc did not:
 
 - a call with no declaration in scope (a declaration inside a function

@@ -2326,7 +2326,11 @@ overlays into one executable (`eidos_overlays()` in `cmake/overlays.cmake`;
   reaches one.
 
 The title set (ov009, ov010, ov011, ov013, ov017, ov228, ov088, ov179) is
-3163 matched sources, 30 `asm` files left to stubs, 340 trampolines.
+about 3200 matched sources (aletheia's count on 2026-10-01; it grows with
+every wave), 30 `asm` files and 2 files that call another file's `static`
+functions left to stubs, 340 trampolines; it compiles warning-free and
+links at both pointer widths, and `test_ovlink_title` loads all eight from
+the extract, every listed pointer word checked against the player's files.
 `tests/test_ovlink.c` checks two synthetic overlays sharing one window, both
 loaded alternately and reached from ARM9 code and from a third overlay;
 `tests/test_ovlink_real.c` loads ov088 and ov179 from the extract and runs a
