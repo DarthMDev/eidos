@@ -137,7 +137,7 @@ static void test_port(void)
 
 static void test_init(void)
 {
-    static const int served[] = { 5, 7, 8, 11, 12, 13, 14 };
+    static const int served[] = { 4, 5, 7, 8, 9, 11, 12, 13, 14 };
     unsigned i;
 
     BW_CHECK_EQ("init: ARM7 not ready before PXI_Init",
@@ -158,7 +158,8 @@ static void test_init(void)
         sprintf(label, "init: ARM7 ready on tag %d", served[i]);
         BW_CHECK_EQ(label, PXI_IsCallbackReady(served[i], 1), 1);
     }
-    BW_CHECK_EQ("init: no NVRAM responder", PXI_IsCallbackReady(4, 1), 0);
+    /* Wireless is unserved on purpose (sdk/arm7/arm7.h).                   */
+    BW_CHECK_EQ("init: no wireless responder", PXI_IsCallbackReady(10, 1), 0);
     BW_CHECK_EQ("init: ARM9 has tag 12", PXI_IsCallbackReady(12, 0), 1);
     BW_CHECK_EQ("init: Slot-2 module id", rd16(0x02FFFC30u), 0xFFFF);
 }
@@ -398,9 +399,9 @@ static void test_unserved_and_depth(void)
     int i, ordered = 1;
 
     /* No ARM7 responder: the word comes back with the error bit.           */
-    PXI_SetFifoRecvCallback(BW_PXI_TAG_NVRAM, recorder);
+    PXI_SetFifoRecvCallback(BW_PXI_TAG_WM, recorder);
     g_nrec = 0;
-    BW_CHECK_EQ("unserved: send", PXI_SendWordByFifo(4, 0x55, 0), 0);
+    BW_CHECK_EQ("unserved: send", PXI_SendWordByFifo(10, 0x55, 0), 0);
     BW_CHECK_EQ("unserved: echoed", g_nrec, 1);
     BW_CHECK_EQ("unserved: data", g_rec[0].data, 0x55);
     BW_CHECK_EQ("unserved: error bit", g_rec[0].err, 1);

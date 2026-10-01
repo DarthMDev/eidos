@@ -190,6 +190,36 @@ then the path saved in the config file, then the platform default above.
 The mod overlay root (see "The file layer" in the README) is a separate
 folder beside it, `.../eidos/mods`.
 
+### Where the saves go
+
+The player's own files are the opposite of the data root: small, not
+re-derivable, worth backing up and worth following the player to another
+machine. They go where the operating system keeps per-user application
+data that is backed up (roaming on Windows), never beside the data root and
+never in a cache.
+
+| Platform | Save folder | Notes |
+|---|---|---|
+| Windows | `%APPDATA%\eidos\saves` | Roaming: a few hundred KiB that should follow the player. `portable.txt` beside the executable switches to `<exe dir>\saves`, as for the data root |
+| macOS | `~/Library/Application Support/eidos/saves` | inside the app container when sandboxed |
+| Linux | `$XDG_DATA_HOME/eidos/saves` (default `~/.local/share/eidos/saves`) | |
+| Android | `Context.getFilesDir()/eidos/saves` | app-private; the front end passes it to `bw_set_save_dir`, because only the Java side knows it |
+| iOS | `Library/Application Support/eidos/saves` in the app container | backed up (not excluded, unlike the data root); set by the front end through `bw_set_save_dir` |
+
+Resolution order (`sdk/save.h`): `bw_set_save_dir` (a front end, a
+`--save-dir` option, the tests), then the `BW_SAVE_DIR` environment
+variable, then the platform default above. With none (a mobile build whose
+front end has not set it yet) the game runs on in-memory state and says so.
+
+The folder holds three files, each written whole to a sibling `.tmp`,
+synced and swapped in, so a crash leaves the old file or the new one:
+
+| File | What | Written |
+|---|---|---|
+| `pokeblack.sav` | the cartridge's 512 KiB backup flash, a raw image (the format emulators use; a DeSmuME `.dsv` trailer is ignored on load) | one second after the game's last write, at power-off, at exit |
+| `firmware.bin` | the console's 256 KiB firmware flash (header, user settings, Wi-Fi settings) | at the end of each firmware write |
+| `firmware.ini` | the console's user settings, human-editable (`docs/firmware.md`) | only when asked for (`bw_firmware_write_default`); the port only reads it |
+
 ### Picking the ROM, per platform
 
 | Platform | Picker | What the core receives |

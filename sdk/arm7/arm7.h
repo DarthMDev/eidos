@@ -15,7 +15,10 @@
  *   rtc.c    real-time clock (tag 5), answered from the host clock
  *   ctrdg.c  Slot-2 cartridge (tag 13)
  *   card.c   Slot-1 card pull-out (tag 14)
- *   fs.c     Slot-1 backup commands (tag 11, PXI_FIFO_TAG_FS)
+ *   fs.c     Slot-1 backup commands (tag 11, PXI_FIFO_TAG_FS) and the
+ *            backup chip, the game's save in <save dir>/pokeblack.sav
+ *   nvram.c  the firmware flash (tag 4), <save dir>/firmware.bin
+ *   mic.c    the microphone (tag 9): registered, silent, no streaming
  *   snd.c    sound command lists (tag 7): the transport, sdk/arm7/snd.h
  *   snd_driver.c  the sound driver behind it, on engine/audio (eidos
  *            library only; the transport links without it)
@@ -23,6 +26,15 @@
  * Each responder's protocol comes from the matched ARM9 side of the same
  * SDK module (aletheia src/matched/arm9_sdk/, named in each file) and from
  * the SDK's DWARF; nothing here is taken from ARM7 code.
+ *
+ * Wireless (tag 10) has no responder, on purpose.  WM_Init's core
+ * (arm9_sdk/func_0208E038.c) asks PXI_IsCallbackReady(10, 1) once, without
+ * spinning, and answers WM_ERRCODE_WM_DISABLE when the ARM7 has no wireless
+ * component: that is the SDK's own "wireless not available" path, the one a
+ * console with wireless switched off takes, and it is what the port wants
+ * the game to see.  Registering the tag would commit the port to the whole
+ * WM command protocol, whose words are raw 32-bit buffer addresses.  A word
+ * sent on it anyway is returned with the error bit (sdk/pxi.c).
  */
 
 #ifndef BW_PORT_ARM7_H
@@ -66,6 +78,27 @@ void bw_arm7_ctrdg_init(void);
 void bw_arm7_card_init(void);
 void bw_arm7_fs_init(void);
 void bw_arm7_snd_init(void);
+void bw_arm7_nvram_init(void);
+void bw_arm7_mic_init(void);
+
+/* Power-off for the responders that keep a host file: write it if changed. */
+void bw_arm7_fs_reset(void);
+void bw_arm7_nvram_reset(void);
+
+/* Once per bw_arm7_step: the backup chip's delayed file write.             */
+void bw_arm7_fs_step(void);
+
+/*
+ * The host memory behind a buffer address the ARM9 sent as a 32-bit number
+ * (a request's src/dst, an SPI command's buffer).  A value inside `known`
+ * (an ARM9 object the responder knows by name, compared by its host
+ * address's low 32 bits) resolves into it; otherwise, on a host whose
+ * pointers are 32 bits, the value is the pointer.  NULL when neither holds
+ * (a 64-bit host and a buffer the responder cannot know): the responder
+ * answers "invalid parameter".  [value, value + size) must lie inside
+ * `known` for the first rule.
+ */
+void *bw_arm7_resolve(u32 value, u32 size, void *known, u32 known_size);
 
 /* The shared-memory handshake's progress: 1 once both directions are done. */
 int bw_arm7_os_synced(void);
@@ -114,6 +147,44 @@ u32 bw_arm7_ctrdg_words(void);
 /* Backup requests seen on tag 11, and the last request type.              */
 u32 bw_arm7_fs_requests(void);
 u32 bw_arm7_fs_last_request(void);
+
+/*
+ * The backup chip (sdk/arm7/fs.c).  bw_arm7_fs_bind names the ARM9's
+ * command block (cardi_arg) and bounce buffer (CARDi_backup_cache_page_buf)
+ * when they are not at their DS addresses (tests); NULL goes back to the DS
+ * addresses.  The 26 bits the initialise word carried are kept for checks.
+ */
+void bw_arm7_fs_bind(void *cmd_block, void *cache_buf, u32 cache_size);
+u32  bw_arm7_fs_init_word(void);
+
+/* The save file: NULL = <save dir>/pokeblack.sav (sdk/save.h).  Changing it
+ * writes out a changed image first and makes the next IDENTIFY load anew. */
+void bw_arm7_backup_set_path(const char *path);
+/* Seconds without a modifying request before the file is written (default
+ * 1); 0 writes after every modifying request.                             */
+void bw_arm7_backup_set_flush_delay(int seconds);
+/* Write a changed image now.  0 when nothing is pending afterwards.       */
+int  bw_arm7_backup_flush(void);
+/* The chip as the game sees it: NULL until an IDENTIFY loaded it.         */
+const u8 *bw_arm7_backup_image(u32 *size);
+u32  bw_arm7_backup_type(void);     /* identified CARDBackupType, 0 = none  */
+int  bw_arm7_backup_dirty(void);
+u32  bw_arm7_backup_writes(void);   /* file writes so far                   */
+
+/*
+ * The firmware flash (sdk/arm7/nvram.c).  The file: NULL = <save dir>/
+ * firmware.bin.  bw_arm7_nvram_bind names the ARM9's nvramTemp when it is
+ * not at its DS address (tests).  The image is loaded on first use.
+ */
+void bw_arm7_nvram_set_path(const char *path);
+void bw_arm7_nvram_bind(void *nvram_temp);
+int  bw_arm7_nvram_flush(void);
+const u8 *bw_arm7_nvram_image(u32 *size);
+u32  bw_arm7_nvram_commands(void);
+u32  bw_arm7_nvram_writes(void);
+
+/* Microphone commands answered (sdk/arm7/mic.c).                          */
+u32  bw_arm7_mic_commands(void);
 
 #ifdef __cplusplus
 }

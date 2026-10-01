@@ -1513,6 +1513,12 @@ the title screen. The pieces in the tree:
   under one run token, the interrupt controller, alarms and the tick;
 - `sdk/pxi.c` and `sdk/arm7/`, the FIFO between the processors and the ARM7
   stand-in that answers it;
+- `sdk/firmware.c`, `sdk/save.c` and the save chip, firmware flash and
+  microphone responders in `sdk/arm7/`: the owner's settings at power-on
+  from an editable `firmware.ini`, the game's save in `pokeblack.sav` (a
+  raw image, emulator-compatible, replaced atomically), the firmware flash
+  in `firmware.bin` (`docs/firmware.md`; the save folder per platform is in
+  `docs/installer.md`);
 - `sdk/fs.c` and `sdk/overlay.c`, the ROM file system and overlays onto the
   extract;
 - `bw_port_reset` (`sdk/port.h`), the one power-on: `bw_ds_reset`, then
