@@ -76,14 +76,17 @@ struct BwSink g_Sink = { 0, 0, 0, sink_handler };
  * (docs/idioms/file-string-is-an-abs32-into-the-string-area.md).  Their
  * contents never affect behaviour: they are arguments to an assert that only
  * fires on an out-of-range member.  The port supplies its own text, which is
- * why no ROM string is reproduced here.
+ * why no ROM string is reproduced here.  Each is registered at its DS
+ * address with its own length, so it must not be longer than the gap to
+ * the next DS object (0x18 bytes from 0x020A7F18 to lbl_020A7F30, which the
+ * boot links against).
  */
 const char func_02049578_File[] = "arc_tool.c";
-const char func_02049578_Msg[]  = "member index out of range";
+const char func_02049578_Msg[]  = "member out of range";
 const char func_0204944C_File[] = "arc_tool.c";
-const char func_0204944C_Msg[]  = "member index out of range";
+const char func_0204944C_Msg[]  = "member out of range";
 const char func_02048DDC_File[] = "arc_tool.c";
-const char func_02048DDC_Msg[]  = "member index out of range";
+const char func_02048DDC_Msg[]  = "member out of range";
 
 /* ------------------------------------------------------------------ */
 /* g_02146A68 -- the archive name table                                 */

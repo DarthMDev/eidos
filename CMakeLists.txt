@@ -1297,6 +1297,11 @@ add_test(NAME test_dsaddr
             --cc-id=${_dsaddr_cc_id}
             "--cflags=${CMAKE_C_FLAGS}")
 
+# tools/closure.py's source reader and tools/bootlink.py's #if evaluation
+# and implicit declarations, on synthetic C (no aletheia sources needed).
+add_test(NAME test_closure
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_closure.py)
+
 # ---------------------------------------------------------------------------
 # eidos_view -- the demo, and the first visible output
 # ---------------------------------------------------------------------------
@@ -1351,16 +1356,10 @@ endif()
 #                  that the boot is not linked and exits 0.
 #   ON             NitroMain, the one unmatched callee it needs
 #                  (stubs/reimpl_02047990.c), and the closure of NitroMain's
-#                  matched callees as tools/closure.py computes it.  This
-#                  needs the boot lanes' shims (sdk/dsmem.c, the OS thread and
-#                  interrupt layer, the ARM7 replies, the overlay loader) and
-#                  does not link until they have landed.
-#
-# The closure is computed once at configure time into the build tree
-# (eidos_boot_closure.txt; delete it to recompute) and compiled into its own
-# static library, minus the sources the eidos library already carries, so
-# nothing is compiled twice.  The seeds are NitroMain's direct matched
-# callees, func_02005328.c (the system initialiser) among them.
+#                  matched callees, with the names, constants and stubs
+#                  tools/bootlink.py generates to make it link.
+#                  cmake/boot.cmake has the details, including the one list
+#                  of matched files the port's shims replace.
 option(EIDOS_BOOT
        "Link the game's own boot (NitroMain and its closure) into eidos_boot" OFF)
 
@@ -1370,68 +1369,5 @@ target_compile_definitions(eidos_boot PRIVATE
     EIDOS_DEFAULT_DATA_ROOT="${BW_DATA_ROOT_ABS}")
 
 if(EIDOS_BOOT)
-    set(EIDOS_BOOT_SEEDS
-        arm9/func_02005328.c      # system init
-        arm9/sub_0200545C.c       # gfl_use.c: heaps, system record
-        arm9/unit_020051D8.c      # func_020051D8, func_02005204 (hblank)
-        arm9/func_0200520C.c      # vblank handler
-        arm9/func_0200523C.c      # boot sequence, overlays
-        arm9/func_020053EC.c
-        arm9/func_020055F8.c
-        arm9/func_020052EC.c
-        arm9/unit_0200560C.c      # sub_0200560C
-        arm9/func_02005230.c
-        arm9_sdk/OS_SetIrqFunction.c
-        arm9_sdk/OS_EnableIrqMask.c
-        arm9_sdk/func_0207D3AC.c  # GX_HBlankIntr
-        arm9_sdk/func_0207D3E4.c  # GX_VBlankIntr
-        arm9_sdk/func_0208574C.c  # OS_IsThreadTerminated
-        arm9_sdk/func_02085760.c  # OS_SleepThreadDirect
-        arm9_sdk/func_02085868.c  # OS_WakeupThreadDirect
-        arm9_sdk/func_0208459C.c  # OS_WaitIrq
-    )
-    set(_boot_list ${CMAKE_CURRENT_BINARY_DIR}/eidos_boot_closure.txt)
-    if(NOT EXISTS ${_boot_list})
-        set(_seed_args)
-        foreach(s ${EIDOS_BOOT_SEEDS})
-            list(APPEND _seed_args --seed src/matched/${s})
-        endforeach()
-        message(STATUS "EIDOS_BOOT: computing NitroMain's closure (tools/closure.py)")
-        execute_process(
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/closure.py
-                    --aletheia-root ${ALETHEIA_ROOT} ${_seed_args} --cmake
-            OUTPUT_FILE ${_boot_list}
-            RESULT_VARIABLE _boot_rc)
-        if(NOT _boot_rc EQUAL 0)
-            file(REMOVE ${_boot_list})
-            message(FATAL_ERROR "EIDOS_BOOT: tools/closure.py failed (${_boot_rc})")
-        endif()
-    endif()
-    file(STRINGS ${_boot_list} _boot_lines)
-    set(EIDOS_BOOT_MATCHED)
-    foreach(line ${_boot_lines})
-        string(STRIP "${line}" line)
-        string(REPLACE "\${BW_ROOT}" "${ALETHEIA_ROOT}" line "${line}")
-        if(line)
-            list(APPEND EIDOS_BOOT_MATCHED "${line}")
-        endif()
-    endforeach()
-    if(BW_MATCHED_SOURCES)
-        list(REMOVE_ITEM EIDOS_BOOT_MATCHED ${BW_MATCHED_SOURCES})
-    endif()
-    list(LENGTH EIDOS_BOOT_MATCHED _boot_n)
-    message(STATUS "EIDOS_BOOT: ON, ${_boot_n} matched sources beyond the eidos library")
-
-    add_library(eidos_boot_game STATIC
-        ${EIDOS_BOOT_MATCHED}
-        ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02005124.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02047990.c
-    )
-    target_link_libraries(eidos_boot_game PUBLIC eidos)
-    if(NOT MSVC)
-        set_source_files_properties(${EIDOS_BOOT_MATCHED} PROPERTIES
-            COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
-    endif()
-    target_link_libraries(eidos_boot PRIVATE eidos_boot_game)
-    target_compile_definitions(eidos_boot PRIVATE EIDOS_BOOT=1)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boot.cmake)
 endif()

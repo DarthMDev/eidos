@@ -15,14 +15,20 @@ Inputs, all read out of the aletheia checkout (--aletheia-root, default
   layout/matched/**/*.json   the manifest shards: address, name, source,
                              isa, status, and for a unit entry the list of
                              functions the unit defines
-  src/matched/*.c            the `extern` declarations and the `symbols:`
-                             header block of each matched file
+  src/matched/*.c            the `symbols:` header block of each matched
+                             file and every name it needs from elsewhere:
+                             extern declarations, file-scope prototypes,
+                             and calls with no declaration in scope
   layout/symbols_sdk.txt     SDK library symbols (address + name)
   layout/runtime_arm9.txt    mwccarm/MSL runtime helpers (address + name)
 
 Every referenced name is put in exactly one class:
 
   matched   defined by another EXACT matched source           (link it)
+  alias     a matched function reached by address under
+            another spelling                                  (rename)
+  const     a linker symbol whose address is its value
+            (SDK_IRQ_STACKSIZE, ov010_id)                     (bootlink.py)
   sdk       an SDK library symbol                             (sdk/)
   runtime   an MSL/runtime.a helper such as _s32_div_f          (sdk/)
   open      a game function at a known address that nothing
@@ -53,6 +59,7 @@ nothing.
 from __future__ import annotations
 
 import argparse
+import bisect
 import glob
 import json
 import os
@@ -63,17 +70,27 @@ EIDOS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.path.normpath(os.path.join(EIDOS_ROOT, "..", "aletheia"))
 
 ADDR_NAME = re.compile(r"^(?:sub|func|unit)_0([0-9A-Fa-f]{7})$")
-EXTERN_LINE = re.compile(r"^\s*extern\s+(.*?);", re.M | re.S)
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SYMBOL_ROW = re.compile(r"^\s*\*\s+([A-Za-z_][A-Za-z0-9_]*)\s+(0x[0-9A-Fa-f]{8})\s+(thumb|arm|data)\s*$")
 SYMBOLS_HDR = re.compile(r"^\s*\*\s*symbols:\s*$")
+CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+MEMBER = re.compile(r"(?:\.|->)\s*[A-Za-z_]\w*")
+ASM_BODY = re.compile(r"\b(?:asm|__asm)\b")
+ATTRIBUTE = re.compile(r"\b__attribute__\s*\(")
+TAG_BODY = re.compile(r"\b(struct|union|enum)\b(\s+[A-Za-z_]\w*)?\s*\{")
+TAG_NAME = re.compile(r"\b(struct|union|enum)\s+(?!_tag\b)[A-Za-z_]\w*")
+LOCAL_DECL = re.compile(r"\b([A-Za-z_]\w*)\s+\**\s*([A-Za-z_]\w*)\s*(?=[=;,\[)])")
+FUNC_PTR_DECL = re.compile(r"\(\s*\*+\s*(?:const\s+|volatile\s+)*([A-Za-z_]\w*)\s*[\)\[]")
 
-C_KEYWORDS = {
-    "const", "volatile", "struct", "union", "enum", "unsigned", "signed",
-    "char", "short", "int", "long", "float", "double", "void", "static",
-    "inline", "register", "restrict", "extern", "typedef",
-    "u8", "u16", "u32", "u64", "s8", "s16", "s32", "s64", "fx32", "fx16",
-    "BOOL", "vu8", "vu16", "vu32", "vs8", "vs16", "vs32",
+# C's reserved words plus the spellings matched files use for mwcc
+# extensions; none of them can name a symbol.
+C_RESERVED = {
+    "auto", "break", "case", "char", "const", "continue", "default", "do",
+    "double", "else", "enum", "extern", "float", "for", "goto", "if",
+    "inline", "int", "long", "register", "restrict", "return", "short",
+    "signed", "sizeof", "static", "struct", "switch", "typedef", "union",
+    "unsigned", "void", "volatile", "while", "asm", "__asm", "__attribute__",
+    "__inline", "_Bool", "defined", "nofralloc", "naked",
 }
 
 
@@ -101,18 +118,304 @@ def read_symbol_table(path):
     return by_addr, by_name
 
 
+# ---------------------------------------------------------------------------
+# Reading one matched source
+# ---------------------------------------------------------------------------
+#
+# A matched file names the symbols it needs in three ways, and the closure
+# has to see all three, because the host linker does:
+#
+#   - an `extern` declaration (object or function), possibly with an
+#     __attribute__, a struct body or several declarators;
+#   - a file-scope prototype without `extern` (`void func_02085B20(void);`);
+#   - a call to a function with no declaration at all.  mwcc accepts the
+#     implicit declaration and so does the DS build; a host compiler needs a
+#     prototype (tools/bootlink.py writes one), but the linker needs the
+#     definition either way.
+#
+# A declared name counts only when the file uses it outside its own
+# declaration: in a function body, an initializer or a macro body.  A name
+# that is declared and never used costs the linker nothing.
+
+def strip_source(text):
+    """Comments, string and character literals blanked; line splices joined."""
+    text = text.replace("\\\r\n", " ").replace("\\\n", " ")
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append(" " + "\n" * text.count("\n", i, j))
+            i = j
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif c in "\"'":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            out.append(c + c)
+            i = j + 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _matching(text, i, open_ch, close_ch):
+    """Index just past the bracket that closes text[i] (== open_ch)."""
+    depth = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == open_ch:
+            depth += 1
+        elif c == close_ch:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _drop_attributes(text):
+    while True:
+        m = ATTRIBUTE.search(text)
+        if not m:
+            return text
+        end = _matching(text, m.end() - 1, "(", ")")
+        text = text[:m.start()] + " " + text[end:]
+
+
+def _split_top(text, sep):
+    """Split on `sep` where no (), [] or {} is open."""
+    parts, depth, start = [], 0, 0
+    for i, c in enumerate(text):
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == sep and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return parts
+
+
+def is_link_constant(name, addr, kind):
+    """A linker-defined symbol whose *address* is the value the code uses.
+
+    `extern u8 SDK_IRQ_STACKSIZE[]; ... (u32)SDK_IRQ_STACKSIZE` is 0x800 on
+    the DS because the linker command file sets the symbol's address to
+    0x800; overlay ids (`ov010_id`) work the same way.  A host linker cannot
+    place a symbol at an absolute address portably, so these are their own
+    class: every SDK_ linker symbol, and every data symbol whose address is
+    below main RAM.
+    """
+    if name.startswith("SDK_"):
+        return True
+    return kind == "data" and addr is not None and addr < 0x02000000
+
+
+class SourceScan:
+    """What one matched source defines, declares, uses and calls."""
+
+    def __init__(self, text):
+        self.symbols = self._parse_symbols(text)
+        self.defined = set()       # functions and objects with a body here
+        self.statics = set()       # file-local names (static)
+        self.declared = set()      # extern or prototype, not static
+        self.prototyped = set()    # declared as a function (any linkage)
+        self.used = set()          # identifiers outside declarations
+        self.called = set()        # identifiers followed by '('
+        self.macros = set()
+        self.typedefs = set()
+        self.locals = set()        # parameters and local function pointers
+        self.heads = {}            # defined function -> its declarator text
+        code = strip_source(text)
+        self.has_asm = bool(ASM_BODY.search(code))
+        self._scan(code)
+
+    @staticmethod
+    def _parse_symbols(text):
+        out = {}
+        in_block = False
+        for line in text.splitlines():
+            if SYMBOLS_HDR.match(line):
+                in_block = True
+                continue
+            if in_block:
+                m = SYMBOL_ROW.match(line)
+                if m:
+                    out[m.group(1)] = (int(m.group(2), 16), m.group(3))
+                elif line.strip().startswith("*/") or not line.strip().startswith("*"):
+                    in_block = False
+        return out
+
+    def _use(self, text):
+        # `s.callback(...)` and `p->next` name members, not symbols.
+        text = MEMBER.sub(" ", text)
+        self.used.update(IDENT.findall(text))
+        self.called.update(CALL.findall(text))
+
+    def _scan(self, code):
+        body_lines = []
+        for line in code.split("\n"):
+            s = line.lstrip()
+            if s.startswith("#"):
+                m = re.match(r"#\s*define\s+([A-Za-z_]\w*)(\([^)]*\))?(.*)", s)
+                if m:
+                    self.macros.add(m.group(1))
+                    self._use(m.group(3))
+                body_lines.append("")
+            else:
+                body_lines.append(line)
+        code = _drop_attributes("\n".join(body_lines))
+
+        i, n, start = 0, len(code), 0
+        while i < n:
+            c = code[i]
+            if c == "(":
+                i = _matching(code, i, "(", ")")
+                continue
+            if c == "[":
+                i = _matching(code, i, "[", "]")
+                continue
+            if c == "{":
+                head = code[start:i]
+                stripped = head.rstrip()
+                tag = TAG_BODY.search(head + "{")
+                is_tag = tag is not None and tag.end() == len(head) + 1
+                if stripped.endswith(")") and not is_tag \
+                        and "=" not in _split_top(head, ",")[-1]:
+                    end = _matching(code, i, "{", "}")
+                    self._function(head, code[i:end])
+                    i = start = end
+                    continue
+                i = _matching(code, i, "{", "}")
+                continue
+            if c == ";":
+                self._declaration(code[start:i])
+                start = i + 1
+            i += 1
+
+    def _function(self, head, body):
+        head = head.strip()
+        name = None
+        m = FUNC_PTR_DECL.search(head)
+        if m and head.find("(") == m.start():
+            name = m.group(1)
+        else:
+            words = IDENT.findall(head.split("(")[0])
+            if words:
+                name = words[-1]
+        if name:
+            self.defined.add(name)
+            self.heads[name] = head
+            if re.search(r"\bstatic\b", head.split("(")[0]):
+                self.statics.add(name)
+        # Parameters and local function pointers can be called; they are
+        # never symbols.
+        if "(" in head:
+            params = head[head.find("(") + 1:head.rfind(")")]
+            for param in _split_top(params, ","):
+                fp = FUNC_PTR_DECL.search(param)
+                idents = [w for w in IDENT.findall(re.sub(r"\[[^\]]*\]", " ", param))
+                          if w not in C_RESERVED]
+                if fp:
+                    self.locals.add(fp.group(1))
+                elif idents:
+                    self.locals.add(idents[-1])
+        self.locals.update(fp.group(1) for fp in FUNC_PTR_DECL.finditer(body))
+        for typ, var in LOCAL_DECL.findall(body):
+            if typ in self.typedefs or typ in C_RESERVED:
+                self.locals.add(var)
+        self._use(body)
+
+    def _declaration(self, decl):
+        decl = decl.strip()
+        if not decl:
+            return
+        # Struct, union and enum bodies declare members and enumerators,
+        # never symbols; an initializer's braces are kept (they hold refs).
+        pos = 0
+        while True:
+            m = TAG_BODY.search(decl, pos)
+            if not m:
+                break
+            end = _matching(decl, m.end() - 1, "{", "}")
+            repl = " %s _tag " % m.group(1)
+            decl = decl[:m.start()] + repl + decl[end:]
+            pos = m.start() + len(repl)
+        # A tag name is a type, never a declarator (`struct Obj;`,
+        # `struct Obj *p;`).
+        decl = TAG_NAME.sub(lambda t: t.group(1) + " _tag", decl)
+        head_words =IDENT.findall(_split_top(decl, "=")[0].split("(")[0])
+        is_typedef = "typedef" in head_words
+        is_extern = "extern" in head_words
+        is_static = "static" in head_words
+        for piece in _split_top(decl, ","):
+            parts = _split_top(piece, "=")
+            declarator = parts[0]
+            if len(parts) > 1:
+                self._use("=".join(parts[1:]))
+            # `T (*name)(...)` is an object; a parameter list's own `(*cb)`
+            # is not the declarator, so only a match at the first '(' counts.
+            m = FUNC_PTR_DECL.search(declarator)
+            if m and m.start() != declarator.find("("):
+                m = None
+            if m:
+                name, is_func = m.group(1), False
+            elif "(" in declarator:
+                idents = IDENT.findall(declarator.split("(")[0])
+                name, is_func = (idents[-1] if idents else None), True
+            else:
+                idents = [w for w in IDENT.findall(re.sub(r"\[[^\]]*\]", " ", declarator))
+                          if w not in C_RESERVED]
+                name, is_func = (idents[-1] if idents else None), False
+            if not name or name in C_RESERVED or name == "_tag":
+                continue
+            # Array bounds may name enumerators or macros; they are uses.
+            for bound in re.findall(r"\[([^\]]*)\]", declarator):
+                self._use(bound)
+            if is_typedef:
+                self.typedefs.add(name)
+            elif is_static:
+                self.statics.add(name)
+                if not is_func:
+                    self.defined.add(name)
+            elif is_extern or is_func:
+                self.declared.add(name)
+                if is_func:
+                    self.prototyped.add(name)
+            else:
+                self.defined.add(name)
+
+    def references(self, universe):
+        """(every name this file needs from elsewhere, the implicit calls)."""
+        local = self.defined | self.statics | self.macros | self.typedefs | C_RESERVED
+        refs = (self.declared & self.used) - local
+        implicit = {name for name in self.called - self.declared - local - self.locals
+                    if universe(name)}
+        return sorted(refs | implicit), sorted(implicit)
+
+
 class Index:
     def __init__(self):
         self.entries = []          # one dict per shard entry
-        self.by_addr = {}          # address -> entry
+        self.by_addr = {}          # ARM9/TWL/ITCM address -> entry
+        self.member_addr = {}      # (source, member name) -> address
+        self.member_by_addr = {}   # (source, address) -> member name
         self.defines = {}          # function name -> source path
         self.sources = {}          # source path -> entry
-        self.externs = {}          # source path -> [names]
-        self.symbols = {}          # source path -> {name: (addr, kind)}
+        self._scans = {}           # source path -> SourceScan (lazy)
+        self._static_sorted = None # [(address, source)] of the static image
+        self._addr_miss = set()
         self.sdk_by_addr, self.sdk_by_name = read_symbol_table("layout/symbols_sdk.txt")
         self.rt_by_addr, self.rt_by_name = read_symbol_table("layout/runtime_arm9.txt")
         self._load_shards()
-        self._load_sources()
 
     def _load_shards(self):
         pattern = os.path.join(ROOT, "layout", "matched", "**", "*.json")
@@ -133,121 +436,179 @@ class Index:
                     "functions": fn.get("functions") or [fn["name"]],
                 }
                 self.entries.append(entry)
-                self.by_addr[entry["address"]] = entry
                 self.sources[entry["source"]] = entry
                 for name in entry["functions"]:
                     self.defines.setdefault(name, entry["source"])
                 # `unit_0204ABCD` is a file name, not a symbol; the real lead
                 # function keeps its own sub_/func_ spelling in `functions`.
                 self.defines.setdefault(entry["name"], entry["source"])
+                # Overlays share address ranges with each other; only the
+                # static image (ARM9, its TWL extension, ITCM) is resolved by
+                # address.
+                if entry["region"].startswith("ov"):
+                    continue
+                self.by_addr.setdefault(entry["address"], entry)
+                # A unit's members live at their own addresses: the member
+                # name spells it (func_/sub_), or the SDK table names it.
+                for name in entry["functions"]:
+                    addr = self._name_addr(name)
+                    if addr is not None:
+                        self.member_addr[(entry["source"], name)] = addr
+                        self.member_by_addr.setdefault((entry["source"], addr), name)
+                        self.by_addr.setdefault(addr, entry)
 
-    def _load_sources(self):
-        for source in self.sources:
+    def entry_at(self, addr):
+        """The static-image entry whose source defines a function at `addr`.
+
+        A unit's manifest entry may list only its lead function; the other
+        functions it defines are found by reading the units that start at or
+        before `addr` (units are contiguous, so a few are enough).
+        """
+        entry = self.by_addr.get(addr)
+        if entry is not None or addr in self._addr_miss:
+            return entry
+        if self._static_sorted is None:
+            self._static_sorted = sorted(
+                (e["address"], e["source"]) for e in self.entries
+                if not e["region"].startswith("ov"))
+        i = bisect.bisect_right(self._static_sorted, (addr, chr(0x10FFFF))) - 1
+        for k in range(i, max(i - 8, -1), -1):
+            source = self._static_sorted[k][1]
+            sc = self.scan(source)
+            for name in sorted(sc.defined - sc.statics):
+                if self._name_addr(name) == addr:
+                    self.member_addr[(source, name)] = addr
+                    self.member_by_addr.setdefault((source, addr), name)
+                    entry = self.sources[source]
+                    self.by_addr[addr] = entry
+                    return entry
+        self._addr_miss.add(addr)
+        return None
+
+    def _name_addr(self, name):
+        m = ADDR_NAME.match(name)
+        if m:
+            return int("0" + m.group(1), 16)
+        if name in self.sdk_by_name:
+            return self.sdk_by_name[name]
+        return None
+
+    def scan(self, source):
+        sc = self._scans.get(source)
+        if sc is None:
             full = os.path.join(ROOT, source)
-            if not os.path.exists(full):
-                self.externs[source] = []
-                self.symbols[source] = {}
-                continue
-            with open(full, encoding="utf-8", errors="replace") as fh:
-                text = fh.read()
-            self.symbols[source] = self._parse_symbols(text)
-            self.externs[source] = self._parse_externs(text)
+            text = ""
+            if os.path.exists(full):
+                with open(full, encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+            sc = self._scans[source] = SourceScan(text)
+        return sc
 
-    @staticmethod
-    def _parse_symbols(text):
-        out = {}
-        in_block = False
-        for line in text.splitlines():
-            if SYMBOLS_HDR.match(line):
-                in_block = True
-                continue
-            if in_block:
-                m = SYMBOL_ROW.match(line)
-                if m:
-                    out[m.group(1)] = (int(m.group(2), 16), m.group(3))
-                elif line.strip().startswith("*/") or not line.strip().startswith("*"):
-                    in_block = False
-        return out
+    def is_global_name(self, name):
+        """A name a call with no declaration in scope may resolve to."""
+        return (name in self.defines or name in self.sdk_by_name
+                or name in self.rt_by_name or ADDR_NAME.match(name) is not None)
 
-    @staticmethod
-    def _parse_externs(text):
-        # Strip comments first so prose that mentions `extern` cannot match.
-        stripped = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-        stripped = re.sub(r"//[^\n]*", " ", stripped)
-        names = []
-        for decl in EXTERN_LINE.findall(stripped):
-            # The declared name is the last identifier before the first '('
-            # (a function) or the last identifier overall (an object).
-            head = decl.split("(")[0]
-            idents = [i for i in IDENT.findall(head) if i not in C_KEYWORDS]
-            if idents:
-                names.append(idents[-1])
-        return names
+    def owner_name(self, entry, addr):
+        """The symbol the owning source defines at `addr`."""
+        name = self.member_by_addr.get((entry["source"], addr))
+        if name is not None:
+            return name
+        if entry["address"] == addr:
+            return entry["functions"][0]
+        return None
+
+    def address_of(self, source, name):
+        """(DS address, kind) of `name` as `source` sees it; kind may be None."""
+        sym = self.scan(source).symbols.get(name)
+        if sym:
+            return sym
+        addr = self._name_addr(name)
+        if addr is None:
+            addr = self.rt_by_name.get(name)
+        return addr, None
 
     def classify(self, source, name):
-        """Return (klass, detail) for one name referenced by one source."""
+        """Return (klass, detail) for one name referenced by one source.
+
+        klass is one of matched, alias, runtime, sdk, open, data, local.  An
+        `alias` is a name the DS build resolves by address to a matched
+        source that defines the address under another spelling; the detail
+        is "<defined name> in <source>".
+        """
         owner = self.defines.get(name)
         if owner and owner != source:
             return "matched", owner
         if owner == source:
             return "local", source
 
-        addr = None
-        sym = self.symbols.get(source, {}).get(name)
-        if sym:
-            addr, kind = sym
-            if kind == "data":
-                return "data", "0x%08X" % addr
-        else:
-            m = ADDR_NAME.match(name)
-            if m:
-                addr = int("0" + m.group(1), 16)
-
+        addr, kind = self.address_of(source, name)
+        if is_link_constant(name, addr, kind):
+            return "const", ("0x%08X" % addr) if addr is not None else name
+        if kind == "data":
+            return "data", "0x%08X" % addr
+        if addr is not None:
+            entry = self.entry_at(addr)
+            if entry:
+                if entry["source"] == source:
+                    return "local", source
+                defined = self.owner_name(entry, addr)
+                if defined and defined != name:
+                    return "alias", "%s in %s" % (defined, entry["source"])
+                return "matched", entry["source"]
         if name in self.rt_by_name or (addr is not None and addr in self.rt_by_addr):
             return "runtime", name
         if name in self.sdk_by_name or (addr is not None and addr in self.sdk_by_addr):
             return "sdk", self.sdk_by_name.get(name) and name or self.sdk_by_addr.get(addr, name)
         if addr is not None:
-            owner = self.by_addr.get(addr)
-            if owner and owner["source"] != source:
-                # Same address, different spelling of the name.  The DS build
-                # resolves relocations by address and does not care; a host
-                # linker resolves by name and does.  Every one of these needs
-                # a forwarder in port/sdk/aliases.c.
-                if name not in owner["functions"] and name != owner["name"]:
-                    return "alias", "%s in %s" % (owner["functions"][0], owner["source"])
-                return "matched", owner["source"]
             return "open", "0x%08X" % addr
+        if name in self.scan(source).prototyped:
+            # A function no table knows the address of.
+            return "open", name
         return "data", name
 
     def refs(self, source):
         out = []
-        for name in self.externs.get(source, []):
+        names, _implicit = self.scan(source).references(self.is_global_name)
+        for name in names:
             klass, detail = self.classify(source, name)
             if klass == "local":
                 continue
             out.append((name, klass, detail))
         return out
 
-    def closure(self, seeds):
-        """Transitively pull in matched sources; report what stays open."""
+    def implicit_calls(self, source):
+        """Callees `source` calls with no declaration in scope."""
+        return self.scan(source).references(self.is_global_name)[1]
+
+    def closure(self, seeds, stop=()):
+        """Transitively pull in matched sources; report what stays open.
+
+        Sources in `stop` are part of the result but not followed: the port
+        replaces them, so what they call is not needed on their account.
+        """
         seen = []
+        seen_set = set()
         queue = list(seeds)
+        queued = set(queue)
         open_refs = {}
+        stop = set(stop)
         while queue:
             source = queue.pop(0)
-            if source in seen:
+            if source in seen_set:
                 continue
             seen.append(source)
+            seen_set.add(source)
+            if source in stop:
+                continue
             for name, klass, detail in self.refs(source):
-                if klass == "matched":
-                    if detail not in seen and detail not in queue:
-                        queue.append(detail)
-                    continue
-                if klass == "alias":
-                    owner = detail.split(" in ", 1)[1]
-                    if owner not in seen and owner not in queue:
+                if klass in ("matched", "alias"):
+                    owner = detail if klass == "matched" else detail.split(" in ", 1)[1]
+                    if owner not in seen_set and owner not in queued:
                         queue.append(owner)
+                        queued.add(owner)
+                    if klass == "matched":
+                        continue
                 open_refs.setdefault((name, klass, detail), []).append(source)
         return seen, open_refs
 
@@ -618,7 +979,7 @@ def main(argv=None):
         closed, openish = [], 0
         for source in sorted(idx.sources):
             refs = idx.refs(source)
-            bad = [r for r in refs if r[1] in ("open", "data", "alias")]
+            bad = [r for r in refs if r[1] in ("open", "data", "alias", "const")]
             if bad:
                 openish += 1
             else:
@@ -651,7 +1012,7 @@ def main(argv=None):
     buckets = {}
     for (name, klass, detail), users in sorted(open_refs.items()):
         buckets.setdefault(klass, []).append((name, detail, users))
-    for klass in ("sdk", "runtime", "alias", "open", "data"):
+    for klass in ("sdk", "runtime", "alias", "const", "open", "data"):
         rows = buckets.get(klass, [])
         if not rows:
             continue
