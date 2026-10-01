@@ -78,8 +78,11 @@ is only partly done, it says which part.
   and repack it, or a member-level side table. Only whole-file overlay
   exists today.
 - **Milestone 1, portability sweep**: the under-declared-globals sweep, and
-  warning-free builds on Clang and MSVC (GCC is clean, with and without
-  SDL2).
+  a first MSVC build: `cmake/msvc.cmake` and the `msvc-x64`, `msvc-x86` and
+  `clangcl-x64` configurations of `tools/check.py` exist, but the
+  development machine's Visual Studio lacks the C++ build tools and a
+  Windows SDK, so MSVC has never compiled the tree (GCC and Clang are
+  warning-free at both pointer widths, with and without SDL2).
 - **Milestone 5, oracle breadth**: more sequences in the audio oracle is
   mechanical coverage, not accuracy.
 - **Milestone 8+**: high-resolution/widescreen rendering, the mod API,

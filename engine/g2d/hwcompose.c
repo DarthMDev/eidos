@@ -104,7 +104,6 @@
 #define REG_BLDY      0x54u
 #define REG_MASTER_BRIGHT 0x6Cu
 #define REG_SUB_BASE  0x1000u
-#define REG_VRAMCNT_A 0x240u
 #define REG_POWCNT1   0x304u
 
 /* The extra bytes after each BG window copy, so a tile block or a map that
@@ -1042,22 +1041,18 @@ int g2d_hw_render(const G2dHwState *hw, const u8 *rgba3d,
 /* ------------------------------------------------------------------ */
 
 /*
- * The extended palettes are not in the 0x06xxxxxx window at all, so they
- * are found from VRAMCNT directly: the bank, its MST field (bits 0-2) and
- * its OFS field (bits 3-4), bit 7 enabling it.
- *
- *   main BG ext   E with MST 4 (slots 0-3), F or G with MST 4 (OFS bit 0
- *                 picks slots 0-1 or 2-3, 8 KB each)
- *   main OBJ ext  E, F or G with MST 5 (the first 8 KB)
- *   sub BG ext    H with MST 2 (slots 0-3)
- *   sub OBJ ext   I with MST 3 (the first 8 KB)
- *   LCDC          A..D with MST 0, for display mode 2
+ * The extended palettes are not in the 0x06xxxxxx window at all; sdk/dsmem.c
+ * maps them from VRAMCNT into spaces of their own (bw_vram_slot), the same
+ * mapping its CPU window uses, so the renderer and a matched store agree on
+ * which bank holds what.  Display mode 2 reads banks A..D through their
+ * LCDC addresses (0x06800000 + 128 KiB each), which are only mapped while
+ * the bank's MST is 0.
  */
 void g2d_hw_state_from_dsmem(G2dHwState *hw)
 {
     const u8 *io = (const u8 *)(const void *)bw_io(BW_DS_IO_BASE);
     u32 i;
-    int b;
+    int e;
 
     memset(hw, 0, sizeof(*hw));
     hw->io = io;
@@ -1076,61 +1071,17 @@ void g2d_hw_state_from_dsmem(G2dHwState *hw)
         hw->obj_page[1][i] = (const u8 *)bw_ds_try_ptr(0x06600000u + i * G2D_HW_PAGE_SIZE);
     }
 
-    for (b = BW_VRAM_A; b < BW_VRAM_BANKS; b++) {
-        /* VRAMCNT_H and _I sit after WRAMCNT at 0x04000247. */
-        u32 reg = REG_VRAMCNT_A + (u32)b + (b >= BW_VRAM_H ? 1u : 0u);
-        u8 cnt = io[reg];
-        u32 mst = cnt & 7u, ofs = ((u32)cnt >> 3) & 3u;
-        u32 size = 0;
-        const u8 *bank;
+    for (e = G2D_HW_MAIN; e <= G2D_HW_SUB; e++) {
+        int bg_kind = e == G2D_HW_MAIN ? BW_VSLOT_BGEXT_MAIN : BW_VSLOT_BGEXT_SUB;
+        int obj_kind = e == G2D_HW_MAIN ? BW_VSLOT_OBJEXT_MAIN : BW_VSLOT_OBJEXT_SUB;
 
-        if ((cnt & 0x80u) == 0) {
-            continue;
+        for (i = 0; i < 4u; i++) {
+            hw->bg_extpal[e][i] = bw_vram_slot(bg_kind, i * G2D_HW_EXTPAL_SLOT_SIZE, NULL);
         }
-        bank = bw_vram_bank(b, &size);
-        if (bank == NULL) {
-            continue;
-        }
-        switch (b) {
-        case BW_VRAM_A: case BW_VRAM_B: case BW_VRAM_C: case BW_VRAM_D:
-            if (mst == 0u) {
-                hw->lcdc_bank[b - BW_VRAM_A] = bank;
-            }
-            break;
-        case BW_VRAM_E:
-            if (mst == 4u) {
-                for (i = 0; i < 4u; i++) {
-                    hw->bg_extpal[0][i] = bank + i * G2D_HW_EXTPAL_SLOT_SIZE;
-                }
-            } else if (mst == 5u) {
-                hw->obj_extpal[0] = bank;
-            }
-            break;
-        case BW_VRAM_F: case BW_VRAM_G:
-            if (mst == 4u) {
-                u32 first = (ofs & 1u) * 2u;
-
-                hw->bg_extpal[0][first] = bank;
-                hw->bg_extpal[0][first + 1u] = bank + G2D_HW_EXTPAL_SLOT_SIZE;
-            } else if (mst == 5u) {
-                hw->obj_extpal[0] = bank;
-            }
-            break;
-        case BW_VRAM_H:
-            if (mst == 2u) {
-                for (i = 0; i < 4u; i++) {
-                    hw->bg_extpal[1][i] = bank + i * G2D_HW_EXTPAL_SLOT_SIZE;
-                }
-            }
-            break;
-        case BW_VRAM_I:
-            if (mst == 3u) {
-                hw->obj_extpal[1] = bank;
-            }
-            break;
-        default:
-            break;
-        }
+        hw->obj_extpal[e] = bw_vram_slot(obj_kind, 0, NULL);
+    }
+    for (i = 0; i < 4u; i++) {
+        hw->lcdc_bank[i] = (const u8 *)bw_ds_try_ptr(0x06800000u + i * 0x20000u);
     }
 }
 

@@ -15,7 +15,6 @@
 
 #include "port.h"
 #include "dsmem.h"
-#include "dsmem_ext.h"
 #include "port_test.h"
 
 /* A game global sdk/game_globals.c registers at its DS address. */
@@ -426,6 +425,50 @@ static int test_reset(void)
     return 0;
 }
 
+/*
+ * The contracts other layers build on (sdk/port_reset.c): bw_ds_reset
+ * leaves IF unhooked, because the OS layer owns it, and bw_io_write32
+ * updates the copy bw_io_sync compares against, so a port write is never
+ * seen a second time as a matched store.
+ */
+static int test_contracts(void)
+{
+    bw_ds_reset();
+
+    /* No IF hook: a store to IF is plain memory until the OS layer hooks it. */
+    *(volatile u32 *)bw_ds_ptr(0x04000214u) = 5;
+    bw_io_sync();
+    BW_CHECK_EQ("reset leaves IF unhooked", bw_io_read32(0x04000214u), 5);
+    bw_io_write32(0x04000214u, 1);
+    BW_CHECK_EQ("IF write is a plain store", bw_io_read32(0x04000214u), 1);
+
+    /* bw_io_write32 on a four-byte hooked register: one run, sync quiet. */
+    bw_io_hook(0x04000188u, 4, record_hook);
+    g_hook_runs = 0;
+    bw_io_write32(0x04000188u, 0x12345678u);
+    BW_CHECK_EQ("write32 hook ran once", g_hook_runs, 1);
+    BW_CHECK_EQ("write32 hook new", g_hook_new, 0x12345678u);
+    bw_io_sync();
+    BW_CHECK_EQ("write32 updated the sync copy", g_hook_runs, 1);
+    *(volatile u32 *)bw_ds_ptr(0x04000188u) = 0x12345678u;
+    bw_io_sync();
+    BW_CHECK_EQ("same value stored again is invisible", g_hook_runs, 1);
+    *(volatile u32 *)bw_ds_ptr(0x04000188u) = 0x9ABCDEF0u;
+    bw_io_sync();
+    BW_CHECK_EQ("a changed store runs at sync", g_hook_runs, 2);
+    BW_CHECK_EQ("sync hook old is the write32 value", g_hook_old, 0x12345678u);
+
+    /* An unhooked register written by bw_io_write32, hooked afterwards:
+     * the write is not replayed at the next sync.                           */
+    bw_io_write32(0x04000180u, 0x0300u);
+    bw_io_hook(0x04000180u, 4, record_hook);
+    bw_io_sync();
+    BW_CHECK_EQ("no replay of an earlier write32", g_hook_runs, 2);
+    bw_io_hook(0x04000180u, 4, NULL);
+    bw_io_hook(0x04000188u, 4, NULL);
+    return 0;
+}
+
 static int run_overlap(void)
 {
     static u8 a[0x20];
@@ -449,7 +492,7 @@ int main(int argc, char **argv)
     bw_ds_reset();
 
     if (test_regions() != 0 || test_registry() != 0 || test_hooks() != 0
-        || test_vram() != 0 || test_reset() != 0) {
+        || test_vram() != 0 || test_reset() != 0 || test_contracts() != 0) {
         BW_REPORT("test_dsmem");
     }
     BW_REPORT("test_dsmem");

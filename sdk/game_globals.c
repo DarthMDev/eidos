@@ -42,7 +42,6 @@
 
 #include "port.h"
 #include "dsmem.h"
-#include "dsmem_ext.h"
 
 /* ------------------------------------------------------------------ */
 /* g_Sink -- the assertion sink src/matched/sub_02034734.c dispatches to */

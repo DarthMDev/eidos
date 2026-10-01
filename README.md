@@ -57,10 +57,20 @@ One file per SDK module:
 | file | what it stands in for |
 | --- | --- |
 | `sdk/types.h` | the scalar vocabulary: u8..s64, fx32, BOOL, the fixed-point macros, endian-clean readers |
-| `sdk/port.h` | the port's own API: data root, archives, panic |
-| `sdk/fs.c` | FS: `FS_SeekFile`, `FS_ReadFile`, `FS_CloseFile` onto stdio |
+| `sdk/port.h`, `sdk/port_reset.c` | the port's own API: data root, archives, panic, and `bw_port_reset`, the one power-on (address space, OS layer, PXI, and the joins between them) |
+| `sdk/dsmem.h`, `sdk/dsmem.c` | the DS address space: the registry of game objects, main RAM, WRAM, the I/O register file with its write hooks, palette, VRAM through VRAMCNT (CPU window and the engine-only slots), OAM |
+| `sdk/host_vm.c` | reserve and commit for main RAM, the one OS-specific file under `sdk/` besides `plat_thread.c` |
+| `sdk/fs.c` | FS: the ROM file system onto the extracted tree (`FS_Init`, the open/seek/read family, the archive tables) |
+| `sdk/overlay.c` | FS overlays: compiled in, checked and made resident on load, against the generated overlay table |
+| `sdk/vfs.c` | the data root, the mod overlay and path resolution |
 | `sdk/os_alloc.c` | OS heap: `OS_AllocFromHeap`/`OS_FreeToHeap`, and the expanded heap's blocks, the one place the port takes memory from the host |
-| `sdk/os_irq.c` | OS: `OS_DisableInterrupts`/`OS_RestoreInterrupts` as a saved flag, `OS_Terminate` as exit |
+| `sdk/os_arena.c` | OS arena: `OS_AllocFromArenaLo`, the memory the heaps are built in |
+| `sdk/os_irq.c` | the CPU's interrupt state: the CPSR I and F bits behind `OS_DisableInterrupts`/`OS_RestoreInterrupts` (saved per thread), the processor mode, the hooks that give the ARM7 its turn and take pending interrupts on enable, `OS_Terminate` as exit |
+| `sdk/os_interrupt.c` | the interrupt controller: IE/IF/IME (the OS layer owns IF), the IRQ table and callback slots, taking an interrupt, `OS_Halt`, `OS_WaitIrq` |
+| `sdk/os_thread.c`, `sdk/plat_thread.c` | OS threads on host threads under one run token; the host mutex, condition variable and thread start for Win32 and POSIX |
+| `sdk/os_alarm.c`, `sdk/os_tick.c` | alarms on the OS tick, and `OS_GetTick` onto the frame loop's clock |
+| `sdk/os_system.c`, `sdk/os_argument.c` | boot and console type, the protection unit, the ARM7 lock handshake, the deliver argument |
+| `sdk/pxi.c`, `sdk/arm7/` | the IPC FIFO pair and IPCSYNC, and the ARM7 stand-in answering each PXI tag (OS, PM, RTC, CTRDG, CARD, FS, SND) |
 | `sdk/gx.c` | GX: `GX_GetBankForBGExtPltt` and the address the heap layer's failure arm calls |
 | `sdk/mi.c` | MI: the `MI_CpuCopy*` / `MI_CpuFill*` family onto memcpy/memset |
 | `sdk/tcbl.c`, `sdk/tcbl.h` | the host layout of the game's task-callback list, and the port's thin helper over it |
@@ -521,9 +531,11 @@ display mode 2 shows bank A..D directly. BG mode 6's large bitmap, mode
 `G2D_HW_UNSUP_*` flags rather than drawn wrong; the display capture is
 out of scope.
 
-**The tests**, `tests/test_hwcompose.c`, bring a clearly marked test-only
-backing for `sdk/dsmem.h` and write registers, palette, OAM and VRAM
-byte by byte. The synthetic half checks hand-computed pixels for BG
+**The tests**, `tests/test_hwcompose.c`, reset the port's own address
+space (`sdk/dsmem.c`) and write registers, palette, OAM and VRAM byte by
+byte, so the bank mapping the renderer reads is the one a matched store
+goes through (the extended palettes and the LCDC banks included, through
+`bw_vram_slot` and the LCDC window). The synthetic half checks hand-computed pixels for BG
 priority and scroll wrap, OBJ against BG and OBJ against OBJ, hidden
 OBJs, negative X and wrapped Y, flips, 1D and 2D mapping and the 1D
 boundary, affine OBJs at identity and 2x in double size, WIN0 over WIN1,
@@ -1000,6 +1012,16 @@ clock exactly as a paced one does.
 function writes reaches the renderer only through the vblank commit, that 32
 frames are exactly 280095 ticks, and the tick/millisecond conversions.
 
+**Under the game's own boot** (`demo/eidos_boot.c`, see "Running the game's
+boot") the same loop is the driver. The step is one iteration of NitroMain's
+loop, ending where the original waits for vblank, and the vblank hook does
+the hardware's half of the interrupt only: it sets DISPSTAT's vblank flag
+and raises IF bit 0 through the OS layer (`bw_os_raise_irq`). The OS layer
+owns IF; it takes the request at its next safe point, runs the handler the
+game installed in `OS_IRQTable` and wakes the threads waiting in
+`OS_WaitIrq`, as `OS_IrqHandler` does on the DS (docs/boot.md, "Threads,
+interrupts and the frame").
+
 ## The game's scheduler, and the first matched code inside the frame
 
 `aletheia`'s tcbl.c is the game's task-callback list: a manager owning a
@@ -1082,6 +1104,10 @@ recomposes the pose at the committed time. `tests/test_view.c` takes a
 screenshot after frame 1 and another after frame 12 and requires the bottom
 screen to have moved by at least 200 pixels while the top screen, which has
 no task, is **pixel-identical**. Measured: top 0, bottom 1223.
+
+That is the demo's list. Under the game's own boot the step is NitroMain's
+loop instead (previous section), and the lists the runner walks are the ones
+the game's code builds.
 
 ### Why nine matched files are out of the LP64 build
 
@@ -1407,6 +1433,42 @@ after frame 12: the bottom screen must have moved by at least 200 pixels and
 the top screen, which has no task, must be pixel-identical. Measured: top 0,
 bottom 1223. What the picture *is* stays `test_bg`'s and `test_g2d`'s
 business, against the Python renderers.
+
+## Running the game's boot
+
+`docs/boot.md` is the design for running the game's real start-up rather
+than a demo's: what runs, the three layers every SDK name falls into, how
+fixed DS addresses are rewritten at build time, the address space, and the
+thread and interrupt model. `docs/title-closure.md` lists what still blocks
+the title screen. The pieces in the tree:
+
+- `sdk/dsmem.c`, the DS address space every matched fixed-address access
+  goes through (`tools/dsaddr.py` rewrites each matched source's literal
+  casts into `bw_ds_ptr` calls in a build-tree copy, `cmake/dsaddr.cmake`);
+- the OS layer (`sdk/os_*.c`, `sdk/plat_thread.c`): threads on host threads
+  under one run token, the interrupt controller, alarms and the tick;
+- `sdk/pxi.c` and `sdk/arm7/`, the FIFO between the processors and the ARM7
+  stand-in that answers it;
+- `sdk/fs.c` and `sdk/overlay.c`, the ROM file system and overlays onto the
+  extract;
+- `bw_port_reset` (`sdk/port.h`), the one power-on: `bw_ds_reset`, then
+  `bw_os_reset`, then `bw_pxi_reset`, then the joins (PXI interrupt requests
+  go to the OS layer's latch, and every `OS_RestoreInterrupts` gives the
+  ARM7 its turn). The boot and every test that runs game code on the whole
+  machine call it rather than the three resets;
+- `stubs/reimpl_02005124.c`, NitroMain, and `demo/eidos_boot.c`, its
+  headless driver.
+
+```sh
+cmake -S . -B build -G Ninja -DALETHEIA_ROOT=../bw_decomp -DEIDOS_BOOT=ON
+cmake --build build --target eidos_boot
+./build/eidos_boot --data-root ../bw_decomp/extract/data --frames 600
+```
+
+With `EIDOS_BOOT` off (the default) `eidos_boot` builds without the game's
+code, says so and exits 0. With it on, CMake computes NitroMain's matched
+closure with `tools/closure.py` and links it; that link is the work in
+progress, and `docs/boot.md` tracks what it still needs.
 
 ## Growing the source list
 
@@ -1954,8 +2016,10 @@ file (a whole NARC, or a raw asset), not one member inside a NARC. Editing
 one decoded asset inside an archive (the modding target above) needs the
 engine to load the decoded form and repack it, or a member-level side
 table, and neither exists yet. The other two items of the milestone are the
-first-run extractor and booting the game's own lists from the extracted
-tree; the second is gated on aletheia's boot path, which is not decompiled.
+first-run extractor (below) and booting the game from the extracted tree:
+the game's own `FS_Init` and overlay loads now reach the extract through
+`sdk/fs.c` and `sdk/overlay.c` (the sections below), and the boot that
+calls them is the work `docs/boot.md` plans ("Running the game's boot").
 
 ### Archives by id, the way the game opens them
 
@@ -2174,8 +2238,13 @@ message and nothing written, and 300 randomly damaged images (43 extracted,
         answers `OS_GetTick`), and the scheduler inside it is the game's
         own: `src/matched/sub_0203101C.c` builds the list on the matched
         heap layer and `src/matched/sub_020310C4.c` is the step function
-        `demo/eidos_view` installs. What is still missing is the boot path
-        that makes the *game's* lists rather than the demo's one
+        `demo/eidos_view` installs
+  - [ ] The game's own boot runs the frame: NitroMain is supplied
+        (`stubs/reimpl_02005124.c`), and the machine it runs on is in the
+        tree and tested (the address space, the OS layer, the ARM7 stand-in,
+        the file system and overlays, one `bw_port_reset`); linking its
+        matched closure under `EIDOS_BOOT=ON` is in progress. See "Running
+        the game's boot"
 - [ ] **Milestone 3**: 2D engine shim
   - [x] BG layers from tile and palette memory: NSCR screens, all four
         text screen sizes, 16- and 256-colour modes, scroll, priority and
@@ -2275,8 +2344,11 @@ message and nothing written, and 300 randomly damaged images (43 extracted,
         and tested by `test_vfs`; the overlay is file granular, so
         overriding one member inside a NARC is still open, see "The file
         layer")
-  - [ ] Engine boots cleanly from extracted assets (needs aletheia's boot
-        path, which is not decompiled)
+  - [ ] Engine boots cleanly from extracted assets (the ARM9 boot's
+        closure is matched in aletheia and NitroMain is reimplemented here;
+        the port's side is in progress, see "Running the game's boot", and
+        what blocks the title screen past the first overlay load is listed
+        in `docs/title-closure.md`)
 - [ ] **Milestone 7**: Gameplay integration
   - [ ] Field system: player movement, warps, script VM, encounters
   - [ ] Battle system
