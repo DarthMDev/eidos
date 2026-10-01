@@ -1502,6 +1502,16 @@ if(_bw_tp_matched)
     eidos_dsaddr_path(_b ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208B238.c)
     set_source_files_properties(${_a} ${_b}
         PROPERTIES COMPILE_DEFINITIONS "tpState=g_02152FA4")
+    if(MSVC)
+        # As written: TPi_TpCallback's raw-sample union holds an anonymous
+        # struct (C11; C4201 at /W4), and the game's touch pass reads `cal`
+        # whose fields the compiler cannot prove written on every path
+        # (C4701).
+        eidos_dsaddr_path(_c ${ALETHEIA_ROOT}/src/matched/arm9_sdk/TPi_TpCallback.c)
+        eidos_dsaddr_path(_d ${ALETHEIA_ROOT}/src/matched/arm9/func_020358A0.c)
+        set_property(SOURCE ${_c} APPEND PROPERTY COMPILE_OPTIONS /wd4201)
+        set_property(SOURCE ${_d} APPEND PROPERTY COMPILE_OPTIONS /wd4701)
+    endif()
 endif()
 add_test(NAME test_tp COMMAND test_tp)
 set_tests_properties(test_tp PROPERTIES TIMEOUT 30)
