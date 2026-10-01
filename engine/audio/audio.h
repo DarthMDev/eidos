@@ -422,19 +422,15 @@ double bw_audio_note_freq_hz(int played_note);
  *
  * `seq` is the range every SSEQ offset (OpenTrack, Jump, Call) is measured
  * from, and `seq_start` is where track 0's first command is, relative to
- * it.  The two readings that exist meet here:
- *
- *   - the SND command path passes what the ARM9 passed: seqBase and
- *     seqOffset.  Measured against this ROM's 1,970 OpenTrack commands, the
- *     byte before a target offset counted from seqBase (file + 0x1C) is a
- *     track's closing 0xFF in 1,304 of them and never a split command, so
- *     offsets are relative to the DATA block's payload;
- *   - bw_audio_seq_source_sdat() keeps the reading the oracle
- *     (sseqsynth.py) makes, `seq` = the whole file and `seq_start` = 0x1C,
- *     which treats offsets as file-absolute.  That is 0x1C early for every
- *     OpenTrack, Jump and Call, and so differs from the command path in any
- *     sequence that has one; it is kept because tests/test_audio.c holds
- *     the engine to the oracle exactly.
+ * it.  Offsets are relative to the DATA block's payload (file + data_offset,
+ * 0x1C in every SSEQ), which is also what the ARM9 passes as seqBase.
+ * Measured on this ROM's SDAT: all 2,016 OpenTrack targets in 940
+ * sequences follow a track end (0xFF) or a return (0xFD) under that reading
+ * (9 under a file-absolute one), and all 9,945 Jump and Call targets land on
+ * a command boundary of the payload's linear disassembly (4,710 under the
+ * file-absolute one).  Both paths therefore pass the payload: the SND
+ * command path seqBase and seqOffset as the ARM9 sent them, and
+ * bw_audio_seq_source_sdat() the file's payload with `seq_start` 0.
  *
  * `bank` is the SBNK file image and `wave_arc` the SWAR file image in each
  * of the bank's four slots (size 0: no bank, or an empty slot).

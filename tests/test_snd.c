@@ -21,9 +21,8 @@
  * in main RAM and must be bit-identical to bw_audio_player_create() on the
  * SDAT, the existing direct path.  SEQ_BGM_GYM, which has eleven tracks and
  * a loop, must be bit-identical to engine/audio driven directly over the
- * same bytes with the SDK's offset reading; how far the SDAT path's own
- * reading departs from that is printed, not checked (engine/audio/audio.h,
- * "Where a sequence's bytes come from").
+ * same bytes; the SDAT path reads the same payload-relative offsets
+ * (engine/audio/audio.h, "Where a sequence's bytes come from").
  *
  * Pointer arguments are what the matched senders write, `(u32)pointer` in
  * an unsigned long, wherever that keeps the whole pointer; elsewhere (LLP64)
@@ -731,7 +730,7 @@ static void test_real(const char *data_root)
             REQ("real: BGM sounds", peak > 1000);
             bw_audio_player_free(ref);
 
-            /* What the SDAT path's file-absolute reading does instead. */
+            /* The SDAT path reads the same offsets: the same note count. */
             {
                 BwAudioRender r1, r2;
                 BwAudioSeqSource sdat_src;

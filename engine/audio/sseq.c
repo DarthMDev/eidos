@@ -5,7 +5,8 @@
  * The opcode table is aletheia's tools/assets/sseq.py, established by
  * disassembling this ROM's own SEQ_BGM_DUMMY and anchored by the shape
  * every track 0 has: 0xFE AllocTrack followed by a run of 0x93 OpenTrack
- * commands, one per additional track, each naming an absolute file offset.
+ * commands, one per additional track, each naming an offset into the DATA
+ * block's payload (audio.h, "Where a sequence's bytes come from").
  *
  * The interpreter is tools/assets/sseqsynth.py's run_track(), which is the
  * oracle tests/test_audio.c compares against, and it is a real interpreter
