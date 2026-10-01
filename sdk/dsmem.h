@@ -172,6 +172,27 @@ void bw_ds_reset(void);
  */
 void bw_game_globals_register(void);
 
+/*
+ * Access hooks: a notification on every *translation* of an I/O address.
+ *
+ * A write hook (dsmem.h) sees a register's value change at the next sync,
+ * which is enough for a latch like VRAMCNT and useless for a port: the
+ * geometry FIFO at 0x04000400 and the direct command ports behind it take a
+ * stream of stores to one address, and plain memory keeps only the last.
+ * What the rewrite does give is one bw_ds_ptr call per access, because
+ * tools/dsaddr.py turns each literal cast into its own call, so the call is
+ * where a port can see each store coming.  `fn(addr, 0)` runs inside
+ * bw_ds_ptr / bw_ds_try_ptr for every address in [lo, hi), before the
+ * pointer is returned (so before the matched code's store through it lands);
+ * `fn(0, 1)` runs at the top of every bw_io_sync, so whatever the last
+ * access left pending is drained at the synchronisation points.  At most
+ * four ranges, never overlapping; bw_ds_reset clears them like the write
+ * hooks.  engine/g3d/hw3d.c is the user and documents the protocol.
+ */
+typedef void (*BwIoAccessHook)(u32 addr, int sync);
+
+void bw_io_access_hook(u32 lo, u32 hi, BwIoAccessHook fn);
+
 #ifdef __cplusplus
 }
 #endif

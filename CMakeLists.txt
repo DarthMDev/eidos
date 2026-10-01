@@ -311,6 +311,8 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_arena.c      # OS_AllocFromArenaLo, the heaps' arena
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_irq.c        # OS_DisableInterrupts/Restore/Terminate
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/gx.c            # the one GX name the heap layer reaches
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/g3_fifo.c       # GX_SendFifo48B/64B, GXi_NopClearFifo128_ onto hw3d
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi_gx.c         # MI copies and GX command DMA onto hw3d
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/tcbl.c          # the port's helper over tcbl.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs.c           # data root, mod list, path resolution
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs_narc.c      # member-level NARC overrides, the merged archive
@@ -484,6 +486,7 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/nsbmd.c      # NSBMD/NSBTX, dictionaries, shapes
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/gx.c         # the display-list interpreter
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/raster.c     # the software rasteriser
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/hw3d.c       # the 3D hardware: FIFO, ports, registers, swap
 
     # engine/audio/ -- the SDAT sequencer and mixer, the host's stand-in for
     # the ARM7 sound core.  No SDL here either: the platform layer's audio
@@ -1138,6 +1141,15 @@ add_executable(test_hwcompose ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hwcompose.c
 target_include_directories(test_hwcompose PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_hwcompose PRIVATE eidos)
 add_test(NAME test_hwcompose COMMAND test_hwcompose ${BW_DATA_ROOT_ABS})
+
+# The 3D hardware interface (engine/g3d/hw3d.c) over the real sdk/dsmem.c:
+# one display list through the FIFO, the ports and the SDK's sender shims,
+# pixel-identical to the interpreter's own rendering, plus GXSTAT, the test
+# results and the swap.  Synthetic, no game data.
+add_executable(test_g3dhw ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_g3dhw.c)
+target_include_directories(test_g3dhw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_g3dhw PRIVATE eidos)
+add_test(NAME test_g3dhw COMMAND test_g3dhw)
 
 # The FS shim, the overlay registry and member-level mod overrides:
 # synthetic checks always, and the real-data half when the data root's

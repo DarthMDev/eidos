@@ -18,7 +18,8 @@
  *         5-bit alpha rather than on the 8 bits a host buffer holds.
  *   [AP]  an approximation, named as one: the fill rule, the
  *         subpixel resolution, the per-span interpolation, the depth
- *         buffer's units, and the toon and shadow polygon modes.
+ *         buffer's units, the shadow polygon mode, and the toon mode
+ *         when no toon table is loaded (G3dTarget.toon).
  *   [PO]  a decision that belongs to the port rather than to either.
  *
  * The three approximations worth knowing about:
@@ -257,7 +258,10 @@ static void put_pixel(G3dTarget *t, u32 x, u32 y, s32 depth,
     size_t o = ((size_t)y * t->width + x);
     u8 *px = t->rgba + o * 4u;
 
-    if (alpha5 == 0) {
+    /* [HW] the alpha test: with it enabled (DISP3DCNT bit 2) a pixel
+     * whose alpha is not above ALPHA_TEST_REF is not drawn.  alpha_ref is
+     * 0 when the test is off, which is the alpha-0 rule alone. */
+    if (alpha5 == 0 || alpha5 <= t->alpha_ref) {
         return;
     }
     if (depth > t->depth[o]) {
@@ -460,6 +464,7 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                 s32 xc = (x << SUBPIX) + SUB_HALF;
                 ScreenV p;
                 u8 col[3];
+                u8 hl[3] = { 0, 0, 0 };
                 u32 a5 = alpha5;
 
                 /* [AP] affine interpolation across the span: no
@@ -469,6 +474,28 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                 if (p.r < 0) { p.r = 0; } if (p.r > 255) { p.r = 255; }
                 if (p.g < 0) { p.g = 0; } if (p.g > 255) { p.g = 255; }
                 if (p.b < 0) { p.b = 0; } if (p.b > 255) { p.b = 255; }
+
+                /* [HW] toon and highlight shading, when the caller has
+                 * loaded the toon table (engine/g3d/hw3d.c does, from
+                 * the TOON_TABLE registers): the vertex colour's red
+                 * channel indexes the 32-entry table.  Toon replaces the
+                 * vertex colour with the entry; highlight keeps red as a
+                 * grey level and adds the entry after the texture blend
+                 * (below).  [AP] that the add saturates per channel at
+                 * the 8-bit expansion rather than in 6 bits.  Without a
+                 * table the mode falls back to modulate, as before. */
+                if (mode == G3D_POLY_MODE_TOON && t->toon != NULL) {
+                    const u8 *e = t->toon + ((u32)p.r >> 3) * 3u;
+                    if (t->highlight) {
+                        hl[0] = e[0]; hl[1] = e[1]; hl[2] = e[2];
+                        p.g = p.r;
+                        p.b = p.r;
+                    } else {
+                        p.r = e[0];
+                        p.g = e[1];
+                        p.b = e[2];
+                    }
+                }
 
                 if (tex != NULL && tex->rgba != NULL) {
                     u8 tc[4];
@@ -484,9 +511,10 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                         break;
                     }
                     default:
-                        /* [HW] modulate; [AP] the toon and highlight
-                         * mode falls back to it, because the toon table
-                         * is a register nothing in this port loads and
+                        /* [HW] modulate, and the texture half of toon
+                         * and highlight, whose vertex colour was set up
+                         * above.  [AP] with no toon table loaded the
+                         * toon/highlight mode is plain modulate, because
                          * inventing a ramp would be a guess. */
                         col[0] = modulate6(tc[0], (u8)p.r);
                         col[1] = modulate6(tc[1], (u8)p.g);
@@ -498,6 +526,13 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                     col[0] = (u8)p.r;
                     col[1] = (u8)p.g;
                     col[2] = (u8)p.b;
+                }
+                if (hl[0] | hl[1] | hl[2]) {
+                    u32 k;
+                    for (k = 0; k < 3u; k++) {
+                        u32 c = (u32)col[k] + hl[k];
+                        col[k] = (u8)(c > 255u ? 255u : c);
+                    }
                 }
                 put_pixel(t, (u32)x, (u32)y, p.depth, col, a5);
             }

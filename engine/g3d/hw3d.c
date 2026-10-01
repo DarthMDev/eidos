@@ -1,0 +1,1080 @@
+/*
+ * engine/g3d/hw3d.c -- the DS 3D hardware, driven from the DS address space.
+ *
+ * engine/g2d/hwcompose.c draws both screens from what the game wrote into
+ * the 2D registers, VRAM, palette RAM and OAM.  This file is the same idea
+ * for the 3D engine: the geometry command FIFO and the direct command ports,
+ * the 3D registers, and the texture slots of VRAM, feeding the display-list
+ * interpreter (gx.c) and the rasteriser (raster.c) that already exist.  At
+ * SWAP_BUFFERS it renders the frame into a 256x192 RGBA buffer, which is the
+ * `rgba3d` argument engine/g2d/hwcompose.c composes as BG0.
+ *
+ * The register layouts and command semantics are public NDS hardware
+ * documentation.  Nothing here is derived from any other decompilation,
+ * port or emulator.
+ *
+ * ONE INTERPRETER.  Every command, whichever way it arrived, is framed as a
+ * one-command display list (the opcode in a packed word's low byte, then its
+ * parameter words) and handed to g3d_gx_run.  So the FIFO and an NSBMD
+ * display list are decoded by literally the same code, and the test that
+ * pushes a list through the hardware path and compares the frame with the
+ * interpreter's own rendering of it is a comparison of the transport, which
+ * is the part this file adds.  What the hardware does that a static display
+ * list never needs is done here, around the interpreter:
+ *
+ *   SWAP_BUFFERS, VIEWPORT, BOX_TEST, POS_TEST, VEC_TEST   here entirely;
+ *   MTX_PUSH / MTX_POP in projection mode   the one-bit projection stack
+ *       pointer GXSTAT bit 13 reports (mtx.c keeps the saved matrix but not
+ *       the bit);
+ *   MTX_POP with a count of 0 or a negative count   the hardware moves the
+ *       pointer by the signed count and reloads from the new slot; mtx.c
+ *       refuses those (no NSBMD list uses them), and G3X_InitMtxStack issues
+ *       MTX_POP with the current level, which is 0 on a fresh stack;
+ *   BEGIN_VTXS with a list still open   END_VTXS is a no-op on hardware, so
+ *       a new BEGIN (or the swap) closes the open list and its polygons are
+ *       drawn; the interpreter drops an unterminated list, because the asset
+ *       lane's decoder does and the OBJ oracle depends on it.
+ *
+ * HOW A STORE REACHES THE FIFO.  The register file is plain memory
+ * (sdk/dsmem.h): a matched `reg_G3X_GXFIFO = w` is a host store into
+ * g_io[0x400], and ten stores in a row leave only the last.  Write hooks
+ * cannot help, they compare against the last sync.  What tools/dsaddr.py's
+ * rewrite does give is one bw_ds_ptr call per access, because every literal
+ * cast becomes its own call, and the call happens before the store.  So
+ * this file installs an *access hook* (sdk/dsmem_ext.h) over
+ * 0x04000400..0x040006A3, and the protocol is:
+ *
+ *   1. bw_ds_ptr(A) calls the hook before returning.  The hook first
+ *      resolves the access before it (step 3), then, for a command port A,
+ *      writes a sentinel into A's word and remembers A as pending, and
+ *      returns; the matched code then stores through the pointer.
+ *   2. For A in the status/result window (0x04000600 up), the hook writes
+ *      the live register values first, so the read that follows sees them.
+ *      GXSTAT is also remembered as pending, because it is writable.
+ *   3. The pending access is resolved by the next translation of any
+ *      address in the window, by bw_io_sync (the access hook runs at the top
+ *      of every sync), by g3d_hw_flush, and by every entry point below.  A
+ *      pending port whose word no longer holds the sentinel was stored to,
+ *      and the stored word is the command data; a pending GXSTAT whose value
+ *      changed was written.
+ *
+ * The sentinel is G3D_HW_SENTINEL.  A store of exactly that value is
+ * indistinguishable from no store and is dropped; as a command word it
+ * names opcodes 0x00/0x5E/0xED/0xFA... none of which exist, and as a
+ * parameter it is a coordinate near 400000.0, so a real command stream
+ * does not produce it.  That is the one heuristic in the protocol, and it
+ * buys the property that an address taken without a store (a pointer handed
+ * to a copy routine, a probe) is never mistaken for a command.
+ *
+ * WHICH WRITE PATHS ARE CAPTURED, against aletheia's matched corpus (every
+ * literal 0x040004xx/0x040005xx/0x040006xx in src/matched, 90 files):
+ *
+ *   captured, through the access hook: every store through a rewritten
+ *     literal cast, which is every G3_* / reg_G3_* register macro the SDK's
+ *     g3imm/g3x/g3_util objects use (G3X_Init, G3X_Reset, G3X_InitMtxStack,
+ *     G3X_ResetMtxStack, G3X_SetFog, G3X_SetClearColor, G3X_InitTable,
+ *     G3i_PerspectiveW_, G3i_FrustumW_, G3i_LookAt_, G3_RotX/Y/Z,
+ *     G3_MultTransMtx33, G3_LoadMtx43/44, G3_MultMtx33/43/44's opcode
+ *     word), and the game's own inline FIFO writers (func_0206C524,
+ *     func_0206C82C, func_0206DDA4 and the overlay functions that write
+ *     reg_G3_* directly).  Also every read of GXSTAT, RAM_COUNT and the
+ *     test and matrix results through a literal cast;
+ *   captured, through a shim: the hand-written ARM copy loops whose
+ *     destination is the FIFO.  They are `asm` in aletheia and cannot be
+ *     compiled for a host anyway: GX_SendFifo48B (0x02080C84),
+ *     GX_SendFifo64B (0x02080CA8), GXi_NopClearFifo128_ (0x0207DECC) in
+ *     sdk/g3_fifo.c; MIi_CpuSend32 (0x02082AA8), MI_Copy36B (0x02082B60)
+ *     and MI_Copy64B (0x02082BA0, which G3X_GetClipMtx reads the result
+ *     window with) in sdk/mi_gx.c, each FIFO-aware and a plain copy
+ *     otherwise;
+ *   captured, through a shim: the DMA-to-FIFO senders, MI_SendGXCommandAsync
+ *     (0x02082760), MI_SendGXCommandAsyncFast (0x02082960) and the two TWL
+ *     NDMA forms the game calls by address (0x027300F0, 0x0272FEF4), in
+ *     sdk/mi_gx.c: the list is pushed through g3d_hw_fifo_send and the
+ *     completion callback runs before the call returns.  A DMA engine the
+ *     port grows later routes a transfer whose destination is 0x04000400 to
+ *     g3d_hw_fifo_send; MIi_FIFOCallback (0x0208284C) and the DMA register
+ *     path it drives are not used;
+ *   NOT captured: a store through a pointer the code computed once and then
+ *     stored through repeatedly (`vu32 *p = &FIFO; *p = a; *p = b;`): only
+ *     the last store of the run is seen.  No matched source in the corpus
+ *     does this; the SDK's macros re-evaluate the cast on every use;
+ *   NOT captured: a store whose right-hand side itself touches the 3D
+ *     window (`FIFO = f()` where f writes the FIFO), if the compiler
+ *     evaluates the pointer before calling f: the inner access resolves the
+ *     outer one before its store lands.  None in the corpus;
+ *   NOT captured: port code storing through bw_io_write32 or bw_io(): it
+ *     has to call g3d_hw_port_write / g3d_hw_fifo_write;
+ *   NOT captured: sdk/mi.c's MI_CpuCopy/MI_CpuFill family with the FIFO as
+ *     the destination, which writes consecutive register-file bytes.  No
+ *     matched source sends to the FIFO through them;
+ *   NOT captured: 8-bit and 16-bit stores to a command port; the hardware
+ *     takes 32-bit stores and so does this.
+ *
+ * TIMING.  The geometry engine here is infinitely fast: a command executes
+ * when its last parameter is resolved.  So GXSTAT always reads FIFO empty
+ * (bit 26) and less than half full (bit 25), 0 entries, engine and test and
+ * matrix-stack busy all clear, which is what makes every SDK busy-wait
+ * (`while (GXSTAT & 0x08000000)`) fall straight through.  The GXFIFO
+ * interrupt (IF bit 21) is never raised: with a FIFO that is always empty
+ * the level-triggered condition would hold forever, and the one SDK user of
+ * it, MI_SendGXCommandAsync, is shimmed.  SWAP_BUFFERS renders immediately
+ * and the frame is visible from then on; the hardware's one-frame latency
+ * (the swap waits for vblank, the frame is displayed during the next) is not
+ * modelled.
+ *
+ * GXSTAT IN THE REGISTER FILE reads bit 15 (matrix stack error) as 0.  The
+ * bit is write-one-to-acknowledge, and the SDK acknowledges with
+ * `GXSTAT |= 0x8000`: through plain memory that store is only visible when
+ * it changes the value, which it would not if the bit read 1.  Reading 0
+ * makes every acknowledgement visible and every write of 0 (G3X_Init's
+ * `GXSTAT = 0`, the FIFO-interrupt field updates) correctly not one.  No
+ * matched source reads bit 15; g3d_hw_gxstat() returns the true value.
+ *
+ * WHAT THE FRAME HONOURS.  DISP3DCNT bit 0 (texturing; off draws every
+ * polygon untextured), bit 1 (toon or highlight for polygon mode 2, with
+ * the TOON_TABLE registers), bit 2 with ALPHA_TEST_REF (the alpha test),
+ * bit 3 (alpha blending; off draws a translucent polygon opaque, [AP] for
+ * the texture's own alpha, which still blends), CLEAR_COLOR (colour, alpha,
+ * [AP] the fog and polygon-ID bits are ignored), CLEAR_DEPTH (scaled onto
+ * the rasteriser's 23-bit depth), VIEWPORT (folded into the clip-space x/y
+ * of each vertex emitted under it, so the rasteriser's fixed full-screen
+ * transform lands it in the viewport; [AP] a polygon is clipped to the
+ * screen, not to the viewport rectangle).  Not honoured, and reported per
+ * frame through g3d_hw_unsupported(): fog (bit 7), edge marking (bit 5),
+ * anti-aliasing (bit 4), the rear-plane bitmap (bit 14), the w-buffer
+ * (SWAP_BUFFERS bit 1), shadow polygons, and lighting (NORMAL while
+ * POLYGON_ATTR enables a light: the vertex keeps its last COLOR, as in the
+ * interpreter).  DISP_1DOT_DEPTH is stored and not applied.  The hardware's
+ * 2048-polygon / 6144-vertex limits are not imposed (modding: docs/boot.md);
+ * RAM_COUNT reports the true counts saturated to the register's fields.
+ *
+ * TEXTURES come out of the texture-image and texture-palette slots through
+ * bw_vram_slot (sdk/dsmem_ext.h), so they follow VRAMCNT exactly as the
+ * hardware's texture unit does: TEXIMAGE_PARAM's address (8-byte units),
+ * size and format, PLTT_BASE (16-byte units, 8 for the 4-colour format),
+ * and for the 4x4-compressed format the index data in slot 1 at
+ * 0x20000 + (offset & 0x1FFFF) / 2 (+ 0x10000 for an image in slot 2).  An
+ * unmapped piece reads as zero.  Each distinct (image, palette) pair is
+ * decoded once per frame with texture.c's decoder.
+ *
+ * The register file is little-endian, as sdk/dsmem.c keeps it; every access
+ * here goes through bw_io_read32 / bw_io_write32.
+ */
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "dsmem.h"
+#include "dsmem_ext.h"
+#include "hw3d.h"
+
+#define G3D_HW_SENTINEL 0xFAED5E00u
+
+#define FULL_VIEWPORT 0xBFFF0000u    /* x1 0, y1 0, x2 255, y2 191 */
+
+#define STAT_BOX_RESULT   0x00000002u
+#define STAT_PJ_LEVEL     0x00002000u
+#define STAT_LESS_HALF    0x02000000u
+#define STAT_EMPTY        0x04000000u
+
+typedef struct TexCacheEntry {
+    u32 key_tex, key_pal;
+    int ok;
+    G3dTexture tex;
+} TexCacheEntry;
+
+typedef struct Hw3d {
+    int ready;
+
+    G3dGx   gx;
+    G3dGeom geom;
+
+    /* the packed FIFO's framing */
+    int in_packet;
+    u8  ops[4];
+    u32 slot, need, have;
+    u32 par[32];
+
+    /* the direct ports' framing */
+    u32 d_op, d_have;
+    u32 d_par[32];
+
+    /* the access protocol */
+    u32 pending;              /* DS address, 0 = none */
+    u32 stat_published;
+
+    /* status the interpreter does not keep */
+    u32 pj_level;
+    int pj_error;
+    u32 box_result;
+    u32 fifo_irq;             /* GXSTAT bits 30-31 */
+
+    u32 viewport;
+    u32 vtx_adjusted;
+    u32 swap_param;
+
+    /* the frame */
+    G3dTarget front;
+    int  have_frame;
+    u32  frames;
+    u32  unsup, unsup_frame;
+    u32  disp3dcnt;           /* latched for the frame being rendered */
+    u8   toon[32 * 3];
+
+    TexCacheEntry *cache;
+    u32 n_cache, cap_cache;
+} Hw3d;
+
+static Hw3d g_hw;
+
+/* ------------------------------------------------------------------ */
+/* Small helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+static s32 sx16(u32 v)
+{
+    v &= 0xFFFFu;
+    return (v & 0x8000u) ? (s32)v - 0x10000 : (s32)v;
+}
+
+static s32 sx10(u32 v)
+{
+    v &= 0x3FFu;
+    return (v & 0x200u) ? (s32)v - 0x400 : (s32)v;
+}
+
+static u8 c5to8(u32 v)
+{
+    return (u8)((v & 0x1Fu) * 255u / 31u);
+}
+
+/* ------------------------------------------------------------------ */
+/* Status registers                                                    */
+/* ------------------------------------------------------------------ */
+
+static u32 gxstat_value(int with_error)
+{
+    const G3dMtxStack *st = &g_hw.gx.mtx;
+    u32 v = 0;
+
+    v |= g_hw.box_result ? STAT_BOX_RESULT : 0u;
+    v |= (st->sp & 0x1Fu) << 8;
+    v |= g_hw.pj_level ? STAT_PJ_LEVEL : 0u;
+    if (with_error && (st->error || g_hw.pj_error)) {
+        v |= 0x8000u;
+    }
+    v |= STAT_LESS_HALF | STAT_EMPTY;
+    v |= (g_hw.fifo_irq & 3u) << 30;
+    return v;
+}
+
+static void publish_stat(void)
+{
+    g_hw.stat_published = gxstat_value(0);
+    bw_io_write32(G3D_HW_GXSTAT, g_hw.stat_published);
+}
+
+static void publish_ram_count(void)
+{
+    u32 polys = g_hw.geom.n_polys > 0xFFFu ? 0xFFFu : g_hw.geom.n_polys;
+    u32 verts = g_hw.geom.n_verts > 0x1FFFu ? 0x1FFFu : g_hw.geom.n_verts;
+
+    bw_io_write32(G3D_HW_RAM_COUNT, polys | (verts << 16));
+}
+
+static void publish_clip(void)
+{
+    const G3dMtx *c = g3d_mtx_stack_clip(&g_hw.gx.mtx);
+    u32 i;
+
+    for (i = 0; i < 16u; i++) {
+        bw_io_write32(G3D_HW_CLIPMTX_RESULT + i * 4u, (u32)c->m[i]);
+    }
+}
+
+static void publish_vecmtx(void)
+{
+    const G3dMtx *v = &g_hw.gx.mtx.vec;
+    u32 r, c;
+
+    for (r = 0; r < 3u; r++) {
+        for (c = 0; c < 3u; c++) {
+            bw_io_write32(G3D_HW_VECMTX_RESULT + (r * 3u + c) * 4u,
+                          (u32)v->m[r * 4u + c]);
+        }
+    }
+}
+
+/* GXSTAT written by the game: bits 30-31 are the FIFO interrupt condition,
+ * bit 15 acknowledges the matrix stack error (and resets the projection
+ * stack pointer); everything else is read-only. */
+static void gxstat_written(u32 v)
+{
+    g_hw.fifo_irq = (v >> 30) & 3u;
+    if (v & 0x8000u) {
+        g_hw.gx.mtx.error = 0;
+        g_hw.pj_error = 0;
+        g_hw.pj_level = 0;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Running one command                                                 */
+/* ------------------------------------------------------------------ */
+
+static void run_cmd(u32 op, const u32 *par, u32 n)
+{
+    u8 buf[4u + 32u * 4u];
+    u32 len = 4u + n * 4u, i;
+
+    bw_wr32(buf, op & 0xFFu);
+    for (i = 0; i < n; i++) {
+        bw_wr32(buf + 4u + i * 4u, par[i]);
+    }
+    (void)g3d_gx_run(&g_hw.gx, buf, len, 0, len, len);
+}
+
+/* The viewport, folded into clip space so the rasteriser's fixed
+ * full-screen mapping lands each vertex where the viewport puts it:
+ *     x' = (x * vw + w * (vw + 2 * x1 - 256)) / 256
+ *     y' = (y * vh + w * (vh + 2 * y1 - 192)) / 192
+ * with y1 counted from the bottom line, as VIEWPORT's is.  Exact identity
+ * for the full-screen viewport, which is skipped. */
+static void adjust_viewport(void)
+{
+    G3dGeom *g = &g_hw.geom;
+    u32 vp = g_hw.viewport;
+    s64 x1 = (s64)(vp & 0xFFu), y1 = (s64)((vp >> 8) & 0xFFu);
+    s64 x2 = (s64)((vp >> 16) & 0xFFu), y2 = (s64)((vp >> 24) & 0xFFu);
+    s64 vw = x2 - x1 + 1, vh = y2 - y1 + 1;
+    u32 i;
+
+    if (vp != FULL_VIEWPORT && vw > 0 && vh > 0) {
+        for (i = g_hw.vtx_adjusted; i < g->n_verts; i++) {
+            G3dVertex *v = &g->verts[i];
+            s64 w = v->w;
+            v->x = (fx32)(((s64)v->x * vw + w * (vw + 2 * x1 - 256)) / 256);
+            v->y = (fx32)(((s64)v->y * vh + w * (vh + 2 * y1 - 192)) / 192);
+        }
+    }
+    g_hw.vtx_adjusted = g->n_verts;
+}
+
+/* ------------------------------------------------------------------ */
+/* The tests                                                           */
+/* ------------------------------------------------------------------ */
+
+static void pos_test(const u32 *par)
+{
+    fx32 o[4];
+    u32 i;
+
+    /* POS_TEST loads the current vertex too, like VTX_16. */
+    g_hw.gx.cx = (fx32)sx16(par[0]);
+    g_hw.gx.cy = (fx32)sx16(par[0] >> 16);
+    g_hw.gx.cz = (fx32)sx16(par[1]);
+    g3d_mtx_xform(g3d_mtx_stack_clip(&g_hw.gx.mtx),
+                  g_hw.gx.cx, g_hw.gx.cy, g_hw.gx.cz,
+                  &o[0], &o[1], &o[2], &o[3]);
+    for (i = 0; i < 4u; i++) {
+        bw_io_write32(G3D_HW_POS_RESULT + i * 4u, (u32)o[i]);
+    }
+}
+
+static void vec_test(const u32 *par)
+{
+    const G3dMtx *m = &g_hw.gx.mtx.vec;
+    s64 v[3];
+    u32 i;
+
+    v[0] = (s64)sx10(par[0]) << 3;
+    v[1] = (s64)sx10(par[0] >> 10) << 3;
+    v[2] = (s64)sx10(par[0] >> 20) << 3;
+    for (i = 0; i < 3u; i++) {
+        s64 r = (v[0] * m->m[0 * 4 + i] + v[1] * m->m[1 * 4 + i] +
+                 v[2] * m->m[2 * 4 + i]) >> 12;
+        /* 1 sign + 12 fraction bits, the sign repeated in bits 13-15. */
+        u32 r13 = (u32)r & 0x1FFFu;
+        u32 r16 = (r13 & 0x1000u) ? (r13 | 0xE000u) : r13;
+        bw_io_write16(G3D_HW_VEC_RESULT + i * 2u, (u16)r16);
+    }
+}
+
+/* Clip a convex polygon of homogeneous points against one plane of the
+ * view volume, d(p) = w + s * p[axis] >= 0.  The interpolation goes
+ * through a 29-bit fraction so no product leaves 64 bits. */
+#define BOX_MAXV 16
+
+static u32 box_clip(s64 (*out)[4], s64 (*in)[4], u32 n, int axis, int sgn)
+{
+    u32 i, m = 0;
+
+    for (i = 0; i < n; i++) {
+        const s64 *a = in[i], *b = in[(i + 1u) % n];
+        s64 da = a[3] + sgn * a[axis], db = b[3] + sgn * b[axis];
+
+        if (da >= 0 && m < BOX_MAXV) {
+            memcpy(out[m++], a, sizeof(out[0]));
+        }
+        if ((da >= 0) != (db >= 0) && m < BOX_MAXV) {
+            s64 den = da - db;
+            s64 q = (s64)(((da < 0 ? -da : da) << 29) / (den < 0 ? -den : den));
+            u32 k;
+            for (k = 0; k < 4u; k++) {
+                out[m][k] = a[k] + (((b[k] - a[k]) * q) >> 29);
+            }
+            m++;
+        }
+    }
+    return m;
+}
+
+/*
+ * BOX_TEST: the box (x, y, z) .. (x + w, y + h, z + d) in the current clip
+ * matrix, inside if any of its six faces keeps a piece after clipping to
+ * -w <= x, y, z <= w.  [AP] a view volume entirely inside the box crosses
+ * no face and reads as outside; the public description of the hardware
+ * test is face clipping, and that case is not pinned down by it.
+ */
+static void box_test(const u32 *par)
+{
+    static const u8 faces[6][4] = {
+        { 0, 1, 3, 2 }, { 4, 6, 7, 5 }, { 0, 4, 5, 1 },
+        { 2, 3, 7, 6 }, { 0, 2, 6, 4 }, { 1, 5, 7, 3 },
+    };
+    const G3dMtx *clip = g3d_mtx_stack_clip(&g_hw.gx.mtx);
+    fx32 bx = sx16(par[0]), by = sx16(par[0] >> 16), bz = sx16(par[1]);
+    fx32 bw = sx16(par[1] >> 16), bh = sx16(par[2]), bd = sx16(par[2] >> 16);
+    s64 c[8][4];
+    u32 i, f;
+
+    for (i = 0; i < 8u; i++) {
+        fx32 o[4];
+        g3d_mtx_xform(clip, bx + ((i & 1u) ? bw : 0), by + ((i & 2u) ? bh : 0),
+                      bz + ((i & 4u) ? bd : 0), &o[0], &o[1], &o[2], &o[3]);
+        c[i][0] = o[0]; c[i][1] = o[1]; c[i][2] = o[2]; c[i][3] = o[3];
+    }
+    g_hw.box_result = 0;
+    for (f = 0; f < 6u && !g_hw.box_result; f++) {
+        s64 a[BOX_MAXV][4], b[BOX_MAXV][4];
+        u32 n = 4, axis;
+
+        for (i = 0; i < 4u; i++) {
+            memcpy(a[i], c[faces[f][i]], sizeof(a[0]));
+        }
+        for (axis = 0; axis < 3u && n > 0; axis++) {
+            n = box_clip(b, a, n, (int)axis, 1);
+            n = box_clip(a, b, n, (int)axis, -1);
+        }
+        if (n > 0) {
+            g_hw.box_result = 1;
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Textures out of VRAM                                                */
+/* ------------------------------------------------------------------ */
+
+static void copy_slot(int kind, u32 space, u32 off, u8 *dst, u32 n)
+{
+    while (n > 0) {
+        u32 contig = 0, take;
+        const u8 *p;
+
+        off %= space;
+        p = bw_vram_slot(kind, off, &contig);
+        take = 0x2000u - (off & 0x1FFFu);
+        if (p != NULL && contig > take) {
+            take = contig;
+        }
+        if (take > n) {
+            take = n;
+        }
+        if (take > space - off) {
+            take = space - off;
+        }
+        if (p != NULL) {
+            memcpy(dst, p, take);
+        } else {
+            memset(dst, 0, take);
+        }
+        dst += take;
+        off += take;
+        n -= take;
+    }
+}
+
+static u32 pal_bytes_of(u32 fmt)
+{
+    switch (fmt) {
+    case G3D_TEXFMT_A3I5:   return 32u * 2u;
+    case G3D_TEXFMT_PAL4:   return 4u * 2u;
+    case G3D_TEXFMT_PAL16:  return 16u * 2u;
+    case G3D_TEXFMT_PAL256: return 256u * 2u;
+    case G3D_TEXFMT_A5I3:   return 8u * 2u;
+    case G3D_TEXFMT_COMP:   return 0x10004u;
+    default:                return 0;
+    }
+}
+
+#define TEX_SPACE 0x80000u
+#define PAL_SPACE 0x18000u
+
+static int decode_vram_texture(G3dTexture *out, u32 tp, u32 pltt)
+{
+    u32 fmt = G3D_TEX_FORMAT(tp);
+    u32 w = 8u << ((tp >> 20) & 7u), h = 8u << ((tp >> 23) & 7u);
+    u32 addr = (tp & 0xFFFFu) << 3;
+    u32 bytes = g3d_texture_byte_size(fmt, w, h);
+    u32 pbytes = pal_bytes_of(fmt);
+    u8 *texel, *pal = NULL;
+    int rc;
+
+    texel = (u8 *)malloc(bytes ? bytes : 1u);
+    if (texel == NULL) {
+        return -1;
+    }
+    if (fmt == G3D_TEXFMT_COMP) {
+        u32 blocks = (w / 4u) * (h / 4u);
+        u32 iaddr = 0x20000u + ((addr & 0x1FFFFu) >> 1) +
+                    (addr >= 0x40000u ? 0x10000u : 0u);
+        copy_slot(BW_VSLOT_TEX, TEX_SPACE, addr, texel, blocks * 4u);
+        copy_slot(BW_VSLOT_TEX, TEX_SPACE, iaddr, texel + blocks * 4u,
+                  blocks * 2u);
+    } else {
+        copy_slot(BW_VSLOT_TEX, TEX_SPACE, addr, texel, bytes);
+    }
+    if (pbytes > 0) {
+        u32 poff = (pltt & 0x1FFFu) << (fmt == G3D_TEXFMT_PAL4 ? 3 : 4);
+        if (poff >= PAL_SPACE) {
+            poff %= PAL_SPACE;
+        }
+        if (pbytes > PAL_SPACE - poff) {
+            pbytes = PAL_SPACE - poff;
+        }
+        pal = (u8 *)malloc(pbytes);
+        if (pal == NULL) {
+            free(texel);
+            return -1;
+        }
+        copy_slot(BW_VSLOT_TEXPAL, PAL_SPACE, poff, pal, pbytes);
+    }
+    rc = g3d_texture_decode(out, fmt, w, h, texel, bytes, pal, pbytes,
+                            (int)((tp >> 29) & 1u));
+    free(texel);
+    free(pal);
+    return rc;
+}
+
+static const G3dTexture *lookup(void *user, u32 poly_index)
+{
+    const G3dPoly *poly = &g_hw.geom.polys[poly_index];
+    u32 tp = poly->teximage, fmt = G3D_TEX_FORMAT(tp);
+    u32 key_tex = tp & 0x3FF0FFFFu;   /* repeat/flip do not change texels */
+    u32 key_pal = fmt == G3D_TEXFMT_DIRECT ? 0u : (poly->pltt_base & 0x1FFFu);
+    TexCacheEntry *e;
+    u32 i;
+
+    (void)user;
+    if (!(g_hw.disp3dcnt & 1u) || fmt == G3D_TEXFMT_NONE) {
+        return NULL;
+    }
+    for (i = 0; i < g_hw.n_cache; i++) {
+        e = &g_hw.cache[i];
+        if (e->key_tex == key_tex && e->key_pal == key_pal) {
+            return e->ok ? &e->tex : NULL;
+        }
+    }
+    if (g_hw.n_cache == g_hw.cap_cache) {
+        u32 cap = g_hw.cap_cache ? g_hw.cap_cache * 2u : 16u;
+        TexCacheEntry *n = (TexCacheEntry *)realloc(
+            g_hw.cache, (size_t)cap * sizeof(*n));
+        if (n == NULL) {
+            return NULL;
+        }
+        g_hw.cache = n;
+        g_hw.cap_cache = cap;
+    }
+    e = &g_hw.cache[g_hw.n_cache++];
+    memset(e, 0, sizeof(*e));
+    e->key_tex = key_tex;
+    e->key_pal = key_pal;
+    e->ok = decode_vram_texture(&e->tex, tp, poly->pltt_base) == 0;
+    return e->ok ? &e->tex : NULL;
+}
+
+static void cache_clear(void)
+{
+    u32 i;
+
+    for (i = 0; i < g_hw.n_cache; i++) {
+        g3d_texture_free(&g_hw.cache[i].tex);
+    }
+    g_hw.n_cache = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* SWAP_BUFFERS                                                        */
+/* ------------------------------------------------------------------ */
+
+static void render_frame(void)
+{
+    G3dTarget *t = &g_hw.front;
+    u32 d3 = bw_io_read16(G3D_HW_DISP3DCNT);
+    u32 cc = bw_io_read32(G3D_HW_CLEAR_COLOR);
+    u32 cd = bw_io_read16(G3D_HW_CLEAR_DEPTH) & 0x7FFFu;
+    u32 unsup = 0, i;
+
+    if (t->rgba == NULL && g3d_target_init(t, G3D_SCREEN_W, G3D_SCREEN_H) != 0) {
+        return;
+    }
+    g_hw.disp3dcnt = d3;
+
+    if (d3 & 0x0080u) { unsup |= G3D_HW_UNSUP_FOG; }
+    if (d3 & 0x0020u) { unsup |= G3D_HW_UNSUP_EDGE; }
+    if (d3 & 0x0010u) { unsup |= G3D_HW_UNSUP_ANTIALIAS; }
+    if (d3 & 0x4000u) { unsup |= G3D_HW_UNSUP_REARPLANE; }
+    if (g_hw.swap_param & 2u) { unsup |= G3D_HW_UNSUP_WBUFFER; }
+
+    g3d_target_clear(t, c5to8(cc), c5to8(cc >> 5), c5to8(cc >> 10),
+                     c5to8(cc >> 16));
+    if (cd != 0x7FFFu) {
+        s32 d = (s32)((cd << 8) | (cd >> 7));
+        u32 n = t->width * t->height;
+        for (i = 0; i < n; i++) {
+            t->depth[i] = d;
+        }
+    }
+
+    t->alpha_ref = (d3 & 4u) ? (bw_io_read16(G3D_HW_ALPHA_TEST_REF) & 0x1Fu) : 0u;
+    for (i = 0; i < 32u; i++) {
+        u16 c = bw_io_read16(G3D_HW_TOON_TABLE + i * 2u);
+        g3d_bgr555(c, &g_hw.toon[i * 3u], &g_hw.toon[i * 3u + 1u],
+                   &g_hw.toon[i * 3u + 2u]);
+    }
+    t->toon = g_hw.toon;
+    t->highlight = (d3 >> 1) & 1u;
+
+    for (i = 0; i < g_hw.geom.n_polys; i++) {
+        G3dPoly *p = &g_hw.geom.polys[i];
+        if (G3D_ATTR_MODE(p->attr) == G3D_POLY_MODE_SHADOW) {
+            unsup |= G3D_HW_UNSUP_SHADOW;
+        }
+        if (!(d3 & 8u) && G3D_ATTR_ALPHA(p->attr) != 0) {
+            p->attr |= (u32)0x1F << 16;
+        }
+    }
+
+    g3d_raster_geom(t, &g_hw.geom, lookup, NULL);
+    cache_clear();
+
+    g_hw.unsup_frame = unsup | (g_hw.unsup & G3D_HW_UNSUP_LIGHTING);
+    g_hw.unsup &= ~(u32)G3D_HW_UNSUP_LIGHTING;
+    g_hw.have_frame = 1;
+}
+
+static void swap_buffers(u32 param)
+{
+    if (g_hw.gx.batch_open) {
+        run_cmd(0x41u, NULL, 0);
+    }
+    g_hw.swap_param = param;
+    render_frame();
+    g_hw.frames++;
+    /* Polygon and vertex RAM start over; matrices, the current vertex,
+     * colour and attributes persist, as on the hardware. */
+    g_hw.geom.n_verts = 0;
+    g_hw.geom.n_idx = 0;
+    g_hw.geom.n_polys = 0;
+    g_hw.vtx_adjusted = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Executing a command                                                 */
+/* ------------------------------------------------------------------ */
+
+static void exec(u32 op, const u32 *par)
+{
+    G3dMtxStack *st = &g_hw.gx.mtx;
+    u32 n = g3d_gx_param_count(op);
+
+    switch (op) {
+    case 0x11:      /* MTX_PUSH */
+        if (st->mode == G3D_MTX_MODE_PROJECTION) {
+            if (g_hw.pj_level) {
+                g_hw.pj_error = 1;
+            }
+            g_hw.pj_level = 1;
+        }
+        run_cmd(op, par, n);
+        break;
+    case 0x12: {    /* MTX_POP */
+        s32 c = (s32)(par[0] & 0x3Fu);
+        if (c & 0x20) {
+            c -= 0x40;
+        }
+        if (st->mode == G3D_MTX_MODE_PROJECTION) {
+            if (!g_hw.pj_level) {
+                g_hw.pj_error = 1;
+            }
+            g_hw.pj_level = 0;
+            run_cmd(op, par, n);
+        } else if (st->mode == G3D_MTX_MODE_TEXTURE ||
+                   (c > 0 && (u32)c <= st->sp)) {
+            run_cmd(op, par, n);
+        } else {
+            s32 target = (s32)st->sp - c;
+            if (target < 0 || target >= (s32)G3D_POS_STACK_DEPTH) {
+                st->error = 1;
+            } else {
+                st->sp = (u32)target;
+                st->pos = st->pos_stack[st->sp];
+                st->vec = st->vec_stack[st->sp];
+                st->clip_dirty = 1;
+            }
+        }
+        break;
+    }
+    case 0x21:      /* NORMAL: lighting is not computed */
+        if (g_hw.gx.poly_attr_pending & 0xFu) {
+            g_hw.unsup |= G3D_HW_UNSUP_LIGHTING;
+        }
+        run_cmd(op, par, n);
+        break;
+    case 0x40:      /* BEGIN_VTXS: closes a list left open */
+        if (g_hw.gx.batch_open) {
+            run_cmd(0x41u, NULL, 0);
+        }
+        run_cmd(op, par, n);
+        break;
+    case 0x50:      /* SWAP_BUFFERS */
+        swap_buffers(par[0]);
+        break;
+    case 0x60:      /* VIEWPORT */
+        g_hw.viewport = par[0];
+        break;
+    case 0x70:      /* BOX_TEST */
+        box_test(par);
+        break;
+    case 0x71:      /* POS_TEST */
+        pos_test(par);
+        break;
+    case 0x72:      /* VEC_TEST */
+        vec_test(par);
+        break;
+    default:
+        run_cmd(op, par, n);
+        break;
+    }
+    adjust_viewport();
+    publish_stat();
+    publish_ram_count();
+}
+
+/* The packed FIFO: a command word of four opcodes, then each non-NOP
+ * opcode's parameters in order.  A zero-parameter opcode executes as soon
+ * as it is reached; an undefined opcode byte is skipped. */
+static void fifo_advance(void)
+{
+    while (g_hw.slot < 4u) {
+        u32 op = g_hw.ops[g_hw.slot];
+        u32 n;
+
+        if (op == 0) {
+            g_hw.slot++;
+            continue;
+        }
+        n = g3d_gx_param_count(op);
+        if (n == 0xFFu) {
+            g_hw.slot++;
+            continue;
+        }
+        if (n == 0) {
+            exec(op, g_hw.par);
+            g_hw.slot++;
+            continue;
+        }
+        g_hw.need = n;
+        g_hw.have = 0;
+        return;
+    }
+    g_hw.in_packet = 0;
+}
+
+static void fifo_word(u32 w)
+{
+    if (!g_hw.in_packet) {
+        g_hw.ops[0] = (u8)(w & 0xFFu);
+        g_hw.ops[1] = (u8)((w >> 8) & 0xFFu);
+        g_hw.ops[2] = (u8)((w >> 16) & 0xFFu);
+        g_hw.ops[3] = (u8)((w >> 24) & 0xFFu);
+        g_hw.slot = 0;
+        g_hw.in_packet = 1;
+        g_hw.par[0] = 0;
+        fifo_advance();
+        return;
+    }
+    g_hw.par[g_hw.have++] = w;
+    if (g_hw.have == g_hw.need) {
+        exec(g_hw.ops[g_hw.slot], g_hw.par);
+        g_hw.slot++;
+        fifo_advance();
+    }
+}
+
+/* A direct port: the address names the opcode, each store is one parameter
+ * (a zero-parameter command takes one store of any value). */
+static void port_word(u32 op, u32 w)
+{
+    u32 n = g3d_gx_param_count(op);
+
+    if (n == 0xFFu) {
+        return;
+    }
+    if (n == 0) {
+        g_hw.d_par[0] = w;
+        exec(op, g_hw.d_par);
+        return;
+    }
+    if (op != g_hw.d_op) {
+        g_hw.d_op = op;
+        g_hw.d_have = 0;
+    }
+    g_hw.d_par[g_hw.d_have++] = w;
+    if (g_hw.d_have == n) {
+        g_hw.d_have = 0;
+        exec(op, g_hw.d_par);
+    }
+}
+
+static void store(u32 addr, u32 w)
+{
+    if (addr < G3D_HW_PORTS) {
+        fifo_word(w);
+    } else {
+        port_word((addr - G3D_HW_GXFIFO) >> 2, w);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* The access protocol                                                 */
+/* ------------------------------------------------------------------ */
+
+static void resolve_pending(void)
+{
+    u32 p = g_hw.pending, v;
+
+    if (p == 0) {
+        return;
+    }
+    g_hw.pending = 0;
+    v = bw_io_read32(p);
+    if (p == G3D_HW_GXSTAT) {
+        if (v != g_hw.stat_published) {
+            gxstat_written(v);
+            publish_stat();
+        }
+        return;
+    }
+    if (v != G3D_HW_SENTINEL) {
+        store(p, v);
+    }
+}
+
+static void refresh_for(u32 a)
+{
+    if (a < G3D_HW_RAM_COUNT) {
+        publish_stat();
+    } else if (a < G3D_HW_DISP_1DOT) {
+        publish_ram_count();
+    } else if (a >= G3D_HW_CLIPMTX_RESULT && a < G3D_HW_VECMTX_RESULT) {
+        publish_clip();
+    } else if (a >= G3D_HW_VECMTX_RESULT) {
+        publish_vecmtx();
+    }
+    /* DISP_1DOT_DEPTH is a plain write-only latch, and POS/VEC_RESULT are
+     * written when their test runs. */
+}
+
+static void access_hook(u32 addr, int sync)
+{
+    u32 a = addr & ~3u;
+
+    resolve_pending();
+    if (sync) {
+        return;
+    }
+    if (a < G3D_HW_GXSTAT) {
+        g_hw.pending = a;
+        bw_io_write32(a, G3D_HW_SENTINEL);
+        return;
+    }
+    refresh_for(a);
+    if (a == G3D_HW_GXSTAT) {
+        g_hw.pending = a;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Public                                                              */
+/* ------------------------------------------------------------------ */
+
+void g3d_hw_reset(void)
+{
+    G3dTarget front = g_hw.front;
+    G3dGeom geom = g_hw.geom;
+    TexCacheEntry *cache = g_hw.cache;
+    u32 cap = g_hw.cap_cache;
+
+    cache_clear();
+    memset(&g_hw, 0, sizeof(g_hw));
+    g_hw.front = front;
+    g_hw.geom = geom;
+    g_hw.geom.n_verts = g_hw.geom.n_idx = g_hw.geom.n_polys = 0;
+    g_hw.cache = cache;
+    g_hw.cap_cache = cap;
+    g3d_gx_init(&g_hw.gx, &g_hw.geom);
+    g_hw.viewport = FULL_VIEWPORT;
+    if (g_hw.front.rgba != NULL) {
+        g3d_target_clear(&g_hw.front, 0, 0, 0, 0);
+    }
+    g_hw.ready = 1;
+
+    bw_io_access_hook(G3D_HW_GXFIFO, G3D_HW_WINDOW_END, access_hook);
+    publish_stat();
+    publish_ram_count();
+}
+
+void g3d_hw_flush(void)
+{
+    if (g_hw.ready) {
+        resolve_pending();
+    }
+}
+
+void g3d_hw_fifo_write(u32 word)
+{
+    if (!g_hw.ready) {
+        return;
+    }
+    resolve_pending();
+    fifo_word(word);
+}
+
+void g3d_hw_fifo_send(const void *src, u32 bytes)
+{
+    const u8 *p = (const u8 *)src;
+    u32 i;
+
+    if (!g_hw.ready || src == NULL) {
+        return;
+    }
+    resolve_pending();
+    for (i = 0; i + 4u <= bytes; i += 4u) {
+        fifo_word(bw_rd32(p + i));
+    }
+}
+
+void g3d_hw_port_write(u32 addr, u32 value)
+{
+    if (!g_hw.ready || addr < G3D_HW_GXFIFO || addr >= G3D_HW_GXSTAT) {
+        return;
+    }
+    resolve_pending();
+    store(addr & ~3u, value);
+}
+
+static u32 ds_addr_of_ptr(const volatile void *p)
+{
+    u32 a = bw_ds_addr_of((const void *)p);
+
+    if (a == 0) {
+        /* The raw DS value a macro or an integer argument carries. */
+        uintptr_t raw = (uintptr_t)p;
+        if (raw >= G3D_HW_GXFIFO && raw < G3D_HW_WINDOW_END) {
+            a = (u32)raw;
+        }
+    }
+    return a;
+}
+
+int g3d_hw_is_fifo(const volatile void *dst)
+{
+    u32 a;
+
+    if (!g_hw.ready || dst == NULL) {
+        return 0;
+    }
+    a = ds_addr_of_ptr(dst);
+    return a >= G3D_HW_GXFIFO && a < G3D_HW_PORTS;
+}
+
+void g3d_hw_claim(const volatile void *dst)
+{
+    u32 a;
+
+    if (!g_hw.ready || g_hw.pending == 0) {
+        return;
+    }
+    a = ds_addr_of_ptr(dst) & ~3u;
+    if (a == g_hw.pending && bw_io_read32(a) == G3D_HW_SENTINEL) {
+        /* The access made the pointer; nothing was stored through it. */
+        g_hw.pending = 0;
+        return;
+    }
+    resolve_pending();
+}
+
+u32 g3d_hw_result_addr(const volatile void *src)
+{
+    u32 a;
+
+    if (!g_hw.ready || src == NULL) {
+        return 0;
+    }
+    a = ds_addr_of_ptr(src);
+    return (a >= G3D_HW_GXSTAT && a < G3D_HW_WINDOW_END) ? a : 0u;
+}
+
+void g3d_hw_refresh(void)
+{
+    if (!g_hw.ready) {
+        return;
+    }
+    resolve_pending();
+    publish_stat();
+    publish_ram_count();
+    publish_clip();
+    publish_vecmtx();
+}
+
+const u8 *g3d_hw_frame(void)
+{
+    return g_hw.have_frame ? g_hw.front.rgba : NULL;
+}
+
+u32 g3d_hw_frame_count(void)
+{
+    return g_hw.frames;
+}
+
+u32 g3d_hw_unsupported(void)
+{
+    return g_hw.unsup_frame;
+}
+
+u32 g3d_hw_gxstat(void)
+{
+    if (g_hw.ready) {
+        resolve_pending();
+    }
+    return gxstat_value(1);
+}
+
+const G3dGx *g3d_hw_gx(void)
+{
+    return &g_hw.gx;
+}

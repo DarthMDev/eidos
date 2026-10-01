@@ -565,6 +565,7 @@ its rasteriser. Pure C99, no SDL, no third-party code, and not even
 | `engine/g3d/texture.c` | all seven GX texture pixel formats |
 | `engine/g3d/gx.c` | the display-list interpreter: the packed command word, the whole opcode table, every vertex encoding, strip assembly |
 | `engine/g3d/raster.c` | the 256x192 software rasteriser, and the meeting point with the 2D compositor |
+| `engine/g3d/hw3d.c` | the 3D hardware interface: the geometry FIFO and command ports, the 3D registers, the texture slots, `SWAP_BUFFERS` |
 
 **Where the rules come from.** In order of authority, and each file
 header repeats it: aletheia's asset lane (`tools/assets/nsbmd.py` cracked
@@ -681,9 +682,10 @@ own comment as one of three things, and the file header lists them:
   precisely enough anywhere public to transcribe; depth is **z/w mapped
   linearly onto a 23-bit range**, and the exact quantisation is this
   engine's; the toon and highlight polygon mode **falls back to
-  modulate**, because the toon table is a register nothing in this port
-  loads and inventing a ramp would be a guess; and shadow polygons are
-  **not drawn at all** rather than drawn as black slabs.
+  modulate** when no toon table is loaded (the asset path loads none,
+  `engine/g3d/hw3d.c` loads the game's `TOON_TABLE`), because inventing a
+  ramp would be a guess; and shadow polygons are **not drawn at all**
+  rather than drawn as black slabs.
 - **a port decision**: a polygon whose `POLYGON_ATTR` word is zero is
   drawn double-sided and opaque rather than culled. That is not a
   hardware rule. A shape's display list is entered at a heuristically
@@ -785,6 +787,68 @@ of `g3d`: the descriptor is a plain RGBA buffer, and `g3d_compose_over` is
 kept for the common case it already covered. `tests/test_compose3d.c`
 checks the stack, priority, window and blend cases synthetically (18
 checks).
+
+### The hardware interface (`engine/g3d/hw3d.c`)
+
+Once the game's own code runs, the 3D picture is what it writes into the
+3D hardware, and `engine/g3d/hw3d.c` is that hardware, the way
+`engine/g2d/hwcompose.c` is the 2D engine's. It takes packed command words
+at the geometry FIFO (`0x04000400`, and its mirrors to `0x0400043F`) and
+single parameters at the direct command ports (`0x04000440`-`0x040005FF`),
+frames each command and runs it through **the same `g3d_gx_run`** the
+NSBMD path uses, keeps `GXSTAT` (matrix stack levels, the projection stack
+bit, the stack error, FIFO empty, the box test), `RAM_COUNT`, the position
+and vector test results and the clip and vector matrices current in the
+register file, reads `DISP3DCNT`, the clear colour and depth, the alpha
+test reference and the toon table at `SWAP_BUFFERS`, decodes textures out
+of whatever VRAM banks `VRAMCNT` gives the texture image and palette slots,
+and renders the frame through the existing rasteriser into the RGBA buffer
+`g2d_hw_render_dsmem` takes as the 3D layer (`g3d_hw_frame()`).
+
+**How a store reaches the FIFO.** The register file is plain memory, so ten
+stores to `0x04000400` leave one value. The rewrite does give one
+`bw_ds_ptr` call per access, so `sdk/dsmem_ext.h` grew *access hooks*: a
+function called on every translation of an address in a range (and at every
+`bw_io_sync`). The 3D window's hook resolves the previous access (the word
+stored there is a command word or parameter) before handing out the next
+pointer. The hand-written ARM copy loops that burst into the FIFO
+(`GX_SendFifo48B/64B`, `GXi_NopClearFifo128_`, `MIi_CpuSend32`,
+`MI_Copy36B/64B`) and the DMA senders (`MI_SendGXCommandAsync`,
+`...AsyncFast`, their two TWL NDMA forms) are shims onto it in
+`sdk/g3_fifo.c` and `sdk/mi_gx.c`. The file header of `hw3d.c` lists
+exactly which of the corpus's write paths are captured and which are not
+(a pointer computed once and stored through repeatedly; port code writing
+through `bw_io_write32`; `sdk/mi.c`'s copies aimed at the FIFO; 8/16-bit
+port stores), and the timing model (an infinitely fast engine: the FIFO
+always reads empty, the GXFIFO interrupt is never raised, the swap renders
+immediately).
+
+**What is checked.** `tests/test_g3dhw.c` builds one display list (every
+vertex encoding, all four primitive kinds, push/pop, a translucent strip,
+a PAL16 and an A3I5 texture out of VRAM with a palette base and a flip),
+renders it with the interpreter and the rasteriser directly, and requires
+the hardware path's frame **pixel-identical**: packed into the FIFO one
+translated store per word, through the direct ports, through
+`MIi_CpuSend32` and through `MI_SendGXCommandAsync`, and with texturing
+off. Beside that, the SDK's own traffic shapes (an opcode store then
+`GX_SendFifo64B` or `MI_Copy36B` to a fresh `&FIFO`, an integer FIFO
+address, `GXi_NopClearFifo128_` completing a half-sent command, the clip
+and vector matrices read back through `MI_Copy64B`/`MI_Copy36B` from raw
+result addresses), every `GXSTAT` field the SDK polls including the
+`G3X_InitMtxStack` sequence and the `GXSTAT |= 0x8000` acknowledgement,
+`POS_TEST`, `VEC_TEST`, `BOX_TEST`, the viewport, toon and highlight, the
+alpha test, blending off, an unterminated vertex list, and the frame
+composed by `hwcompose` as BG0. **79 checks, 0 failures**, both pointer
+widths. Two interpreter fixes came out of it: opcode `0x2B` (`PLTT_BASE`)
+was missing from the parameter-count table, so a list using it stopped
+there, and `MTX_SCALE` in position+vector mode now scales the position
+matrix only, as the hardware does; `test_g3d`'s oracle numbers are
+unchanged by both.
+
+Not honoured, and reported per frame by `g3d_hw_unsupported()`: fog, edge
+marking, anti-aliasing, the rear-plane bitmap, the w-buffer, shadow
+polygons, and lighting (as in the interpreter, a vertex keeps its last
+`COLOR`). The hardware's polygon and vertex RAM limits are not imposed.
 
 ### What is not decoded, and is the next step
 
