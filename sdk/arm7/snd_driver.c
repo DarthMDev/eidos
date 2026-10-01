@@ -1,78 +1,74 @@
 /*
  * sdk/arm7/snd_driver.c -- the ARM7's sound driver, the part that plays:
- * SND commands executed on engine/audio, and the shared work the ARM9 polls.
+ * SND commands executed on the sequencer (sdk/arm7/snd_seq.c) and the sound
+ * hardware model (sdk/arm7/snd_hw.c), and the shared work the ARM9 polls.
  *
  * Why a stand-in: sdk/arm7/arm7.h.  sdk/arm7/snd.c hands this file one
- * command at a time (sdk/arm7/snd.h).  What each command means is read off
- * the matched ARM9 senders (src/matched/arm9_sdk/, snd_interface.o) and the
- * SDK's DWARF (enum SNDCommandID, struct SNDPlayer, SNDTrack, SNDWork,
- * SNDDriverInfo, SNDSharedWork, SNDBankData, SNDWaveArc), nothing from ARM7
- * code:
+ * command at a time (sdk/arm7/snd.h).  What each command's arguments are is
+ * read off the ARM9 senders: the matched ones (src/matched/arm9_sdk/,
+ * snd_interface.o) and, for the senders this game does not link, the
+ * listings of the same object in libsnd.TWL.HYB.a through aletheia's
+ * tools/sdkobj.py.  Nothing comes from ARM7 code.
  *
- *   PREPARE_SEQ (player, seqBase, seqOffset, bank)   func_02089350.c
- *   START_SEQ   (the same four)                      enum only, = prepare+start
- *   START_PREPARED_SEQ (player), STOP_SEQ (player)   func_02089330.c
- *   PAUSE_SEQ   (player, flag)                       func_02089398.c
- *   PLAYER_PARAM (player, offset, data, size)        func_020897B4.c: a store
- *               into the ARM7's SNDPlayer; SND_SetPlayerVolume is offset 6
- *               (extFader), SND_SetPlayerTempoRatio 0x1A, the channel
- *               priority 4 (the asm veneers of the same name)
- *   TRACK_PARAM (player | size << 24, tracks, offset, data)  func_020897DC.c:
- *               the same into each SNDTrack; volume 0xA (extFader), pitch
- *               0xC, pan 9, modulation depth 0x1A and speed 0x19
- *   MUTE_TRACK  (player, tracks, mode)               func_02089580.c
- *   SETUP_ALARM (alarmNo, tick, period, id)          func_02089540.c
+ *   START_SEQ / PREPARE_SEQ (player, seqBase, seqOffset, bank)  func_02089350.c
+ *   START_PREPARED_SEQ (player), STOP_SEQ (player)              func_02089330.c
+ *   PAUSE_SEQ (player, flag)                                    func_02089398.c
+ *   SKIP_SEQ (player, ticks)                                    enum only
+ *   PLAYER_PARAM (player, offset, data, size)                   func_020897B4.c
+ *   TRACK_PARAM (player | size << 24, tracks, offset, data)     func_020897DC.c
+ *   MUTE_TRACK (player, tracks, mode)                           func_02089580.c
+ *   ALLOCATABLE_CHANNEL (player, tracks, channels)              func_0208948C.c
+ *   PLAYER_LOCAL_VAR (player, var, value)            SND_SetPlayerLocalVariable
+ *   PLAYER_GLOBAL_VAR (var, value)                  SND_SetPlayerGlobalVariable
  *   START_TIMER / STOP_TIMER (channels, captures, alarms, flags)
- *   MASTER_VOLUME (volume)                           func_0208970C.c
- *   LOCK_CHANNEL / UNLOCK_CHANNEL (channels, flags)  func_020895D8.c / F8
- *   SHARED_WORK (SNDSharedWork *)                    SND_CommandInit
- *   INVALIDATE_SEQ/BANK/WAVE (start, end)            func_020896AC.c
- *   READ_DRIVER_INFO (SNDDriverInfo *)               func_02089794.c
+ *                                                 func_020894B4.c / func_020894DC.c
+ *   SETUP_CHANNEL_PCM (ch | timer << 16, data, volume << 24 | shift << 22 |
+ *                      loopLen, loop << 26 | format << 24 | pan << 16 |
+ *                      loopStart)                               func_02089660.c
+ *   SETUP_CHANNEL_PSG (ch, volume | shift << 8, pan | timer << 8, duty)
+ *   SETUP_CHANNEL_NOISE (ch, volume | shift << 8, pan | timer << 8, 0)
+ *   SETUP_CAPTURE (capture << 31 | format << 30 | loop << 29 | in << 28 |
+ *                  out << 27, buffer, length, 0)                SND_SetupCapture
+ *   SETUP_ALARM (alarmNo, tick, period, id)                     func_02089540.c
+ *   CHANNEL_TIMER (channels, timer)                             func_02089618.c
+ *   CHANNEL_VOLUME (channels, volume, shift)                    func_02089638.c
+ *   CHANNEL_PAN (channels, pan)                                 SND_SetChannelPan
+ *   SURROUND_DECAY (decay)                                      enum only
+ *   MASTER_VOLUME (volume)                                      func_0208970C.c
+ *   MASTER_PAN (pan, -1 to reset)                     func_02089754.c / 02089774.c
+ *   OUTPUT_SELECTOR (left, right, channel1, channel3)           func_0208972C.c
+ *   LOCK_CHANNEL / UNLOCK_CHANNEL (channels, flags)             func_020895D8.c / F8
+ *   STOP_UNLOCKED_CHANNEL (channels, flags)               SND_StopUnlockedChannel
+ *   SHARED_WORK (SNDSharedWork *)                               SND_CommandInit
+ *   INVALIDATE_SEQ/BANK/WAVE (start, end)                       func_020896AC.c
+ *   READ_DRIVER_INFO (SNDDriverInfo *)                          func_02089794.c
  *
- * ------------------------------------------------------------------------
- * The sequencer
- * ------------------------------------------------------------------------
- * A prepared sequence is an engine/audio player over a BwAudioSeqSource
- * whose bytes are the game's own: seqBase and seqOffset as the ARM9 sent
- * them (offsets measured from seqBase, the reading engine/audio/audio.h
- * documents for the command path), the SBNK the bank argument points at,
- * and the four SWARs its waveArcLink[] names (SND_AssignWaveArc,
- * func_0208A2BC.c, links them).  Nothing is copied, so a mod that loads a
- * new sequence, bank or wave archive into the game's memory plays without
- * anything here knowing about it, and there is no table of sequences at
- * all.  The source's `volume` is 0 (unity): the ARM9 sends the SEQ record's
- * volume as a player fader instead.
- *
- * Levels.  extFader is in tenths of a decibel: SND_CalcChannelVolume
- * (func_0208A24C.c) clamps a level to -723..0 and steps its hardware shift
- * at -60, -120 and -240, i.e. one halving (6 dB) per 60.  So a fader f is
- * an amplitude of 10^(f / 200); 0 is exactly 1.0 and is not multiplied in,
- * so a sequence nobody turned down is bit-identical to engine/audio driven
- * directly.  MASTER_VOLUME is linear, 127 = 1.0, likewise skipped at 127.
- *
- * ------------------------------------------------------------------------
- * The shared work
- * ------------------------------------------------------------------------
- * SNDSharedWork is the matched code's own declaration (func_0208A1D0.c),
- * reproduced below so both sides agree on every host.  The driver keeps
- * playerStatus (bit n while player n is active), channelStatus (the engine
- * voices sounding, OR-ed over players: the engine gives each player its own
- * sixteen, where the DS shares sixteen between all of them) and each
- * player's tickCounter (sequence ticks played, 48 to the quarter).  It
- * writes them at bw_arm7_step (the game thread's service point) and after
- * every command list, so the ARM9 sees a START before it sees the list
- * complete, and a finished sequence after the next step.
+ * SKIP_SEQ and SURROUND_DECAY have no sender in the library's ARM9 objects
+ * that shows their arguments; the shapes above are the natural reading of
+ * the command names and are labelled as such.
  *
  * ------------------------------------------------------------------------
  * Time
  * ------------------------------------------------------------------------
  * The driver's clock is the output: bw_snd_render() advances it by the
- * frames it mixes, at BW_AUDIO_RATE.  Sequences end, ticks move and alarms
- * fire on that clock, so a stream's refill alarm stays in step with the
- * samples actually played.  An alarm's tick and period are OS ticks, the
- * bus clock / 64 (sdk/os_tick.c), converted exactly from frames.  A firing
- * is the word alarmNo | id << 8 on tag 7 (func_0208A010.c), sent at the
- * next step on the game thread.
+ * frames it mixes, at BW_AUDIO_RATE.  Every 64 * 2728 bus cycles of that
+ * clock (BW_SNDSEQ_FRAME_CYCLES, counted exactly in a cycle accumulator)
+ * the sequencer runs one frame, which is when notes start, envelopes move
+ * and channel registers change; between frames the hardware model mixes.
+ * An alarm's tick and period are OS ticks, the bus clock / 64
+ * (sdk/os_tick.c), converted exactly from frames; a firing is the word
+ * alarmNo | id << 8 on tag 7 (func_0208A010.c), sent at the next step on
+ * the game thread.  START_TIMER starts its channels, captures and alarms
+ * together, which is how a stream's buffer and its refill alarm stay in step.
+ *
+ * ------------------------------------------------------------------------
+ * The shared work
+ * ------------------------------------------------------------------------
+ * SNDSharedWork is the matched code's own declaration (func_0208A1D0.c).
+ * The driver keeps playerStatus, channelStatus (the hardware channels
+ * busy: notes and direct channels alike, sixteen shared between every
+ * player), captureStatus, each player's tickCounter and the sequence
+ * variables, and writes them at bw_arm7_step and after every command list.
  *
  * ------------------------------------------------------------------------
  * Addresses in arguments
@@ -80,30 +76,15 @@
  * The matched senders store pointers as `(u32)pointer`, where their u32 is
  * unsigned long.  So an argument carries the whole host pointer wherever
  * unsigned long is at least as wide as a pointer: every ILP32 host (the
- * reference configuration, where the game's heap and therefore its sound
- * data exist) and LP64 Unix.  On LLP64 (64-bit Windows) the cast drops the
- * top half and nothing can recover it, so there an argument is read as a DS
- * address instead, which is what a port-side sender can supply.  How many
- * bytes are readable is known when the address lies in sdk/dsmem.h's space
- * (probed through bw_ds_addr_of); otherwise the driver reads what the
- * file's own header says the game loaded (SSEQ, SBNK, SWAR all carry their
- * size at +8).  bw_snd_set_resolver() replaces the whole rule.
- *
- * ------------------------------------------------------------------------
- * Not modelled (counted in BwSndStats.ignored)
- * ------------------------------------------------------------------------
- * SKIP_SEQ, ALLOCATABLE_CHANNEL, the sequence variables (no matched ARM9
- * sender in this game shows their argument shape), direct channel and
- * capture control (SETUP_CHANNEL_*, SETUP_CAPTURE, CHANNEL_TIMER/VOLUME/PAN,
- * SURROUND_DECAY, MASTER_PAN, OUTPUT_SELECTOR, STOP_UNLOCKED_CHANNEL, the
- * channel and capture bits of START/STOP_TIMER).  The tempo ratio and the
- * track pitch, pan and modulation parameters are stored where the ARM9
- * wrote them and reported in SNDDriverInfo, but the engine renders at the
- * sequence's own tempo and does not bend notes.  Track volume and mute
- * apply to notes that start after the command.
+ * reference configuration) and LP64 Unix.  On LLP64 (64-bit Windows) the
+ * cast drops the top half, so there an argument is read as a DS address,
+ * which is what a port-side sender can supply.  How many bytes are readable
+ * is known when the address lies in sdk/dsmem.h's space; otherwise the
+ * driver reads what the file's own header says the game loaded (SSEQ, SBNK,
+ * SWAR all carry their size at +8), and a direct channel what its registers
+ * say.  bw_snd_set_resolver() replaces the whole rule.
  */
 
-#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -114,49 +95,33 @@
 #include "plat_thread.h"
 #include "pxi.h"
 #include "snd.h"
+#include "snd_hw.h"
+#include "snd_seq.h"
 
-#define PLAYERS 16
-#define TRACKS  16
+#define PLAYERS BW_SNDSEQ_PLAYERS
 #define ALARMS  8
 
 /* Firings held for the next step.  The ARM9 drains them at every step, a
  * few per frame for a stream; a burst beyond this is counted and dropped. */
 #define ALARM_QUEUE 256
 
-/* struct SNDPlayer (snd_work.o DWARF), the bytes PLAYER_PARAM addresses.  */
-#define PL_PRIO         0x04
-#define PL_VOLUME       0x05
-#define PL_EXT_FADER    0x06
-#define PL_TRACKS       0x08
-#define PL_TEMPO        0x18
-#define PL_TEMPO_RATIO  0x1A
-#define PL_SIZE         0x24
-
-/* struct SNDTrack (snd_work.o DWARF).                                     */
-#define TR_VOLUME       0x04
-#define TR_VOLUME2      0x05
-#define TR_BEND_RANGE   0x07
-#define TR_EXT_FADER    0x0A
-#define TR_PRIO         0x12
-#define TR_SIZE         0x40
-
-/* struct SNDDriverInfo / SNDWork (snd_work.o DWARF), DS layout.           */
-#define DI_PLAYER       0x0540
-#define DI_TRACK        0x0780
-#define DI_TRACK_COUNT  32
+/* struct SNDDriverInfo (snd_work.o DWARF), DS layout.                     */
 #define DI_CHCTRL       0x1180
 #define DI_WORK_ADDRESS 0x11C0
 #define DI_LOCKED       0x11C4
 #define DI_SIZE         0x11E0
-
-/* The SDK's fader floor (SND_CalcChannelVolume, func_0208A24C.c).         */
-#define FADER_MIN       (-723)
+#define DI_ALARM        0x0F80
 
 /* The most of a header-less sequence the driver will read.               */
 #define SEQ_FALLBACK_MAX ((size_t)256 * 1024)
 
+/* Bus cycles per BW_AUDIO_RATE frame is 33513982 / 32768; both sides of
+ * the comparisons below are scaled by 32768 to stay in integers.          */
+#define BUS_HZ          33513982u
+#define FRAME_UNITS     ((u64)BW_SNDSEQ_FRAME_CYCLES * BW_AUDIO_RATE)
+
 /* OS ticks per BW_AUDIO_RATE frame, as a ratio: (bus / 64) / 32768.       */
-#define TICK_NUM        33513982u
+#define TICK_NUM        BUS_HZ
 #define TICK_DEN        (64u * 32768u)
 
 /* SNDSharedWork as the matched code declares it (func_0208A1D0.c).        */
@@ -177,18 +142,6 @@ typedef struct {
 typedef char bw_shared_work_size[(sizeof(unsigned long) != 4 || sizeof(SharedWork) == 640) ? 1 : -1];
 
 typedef struct {
-    BwAudioPlayer   *ap;
-    BwAudioSeqSource src;
-    int   active, prepared, paused, done;
-    u8    param[PL_SIZE];
-    u8    track[TRACKS][TR_SIZE];
-    u8    mute[TRACKS];
-    u64   tick;
-    u32   voices;
-    double gain;
-} Player;
-
-typedef struct {
     int armed;
     u8  id;
     u64 tick, period;   /* as SETUP_ALARM gave them, in OS ticks */
@@ -197,12 +150,10 @@ typedef struct {
 
 static struct {
     BwMutex      *mtx;
-    Player        pl[PLAYERS];
     Alarm         alarm[ALARMS];
     u32           fired[ALARM_QUEUE];
     u32           n_fired;
-    int           master_volume;
-    u32           locked;
+    u64           seq_units;    /* toward the next sequencer frame       */
     SharedWork   *shared;
     BwSndResolver resolver;
     BwSndStats    stats;
@@ -215,56 +166,7 @@ static struct {
 static void lock(void)   { if (g.mtx) bw_mutex_lock(g.mtx); }
 static void unlock(void) { if (g.mtx) bw_mutex_unlock(g.mtx); }
 
-static double fader_gain(int f)
-{
-    if (f >= 0)
-        return 1.0;
-    if (f < FADER_MIN)
-        f = FADER_MIN;
-    return pow(10.0, (double)f / 200.0);
-}
-
-static s16 rd_s16(const u8 *p) { return (s16)bw_rd16(p); }
-
-static void store_le(u8 *dst, u32 v, u32 size)
-{
-    u32 i;
-    for (i = 0; i < size; i++)
-        dst[i] = (u8)(v >> (8 * i));
-}
-
-static void player_defaults(Player *p)
-{
-    int t;
-    memset(p->param, 0, sizeof(p->param));
-    p->param[PL_PRIO] = 64;
-    p->param[PL_VOLUME] = 127;
-    memset(p->param + PL_TRACKS, 0xFF, 16);
-    store_le(p->param + PL_TEMPO, 120, 2);
-    store_le(p->param + PL_TEMPO_RATIO, 256, 2);
-    for (t = 0; t < TRACKS; t++) {
-        memset(p->track[t], 0, TR_SIZE);
-        p->track[t][TR_VOLUME] = 127;
-        p->track[t][TR_VOLUME2] = 127;
-        p->track[t][TR_BEND_RANGE] = 2;
-        p->track[t][TR_PRIO] = 64;
-        p->mute[t] = 0;
-    }
-    p->gain = 1.0;
-}
-
-/* Apply the stored parameters to the engine player (under the lock).      */
-static void player_apply(Player *p)
-{
-    int t;
-    p->gain = fader_gain(rd_s16(p->param + PL_EXT_FADER));
-    if (p->ap == NULL)
-        return;
-    for (t = 0; t < TRACKS; t++) {
-        double tg = p->mute[t] ? 0.0 : fader_gain(rd_s16(p->track[t] + TR_EXT_FADER));
-        bw_audio_player_set_track_gain(p->ap, t, tg);
-    }
-}
+static int bit(u64 mask, int n) { return (int)((mask >> n) & 1u); }
 
 /* ------------------------------------------------------------------ */
 /* Addresses                                                           */
@@ -404,31 +306,27 @@ static int seq_blob(u64 value, BwBlob *out)
     return 0;
 }
 
-static int build_source(const BwSndCommand *c, BwAudioSeqSource *src)
+/* The bank argument: the SBNK and the SWARs its waveArcLink[] names
+ * (SND_AssignWaveArc, func_0208A2BC.c, links them). */
+static int bank_of(u64 value, BwSndSeqBank *bank)
 {
     int i;
-
-    memset(src, 0, sizeof(*src));
-    if (seq_blob(c->arg[1], &src->seq) != 0)
+    memset(bank, 0, sizeof(*bank));
+    if (value == 0)
+        return 0;
+    if (file_blob(value, "SBNK", 0x3C, &bank->sbnk) != 0)
         return -1;
-    if (c->arg[2] >= src->seq.size)
-        return -1;
-    src->seq_start = (u32)c->arg[2];
-    if (c->arg[3] != 0) {
-        if (file_blob(c->arg[3], "SBNK", 0x3C, &src->bank) != 0)
-            return -1;
-        for (i = 0; i < 4; i++) {
-            /* waveArcLink[i].waveArc, a DS-width pointer slot. */
-            u32 arc = bw_rd32(src->bank.data + 0x18 + 8 * i);
-            if (arc != 0)
-                (void)file_blob(arc, "SWAR", 0x3C, &src->wave_arc[i]);
-        }
+    for (i = 0; i < 4; i++) {
+        /* waveArcLink[i].waveArc, a DS-width pointer slot. */
+        u32 arc = bw_rd32(bank->sbnk.data + 0x18 + 8 * i);
+        if (arc != 0)
+            (void)file_blob(arc, "SWAR", 0x3C, &bank->arc[i]);
     }
     return 0;
 }
 
 /* ------------------------------------------------------------------ */
-/* Players                                                             */
+/* Sequences                                                           */
 /* ------------------------------------------------------------------ */
 
 static int player_no(u64 v)
@@ -436,133 +334,30 @@ static int player_no(u64 v)
     return v < PLAYERS ? (int)v : -1;
 }
 
-/* Detach the engine player under the lock; the caller frees it outside. */
-static BwAudioPlayer *player_stop(Player *p)
-{
-    BwAudioPlayer *old = p->ap;
-    p->ap = NULL;
-    p->active = p->prepared = p->paused = p->done = 0;
-    p->voices = 0;
-    return old;
-}
-
 static void cmd_prepare(const BwSndCommand *c, int start)
 {
     int n = player_no(c->arg[0]);
-    BwAudioSeqSource src;
-    BwAudioPlayer *ap, *old;
-    Player *p;
+    BwBlob seq;
+    BwSndSeqBank bank;
 
     if (n < 0)
         return;
-    if (build_source(c, &src) != 0) {
+    if (seq_blob(c->arg[1], &seq) != 0 || c->arg[2] >= seq.size
+        || bank_of(c->arg[3], &bank) != 0) {
         g.stats.bad_address++;
-        lock();
-        old = player_stop(&g.pl[n]);
-        unlock();
-        bw_audio_player_free(old);
+        bw_sndseq_stop(n);
         return;
     }
-    /* The slow part (decode, the level probe) runs outside the lock, so
-     * the audio thread keeps mixing the other players meanwhile. */
-    ap = bw_audio_player_create_source(&src, BW_SND_SEQ_MAX_SECONDS, 0);
-    if (ap == NULL)
-        g.stats.bad_sequence++;
-    else
-        bw_audio_player_set_loop(ap, bw_audio_player_seq_loops(ap));
-
-    lock();
-    p = &g.pl[n];
-    old = player_stop(p);
-    player_defaults(p);
-    p->src = src;
-    p->ap = ap;
-    p->prepared = ap != NULL;
-    p->active = start && ap != NULL;
-    p->tick = 0;
-    player_apply(p);
-    unlock();
-    bw_audio_player_free(old);
-}
-
-static void cmd_player(const BwSndCommand *c)
-{
-    int n = player_no(c->arg[0]);
-    BwAudioPlayer *old = NULL;
-    Player *p;
-
-    if (n < 0)
-        return;
-    lock();
-    p = &g.pl[n];
-    switch (c->id) {
-    case BW_SND_CMD_START_PREPARED_SEQ:
-        if (p->prepared && p->ap != NULL)
-            p->active = 1;
-        break;
-    case BW_SND_CMD_STOP_SEQ:
-        old = player_stop(p);
-        break;
-    case BW_SND_CMD_PAUSE_SEQ:
-        p->paused = c->arg[1] != 0;
-        break;
-    case BW_SND_CMD_PLAYER_PARAM: {
-        u32 off = (u32)c->arg[1], size = (u32)c->arg[3];
-        if ((size == 1 || size == 2 || size == 4) && off + size <= PL_SIZE) {
-            store_le(p->param + off, (u32)c->arg[2], size);
-            player_apply(p);
-        }
-        break;
-    }
-    case BW_SND_CMD_MUTE_TRACK: {
-        int t;
-        for (t = 0; t < TRACKS; t++)
-            if ((c->arg[1] >> t) & 1u)
-                p->mute[t] = c->arg[2] != 0;
-        player_apply(p);
-        break;
-    }
-    default:
-        break;
-    }
-    unlock();
-    bw_audio_player_free(old);
-}
-
-static void cmd_track_param(const BwSndCommand *c)
-{
-    int n = player_no(c->arg[0] & 0xFFFFFFu);
-    u32 size = (u32)(c->arg[0] >> 24) & 0xFFu;
-    u32 off = (u32)c->arg[2];
-    int t;
-
-    if (n < 0 || !(size == 1 || size == 2 || size == 4) || off + size > TR_SIZE)
-        return;
-    lock();
-    for (t = 0; t < TRACKS; t++)
-        if ((c->arg[1] >> t) & 1u)
-            store_le(g.pl[n].track[t] + off, (u32)c->arg[3], size);
-    player_apply(&g.pl[n]);
-    unlock();
-}
-
-/* INVALIDATE_*: the ARM9 is about to reuse [start, end); every player that
- * reads from it stops, as the DS's driver stops it. */
-static int overlaps(const BwBlob *b, uintptr_t lo, uintptr_t hi)
-{
-    uintptr_t a;
-    if (b->data == NULL || b->size == 0)
-        return 0;
-    a = (uintptr_t)b->data;
-    return a < hi && lo < a + b->size;
+    bw_sndseq_prepare(n, seq, (u32)c->arg[2], &bank);
+    if (start)
+        bw_sndseq_start(n);
 }
 
 static void cmd_invalidate(const BwSndCommand *c)
 {
-    BwAudioPlayer *old[PLAYERS];
     uintptr_t lo, hi;
     u8 *h;
-    int i, k;
+    int kind = (int)(c->id - BW_SND_CMD_INVALIDATE_SEQ), ch;
 
     if (c->arg[1] <= c->arg[0])
         return;
@@ -573,31 +368,54 @@ static void cmd_invalidate(const BwSndCommand *c)
     }
     lo = (uintptr_t)h;
     hi = lo + (uintptr_t)(c->arg[1] - c->arg[0]);
-    lock();
-    for (i = 0; i < PLAYERS; i++) {
-        Player *p = &g.pl[i];
-        int hit = 0;
-        old[i] = NULL;
-        if (p->ap == NULL)
-            continue;
-        if (c->id == BW_SND_CMD_INVALIDATE_SEQ)
-            hit = overlaps(&p->src.seq, lo, hi);
-        else if (c->id == BW_SND_CMD_INVALIDATE_BANK)
-            hit = overlaps(&p->src.bank, lo, hi);
-        else
-            for (k = 0; k < 4; k++)
-                hit |= overlaps(&p->src.wave_arc[k], lo, hi);
-        if (hit)
-            old[i] = player_stop(p);
-    }
-    unlock();
-    for (i = 0; i < PLAYERS; i++)
-        bw_audio_player_free(old[i]);
+    bw_sndseq_invalidate(kind, lo, hi);
+    /* A direct channel reading wave data from there stops too. */
+    if (kind == 2)
+        for (ch = 0; ch < BW_SNDHW_CHANNELS; ch++) {
+            size_t n;
+            const u8 *src = (const u8 *)bw_sndhw_source(ch, &n);
+            if (src != NULL && (uintptr_t)src < hi && lo < (uintptr_t)src + n
+                && bit(bw_sndseq_locked(), ch))
+                bw_sndhw_stop(ch);
+        }
 }
 
 /* ------------------------------------------------------------------ */
-/* Alarms                                                              */
+/* Direct channels and captures                                        */
 /* ------------------------------------------------------------------ */
+
+static void cmd_setup_pcm(const BwSndCommand *c)
+{
+    int ch = (int)(c->arg[0] & 0xFFFFu);
+    u32 timer = (u32)(c->arg[0] >> 16) & 0xFFFFu;
+    u32 a2 = (u32)c->arg[2], a3 = (u32)c->arg[3];
+    int format = (int)((a3 >> 24) & 3u), loop = (int)((a3 >> 26) & 3u);
+    u32 pnt = a3 & 0xFFFFu, len = a2 & 0x3FFFFFu;
+    size_t avail;
+    const void *data = bw_snd_resolve(c->arg[1], &avail);
+
+    if (ch >= BW_SNDHW_CHANNELS)
+        return;
+    if (data == NULL)
+        g.stats.bad_address++;
+    bw_sndhw_setup_pcm(ch, format, data, avail, loop, pnt, len,
+                       (int)((a2 >> 24) & 0x7Fu), (int)((a2 >> 22) & 3u), timer,
+                       (int)((a3 >> 16) & 0x7Fu));
+}
+
+static void cmd_setup_capture(const BwSndCommand *c)
+{
+    u32 a0 = (u32)c->arg[0];
+    size_t avail;
+    void *dst = bw_snd_resolve(c->arg[1], &avail);
+    int cap = (int)(a0 >> 31);
+
+    if (dst == NULL)
+        g.stats.bad_address++;
+    bw_sndhw_setup_capture(cap, (int)((a0 >> 30) & 1u), dst, avail, (u32)c->arg[2],
+                           (int)((a0 >> 29) & 1u), (int)((a0 >> 28) & 1u),
+                           (int)((a0 >> 27) & 1u));
+}
 
 static u64 now_ticks(void)
 {
@@ -609,9 +427,20 @@ static void cmd_timer(const BwSndCommand *c, int start)
     u32 mask = (u32)c->arg[2] & 0xFFu;
     int i;
 
-    if ((c->arg[0] & 0xFFFFu) != 0 || (c->arg[1] & 0x3u) != 0)
-        g.stats.ignored++;          /* direct channels and capture */
-    lock();
+    for (i = 0; i < BW_SNDHW_CHANNELS; i++)
+        if (bit(c->arg[0], i)) {
+            if (start)
+                bw_sndhw_start(i);
+            else
+                bw_sndhw_stop(i);
+        }
+    for (i = 0; i < BW_SNDHW_CAPTURES; i++)
+        if (bit(c->arg[1], i)) {
+            if (start)
+                bw_sndhw_capture_start(i);
+            else
+                bw_sndhw_capture_stop(i);
+        }
     for (i = 0; i < ALARMS; i++) {
         if (!((mask >> i) & 1u))
             continue;
@@ -619,7 +448,6 @@ static void cmd_timer(const BwSndCommand *c, int start)
         if (start)
             g.alarm[i].fire_at = now_ticks() + g.alarm[i].tick;
     }
-    unlock();
 }
 
 static void alarms_run(void)
@@ -651,7 +479,8 @@ static void cmd_driver_info(const BwSndCommand *c)
 {
     size_t avail;
     u8 *info = (u8 *)bw_snd_resolve(c->arg[0], &avail);
-    int i, t, next_track = 0;
+    u32 addr;
+    int i;
 
     /* SNDDriverInfo holds pointers, so its layout is the DS's only where
      * pointers are four bytes. */
@@ -660,27 +489,30 @@ static void cmd_driver_info(const BwSndCommand *c)
         return;
     }
     memset(info, 0, DI_SIZE);
-    lock();
-    for (i = 0; i < PLAYERS; i++) {
-        Player *p = &g.pl[i];
-        u8 *pl = info + DI_PLAYER + (size_t)i * PL_SIZE;
-        u32 tracks = (p->ap != NULL) ? bw_audio_player_track_mask(p->ap) : 0;
-        memcpy(pl, p->param, PL_SIZE);
-        memset(pl + 0x20, 0, 4);                  /* the ARM7's bank pointer */
-        pl[1] = (u8)i;                            /* myNo                    */
-        memset(pl + PL_TRACKS, 0xFF, 16);
-        for (t = 0; t < TRACKS; t++) {
-            if (!((tracks >> t) & 1u) || next_track >= DI_TRACK_COUNT)
-                continue;
-            memcpy(info + DI_TRACK + (size_t)next_track * TR_SIZE, p->track[t], TR_SIZE);
-            /* base, cur, call_stack, channel_list: none to report */
-            memset(info + DI_TRACK + (size_t)next_track * TR_SIZE + 0x24, 0, 0x1C);
-            pl[PL_TRACKS + t] = (u8)next_track++;
-        }
+    addr = (u32)(uintptr_t)info;
+    bw_sndseq_write_work(info, addr);
+    for (i = 0; i < ALARMS; i++) {
+        u8 *a = info + DI_ALARM + (size_t)i * 0x40;
+        a[0] = (u8)g.alarm[i].armed;
+        a[1] = g.alarm[i].id;
     }
-    store_le(info + DI_WORK_ADDRESS, (u32)(uintptr_t)info, 4);
-    store_le(info + DI_LOCKED, g.locked, 4);
-    unlock();
+    for (i = 0; i < BW_SNDHW_CHANNELS; i++) {
+        u32 v = bw_sndhw_cnt(i);
+        u8 *p = info + DI_CHCTRL + (size_t)i * 4;
+        p[0] = (u8)v;
+        p[1] = (u8)(v >> 8);
+        p[2] = (u8)(v >> 16);
+        p[3] = (u8)(v >> 24);
+    }
+    info[DI_WORK_ADDRESS] = (u8)addr;
+    info[DI_WORK_ADDRESS + 1] = (u8)(addr >> 8);
+    info[DI_WORK_ADDRESS + 2] = (u8)(addr >> 16);
+    info[DI_WORK_ADDRESS + 3] = (u8)(addr >> 24);
+    {
+        u32 l = bw_sndseq_locked();
+        info[DI_LOCKED] = (u8)l;
+        info[DI_LOCKED + 1] = (u8)(l >> 8);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -689,33 +521,20 @@ static void cmd_driver_info(const BwSndCommand *c)
 
 static void drv_reset(void)
 {
-    BwAudioPlayer *old[PLAYERS];
-    int i;
-
     lock();
-    for (i = 0; i < PLAYERS; i++) {
-        old[i] = player_stop(&g.pl[i]);
-        player_defaults(&g.pl[i]);
-        memset(&g.pl[i].src, 0, sizeof(g.pl[i].src));
-        g.pl[i].tick = 0;
-    }
+    bw_sndhw_reset();
+    bw_sndseq_reset();
     memset(g.alarm, 0, sizeof(g.alarm));
     g.n_fired = 0;
-    g.master_volume = 127;
-    g.locked = 0;
+    g.seq_units = FRAME_UNITS;     /* the first frame runs at once */
     g.shared = NULL;
     memset(&g.stats, 0, sizeof(g.stats));
     unlock();
-    for (i = 0; i < PLAYERS; i++)
-        bw_audio_player_free(old[i]);
 }
 
-static void drv_command(const BwSndCommand *c)
+static void execute(const BwSndCommand *c)
 {
-    g.stats.commands++;
-    if (c->id < BW_SND_CMD_COUNT)
-        g.stats.by_id[c->id]++;
-
+    int i;
     switch (c->id) {
     case BW_SND_CMD_START_SEQ:
         cmd_prepare(c, 1);
@@ -724,47 +543,107 @@ static void drv_command(const BwSndCommand *c)
         cmd_prepare(c, 0);
         break;
     case BW_SND_CMD_START_PREPARED_SEQ:
+        bw_sndseq_start(player_no(c->arg[0]));
+        break;
     case BW_SND_CMD_STOP_SEQ:
+        bw_sndseq_stop(player_no(c->arg[0]));
+        break;
     case BW_SND_CMD_PAUSE_SEQ:
+        bw_sndseq_pause(player_no(c->arg[0]), c->arg[1] != 0);
+        break;
+    case BW_SND_CMD_SKIP_SEQ:
+        bw_sndseq_skip(player_no(c->arg[0]), (u32)c->arg[1]);
+        break;
     case BW_SND_CMD_PLAYER_PARAM:
-    case BW_SND_CMD_MUTE_TRACK:
-        cmd_player(c);
+        bw_sndseq_player_param(player_no(c->arg[0]), (u32)c->arg[1], (u32)c->arg[2],
+                               (u32)c->arg[3]);
         break;
     case BW_SND_CMD_TRACK_PARAM:
-        cmd_track_param(c);
+        bw_sndseq_track_param(player_no(c->arg[0] & 0xFFFFFFu), (u32)c->arg[1],
+                              (u32)c->arg[2], (u32)c->arg[3],
+                              (u32)(c->arg[0] >> 24) & 0xFFu);
         break;
-    case BW_SND_CMD_SETUP_ALARM: {
-        u64 n = c->arg[0];
-        if (n < ALARMS) {
-            lock();
-            g.alarm[n].armed = 0;
-            g.alarm[n].tick = (u32)c->arg[1];
-            g.alarm[n].period = (u32)c->arg[2];
-            g.alarm[n].id = (u8)c->arg[3];
-            unlock();
-        }
+    case BW_SND_CMD_MUTE_TRACK:
+        bw_sndseq_mute(player_no(c->arg[0]), (u32)c->arg[1], (int)c->arg[2]);
         break;
-    }
+    case BW_SND_CMD_ALLOCATABLE_CHANNEL:
+        bw_sndseq_allocatable(player_no(c->arg[0]), (u32)c->arg[1], (u32)c->arg[2]);
+        break;
+    case BW_SND_CMD_PLAYER_LOCAL_VAR:
+        if (c->arg[1] < 16)
+            bw_sndseq_set_var(player_no(c->arg[0]), (int)c->arg[1], (s16)(u16)c->arg[2]);
+        break;
+    case BW_SND_CMD_PLAYER_GLOBAL_VAR:
+        if (c->arg[0] < 16)
+            bw_sndseq_set_var(0, 16 + (int)c->arg[0], (s16)(u16)c->arg[1]);
+        break;
     case BW_SND_CMD_START_TIMER:
         cmd_timer(c, 1);
         break;
     case BW_SND_CMD_STOP_TIMER:
         cmd_timer(c, 0);
         break;
+    case BW_SND_CMD_SETUP_CHANNEL_PCM:
+        cmd_setup_pcm(c);
+        break;
+    case BW_SND_CMD_SETUP_CHANNEL_PSG:
+        bw_sndhw_setup_psg((int)c->arg[0], (int)c->arg[3], (int)(c->arg[1] & 0x7Fu),
+                           (int)((c->arg[1] >> 8) & 3u), (u32)(c->arg[2] >> 8) & 0xFFFFu,
+                           (int)(c->arg[2] & 0x7Fu));
+        break;
+    case BW_SND_CMD_SETUP_CHANNEL_NOISE:
+        bw_sndhw_setup_noise((int)c->arg[0], (int)(c->arg[1] & 0x7Fu),
+                             (int)((c->arg[1] >> 8) & 3u), (u32)(c->arg[2] >> 8) & 0xFFFFu,
+                             (int)(c->arg[2] & 0x7Fu));
+        break;
+    case BW_SND_CMD_SETUP_CAPTURE:
+        cmd_setup_capture(c);
+        break;
+    case BW_SND_CMD_SETUP_ALARM: {
+        u64 n = c->arg[0];
+        if (n < ALARMS) {
+            g.alarm[n].armed = 0;
+            g.alarm[n].tick = (u32)c->arg[1];
+            g.alarm[n].period = (u32)c->arg[2];
+            g.alarm[n].id = (u8)c->arg[3];
+        }
+        break;
+    }
+    case BW_SND_CMD_CHANNEL_TIMER:
+        for (i = 0; i < BW_SNDHW_CHANNELS; i++)
+            if (bit(c->arg[0], i))
+                bw_sndhw_set_timer(i, (u32)c->arg[1] & 0xFFFFu);
+        break;
+    case BW_SND_CMD_CHANNEL_VOLUME:
+        for (i = 0; i < BW_SNDHW_CHANNELS; i++)
+            if (bit(c->arg[0], i))
+                bw_sndhw_set_volume(i, (int)(c->arg[1] & 0x7Fu), (int)(c->arg[2] & 3u));
+        break;
+    case BW_SND_CMD_CHANNEL_PAN:
+        for (i = 0; i < BW_SNDHW_CHANNELS; i++)
+            if (bit(c->arg[0], i))
+                bw_sndhw_set_pan(i, (int)(c->arg[1] & 0x7Fu));
+        break;
+    case BW_SND_CMD_SURROUND_DECAY:
+        bw_sndhw_set_surround_decay((int)(c->arg[0] & 0x7Fu));
+        break;
     case BW_SND_CMD_MASTER_VOLUME:
-        lock();
-        g.master_volume = c->arg[0] > 127 ? 127 : (int)c->arg[0];
-        unlock();
+        bw_sndhw_set_master_volume(c->arg[0] > 127 ? 127 : (int)c->arg[0]);
+        break;
+    case BW_SND_CMD_MASTER_PAN:
+        bw_sndhw_set_master_pan((s32)(u32)c->arg[0]);
+        break;
+    case BW_SND_CMD_OUTPUT_SELECTOR:
+        bw_sndhw_set_output((int)c->arg[0], (int)c->arg[1], c->arg[2] != 0, c->arg[3] != 0);
         break;
     case BW_SND_CMD_LOCK_CHANNEL:
-        lock();
-        g.locked |= (u32)c->arg[0] & 0xFFFFu;
-        unlock();
+        bw_sndseq_lock((u32)c->arg[0] & 0xFFFFu);
         break;
     case BW_SND_CMD_UNLOCK_CHANNEL:
-        lock();
-        g.locked &= ~((u32)c->arg[0] & 0xFFFFu);
-        unlock();
+        bw_sndseq_unlock((u32)c->arg[0] & 0xFFFFu);
+        break;
+    case BW_SND_CMD_STOP_UNLOCKED_CHANNEL:
+        bw_sndseq_stop_unlocked((u32)c->arg[0] & 0xFFFFu);
         break;
     case BW_SND_CMD_SHARED_WORK: {
         size_t avail;
@@ -772,7 +651,7 @@ static void drv_command(const BwSndCommand *c)
         if (w == NULL || (avail != 0 && avail < sizeof(SharedWork)))
             g.stats.bad_address++;
         else
-            bw_snd_bind_shared(w);
+            g.shared = (SharedWork *)w;
         break;
     }
     case BW_SND_CMD_INVALIDATE_SEQ:
@@ -789,39 +668,58 @@ static void drv_command(const BwSndCommand *c)
     }
 }
 
-/* Write what the ARM9 polls, free finished players, send fired alarms.
- * Game thread only. */
+static void drv_command(const BwSndCommand *c)
+{
+    lock();
+    g.stats.commands++;
+    if (c->id < BW_SND_CMD_COUNT)
+        g.stats.by_id[c->id]++;
+    execute(c);
+    unlock();
+}
+
+/* Write what the ARM9 polls and send fired alarms.  Game thread only. */
 static void publish(void)
 {
-    BwAudioPlayer *old[PLAYERS];
-    u32 status = 0, channels = 0, fired[ALARM_QUEUE], n_fired, i;
+    u32 status, channels = 0, captures = 0, fired[ALARM_QUEUE], n_fired, i, v;
     u32 ticks[PLAYERS];
+    s16 vars[PLAYERS][16], globals[16];
     SharedWork *sw;
 
     lock();
+    status = bw_sndseq_status();
+    for (i = 0; i < BW_SNDHW_CHANNELS; i++)
+        if (bw_sndhw_busy((int)i))
+            channels |= 1u << i;
+    for (i = 0; i < BW_SNDHW_CAPTURES; i++)
+        if (bw_sndhw_capture_busy((int)i))
+            captures |= 1u << i;
     for (i = 0; i < PLAYERS; i++) {
-        Player *p = &g.pl[i];
-        old[i] = NULL;
-        if (p->done)
-            old[i] = player_stop(p);
-        if (p->active && p->ap != NULL)
-            status |= 1u << i;
-        channels |= p->voices;
-        ticks[i] = (u32)p->tick;
+        BwSndSeqPlayerInfo pi;
+        bw_sndseq_player_info((int)i, &pi);
+        ticks[i] = (u32)pi.tick;
+        for (v = 0; v < 16; v++)
+            vars[i][v] = bw_sndseq_var((int)i, (int)v);
     }
+    for (v = 0; v < 16; v++)
+        globals[v] = bw_sndseq_var(0, 16 + (int)v);
     n_fired = g.n_fired;
     memcpy(fired, g.fired, n_fired * sizeof(u32));
     g.n_fired = 0;
     sw = g.shared;
     unlock();
 
-    for (i = 0; i < PLAYERS; i++)
-        bw_audio_player_free(old[i]);
     if (sw != NULL) {
         sw->playerStatus = status;
         sw->channelStatus = (unsigned short)channels;
-        for (i = 0; i < PLAYERS; i++)
+        sw->captureStatus = (unsigned short)captures;
+        for (i = 0; i < PLAYERS; i++) {
             sw->player[i].tickCounter = ticks[i];
+            for (v = 0; v < 16; v++)
+                sw->player[i].variable[v] = vars[i][v];
+        }
+        for (v = 0; v < 16; v++)
+            sw->globalVariable[v] = globals[v];
     }
     for (i = 0; i < n_fired; i++)
         (void)bw_pxi_arm7_send(BW_PXI_TAG_SOUND, fired[i], 0);
@@ -851,18 +749,19 @@ const BwArm7SndDriver *bw_snd_driver_ops(void)
 void bw_snd_driver_attach(void)
 {
     if (g.mtx == NULL) {
-        int i;
         g.mtx = bw_mutex_create();
-        g.master_volume = 127;
-        for (i = 0; i < PLAYERS; i++)
-            player_defaults(&g.pl[i]);
+        bw_sndhw_reset();
+        bw_sndseq_reset();
+        g.seq_units = FRAME_UNITS;
     }
     bw_arm7_snd_set_driver(&g_ops);
 }
 
 void bw_snd_bind_shared(void *shared_work)
 {
+    lock();
     g.shared = (SharedWork *)shared_work;
+    unlock();
 }
 
 /* ------------------------------------------------------------------ */
@@ -871,63 +770,23 @@ void bw_snd_bind_shared(void *shared_work)
 
 void bw_snd_render(s16 *out, u32 frames)
 {
-    /* The engine player renders in blocks of this size too; mixing in the
-     * same blocks keeps one playing sequence bit-identical to
-     * bw_audio_player_mix() over the same requests. */
-    enum { BLOCK = 1024 };
-    static double acc_l[BLOCK], acc_r[BLOCK], tl[BLOCK], tr[BLOCK];
     u32 done = 0;
 
     lock();
     while (done < frames) {
-        u32 n = frames - done, k;
-        int i;
-        double master;
-
-        if (n > BLOCK)
-            n = BLOCK;
-        memset(acc_l, 0, n * sizeof(double));
-        memset(acc_r, 0, n * sizeof(double));
-        for (i = 0; i < PLAYERS; i++) {
-            Player *p = &g.pl[i];
-            if (p->ap == NULL || !p->active || p->paused || p->done)
-                continue;
-            bw_audio_player_render(p->ap, tl, tr, n);
-            if (p->gain != 1.0) {
-                for (k = 0; k < n; k++) {
-                    tl[k] *= p->gain;
-                    tr[k] *= p->gain;
-                }
-            }
-            for (k = 0; k < n; k++) {
-                acc_l[k] += tl[k];
-                acc_r[k] += tr[k];
-            }
-            p->tick = bw_audio_player_tick(p->ap);
-            p->voices = bw_audio_player_voice_mask(p->ap);
-            if (bw_audio_player_finished(p->ap)) {
-                p->done = 1;
-                p->voices = 0;
-            }
+        u64 need;
+        u32 n;
+        if (g.seq_units >= FRAME_UNITS) {
+            g.seq_units -= FRAME_UNITS;
+            bw_sndseq_frame();
         }
-        if (out != NULL) {
-            master = g.master_volume == 127 ? 1.0 : g.master_volume / 127.0;
-            for (k = 0; k < n; k++) {
-                double lv = acc_l[k], rv = acc_r[k];
-                if (master != 1.0) {
-                    lv *= master;
-                    rv *= master;
-                }
-                lv = bw_audio_py_round(lv);
-                rv = bw_audio_py_round(rv);
-                if (lv < -32768.0) lv = -32768.0;
-                if (lv > 32767.0) lv = 32767.0;
-                if (rv < -32768.0) rv = -32768.0;
-                if (rv > 32767.0) rv = 32767.0;
-                out[(size_t)(done + k) * 2] = (s16)lv;
-                out[(size_t)(done + k) * 2 + 1] = (s16)rv;
-            }
-        }
+        /* Frames until the next sequencer frame is due. */
+        need = (FRAME_UNITS - g.seq_units + BUS_HZ - 1) / BUS_HZ;
+        n = frames - done;
+        if ((u64)n > need)
+            n = (u32)need;
+        bw_sndhw_mix(out != NULL ? out + (size_t)done * 2 : NULL, n);
+        g.seq_units += (u64)n * BUS_HZ;
         g.stats.frames += n;
         alarms_run();
         done += n;
@@ -943,36 +802,74 @@ void bw_snd_stats(BwSndStats *out)
 {
     lock();
     *out = g.stats;
+    out->notes_dropped = bw_sndseq_dropped_notes();
     unlock();
 }
 
 int bw_snd_player_state(int player, BwSndPlayerState *out)
 {
-    Player *p;
+    BwSndSeqPlayerInfo pi;
     if (player < 0 || player >= PLAYERS)
         return -1;
     lock();
-    p = &g.pl[player];
-    out->active = p->active && p->ap != NULL && !p->done;
-    out->prepared = p->prepared;
-    out->paused = p->paused;
-    out->loops = p->ap != NULL && bw_audio_player_seq_loops(p->ap);
-    out->tick = p->tick;
-    out->player_fader = rd_s16(p->param + PL_EXT_FADER);
-    out->tempo_ratio = bw_rd16(p->param + PL_TEMPO_RATIO);
-    out->volume = p->param[PL_VOLUME];
-    out->prio = p->param[PL_PRIO];
-    out->gain = p->gain;
+    bw_sndseq_player_info(player, &pi);
     unlock();
+    out->active = pi.active;
+    out->prepared = pi.prepared;
+    out->paused = pi.paused;
+    out->loops = pi.loops;
+    out->tick = pi.tick;
+    out->player_fader = (s16)bw_rd16(pi.reg + BW_SNDPL_EXT_FADER);
+    out->tempo = bw_rd16(pi.reg + BW_SNDPL_TEMPO);
+    out->tempo_ratio = bw_rd16(pi.reg + BW_SNDPL_TEMPO_RATIO);
+    out->volume = pi.reg[BW_SNDPL_VOLUME];
+    out->prio = pi.reg[BW_SNDPL_PRIO];
+    out->tracks = pi.track_mask;
+    out->channels = pi.channel_mask;
     return 0;
 }
 
 int bw_snd_master_volume(void)
 {
-    return g.master_volume;
+    int v;
+    lock();
+    v = bw_sndhw_master_volume();
+    unlock();
+    return v;
+}
+
+int bw_snd_master_pan(void)
+{
+    int v;
+    lock();
+    v = bw_sndhw_master_pan();
+    unlock();
+    return v;
 }
 
 u32 bw_snd_locked_channels(void)
 {
-    return g.locked;
+    u32 v;
+    lock();
+    v = bw_sndseq_locked();
+    unlock();
+    return v;
+}
+
+u32 bw_snd_channel_cnt(int ch)
+{
+    u32 v;
+    lock();
+    v = bw_sndhw_cnt(ch);
+    unlock();
+    return v;
+}
+
+u32 bw_snd_channel_timer(int ch)
+{
+    u32 v;
+    lock();
+    v = bw_sndhw_timer(ch);
+    unlock();
+    return v;
 }

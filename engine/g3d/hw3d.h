@@ -50,14 +50,11 @@ extern "C" {
 #define G3D_HW_WINDOW_END     0x040006A4u   /* end of the hooked window    */
 
 /* Register features the rasteriser does not implement, reported per frame
- * by g3d_hw_unsupported() when the game enables them. */
-#define G3D_HW_UNSUP_FOG        0x01u
-#define G3D_HW_UNSUP_EDGE       0x02u
-#define G3D_HW_UNSUP_ANTIALIAS  0x04u
-#define G3D_HW_UNSUP_REARPLANE  0x08u   /* clear image from VRAM C/D    */
-#define G3D_HW_UNSUP_WBUFFER    0x10u   /* SWAP_BUFFERS bit 1           */
+ * by g3d_hw_unsupported() when the game uses them.  Fog, edge marking,
+ * anti-aliasing, the rear-plane bitmap, the w-buffer and lighting are
+ * implemented (hw3d.c's header); their old flags 0x01..0x10 and 0x40 are
+ * retired. */
 #define G3D_HW_UNSUP_SHADOW     0x20u   /* a shadow polygon was drawn   */
-#define G3D_HW_UNSUP_LIGHTING   0x40u   /* NORMAL with a light enabled  */
 
 /*
  * Power-on state, and the access hook over 0x04000400..0x040006A3.  Call it
@@ -104,7 +101,9 @@ void g3d_hw_refresh(void);
 /*
  * The last frame SWAP_BUFFERS produced: 256x192 RGBA in the byte order
  * engine/g2d composes, alpha 0 where nothing was drawn and the clear alpha
- * was 0.  NULL before the first swap.
+ * was 0, a translucent pixel's own alpha where it was drawn over that.
+ * engine/g2d/hwcompose.c composes it with that alpha.  NULL before the
+ * first swap.
  */
 const u8 *g3d_hw_frame(void);
 u32       g3d_hw_frame_count(void);

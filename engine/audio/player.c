@@ -193,9 +193,16 @@ int bw_audio_seq_source_sdat(const BwSdat *s, u32 seq_index, long bank_override,
         fprintf(stderr, "audio: SEQ %u is not an SSEQ\n", seq_index);
         return -1;
     }
-    /* The oracle's reading: the whole file, offsets file-absolute. */
-    out->seq = blob;
-    out->seq_start = q.data_offset;
+    /* Offsets count from the DATA block's payload (audio.h), so the range
+     * is the payload and track 0 starts at its first byte, exactly what the
+     * SND command path passes as seqBase and seqOffset. */
+    if (q.data_offset >= blob.size) {
+        fprintf(stderr, "audio: SEQ %u has no payload\n", seq_index);
+        return -1;
+    }
+    out->seq.data = blob.data + q.data_offset;
+    out->seq.size = blob.size - q.data_offset;
+    out->seq_start = 0;
     return 0;
 }
 

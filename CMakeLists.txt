@@ -52,6 +52,10 @@ if(IS_ABSOLUTE "${BW_DATA_ROOT}")
 else()
     set(BW_DATA_ROOT_ABS "${ALETHEIA_ROOT}/${BW_DATA_ROOT}")
 endif()
+# Forward slashes only: the path is also compiled in as a C string literal
+# (EIDOS_DEFAULT_DATA_ROOT in eidos_view and eidos_boot), where a
+# Windows-style C:\Users\... reads as escape sequences.  Windows accepts '/'.
+file(TO_CMAKE_PATH "${BW_DATA_ROOT_ABS}" BW_DATA_ROOT_ABS)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
@@ -297,9 +301,14 @@ set(BW_PXI_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/pm.c       # power manager, tag 8
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/rtc.c      # real-time clock, tag 5
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/ctrdg.c    # Slot-2, tag 13
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/tp.c       # touch panel, tag 6
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/card.c     # Slot-1 pull-out, tag 14
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/fs.c       # Slot-1 backup requests, tag 11
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/fs.c       # Slot-1 backup requests and the save chip, tag 11
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd.c      # sound command lists, tag 7
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/nvram.c    # firmware flash, tag 4
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/mic.c      # microphone, tag 9 (silent)
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/tp.c       # touch panel, tag 6
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/pad.c      # X, Y, DEBUG, hinge in HW_BUTTON_XY_BUF
 )
 
 set(BW_SDK_SOURCES
@@ -311,13 +320,17 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_alloc.c      # OS heap onto malloc
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_arena.c      # OS_AllocFromArenaLo, the heaps' arena
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_irq.c        # OS_DisableInterrupts/Restore/Terminate
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/gx.c            # the one GX name the heap layer reaches
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/gx.c            # 0x02030524, the heap manager's error halfword
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/g3_fifo.c       # GX_SendFifo48B/64B, GXi_NopClearFifo128_ onto hw3d
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi_gx.c         # MI copies and GX command DMA onto hw3d
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi_dma.c        # MI_WaitDma/MI_StopDma on the DMA registers
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/tcbl.c          # the port's helper over tcbl.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs.c           # data root, mod list, path resolution
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs_narc.c      # member-level NARC overrides, the merged archive
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_dir.c      # path kind and directory listing, Win32 and POSIX
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_save.c     # save folder, mkdir, sync, replace: Win32 and POSIX
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/save.c          # the save folder and the atomic whole-file write
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/firmware.c      # user settings: firmware.ini, 0x02FFFC80, flash blocks
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/narc.c          # NARC framing, ARM9 rodata
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/game_globals.c  # the ARM9 globals the matched code names
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/aliases.c       # sub_/func_ spelling forwarders
@@ -329,6 +342,7 @@ set(BW_SDK_SOURCES
     # so they need sdk/dsmem.c; nothing in the library pulls them in until a
     # caller of theirs is linked.
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_thread.c   # host mutex/condvar/thread, Win32 and POSIX
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_crash.c    # a host crash reported on stderr, Win32 and POSIX
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_thread.c     # OSThread on host threads, one run token
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_interrupt.c  # IE/IF/IME, the IRQ handler, OS_Halt, OS_WaitIrq
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_alarm.c      # alarms on the tick
@@ -336,6 +350,8 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_argument.c   # the deliver argument
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/panic.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/port_reset.c    # bw_port_reset: dsmem, OS, PXI power-on and their joins
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/cp.c            # the divider and square-root unit, computed on access
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/input.c         # buttons, hinge, stylus: host + script onto the hardware
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/armdata.c       # the ARM9 image's data: copy, relocate, bind names
     ${BW_PXI_SOURCES}
 )
@@ -543,6 +559,7 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/nsbmd.c      # NSBMD/NSBTX, dictionaries, shapes
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/gx.c         # the display-list interpreter
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/raster.c     # the software rasteriser
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/light.c      # the lighting equation, for hw3d.c
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/hw3d.c       # the 3D hardware: FIFO, ports, registers, swap
 
     # engine/audio/ -- the SDAT sequencer and mixer, the host's stand-in for
@@ -556,10 +573,13 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/mixer.c    # one voice: resample, ADSR, PSG
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/player.c   # render and stream a sequence
 
-    # The ARM7's sound driver over engine/audio: SND commands from tag 7,
-    # the shared work, the alarms (sdk/arm7/snd.h).  Not in BW_PXI_SOURCES:
-    # the transport (sdk/arm7/snd.c) links without it, and test_pxi does.
+    # The ARM7's sound driver: SND commands from tag 7, the shared work, the
+    # alarms (sdk/arm7/snd.h), the sequencer (snd_seq.c) and the sound
+    # hardware model (snd_hw.c).  Not in BW_PXI_SOURCES: the transport
+    # (sdk/arm7/snd.c) links without them, and test_pxi does.
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_driver.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_seq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_hw.c
 )
 
 add_library(eidos STATIC
@@ -649,6 +669,8 @@ set(BW_AUDIO_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/mixer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/player.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_driver.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_seq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_hw.c
 )
 if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT MSVC)
     check_c_compiler_flag("-msse2 -mfpmath=sse" BW_HAVE_SSE2_MATH)
@@ -667,130 +689,11 @@ endif()
 # SDL2, optional
 # ---------------------------------------------------------------------------
 #
-# SDL2 is needed only by engine/platform/ and by the eidos_view demo.  The
-# engine library, the shim, the stubs and every other test build and run
-# without it, so it is looked for rather than required, and everything that
-# depends on it is skipped when it is not there.
+# Needed only by engine/platform/ and the eidos_view demo.  Where it is
+# looked for, the opt-in configure-time fetch (EIDOS_SDL_FETCH) and the link
+# probe are in cmake/sdl2.cmake.
 #
-# Three places are tried, in this order:
-#
-#   1. third_party/SDL2-<version>/<triplet>, which `python tools/fetch_sdl.py`
-#      downloads from the official libsdl-org release and verifies against a
-#      recorded SHA-256.  This is the no-installer path on Windows and is the
-#      same pattern as the toolchain archives in aletheia's tools/.
-#   2. an SDL2 CMake package (find_package), which is what a system package
-#      manager installs.
-#   3. pkg-config's sdl2.pc.
-#
-option(EIDOS_SDL "Build the SDL2 platform layer and the eidos_view demo" ON)
-
-set(EIDOS_SDL_FOUND OFF)
-set(EIDOS_SDL_ORIGIN "")
-set(EIDOS_SDL_RUNTIME "")
-
-if(EIDOS_SDL)
-    # 1. the fetched tree
-    file(GLOB _sdl_trees "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL2-*")
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(_sdl_triplet "x86_64-w64-mingw32")
-    else()
-        set(_sdl_triplet "i686-w64-mingw32")
-    endif()
-    foreach(_tree ${_sdl_trees})
-        set(_cand "${_tree}/${_sdl_triplet}")
-        if(EXISTS "${_cand}/include/SDL2/SDL.h"
-           AND EXISTS "${_cand}/lib/libSDL2.dll.a"
-           AND NOT EIDOS_SDL_FOUND)
-            add_library(eidos_sdl2 INTERFACE)
-            target_include_directories(eidos_sdl2 INTERFACE "${_cand}/include/SDL2")
-            # Only libSDL2 itself: engine/platform/platform.c defines
-            # SDL_MAIN_HANDLED and calls SDL_SetMainReady, so eidos keeps its
-            # own main() and needs neither SDL2main nor the mingw32 stub.
-            target_link_libraries(eidos_sdl2 INTERFACE "${_cand}/lib/libSDL2.dll.a")
-            set(_sdl_probe_incs "${_cand}/include/SDL2")
-            set(_sdl_probe_libs "${_cand}/lib/libSDL2.dll.a")
-            set(EIDOS_SDL_FOUND ON)
-            set(EIDOS_SDL_ORIGIN "${_cand}")
-            if(EXISTS "${_cand}/bin/SDL2.dll")
-                set(EIDOS_SDL_RUNTIME "${_cand}/bin/SDL2.dll")
-            endif()
-        endif()
-    endforeach()
-
-    # 2. a system CMake package
-    if(NOT EIDOS_SDL_FOUND)
-        find_package(SDL2 QUIET)
-        if(SDL2_FOUND)
-            add_library(eidos_sdl2 INTERFACE)
-            if(TARGET SDL2::SDL2)
-                target_link_libraries(eidos_sdl2 INTERFACE SDL2::SDL2)
-                set(_sdl_probe_libs SDL2::SDL2)
-            else()
-                target_include_directories(eidos_sdl2 INTERFACE ${SDL2_INCLUDE_DIRS})
-                target_link_libraries(eidos_sdl2 INTERFACE ${SDL2_LIBRARIES})
-                set(_sdl_probe_incs ${SDL2_INCLUDE_DIRS})
-                set(_sdl_probe_libs ${SDL2_LIBRARIES})
-            endif()
-            set(EIDOS_SDL_FOUND ON)
-            set(EIDOS_SDL_ORIGIN "system package")
-        endif()
-    endif()
-
-    # 3. pkg-config
-    if(NOT EIDOS_SDL_FOUND)
-        find_package(PkgConfig QUIET)
-        if(PKG_CONFIG_FOUND)
-            pkg_check_modules(SDL2PC QUIET sdl2)
-            if(SDL2PC_FOUND)
-                add_library(eidos_sdl2 INTERFACE)
-                target_include_directories(eidos_sdl2 INTERFACE ${SDL2PC_INCLUDE_DIRS})
-                target_link_libraries(eidos_sdl2 INTERFACE ${SDL2PC_LIBRARIES})
-                target_link_directories(eidos_sdl2 INTERFACE ${SDL2PC_LIBRARY_DIRS})
-                set(_sdl_probe_incs ${SDL2PC_INCLUDE_DIRS})
-                set(_sdl_probe_libs ${SDL2PC_LINK_LIBRARIES})
-                set(EIDOS_SDL_FOUND ON)
-                set(EIDOS_SDL_ORIGIN "pkg-config sdl2")
-            endif()
-        endif()
-    endif()
-endif()
-
-# A package that was found is not necessarily one this target can link: on
-# a 64-bit Linux host configured with cmake/ilp32-toolchain.cmake, pkg-config
-# happily reports the 64-bit SDL2, whose headers then fail to compile under
-# -m32 (the multiarch SDL_config.h forwards to a per-ABI header that is not
-# installed) or whose library fails to link.  Try it, at this target's
-# pointer width, before committing to it.
-if(EIDOS_SDL_FOUND)
-    include(CheckCSourceCompiles)
-    # try_compile takes imported targets and plain paths, not the ordinary
-    # INTERFACE target above, so the probe is handed what went into it.
-    set(CMAKE_REQUIRED_INCLUDES ${_sdl_probe_incs})
-    set(CMAKE_REQUIRED_LIBRARIES ${_sdl_probe_libs})
-    set(CMAKE_REQUIRED_QUIET ON)
-    check_c_source_compiles("
-#define SDL_MAIN_HANDLED
-#include <SDL.h>
-int main(void) { SDL_SetMainReady(); return SDL_Init(0) == 0 ? 0 : 1; }
-" EIDOS_SDL_LINKS)
-    unset(CMAKE_REQUIRED_INCLUDES)
-    unset(CMAKE_REQUIRED_LIBRARIES)
-    unset(CMAKE_REQUIRED_QUIET)
-    if(NOT EIDOS_SDL_LINKS)
-        message(STATUS "SDL2: ${EIDOS_SDL_ORIGIN} found, but a test program "
-                       "does not compile and link against it for this "
-                       "target (${CMAKE_SIZEOF_VOID_P}-byte pointers)")
-        set(EIDOS_SDL_FOUND OFF)
-        set(EIDOS_SDL_ORIGIN "")
-    endif()
-endif()
-
-if(EIDOS_SDL_FOUND)
-    message(STATUS "SDL2: ${EIDOS_SDL_ORIGIN}")
-else()
-    message(STATUS "SDL2: not found; the platform layer and eidos_view are "
-                   "skipped (run python tools/fetch_sdl.py, or install SDL2)")
-endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/sdl2.cmake)
 
 # ---------------------------------------------------------------------------
 # The platform layer
@@ -1091,6 +994,31 @@ if(WIN32)
     target_link_libraries(eidos_extract PRIVATE shell32)
 endif()
 
+# First run without a window (install/setup.c): where the data root lives
+# on each platform, whether the one there is playable, the config file,
+# --rom/--reset-data/--move-data; and the platform's own file dialog
+# (install/picker.c, NSOpenPanel in install/picker_mac.m on macOS).  No SDL,
+# so every configuration builds and tests it, MSVC included; the SDL
+# wizard on top of it is with the platform layer below (eidos_wizard).
+add_library(eidos_setup STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/setup.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/location.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/picker.c
+)
+target_link_libraries(eidos_setup PUBLIC eidos_install)
+if(WIN32)
+    # SHGetKnownFolderPath and CommandLineToArgvW (shell32), CoTaskMemFree
+    # and the COM dialog (ole32), GetOpenFileNameW (comdlg32).
+    target_link_libraries(eidos_setup PUBLIC shell32 ole32 comdlg32)
+elseif(APPLE)
+    enable_language(OBJC)
+    target_sources(eidos_setup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/install/picker_mac.m)
+    target_link_libraries(eidos_setup PUBLIC "-framework Cocoa")
+else()
+    # dlopen of libdbus-1 for the desktop portal; no link-time D-Bus.
+    target_link_libraries(eidos_setup PUBLIC ${CMAKE_DL_LIBS})
+endif()
+
 # A synthetic cartridge and aletheia's own extraction of it, generated from a
 # fixed seed (no game data): tools/synth_rom.py.
 set(BW_SYNTH_DIR ${CMAKE_CURRENT_BINARY_DIR}/synth)
@@ -1182,9 +1110,9 @@ add_test(NAME test_audio COMMAND test_audio ${BW_DATA_ROOT_ABS} ${BW_AUDIO_ORACL
 eidos_data_test(test_audio bw_audio_oracle)
 
 # The ARM7 sound driver through the PXI wire (sdk/arm7/snd.h): synthetic
-# command lists against engine/audio driven directly, needing no data; and
-# the same with real sequences copied into main RAM from the SDAT, which
-# needs the data root.
+# command lists exercising the sequencer, the shared channels and the
+# hardware model, needing no data; and real sequences and a real wave
+# copied into main RAM from the SDAT, which needs the data root.
 add_executable(test_snd ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_snd.c)
 target_include_directories(test_snd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_snd PRIVATE eidos)
@@ -1407,6 +1335,261 @@ endif()
 add_test(NAME test_pxi COMMAND test_pxi)
 set_tests_properties(test_pxi PROPERTIES TIMEOUT 30)
 
+# --- Firmware settings, the save chip, the firmware flash, MIC and WM -------
+#
+# Both tests compile a set of aletheia's matched sources as test_pxi does
+# (the dsaddr rewrite, the library's own copies left to it).  test_firmware:
+# the owner-info readers, at both widths.  test_backup: the PXI senders at
+# both widths, and on a 32-bit host the CARD, NVRAM, MIC and WM files whose
+# buffer addresses travel as u32 (docs/pointer-width.md).  Each file defines
+# its address spelling and calls its neighbours by their SDK names, so the
+# SDK names are defined to the address names on the test's command line, as
+# for test_snd_matched; the files themselves are untouched.
+set(BW_FIRMWARE_TEST_MATCHED
+    arm9_sdk/func_02087C88.c            # OS_GetOwnerInfo
+    arm9_sdk/func_02087D28.c            # OS_GetOwnerInfoEx
+    arm9_sdk/func_0208A998.c            # TP_GetUserInfo
+)
+set(BW_BACKUP_TEST_MATCHED
+    arm9/func_02088498.c                # PXI_Init
+    arm9_sdk/PXI_SendWordByFifo.c
+    arm9_sdk/PXI_SetFifoRecvCallback.c
+    arm9_sdk/func_020885EC.c            # PXI_IsCallbackReady
+    arm9_sdk/OS_SetIrqFunction.c
+    arm9_sdk/OS_EnableIrqMask.c
+)
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    list(APPEND BW_BACKUP_TEST_MATCHED
+        arm9_sdk/func_020760B4.c        # CARDi_InitCommand
+        arm9_sdk/func_020763BC.c        # CARDi_OnFifoRecv
+        arm9_sdk/func_020763F0.c        # CARDi_Request
+        arm9_sdk/func_02076540.c        # CARDi_RequestStreamCommandCore
+        arm9_sdk/func_02076A20.c        # CARDi_IdentifyBackupCore
+        arm9_sdk/func_02076A70.c        # CARDi_BeginBackupCommand
+        arm9_sdk/func_02076AC0.c        # CARDi_RequestStreamCommand
+        arm9_sdk/func_02076B2C.c        # CARD_IdentifyBackup
+        arm9_sdk/CARDi_IdentifyBackupCore2.c
+        arm9_sdk/func_02076170.c        # CARDi_ExecuteOldTypeTask
+        arm9_sdk/func_02076230.c        # CARDi_WaitForTask
+        arm9_sdk/func_020762A8.c        # CARDi_EndTask
+        arm9_sdk/func_02083644.c        # NVRAMi_Init
+        arm9_sdk/func_02083704.c        # NVRAMi_ReadAsync
+        arm9_sdk/func_02083934.c        # NVRAMi_WriteAsync
+        arm9_sdk/func_02083EB8.c        # NVRAMi_VerifyAsync
+        arm9_sdk/NVRAMi_Callback.c
+        arm9_sdk/NVRAMi_ReadCallback.c
+        arm9_sdk/NVRAMi_WriteCallback.c
+        arm9_sdk/NVRAMi_VerifyCallback.c
+        arm9_sdk/NVRAMi_ReadDataBytes.c
+        arm9_sdk/NVRAMi_PageWrite.c
+        arm9_sdk/NVRAMi_ReadStatusRegister.c
+        arm9_sdk/NVRAMi_WriteEnable.c
+        arm9_sdk/NVRAMi_WriteDisable.c
+        arm9_sdk/NVRAMi_SoftwareReset.c
+        arm9_sdk/NVRAMi_VerifyDataArray.c
+        arm9_sdk/NVRAMi_AlarmHandler.c
+        arm9_sdk/func_0208B24C.c        # MIC_Init
+        arm9_sdk/func_0208B548.c        # MicCommonCallback
+        arm9_sdk/func_0208B650.c        # MicStartAutoSampling
+        arm9_sdk/func_0208B75C.c        # MicStopAutoSampling
+        arm9_sdk/func_0208B2BC.c        # MIC_StartAutoSamplingAsync
+        arm9_sdk/func_0208B424.c        # MIC_StopAutoSamplingAsync
+        arm9_sdk/func_0208E038.c        # WmInitCore
+    )
+    set(_bw_backup_card_matched 1)
+else()
+    set(_bw_backup_card_matched 0)
+endif()
+foreach(_set FIRMWARE BACKUP)
+    set(_originals)
+    foreach(_rel ${BW_${_set}_TEST_MATCHED})
+        set(_src ${ALETHEIA_ROOT}/src/matched/${_rel})
+        if(NOT _src IN_LIST BW_MATCHED_ORIGINALS)
+            list(APPEND _originals ${_src})
+        endif()
+    endforeach()
+    eidos_dsaddr(_bw_${_set}_sources ${_originals})
+    if(NOT MSVC)
+        set_source_files_properties(${_bw_${_set}_sources} PROPERTIES
+            COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
+    else()
+        set_source_files_properties(${_bw_${_set}_sources} PROPERTIES
+            COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS};${EIDOS_MATCHED_PRAGMA_OPTION}")
+    endif()
+endforeach()
+
+add_executable(test_firmware
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_firmware.c
+    ${_bw_FIRMWARE_sources})
+target_include_directories(test_firmware PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_firmware PRIVATE eidos)
+add_test(NAME test_firmware COMMAND test_firmware)
+
+add_executable(test_backup
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_backup.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/backup_doubles.c
+    ${_bw_BACKUP_sources})
+target_include_directories(test_backup PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_definitions(test_backup PRIVATE
+    BW_TEST_CARD_MATCHED=${_bw_backup_card_matched}
+    PXI_Init=func_02088498
+    PXI_IsCallbackReady=func_020885EC
+    CARDi_OnFifoRecv=func_020763BC
+    CARDi_Request=func_020763F0
+    CARDi_RequestStreamCommandCore=func_02076540
+    CARDi_IdentifyBackupCore=func_02076A20
+    CARDi_BeginBackupCommand=func_02076A70
+    CARDi_ExecuteOldTypeTask=func_02076170
+    CARDi_WaitForTask=func_02076230
+    CARDi_EndTask=func_020762A8
+    MicCommonCallback=func_0208B548
+    MicStartAutoSampling=func_0208B650
+    MicStopAutoSampling=func_0208B75C)
+target_link_libraries(test_backup PRIVATE eidos)
+if(_bw_backup_card_matched)
+    # Per file: CARDi_IdentifyBackupCore2 is static in the vendor object
+    # and CARD_IdentifyBackup calls it from another; mic.o's .bss has two
+    # names (see "Two matched files name one DS object"); NVRAMi_WriteCallback
+    # reaches nvramTemp through the section base (tests/backup_doubles.c);
+    # cl.exe has no __attribute__, which one CARD file spells an alignment
+    # with (tests/msvc_no_attribute.h says why dropping it is right).
+    eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/CARDi_IdentifyBackupCore2.c)
+    set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_DEFINITIONS "static=")
+    foreach(_m func_0208B24C func_0208B424)
+        eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/${_m}.c)
+        set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_DEFINITIONS "mic_bss=g_02152FE0")
+    endforeach()
+    eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/NVRAMi_WriteCallback.c)
+    set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_DEFINITIONS "g_02150EA0=(*bw_test_nvram_base)")
+    # Two reports on the style of the vendor source, not on its behaviour:
+    # a switch over the lock state with no case for "off" (NVRAMi_Callback),
+    # and `sizeof(fifoBuf[0]) / sizeof(u16)` read as an element count
+    # (WmInitCore, where it is the halfword count it means).
+    if(NOT MSVC OR EIDOS_CLANG_CL)
+        eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/NVRAMi_Callback.c)
+        set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_OPTIONS "-Wno-switch")
+        eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208E038.c)
+        set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_OPTIONS "-Wno-sizeof-array-div")
+    endif()
+    if(MSVC AND NOT EIDOS_CLANG_CL)
+        eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_02076540.c)
+        set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_OPTIONS
+                     "/FI${CMAKE_CURRENT_SOURCE_DIR}/tests/msvc_no_attribute.h")
+    endif()
+endif()
+add_test(NAME test_backup COMMAND test_backup)
+set_tests_properties(test_backup PROPERTIES TIMEOUT 60)
+
+# --- Input: the keypad, the hinge and the touch panel ------------------------
+#
+# test_input drives sdk/input.c from host state and a script and reads the
+# result back with the game's own per-frame pad update (key.c's
+# func_02035F38, compiled as written), and checks the divider unit
+# (sdk/cp.c) the touch calibration runs on.
+#
+# test_tp drives the touch-panel responder (sdk/arm7/tp.c) from aletheia's
+# matched ARM9 TP library and the game's touch pass.  tp.o's files view its
+# .bss through layouts that agree only with 4-byte pointers (TP_WaitBusy and
+# TP_CheckError at fixed offsets 0x3a and 0x38), so on a 64-bit target only
+# the four calibration files join and the protocol is checked at the FIFO.
+# The PXI files are test_pxi's rewritten copies (the same build directory),
+# or the library's where it has them.
+function(eidos_matched_test_sources out_var)
+    set(_new)
+    set(_all)
+    foreach(_rel ${ARGN})
+        set(_src ${ALETHEIA_ROOT}/src/matched/${_rel})
+        if(_src IN_LIST BW_MATCHED_ORIGINALS)
+            continue()
+        endif()
+        if(_src IN_LIST _bw_pxi_test_originals)
+            eidos_dsaddr_path(_copy ${_src})
+            list(APPEND _all ${_copy})
+        else()
+            list(APPEND _new ${_src})
+        endif()
+    endforeach()
+    eidos_dsaddr(_copies ${_new})
+    if(NOT MSVC)
+        set_source_files_properties(${_copies} PROPERTIES COMPILE_OPTIONS
+            "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
+    else()
+        set_source_files_properties(${_copies} PROPERTIES COMPILE_OPTIONS
+            "${EIDOS_MATCHED_COMPILE_OPTIONS};${EIDOS_MATCHED_PRAGMA_OPTION}")
+    endif()
+    list(APPEND _all ${_copies})
+    set(${out_var} ${_all} PARENT_SCOPE)
+endfunction()
+
+eidos_matched_test_sources(_bw_input_test_sources arm9/func_02035F38.c)
+add_executable(test_input
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_input.c
+    ${_bw_input_test_sources})
+target_include_directories(test_input PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_input PRIVATE eidos)
+add_test(NAME test_input COMMAND test_input)
+set_tests_properties(test_input PROPERTIES TIMEOUT 30)
+
+set(BW_TP_TEST_MATCHED
+    arm9/func_02088498.c                # PXI_Init
+    arm9_sdk/PXI_SendWordByFifo.c
+    arm9_sdk/PXI_SetFifoRecvCallback.c
+    arm9_sdk/func_020885EC.c            # PXI_IsCallbackReady
+    arm9_sdk/func_0208A998.c            # TP_GetUserInfo
+    arm9_sdk/func_0208AA2C.c            # TP_SetCalibrateParam
+    arm9_sdk/func_0208AF18.c            # TP_CalcCalibrateParam
+    arm9_sdk/func_0208B104.c            # TP_GetCalibratedPoint
+)
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    list(APPEND BW_TP_TEST_MATCHED
+        arm9_sdk/func_0208A924.c        # TP_Init
+        arm9_sdk/func_0208AB1C.c        # TP_RequestSamplingAsync
+        arm9_sdk/func_0208ABB8.c        # TP_WaitRawResult
+        arm9_sdk/func_0208AC0C.c        # TP_RequestAutoSamplingStartAsync
+        arm9_sdk/func_0208AD14.c        # TP_RequestAutoSamplingStopAsync
+        arm9_sdk/func_0208ADB4.c        # TP_GetLatestRawPointInAuto
+        arm9_sdk/func_0208AF08.c        # TP_GetLatestIndexInAuto
+        arm9_sdk/func_0208B220.c        # TP_WaitBusy
+        arm9_sdk/func_0208B238.c        # TP_CheckError
+        arm9_sdk/TPi_TpCallback.c
+        arm9/func_020358A0.c)           # the game's touch pass
+    set(_bw_tp_matched 1)
+else()
+    set(_bw_tp_matched 0)
+endif()
+eidos_matched_test_sources(_bw_tp_test_sources ${BW_TP_TEST_MATCHED})
+add_executable(test_tp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tp.c
+    ${_bw_tp_test_sources})
+target_include_directories(test_tp PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_definitions(test_tp PRIVATE BW_TEST_TP_MATCHED=${_bw_tp_matched})
+target_link_libraries(test_tp PRIVATE eidos)
+if(_bw_tp_matched)
+    # TP_WaitBusy and TP_CheckError name tp.o's .bss `tpState`; the rest
+    # name it by address.  One object, two names.
+    eidos_dsaddr_path(_a ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208B220.c)
+    eidos_dsaddr_path(_b ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208B238.c)
+    set_source_files_properties(${_a} ${_b}
+        PROPERTIES COMPILE_DEFINITIONS "tpState=g_02152FA4")
+    if(MSVC)
+        # As written: TPi_TpCallback's raw-sample union holds an anonymous
+        # struct (C11; C4201 at /W4), and the game's touch pass reads `cal`
+        # whose fields the compiler cannot prove written on every path
+        # (C4701).
+        eidos_dsaddr_path(_c ${ALETHEIA_ROOT}/src/matched/arm9_sdk/TPi_TpCallback.c)
+        eidos_dsaddr_path(_d ${ALETHEIA_ROOT}/src/matched/arm9/func_020358A0.c)
+        set_property(SOURCE ${_c} APPEND PROPERTY COMPILE_OPTIONS /wd4201)
+        set_property(SOURCE ${_d} APPEND PROPERTY COMPILE_OPTIONS /wd4701)
+    endif()
+endif()
+add_test(NAME test_tp COMMAND test_tp)
+set_tests_properties(test_tp PROPERTIES TIMEOUT 30)
+
+
 # The OS layer's tests, on the real address space (sdk/dsmem.c) and the
 # port's power-on (bw_port_reset).  test_os_irq also compiles aletheia's
 # matched OS_GetIrqFunction.c as written, the table reader beside the
@@ -1443,6 +1626,31 @@ target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test
 target_link_libraries(test_extract PRIVATE eidos_install)
 add_dependencies(test_extract bw_synth)
 add_test(NAME test_extract COMMAND test_extract ${BW_SYNTH_DIR})
+
+# The data root's location, check, config file, reset and move, and the
+# headless first run, on synthetic trees and the synthetic cartridge.  The
+# test sets its own eidos home, so it never reads or writes the real one;
+# BW_DATA_ROOT is cleared because it outranks everything the test sets up.
+# Not named test_setup: 32-bit Windows treats an executable with "setup"
+# (or "install", "update") in its name as an installer and demands
+# elevation before it will start it (UAC installer detection).
+add_executable(test_dataroot ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dataroot.c)
+target_include_directories(test_dataroot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_dataroot PRIVATE eidos_setup)
+add_dependencies(test_dataroot bw_synth)
+add_test(NAME test_dataroot
+         COMMAND test_dataroot ${BW_SYNTH_DIR} ${CMAKE_CURRENT_BINARY_DIR}/setup_work)
+set_tests_properties(test_dataroot PROPERTIES ENVIRONMENT "BW_DATA_ROOT=;EIDOS_HOME=")
+
+# The native file dialog opened for real and answered by a helper thread
+# (Windows).  It shows a window on the desktop, so it runs only with
+# EIDOS_TEST_DIALOGS=1 and is skipped otherwise.
+add_executable(test_picker ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_picker.c)
+target_include_directories(test_picker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_picker PRIVATE eidos_setup)
+add_test(NAME test_picker
+         COMMAND test_picker ${CMAKE_CURRENT_BINARY_DIR}/picker_work)
+set_tests_properties(test_picker PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
 
 # The extractor on the player's real ROM, named by BW_ROM at test time,
 # checked file for file against the extract/ tree that holds BW_DATA_ROOT
@@ -1590,6 +1798,11 @@ add_test(NAME test_dsaddr
             --cc-id=${_dsaddr_cc_id}
             "--cflags=${CMAKE_C_FLAGS}")
 
+# tools/closure.py's source reader and tools/bootlink.py's #if evaluation
+# and implicit declarations, on synthetic C (no aletheia sources needed).
+add_test(NAME test_closure
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_closure.py)
+
 # ---------------------------------------------------------------------------
 # eidos_view -- the demo, and the first visible output
 # ---------------------------------------------------------------------------
@@ -1604,10 +1817,20 @@ add_test(NAME test_dsaddr
 # ctest checks the picture on a machine with no display and no sound card.
 #
 if(EIDOS_SDL_FOUND)
+    # The first-run setup window (engine/platform/wizard.c) and its bitmap
+    # font, over install/setup.h.  eidos_view finds its data the way the
+    # game will, through eidos_firstrun: --data-root, BW_DATA_ROOT, the
+    # saved setting, the platform default, else this window.
+    add_library(eidos_wizard STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/wizard.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/font.c
+    )
+    target_include_directories(eidos_wizard PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform)
+    target_link_libraries(eidos_wizard PUBLIC eidos_setup eidos_sdl2)
+
     add_executable(eidos_view ${CMAKE_CURRENT_SOURCE_DIR}/demo/eidos_view.c)
-    target_link_libraries(eidos_view PRIVATE eidos_platform)
-    target_compile_definitions(eidos_view PRIVATE
-        EIDOS_DEFAULT_DATA_ROOT="${BW_DATA_ROOT_ABS}")
+    target_link_libraries(eidos_view PRIVATE eidos_platform eidos_wizard)
 
     # SDL2.dll has to sit next to the executable on Windows: there is no
     # installer and nothing on PATH.
@@ -1631,29 +1854,66 @@ if(EIDOS_SDL_FOUND)
     if(NOT EIDOS_DATA_TESTS)
         set_tests_properties(test_view PROPERTIES DISABLED TRUE)
     endif()
+
+    # The platform layer's input tables and window-to-panel mapping, under
+    # the dummy video driver; no game data.
+    add_executable(test_platform_input
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_platform_input.c)
+    target_include_directories(test_platform_input PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_platform_input PRIVATE eidos_platform)
+    if(EIDOS_SDL_RUNTIME)
+        add_custom_command(TARGET test_platform_input POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:test_platform_input>"
+            COMMENT "Copying SDL2.dll next to test_platform_input")
+    endif()
+    add_test(NAME test_platform_input COMMAND test_platform_input)
+    set_tests_properties(test_platform_input PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+
+    # The setup window under the dummy video driver, driven by scripted
+    # events: an archive dropped and refused, a mouse click on "Choose
+    # another file", the synthetic cartridge refused as not the original
+    # game, then installed with the test-only override, Start; Escape and
+    # closing the window.  With BW_ROM set it also installs the real ROM
+    # through a drop, with no override.
+    add_executable(test_wizard ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_wizard.c)
+    target_include_directories(test_wizard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_wizard PRIVATE eidos_wizard)
+    add_dependencies(test_wizard bw_synth eidos_view)
+    add_test(NAME test_wizard
+             COMMAND test_wizard ${BW_SYNTH_DIR} ${CMAKE_CURRENT_BINARY_DIR}/wizard_work)
+    set_tests_properties(test_wizard PROPERTIES TIMEOUT 600
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;BW_DATA_ROOT=;EIDOS_HOME=")
+
+    # The whole first run on the player's real ROM, without a window:
+    # eidos_view --rom makes the data in a scratch eidos home and draws
+    # from it; the next start finds it through the saved setting;
+    # --move-data and --reset-data.  Skipped without BW_ROM.
+    add_test(NAME test_firstrun_rom
+             COMMAND ${CMAKE_COMMAND} -DVIEW=$<TARGET_FILE:eidos_view>
+                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}/firstrun_rom
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/firstrun_rom.cmake)
+    set_tests_properties(test_firstrun_rom PROPERTIES
+        SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 900
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;BW_DATA_ROOT=")
 endif()
 
 # ---------------------------------------------------------------------------
 # eidos_boot -- the game's own ARM9 boot (docs/boot.md)
 # ---------------------------------------------------------------------------
 #
-# demo/eidos_boot.c runs NitroMain (stubs/reimpl_02005124.c) under the frame
-# loop, headless.  It is always built; what it links depends on EIDOS_BOOT:
+# demo/eidos_boot.c runs NitroMain on the OS layer, the frame loop as its
+# halt hook.  It is always built; what it links depends on EIDOS_BOOT:
 #
 #   OFF (default)  only the parts that link today.  The executable reports
 #                  that the boot is not linked and exits 0.
-#   ON             NitroMain, the one unmatched callee it needs
-#                  (stubs/reimpl_02047990.c), and the closure of NitroMain's
-#                  matched callees as tools/closure.py computes it.  This
-#                  needs the boot lanes' shims (sdk/dsmem.c, the OS thread and
-#                  interrupt layer, the ARM7 replies, the overlay loader) and
-#                  does not link until they have landed.
-#
-# The closure is computed once at configure time into the build tree
-# (eidos_boot_closure.txt; delete it to recompute) and compiled into its own
-# static library, minus the sources the eidos library already carries, so
-# nothing is compiled twice.  The seeds are NitroMain's direct matched
-# callees, func_02005328.c (the system initialiser) among them.
+#   ON             NitroMain and the closure of its matched callees, with
+#                  the names, data bindings and stubs tools/bootlink.py and
+#                  tools/armdata.py generate to make it link.
+#                  cmake/boot.cmake has the details, including the one list
+#                  of matched files the port's shims replace.
 option(EIDOS_BOOT
        "Link the game's own boot (NitroMain and its closure) into eidos_boot" OFF)
 
@@ -1663,89 +1923,7 @@ target_compile_definitions(eidos_boot PRIVATE
     EIDOS_DEFAULT_DATA_ROOT="${BW_DATA_ROOT_ABS}")
 
 if(EIDOS_BOOT)
-    set(EIDOS_BOOT_SEEDS
-        arm9/func_02005328.c      # system init
-        arm9/sub_0200545C.c       # gfl_use.c: heaps, system record
-        arm9/unit_020051D8.c      # func_020051D8, func_02005204 (hblank)
-        arm9/func_0200520C.c      # vblank handler
-        arm9/func_0200523C.c      # boot sequence, overlays
-        arm9/func_020053EC.c
-        arm9/func_020055F8.c
-        arm9/func_020052EC.c
-        arm9/unit_0200560C.c      # sub_0200560C
-        arm9/func_02005230.c
-        arm9_sdk/OS_SetIrqFunction.c
-        arm9_sdk/OS_EnableIrqMask.c
-        arm9_sdk/func_0207D3AC.c  # GX_HBlankIntr
-        arm9_sdk/func_0207D3E4.c  # GX_VBlankIntr
-        arm9_sdk/func_0208574C.c  # OS_IsThreadTerminated
-        arm9_sdk/func_02085760.c  # OS_SleepThreadDirect
-        arm9_sdk/func_02085868.c  # OS_WakeupThreadDirect
-        arm9_sdk/func_0208459C.c  # OS_WaitIrq
-    )
-    set(_boot_list ${CMAKE_CURRENT_BINARY_DIR}/eidos_boot_closure.txt)
-    if(NOT EXISTS ${_boot_list})
-        set(_seed_args)
-        foreach(s ${EIDOS_BOOT_SEEDS})
-            list(APPEND _seed_args --seed src/matched/${s})
-        endforeach()
-        message(STATUS "EIDOS_BOOT: computing NitroMain's closure (tools/closure.py)")
-        execute_process(
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/closure.py
-                    --aletheia-root ${ALETHEIA_ROOT} ${_seed_args} --cmake
-            OUTPUT_FILE ${_boot_list}
-            RESULT_VARIABLE _boot_rc)
-        if(NOT _boot_rc EQUAL 0)
-            file(REMOVE ${_boot_list})
-            message(FATAL_ERROR "EIDOS_BOOT: tools/closure.py failed (${_boot_rc})")
-        endif()
-    endif()
-    file(STRINGS ${_boot_list} _boot_lines)
-    set(EIDOS_BOOT_MATCHED)
-    foreach(line ${_boot_lines})
-        string(STRIP "${line}" line)
-        string(REPLACE "\${BW_ROOT}" "${ALETHEIA_ROOT}" line "${line}")
-        if(line)
-            list(APPEND EIDOS_BOOT_MATCHED "${line}")
-        endif()
-    endforeach()
-    if(BW_MATCHED_SOURCES)
-        list(REMOVE_ITEM EIDOS_BOOT_MATCHED ${BW_MATCHED_SOURCES})
-    endif()
-    list(LENGTH EIDOS_BOOT_MATCHED _boot_n)
-    message(STATUS "EIDOS_BOOT: ON, ${_boot_n} matched sources beyond the eidos library")
-
-    add_library(eidos_boot_game STATIC
-        ${EIDOS_BOOT_MATCHED}
-        ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02005124.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02047990.c
-    )
-    target_link_libraries(eidos_boot_game PUBLIC eidos)
-    if(NOT MSVC)
-        set_source_files_properties(${EIDOS_BOOT_MATCHED} PROPERTIES
-            COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
-    else()
-        set_source_files_properties(${EIDOS_BOOT_MATCHED} PROPERTIES
-            COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS}")
-    endif()
-    target_link_libraries(eidos_boot PRIVATE eidos_boot_game)
-    target_compile_definitions(eidos_boot PRIVATE EIDOS_BOOT=1)
-
-    # The ARM9 image's data for everything this build compiles
-    # (docs/armdata.md): the names the boot's matched sources use, bound by
-    # the forced-include header, and the image's pointers relocated.  The
-    # program installs it with bw_data_install(&bw_arm9_data, 0) before its
-    # first bw_ds_reset.
-    file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/eidos_boot_sources.txt
-         CONTENT "$<JOIN:$<TARGET_PROPERTY:eidos,SOURCES>,
->
-$<JOIN:$<TARGET_PROPERTY:eidos_boot_game,SOURCES>,
->
-")
-    eidos_armdata(bw_arm9_data
-        SOURCES_LIST ${CMAKE_CURRENT_BINARY_DIR}/eidos_boot_sources.txt
-        MATCHED ${EIDOS_BOOT_MATCHED})
-    target_sources(eidos_boot_game PRIVATE ${bw_arm9_data_C})
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boot.cmake)
 endif()
 
 # --- Overlays compiled into eidos_boot (docs/overlays.md) --------------------

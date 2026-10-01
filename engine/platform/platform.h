@@ -1,6 +1,7 @@
 /*
  * engine/platform/platform.h -- the host platform layer: the window, the
- * keyboard, the audio device and the frame pacer.
+ * keyboard, gamepads, the mouse as the stylus, the audio device and the
+ * frame pacer.
  *
  * This is the only part of eidos that includes SDL2, and it is the only part
  * that is optional: the engine library, the shim, the stubs and every test
@@ -26,6 +27,10 @@
  *     PAD_* bits), active high here: a set bit means the button is down.
  *     Keeping the hardware's bit order means the matched input code can be
  *     handed this word unchanged when it arrives.
+ *   - Every pump hands the buttons and the stylus to the port's input layer
+ *     (sdk/input.h, bw_input_set_host), which puts them where the game
+ *     reads them at the next frame boundary.  The bindings are tables a
+ *     caller may replace; none is hard-coded outside the default tables.
  */
 
 #ifndef EIDOS_ENGINE_PLATFORM_H
@@ -59,6 +64,7 @@ extern "C" {
 #define EIDOS_PAD_L      0x0200u
 #define EIDOS_PAD_X      0x0400u
 #define EIDOS_PAD_Y      0x0800u
+#define EIDOS_PAD_DEBUG  0x2000u    /* the debug button (DS development units) */
 
 /*
  * One keyboard binding.  `scancode` is an SDL_Scancode value, a physical key
@@ -88,6 +94,38 @@ typedef struct EidosKeyBinding {
  */
 const EidosKeyBinding *eidos_default_keymap(u32 *count);
 
+/*
+ * One gamepad binding, through SDL's game controller API (every pad SDL's
+ * controller database knows, under one positional layout).  `kind` says
+ * what `index` is: an SDL_GameControllerButton, or an SDL_GameControllerAxis
+ * read past half its travel in the positive or the negative direction.
+ * Every open pad is read through the same table; any binding held presses
+ * its button.
+ */
+#define EIDOS_PADBIND_BUTTON   0
+#define EIDOS_PADBIND_AXIS_POS 1
+#define EIDOS_PADBIND_AXIS_NEG 2
+
+typedef struct EidosPadBinding {
+    int kind;
+    int index;
+    u32 button;
+} EidosPadBinding;
+
+/*
+ * The default table.  SDL names a pad's face buttons by position (A south,
+ * B east, X west, Y north; the platform layer asks SDL for positions on
+ * Nintendo pads too), and the defaults keep the DS's own positions: DS A is
+ * east, B south, X north, Y west.
+ *
+ *     A            east (SDL B)       B            south (SDL A)
+ *     X            north (SDL Y)      Y            west (SDL X)
+ *     L, R         the shoulders and the triggers
+ *     START        Start              SELECT       Back
+ *     d-pad        the d-pad and the left stick
+ */
+const EidosPadBinding *eidos_default_padmap(u32 *count);
+
 /* ------------------------------------------------------------------ */
 /* The window                                                          */
 /* ------------------------------------------------------------------ */
@@ -106,6 +144,8 @@ typedef struct EidosPlatformConfig {
     int   audio;             /* non-zero: open the audio device          */
     const EidosKeyBinding *keymap;  /* NULL: eidos_default_keymap()      */
     u32   keymap_count;
+    const EidosPadBinding *padmap;  /* NULL: eidos_default_padmap()      */
+    u32   padmap_count;
 } EidosPlatformConfig;
 
 typedef struct EidosPlatform EidosPlatform;
@@ -121,9 +161,10 @@ int  eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg);
 void eidos_platform_quit(EidosPlatform *p);
 
 /*
- * Drain the event queue and update the button word.  Returns 0 when the
- * application has been asked to quit (the window was closed or Escape was
- * pressed), non-zero to keep running.
+ * Drain the event queue, update the button word and the stylus, and hand
+ * both to the input layer (bw_input_set_host, sdk/input.h).  Returns 0
+ * when the application has been asked to quit (the window was closed or
+ * Escape was pressed), non-zero to keep running.
  */
 int  eidos_platform_pump(EidosPlatform *p);
 
@@ -132,6 +173,30 @@ u32  eidos_platform_buttons(const EidosPlatform *p);
 
 /* The buttons that went down during the last pump (edge-triggered). */
 u32  eidos_platform_buttons_pressed(const EidosPlatform *p);
+
+/*
+ * The stylus: the left mouse button, or a finger (SDL turns touches into
+ * the mouse), on the bottom screen.  A press starts only inside the bottom
+ * screen; a drag that leaves it is held to the nearest edge, as a stylus
+ * cannot leave the panel without being lifted.  Window coordinates are
+ * mapped through the window's current size, so they stay right if the
+ * window is resized.  Returns non-zero while it is down, with the
+ * bottom-screen pixel in *x (0..255) and *y (0..191).
+ */
+int  eidos_platform_touch(const EidosPlatform *p, int *x, int *y);
+
+/*
+ * The mapping eidos_platform_touch uses, exposed for tests: the
+ * bottom-screen pixel under window point (wx, wy) for a window `win_w` x
+ * `win_h` showing this platform's layout.  Returns non-zero when the point
+ * is on the bottom screen; *x and *y are clamped to it either way.
+ */
+int  eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
+                                    int win_h, int wx, int wy,
+                                    int *x, int *y);
+
+/* Gamepads currently open.                                                */
+int  eidos_platform_pads(const EidosPlatform *p);
 
 /* Non-zero once F12 has been pressed since the last call; clears the flag. */
 int  eidos_platform_take_screenshot_request(EidosPlatform *p);

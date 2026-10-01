@@ -70,9 +70,16 @@ is only partly done, it says which part.
   and ARM9 rodata tables; it needs game data to test meaningfully.
 
 - **Milestone 4, 3D gaps**: the texture matrix (`TEXIMAGE_PARAM` bits 30-31)
-  and the toon/highlight polygon modes are unimplemented; lighting registers
-  are parsed but not interpreted. None of these has shown a map model that
-  needs it, so implementing them is speculative until a model is found.
+  is unimplemented, and so are shadow polygons (no matched `POLYGON_ATTR`
+  constant selects them). Lighting, fog, edge marking, anti-aliasing, the
+  rear-plane bitmap and the w-buffer are done on the hardware path; the
+  lighting's fixed point and the anti-aliasing's coverage rule are marked
+  approximations (`engine/g3d/light.c`, `engine/g3d/raster.c`).
+- **Milestone 4, 2D gaps**: bitmap OBJs, BG mode 6, display mode 3 and
+  capture from main memory are flagged, not drawn; the matched code sets
+  none of them as a constant. The 3D alpha blend, mosaic, the display
+  capture and the 6-bit master brightness are done
+  (`engine/g2d/hwcompose.c`).
 - **Milestone 4, per-shape display-list preamble**: each shape's declared
   range opens with a short non-command preamble the loader locates by a
   self-consistency scan. Cracking it removes the heuristic.

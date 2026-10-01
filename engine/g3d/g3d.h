@@ -341,6 +341,45 @@ typedef struct G3dGx {
 
 void g3d_gx_init(G3dGx *gx, G3dGeom *out);
 
+/* ------------------------------------------------------------------ */
+/* Lighting (engine/g3d/light.c)                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The lighting state the hardware keeps: four lights (direction after the
+ * vector matrix, its half vector, colour) and the material (diffuse,
+ * ambient, specular, emission as BGR555, the shininess table and whether
+ * SPE_EMI enables it).  Directions are in 12 fraction bits.
+ */
+typedef struct G3dLight {
+    s32 dir[4][3];
+    s32 half[4][3];
+    u16 color[4];
+    u16 diffuse, ambient, specular, emission;
+    int use_table;
+    u8  shine[128];
+} G3dLight;
+
+void g3d_light_init(G3dLight *l);
+/* LIGHT_VECTOR (0x32), the vector matrix in force when it runs. */
+void g3d_light_vector(G3dLight *l, const G3dMtx *vec, u32 param);
+/* LIGHT_COLOR (0x33). */
+void g3d_light_color(G3dLight *l, u32 param);
+/* DIF_AMB (0x30); returns bit 15: the diffuse colour is also the vertex
+ * colour from now on. */
+int  g3d_light_dif_amb(G3dLight *l, u32 param);
+/* SPE_EMI (0x31). */
+void g3d_light_spe_emi(G3dLight *l, u32 param);
+/* SHININESS (0x34): 32 words, four 8-bit entries each, low byte first. */
+void g3d_light_shininess(G3dLight *l, const u32 par[32]);
+/*
+ * NORMAL (0x21) under the POLYGON_ATTR light bits `light_mask`: the
+ * vertex colour the lighting equation gives, BGR555.  light.c's header has
+ * the equation and its fixed point.
+ */
+u16  g3d_light_normal(const G3dLight *l, const G3dMtx *vec, u32 param,
+                      u32 light_mask);
+
 /* Parameter words opcode `op` takes, or 0xFF for a byte the hardware does
  * not define as a command.  The one table g3d_gx_run decodes with, so the
  * hardware FIFO (engine/g3d/hw3d.c) frames commands exactly as it does. */
@@ -550,12 +589,61 @@ typedef struct G3dTarget {
     u32       alpha_ref;
     const u8 *toon;
     u32       highlight;
+    /*
+     *   wbuffer    1: the depth buffer holds w (SWAP_BUFFERS bit 1), 0: z.
+     *   aa         1: record the coverage of span-end pixels of opaque
+     *              polygons and the colour beneath them, for
+     *              g3d_target_antialias (DISP3DCNT bit 4).
+     */
+    u32       wbuffer;
+    u32       aa;
+
+    /*
+     * Per-pixel attributes beside the colour and the depth, owned and
+     * allocated by g3d_target_init; what the hardware's rear passes (edge
+     * marking, fog, anti-aliasing) read.
+     *   pid    the polygon ID of the opaque polygon last drawn there, or
+     *          the clear plane's.
+     *   pflag  G3D_PIX_* bits.
+     *   cov    an edge pixel's 5-bit coverage (31: full).
+     *   under  R,G,B,A of what was there before an edge pixel was drawn.
+     */
+    u8 *pid;
+    u8 *pflag;
+    u8 *cov;
+    u8 *under;
 } G3dTarget;
+
+#define G3D_PIX_OPAQUE 0x01u   /* an opaque polygon drew this pixel      */
+#define G3D_PIX_FOG    0x02u   /* the fog applies (POLYGON_ATTR bit 15)  */
+#define G3D_PIX_EDGE   0x04u   /* a span end with partial coverage       */
 
 int  g3d_target_init(G3dTarget *t, u32 width, u32 height);
 void g3d_target_free(G3dTarget *t);
-/* Clear to one colour and to the far depth. */
+/* Clear to one colour and to the far depth; polygon IDs 0, no flags. */
 void g3d_target_clear(G3dTarget *t, u8 r, u8 g, u8 b, u8 a);
+
+/*
+ * The three passes the DS 3D engine runs over the finished frame, in the
+ * hardware's order (edge marking, fog, anti-aliasing).  engine/g3d/raster.c
+ * says what each does and which parts are approximations.
+ *
+ * Edge marking: `edge` is the 8 BGR555 EDGE_COLOR entries; the screen
+ * border counts as the clear plane, `clear_id` and `clear_depth`.
+ */
+void g3d_target_edge_mark(G3dTarget *t, const u16 edge[8], u32 clear_id,
+                          s32 clear_depth);
+
+/*
+ * Fog: `table` the 32 FOG_TABLE densities (7 bits), `color` FOG_COLOR's
+ * BGR555 in bits 0-14 and alpha in 16-20, `offset` FOG_OFFSET (15 bits),
+ * `shift` DISP3DCNT bits 8-11, `alpha_only` DISP3DCNT bit 6.
+ */
+void g3d_target_fog(G3dTarget *t, const u8 table[32], u32 color, u32 offset,
+                    u32 shift, int alpha_only);
+
+/* Anti-aliasing: blend the silhouette edge pixels the raster recorded. */
+void g3d_target_antialias(G3dTarget *t);
 
 #define G3D_DEPTH_FAR 0x7FFFFFFF
 
@@ -565,6 +653,9 @@ void g3d_target_clear(G3dTarget *t, u8 r, u8 g, u8 b, u8 a);
 #define G3D_ATTR_FRONT(a)       (((a) >> 7) & 1u)
 #define G3D_ATTR_ALPHA(a)       (((a) >> 16) & 0x1Fu)
 #define G3D_ATTR_ID(a)          (((a) >> 24) & 0x3Fu)
+#define G3D_ATTR_LIGHTS(a)      ((a) & 0xFu)
+#define G3D_ATTR_XLU_DEPTH(a)   (((a) >> 11) & 1u)
+#define G3D_ATTR_FOG(a)         (((a) >> 15) & 1u)
 #define G3D_POLY_MODE_MODULATE  0u
 #define G3D_POLY_MODE_DECAL     1u
 #define G3D_POLY_MODE_TOON      2u

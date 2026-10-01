@@ -11,8 +11,10 @@
  *     hardware rule under test (priority, scroll, OBJ-against-OBJ, flips,
  *     affine OBJ, the windows, the OBJ window, alpha and brightness, the
  *     semi-transparent OBJ, affine, extended and bitmap BGs, extended
- *     palettes, the 3D layer, master brightness, display modes, the screen
- *     swap, the bank mapping).
+ *     palettes, the 3D layer with its alpha and BG0HOFS, master brightness
+ *     in 6 bits, display modes, the screen swap, the bank mapping, BG and
+ *     OBJ mosaic, the display capture with the game's own DISPCAPCNT
+ *     words).
  *
  *   - With game data: the title screen the BG oracle test and eidos_view
  *     use (titledemo.narc 0/1/2) and the species 25 rig pose eidos_view
@@ -238,8 +240,21 @@ static void test_display(void)
     BW_CHECK_EQ("bright down 16 is black", rgb_of(g_top, 0, 0), 0u);
     io16(0x0400006Cu, 0x8000 | 8);
     render(NULL);
-    /* 31 - (31 * 8 >> 4) = 16 */
-    BW_CHECK_EQ("bright down 8", rgb_of(g_top, 0, 0), rgb5(16, 0, 0));
+    /* In the 6-bit stage: red 31 is 63, 63 - (63 * 8 >> 4) = 32, and
+     * 32 * 255 / 63 = 129 (the 5-bit arithmetic gave 16, 131). */
+    BW_CHECK_EQ("bright down 8, 6-bit", rgb_of(g_top, 0, 0), 129u << 16);
+    pal_set(0, 0, 0, (u16)(10u | (20u << 5)));
+    io16(0x0400006Cu, 0x4000 | 5);
+    render(NULL);
+    /* 10 -> 21, 21 + ((63 - 21) * 5 >> 4) = 34, 34 * 255 / 63 = 137;
+     * 20 -> 41, 41 + (22 * 5 >> 4) = 47, 190; 0 -> 0, 0 + (63 * 5 >> 4)
+     * = 19, 76. */
+    BW_CHECK_EQ("bright up 5, 6-bit", rgb_of(g_top, 0, 0),
+                (137u << 16) | (190u << 8) | 76u);
+    io16(0x0400006Cu, 0xC000 | 8);
+    render(NULL);
+    BW_CHECK_EQ("mode 3 does nothing", rgb_of(g_top, 0, 0), rgb5(10, 20, 0));
+    pal_set(0, 0, 0, RED);
     io16(0x0400006Cu, 0);
     io32(0x04001000u, 0x10000u);
     pal_set(1, 0, 0, BLUE);
@@ -256,6 +271,10 @@ static void test_display(void)
     render(NULL);
     BW_CHECK_EQ("VRAM display", rgb_of(g_top, 3, 10), C_GREEN);
     BW_CHECK_EQ("VRAM display zero", rgb_of(g_top, 4, 10), 0u);
+    io16(0x0400006Cu, 0x8000 | 8);
+    render(NULL);
+    /* green 31 -> 63 -> 32 -> 129, as on the graphics screen */
+    BW_CHECK_EQ("VRAM display faded", rgb_of(g_top, 3, 10), 129u << 8);
 }
 
 /* BG0 and BG1, tile 1 and tile 2, char base 0, maps at 0x4000 / 0x4800. */
@@ -643,6 +662,267 @@ static void test_3d(void)
 }
 
 /* ================================================================== */
+/* The 3D layer's alpha and scroll, mosaic, the display capture        */
+/* ================================================================== */
+
+static void test_3d_alpha(void)
+{
+    static u8 g3d[W * H * 4];
+    u32 i;
+
+    for (i = 0; i < W * H; i++) {
+        g3d[i * 4u + 0u] = 10;
+        g3d[i * 4u + 1u] = 20;
+        g3d[i * 4u + 2u] = 30;
+        g3d[i * 4u + 3u] = 255;
+    }
+    g3d[(5u * W + 5u) * 4u + 3u] = 0;             /* (5, 5): nothing drawn */
+    g3d[(7u * W + 7u) * 4u + 0u] = 252;           /* (7, 7): translucent */
+    g3d[(7u * W + 7u) * 4u + 1u] = 0;
+    g3d[(7u * W + 7u) * 4u + 2u] = 0;
+    g3d[(7u * W + 7u) * 4u + 3u] = 123;           /* folds to alpha 15 */
+
+    reset();
+    tile4(0x06000000u + 32u, 1);
+    pal_set(0, 0, 0, BLUE);
+    pal_set(0, 0, 1, RED);
+    map_fill(0x06004800u, 0x0001);                /* BG1 red everywhere */
+    io16(0x04000008u, 0);                         /* BG0 (3D) priority 0 */
+    io16(0x0400000Au, (u16)((9u << 8) | 1u));     /* BG1 priority 1 */
+    io32(0x04000000u, 0x10000u | 0x8u | 0x0300u);
+    render(g3d);
+    BW_CHECK_EQ("3D in front", rgb_of(g_top, 6, 5), 0x0A141Eu);
+    BW_CHECK_EQ("3D alpha 0 shows BG1", rgb_of(g_top, 5, 5), C_RED);
+    BW_CHECK_EQ("translucent, no second target: as drawn",
+                rgb_of(g_top, 7, 7), 0xFC0000u);
+
+    /*
+     * BG1 a second target: the 3D pixel blends by its own alpha 15.
+     * 6-bit: 3D red 252 -> 62, BG1 red 31 -> 63;
+     * (62 * (15 + 1) + 63 * (31 - 15)) / 32 = 2000 / 32 = 62, and
+     * 62 * 255 / 63 = 250.  The opaque pixels are unchanged.
+     */
+    io16(0x04000050u, 0x0200u);
+    render(g3d);
+    BW_CHECK_EQ("3D alpha blend with BG1", rgb_of(g_top, 7, 7), 250u << 16);
+    BW_CHECK_EQ("opaque 3D unchanged", rgb_of(g_top, 6, 5), 0x0A141Eu);
+    io16(0x04000050u, 0);
+
+    /* BG0HOFS 3: screen x 2 is column 5, the transparent pixel. */
+    io16(0x04000010u, 3);
+    render(g3d);
+    BW_CHECK_EQ("BG0HOFS: x 2 shows column 5", rgb_of(g_top, 2, 5), C_RED);
+    BW_CHECK_EQ("BG0HOFS: x 5 shows column 8", rgb_of(g_top, 5, 5), 0x0A141Eu);
+    BW_CHECK_EQ("BG0HOFS: column 256 and on is empty",
+                rgb_of(g_top, 253, 5), C_RED);
+    io16(0x04000010u, 0);
+
+    /* The mosaic bit on the 3D BG0 is ignored and flagged. */
+    io16(0x04000008u, 0x40u);
+    io8(0x0400004Cu, 0x33);
+    render(g3d);
+    BW_CHECK_EQ("3D BG0 mosaic flagged", g_flags[0] & G2D_HW_UNSUP_MOSAIC,
+                G2D_HW_UNSUP_MOSAIC);
+    BW_CHECK_EQ("3D BG0 not mosaicked", rgb_of(g_top, 5, 5), C_RED);
+}
+
+/* A 4bpp tile: row 0 alternates indices 1 and 2, every other row is 3. */
+static void tile_rows(u32 addr)
+{
+    u32 r;
+
+    vram_fill(addr, 0x21, 4);
+    for (r = 1; r < 8u; r++) {
+        vram_fill(addr + r * 4u, 0x33, 4);
+    }
+}
+
+static void test_mosaic(void)
+{
+    reset();
+    tile_rows(0x06000000u + 32u);
+    pal_set(0, 0, 0, BLUE);
+    pal_set(0, 0, 1, RED);
+    pal_set(0, 0, 2, GREEN);
+    pal_set(0, 0, 3, YELLOW);
+    vram16(0x06004000u, 0x0001);                  /* BG0 (0,0): tile 1 */
+    io16(0x04000008u, (u16)(8u << 8));
+    io32(0x04000000u, 0x10000u | 0x0100u);
+    render(NULL);
+    BW_CHECK_EQ("no mosaic: x 1 is index 2", rgb_of(g_top, 1, 0), C_GREEN);
+    BW_CHECK_EQ("no mosaic: row 2 is index 3", rgb_of(g_top, 0, 2), C_YELLOW);
+
+    /* H 2, V 4: (x, y) shows (x - x % 2, y - y % 4). */
+    io16(0x04000008u, (u16)((8u << 8) | 0x40u));
+    io8(0x0400004Cu, 0x31);
+    render(NULL);
+    BW_CHECK_EQ("mosaic: (1,0) shows (0,0)", rgb_of(g_top, 1, 0), C_RED);
+    BW_CHECK_EQ("mosaic: (1,3) shows (0,0)", rgb_of(g_top, 1, 3), C_RED);
+    BW_CHECK_EQ("mosaic: (3,0) shows (2,0)", rgb_of(g_top, 3, 0), C_RED);
+    BW_CHECK_EQ("mosaic: (3,5) shows (2,4)", rgb_of(g_top, 3, 5), C_YELLOW);
+    BW_CHECK_EQ("mosaic: (9,0) shows (8,0), empty", rgb_of(g_top, 9, 0), C_BLUE);
+    BW_CHECK_EQ("mosaic layer keeps no flag", g_flags[0] & G2D_HW_UNSUP_MOSAIC, 0u);
+
+    /* The size register at 0 (1x1) changes nothing. */
+    io8(0x0400004Cu, 0x00);
+    render(NULL);
+    BW_CHECK_EQ("mosaic 1x1: x 1 is index 2", rgb_of(g_top, 1, 0), C_GREEN);
+
+    /* A bitmap BG (an existing raster) through the same grid: 4 x 4. */
+    reset();
+    pal_set(0, 0, 0, BLUE);
+    pal_set(0, 0, 9, YELLOW);
+    vram_fill(0x06008000u + 4u * 256u + 8u, 9, 1);
+    io16(0x0400000Cu, (u16)(0x80u | 0x40u | (2u << 8) | (1u << 14)));
+    io16(0x04000020u, 256);
+    io16(0x04000026u, 256);
+    io8(0x0400004Cu, 0x33);
+    io32(0x04000000u, 0x10000u | 5u | 0x0400u);
+    render(NULL);
+    BW_CHECK_EQ("bitmap mosaic: (11,7) shows (8,4)", rgb_of(g_top, 11, 7), C_YELLOW);
+    BW_CHECK_EQ("bitmap mosaic: (12,7) shows (12,4)", rgb_of(g_top, 12, 7), C_BLUE);
+
+    /*
+     * OBJ mosaic, H 2 and V 4 in MOSAIC's high byte, an 8x8 OBJ at x 1:
+     * screen x 1 is OBJ column 0 (the grid cell starts at x 0, left of the
+     * OBJ: its first column is repeated), x 2 and 3 are column 1, x 4 and
+     * 5 column 3; screen row 2 is OBJ row 0.
+     */
+    reset();
+    tile_rows(0x06400000u + 32u);
+    pal_set(0, 0, 0, BLUE);
+    pal_set(0, 1, 1, RED);
+    pal_set(0, 1, 2, GREEN);
+    pal_set(0, 1, 3, YELLOW);
+    oam_set(0, 0, (u16)(0x1000u | 0u), 1u, 1u);
+    io8(0x0400004Du, 0x31);
+    io32(0x04000000u, 0x10000u | 0x1000u);
+    render(NULL);
+    BW_CHECK_EQ("OBJ mosaic: x 1", rgb_of(g_top, 1, 0), C_RED);
+    BW_CHECK_EQ("OBJ mosaic: x 2", rgb_of(g_top, 2, 0), C_GREEN);
+    BW_CHECK_EQ("OBJ mosaic: x 3", rgb_of(g_top, 3, 0), C_GREEN);
+    BW_CHECK_EQ("OBJ mosaic: x 4", rgb_of(g_top, 4, 0), C_GREEN);
+    BW_CHECK_EQ("OBJ mosaic: row 2 is row 0", rgb_of(g_top, 2, 2), C_GREEN);
+    BW_CHECK_EQ("OBJ mosaic: row 4 is row 4", rgb_of(g_top, 2, 4), C_YELLOW);
+    oam_set(0, 0, 0u, 1u, 1u);
+    render(NULL);
+    BW_CHECK_EQ("OBJ without the bit: x 2 is column 1",
+                rgb_of(g_top, 2, 0), C_GREEN);
+    BW_CHECK_EQ("OBJ without the bit: x 3 is column 2",
+                rgb_of(g_top, 3, 0), C_RED);
+}
+
+static u16 bank16(const u8 *bank, u32 ofs)
+{
+    return bw_rd16(bank + ofs);
+}
+
+static void test_capture(void)
+{
+    static u8 g3d[W * H * 4];
+    u8 *bank_c = bw_vram_bank(BW_VRAM_C, NULL);
+    u8 *bank_d = bw_vram_bank(BW_VRAM_D, NULL);
+    u32 i;
+
+    for (i = 0; i < W * H; i++) {
+        g3d[i * 4u + 0u] = 10;
+        g3d[i * 4u + 1u] = 20;
+        g3d[i * 4u + 2u] = 30;
+        g3d[i * 4u + 3u] = 255;
+    }
+    g3d[3] = 0;                                    /* (0, 0) transparent */
+
+    /*
+     * The game's own word, 0x80330010 (func_0204EAD4): source A the
+     * graphics screen, 256x192 into bank D at 0, EVA 16.  The backdrop is
+     * red and the main screen is faded to black: the capture is taken
+     * before the master brightness.
+     */
+    reset();
+    io8(0x04000243u, 0x80);                        /* D in LCDC mode */
+    pal_set(0, 0, 0, RED);
+    io32(0x04000000u, 0x10000u);
+    io16(0x0400006Cu, 0x8000 | 16);
+    io32(0x04000064u, 0x80330010u);
+    render(NULL);
+    BW_CHECK_EQ("screen faded to black", rgb_of(g_top, 0, 0), 0u);
+    BW_CHECK_EQ("captured red with alpha", bank16(bank_d, 0), 0x801Fu);
+    BW_CHECK_EQ("captured last pixel", bank16(bank_d, (191u * 256u + 255u) * 2u),
+                0x801Fu);
+    BW_CHECK_EQ("past 256x192 untouched", bank16(bank_d, 192u * 256u * 2u), 0u);
+    BW_CHECK_EQ("enable bit cleared", bw_io_read32(0x04000064u), 0x00330010u);
+
+    /* The bit is clear now: the next frame captures nothing. */
+    pal_set(0, 0, 0, GREEN);
+    render(NULL);
+    BW_CHECK_EQ("no capture once cleared", bank16(bank_d, 0), 0x801Fu);
+
+    /* A destination bank not in LCDC mode is not written. */
+    io8(0x04000243u, 0x84);
+    io32(0x04000064u, 0x80330010u);
+    render(NULL);
+    io8(0x04000243u, 0x80);
+    BW_CHECK_EQ("bank D mapped elsewhere: not captured", bank16(bank_d, 0),
+                0x801Fu);
+
+    /* The graphics screen while the display shows VRAM (mode 2, bank C). */
+    io8(0x04000242u, 0x80);
+    io32(0x04000000u, 0x20000u | (2u << 18));
+    io16(0x0400006Cu, 0);
+    io32(0x04000064u, 0x80330010u);
+    render(NULL);
+    BW_CHECK_EQ("graphics captured under a VRAM display", bank16(bank_d, 0),
+                0x83E0u);
+
+    /*
+     * The game's 0x81330010 (func_021C2784): source A the 3D frame alone.
+     * (0, 0) has alpha 0: colour 0, alpha bit 0.  Elsewhere 10, 20, 30 fold
+     * to 6-bit 2, 5, 7 and halve to 1, 2, 3.
+     */
+    io32(0x04000000u, 0x10000u | 0x8u | 0x0100u);
+    io32(0x04000064u, 0x81330010u);
+    render(g3d);
+    BW_CHECK_EQ("3D capture: alpha 0", bank16(bank_d, 0), 0u);
+    BW_CHECK_EQ("3D capture: a pixel", bank16(bank_d, 2u),
+                0x8000u | 1u | (2u << 5) | (3u << 10));
+
+    /*
+     * Blend, 128x128 into D at 32 KiB, source B bank C (DISPCNT bits 18-19)
+     * from 32 KiB: (A * Aa * 8 + B * Ba * 8) / 16 per channel.
+     *   pixel 0:   A red, B blue with alpha  -> 15, 0, 15, alpha
+     *   pixel 1:   A red, B red without alpha -> 15, 0, 0, alpha
+     *   pixel 128: A red, B green with alpha  -> 15, 15, 0 (row 1: the
+     *              128-wide stream, at D + 32 KiB + 256)
+     */
+    io32(0x04000000u, 0x10000u | (2u << 18));
+    pal_set(0, 0, 0, RED);
+    bw_wr16(bank_c + 0x8000u, 0x8000u | BLUE);
+    bw_wr16(bank_c + 0x8002u, RED);
+    bw_wr16(bank_c + 0x8000u + 256u, 0x8000u | GREEN);
+    io32(0x04000064u, 0x80000000u | (2u << 29) | (1u << 26) | (0u << 20)
+                      | (3u << 16) | (1u << 18) | (8u << 8) | 8u);
+    render(NULL);
+    BW_CHECK_EQ("blend pixel 0", bank16(bank_d, 0x8000u),
+                0x8000u | 15u | (15u << 10));
+    BW_CHECK_EQ("blend pixel 1, B alpha 0", bank16(bank_d, 0x8002u),
+                0x8000u | 15u);
+    BW_CHECK_EQ("blend pixel 128", bank16(bank_d, 0x8000u + 256u),
+                0x8000u | 15u | (15u << 5));
+
+    /* Source B alone is copied as it is, alpha bit included. */
+    io32(0x04000064u, 0x80000000u | (1u << 29) | (1u << 26) | (3u << 16));
+    render(NULL);
+    BW_CHECK_EQ("source B copied", bank16(bank_d, 2u), RED);
+
+    /* Source B from the main memory FIFO: flagged, read as 0. */
+    io32(0x04000064u, 0x80000000u | (1u << 29) | (1u << 25) | (3u << 16));
+    render(NULL);
+    BW_CHECK_EQ("FIFO source flagged", g_flags[0] & G2D_HW_UNSUP_CAPTURE_FIFO,
+                G2D_HW_UNSUP_CAPTURE_FIFO);
+    BW_CHECK_EQ("FIFO source reads 0", bank16(bank_d, 2u), 0u);
+}
+
+/* ================================================================== */
 /* Against the asset path, with game data                              */
 /* ================================================================== */
 
@@ -977,6 +1257,9 @@ int main(int argc, char **argv)
     test_affine_bg();
     test_extpal();
     test_3d();
+    test_3d_alpha();
+    test_mosaic();
+    test_capture();
     if (test_against_assets() != 0) {
         BW_REPORT("test_hwcompose");
     }

@@ -2,12 +2,12 @@
 
 eidos ships no game data. On first run the player gives it their own dump of
 Pokemon Black and the installer turns it into the data root the engine reads.
-This document has two halves: what exists and is verified (the extractor core
-in `install/` and its command-line front end `eidos_extract`), and the design
-of the per-platform first-run wizard that will wrap it on Windows, macOS,
-Linux, Android and iOS.
+This document has two halves: the extractor core in `install/` and its
+command-line front end `eidos_extract`, and first run: where the data root
+lives on each platform, how the engine decides it is playable, and the
+setup window that asks for the ROM when it is not.
 
-## What exists
+## The extractor core
 
 `install/` is plain C99 and the standard library, plus one small file of
 operating-system calls (`install/fsutil.c`, Win32 and POSIX behind one
@@ -119,7 +119,7 @@ folder left by a killed process is recognised by its marker or manifest and
 removed on the next run; one that is not recognisably eidos's is refused,
 never deleted.
 
-### Paths and progress
+### Paths, progress and cancelling
 
 Paths are UTF-8 everywhere. On Windows they are converted to UTF-16 for the
 wide API, and long ones are made absolute with the `\\?\` prefix so the
@@ -130,13 +130,14 @@ on files that have just been written. Removal never follows a link or
 junction.
 
 Progress is a callback: bytes for the hash (`what` = "hashing"), KiB for
-the extraction with the file just written.
+the extraction with the file just written. The callback returns 0 to go
+on; anything else stops the hash or the extraction at the next block or
+file, and the call returns `BW_CANCELLED` (-2) with nothing left behind
+(the staging folder is removed as on any error). `bw_free_space_utf8`
+gives the free bytes on the volume that holds, or would hold, a path.
 
 ### Not done in the core yet
 
-- Cancellation: the progress callback returns nothing; a wizard needs it to
-  return "stop" (the staging cleanup already makes stopping safe).
-- A free-space check before extracting (about 210 MB are written).
 - Reading the image from an open descriptor rather than a path, for
   Android's content URIs (see below).
 - Per-file hashes in the manifest, so the engine can verify its data
@@ -144,29 +145,79 @@ the extraction with the file just written.
 - White, other regions, other revisions: one line each in the known-dump
   table once the port supports them.
 
-## The first-run wizard (design)
+## First run
 
-One flow on every platform; only the file picker, the data location and the
-window around it differ.
+Built on top of the core, in two layers:
 
-1. **Welcome**: one screen saying eidos needs the player's own Pokemon Black
-   ROM, what a ROM is, and that nothing is downloaded.
-2. **Pick the ROM**: the platform's file picker, filtered to `.nds` but not
-   restricted to it (dumps arrive with other extensions). Desktop also
-   accepts drag and drop onto the window and a `--rom <path>` argument. The
-   wizard never scans the disk for ROMs.
-3. **Identify**: `bw_rom_identify` with a progress bar ("Checking your
-   ROM"), then `bw_rom_verdict`. On `OK`, continue; otherwise show the
-   verdict's message with one button, "Choose another file". The wizard
-   offers no override: `--any` stays a command-line tool for developers.
-4. **Extract**: free-space check, then `bw_rom_extract` into the data root
-   with a progress bar and a Cancel button, passing the hash from step 3.
-5. **Done**: start the game.
+| File | What it is |
+|---|---|
+| `install/setup.c`, `setup.h` | where the data root lives, whether it is playable, the config file, `--rom`, `--reset-data`, `--move-data`, the headless answer. No SDL |
+| `install/location.c` | the operating-system half: the known folder, the executable's folder, the environment and command line as UTF-8 |
+| `install/picker.c`, `picker.h`, `picker_mac.m` | the platform's own file dialog. No SDL |
+| `engine/platform/wizard.c`, `wizard.h` | the setup window (SDL) and `eidos_firstrun`, the one call a front end makes |
+| `engine/platform/font.c` | the window's 5 x 7 bitmap font, drawn for eidos (printable ASCII; Latin-1 letters shown as their base letter, anything else as a box) |
 
-The ROM itself is never copied. Desktop builds remember its path in the
-config file, so a later installer version that changes the layout can
-re-extract without asking (if the file is still there and still hashes the
-same); mobile builds read it once.
+A front end passes its arguments through `bw_setup_parse_arg`, then calls
+`eidos_firstrun`, which either hands back the data folder to pass to
+`bw_set_data_root` or says to exit. `demo/eidos_view` does exactly this,
+so it now starts the way the game will.
+
+### The flow
+
+1. **Resolve** (`bw_setup_resolve`): `--data-root`, then `BW_DATA_ROOT`,
+   then the folder saved in the config file, then the platform default.
+   A path given either way may name the extraction folder (the one with
+   `eidos_manifest.json` and `data/`) or its `data/` folder (what
+   `BW_DATA_ROOT` has always named).
+2. **Check** (`bw_setup_check`): playable when the manifest names this
+   installer version and the known good dump, and `data/a` and
+   `arm9_dec.bin` are there. A folder named explicitly (`--data-root`,
+   `BW_DATA_ROOT`) is trusted: the NitroFS tree being there is enough, so
+   aletheia's own `extract/` (no eidos manifest) and an `--any` extraction
+   both run. The states and their sentences for the player: missing (or an
+   empty folder), incomplete (someone else's files, or no finished
+   extraction), made by another installer version, made from another image,
+   files missing.
+3. **Act** (`bw_setup_prepare`): `--reset-data` and `--move-data` run and
+   exit; `--rom <file>` installs without a window (progress on stderr) and
+   continues; an older installer's extraction is made again from the
+   remembered ROM when there is no window. Otherwise, when the data is not
+   playable: with `--no-window` it prints where it looked, why, and the
+   `--rom` / `eidos_extract` commands that would fill it, and fails; with a
+   window, the wizard opens on that folder.
+4. **The wizard** (`eidos_wizard_run`), one SDL window, 512 x 320 shown at
+   an integer scale (the largest of 1 to 3 that fits the screen):
+   - *Welcome*: what is needed and why (a ROM, nothing downloaded, the ROM
+     not copied), where the data will go, "Choose ROM file..." and Quit;
+     dropping the file on the window does the same. When setup opened
+     because of something other than missing data, the reason comes
+     first.
+   - *Checking your ROM*, then *Writing the game data*: a progress bar
+     driven by the worker thread and a Cancel button (Escape).
+   - *Refused*, with a headline per case and the core's message under it:
+     "This file cannot be used" (an archive, too small, too large),
+     "This is not a DS game", "This is a different game", "Not supported
+     yet" (White, another region), "This dump is damaged", "Not the
+     original game" (modified, patched or another revision; both hashes
+     shown), "Not enough free space", "The game data could not be
+     written", "Cancelled". One button: "Choose another file...".
+   - *Ready to play*: where the data is, which ROM it came from; Start.
+   Every button has a key: Enter (the focused button), Escape (quit or
+   cancel), Tab or the arrows (move focus), O (choose a file). The mouse
+   highlights and clicks. There is no override for an unsupported image in
+   the window (`eidos_extract --any` stays a developer tool).
+5. **Remember**: the extraction folder and the ROM's path go into the
+   config file (not when the folder came from `BW_DATA_ROOT`, which is a
+   developer's setting), and the data root is checked again before the
+   game starts.
+
+The check, the free space test (the ROM's size plus 16 MB, an upper
+bound: the extraction is about 80 percent of the ROM) and the extraction
+(replacing an eidos extraction of another image, since the player chose
+this ROM for this folder) are `bw_setup_install`, shared by `--rom`, the
+wizard and `--move-data`. A trimmed dump's extraction records the hash of
+the whole dump it was cut from (`bw_setup_identity`), so the check
+recognises it as the known dump.
 
 ### Where the data goes
 
@@ -174,59 +225,132 @@ The data root is the extraction folder (`data/` inside it is what the engine
 opens as `BW_DATA_ROOT`). It is re-derivable from the ROM, so it goes where
 an operating system keeps large local application data, never in a roaming,
 synced or backed-up location, and never in a cache directory the system may
-purge.
+purge. The eidos home folder holds `extract/` and `config.txt`; the mod
+overlay root (see "The file layer" in the README) is meant to sit beside
+them as `mods/`.
 
-| Platform | Data root | Notes |
+| Platform | eidos home (`bw_os_app_home`) | Notes |
 |---|---|---|
-| Windows | `%LOCALAPPDATA%\eidos\extract` | `SHGetKnownFolderPath(FOLDERID_LocalAppData)`; Local, not Roaming, so 210 MB do not roam. A `portable.txt` beside the executable switches to `<exe dir>\extract` for USB-stick installs |
-| macOS | `~/Library/Application Support/eidos/extract` | `NSApplicationSupportDirectory`; inside the app container when sandboxed, which the same call returns |
-| Linux | `$XDG_DATA_HOME/eidos/extract` (default `~/.local/share/eidos/extract`) | Flatpak and Snap set `XDG_DATA_HOME` to their own per-app folder, so the same rule holds |
-| Android | `Context.getFilesDir()/eidos/extract` | app-private internal storage: no permission needed, removed with the app; not shared storage, which scoped storage makes slow and permission-bound |
-| iOS | `Library/Application Support/eidos/extract` in the app container | marked `NSURLIsExcludedFromBackupKey`, since it is re-derivable and large |
+| Windows | `%LOCALAPPDATA%\eidos` | `SHGetKnownFolderPath(FOLDERID_LocalAppData)`; Local, not Roaming, so 210 MB do not roam |
+| macOS | `~/Library/Application Support/eidos` | from `HOME`, which is the app container when sandboxed, so this is what `NSApplicationSupportDirectory` returns there too |
+| Linux | `$XDG_DATA_HOME/eidos` (default `~/.local/share/eidos`) | a relative `XDG_DATA_HOME` is ignored, as the spec says; Flatpak and Snap set it to their own per-app folder |
+| Android | `Context.getFilesDir()/eidos` | app-private internal storage; `eidos_firstrun` sets it from `SDL_AndroidGetInternalStoragePath` through `bw_setup_set_home` |
+| iOS | `Library/Application Support/eidos` in the app container | same code as macOS (`HOME` is the container); marking it `NSURLIsExcludedFromBackupKey` is still to do |
 
-The engine's resolution order is: `--data <dir>` on the command line, then
-the `BW_DATA_ROOT` environment variable (what the tests and developers use),
-then the path saved in the config file, then the platform default above.
-The mod overlay root (see "The file layer" in the README) is a separate
-folder beside it, `.../eidos/mods`.
+Before the platform default come, in order: a folder a front end set with
+`bw_setup_set_home`, the `EIDOS_HOME` environment variable (the tests use
+it, so they never touch the player's real folder), and **portable mode**:
+a `portable.txt` beside the executable makes the executable's folder the
+home, for a USB stick (Windows, Linux through `/proc/self/exe`, macOS
+through `_NSGetExecutablePath`).
+
+The config file is two `key=value` lines, `data_root=` and `rom=`, written
+to a temporary file and renamed into place. It is kept in the home folder
+on every platform, Linux included: it holds only machine-local paths,
+which the XDG rules put with data and state, not with configuration.
+
+### Resetting and moving
+
+- `--reset-data` deletes the extraction at the resolved folder and clears
+  the saved setting; the next start asks for the ROM again. Only an eidos
+  extraction (it has `eidos_manifest.json`), an empty folder, or the
+  installer's own leftovers (`.partial` with its marker, `.old`) are
+  deleted; a folder with anything else in it is refused and left alone.
+- `--move-data <folder>` moves the extraction to a new or empty folder
+  and saves the new place. On one volume it is a rename; across volumes
+  the extraction is made again there from the remembered ROM, and the old
+  one is deleted afterwards. Without a remembered ROM it says to use
+  `--rom <ROM> --data-root <folder>` instead.
+
+Both exit when done. The window has no buttons for them yet.
+
+### Where the saves go
+
+The player's own files are the opposite of the data root: small, not
+re-derivable, worth backing up and worth following the player to another
+machine. They go where the operating system keeps per-user application
+data that is backed up (roaming on Windows), never beside the data root and
+never in a cache.
+
+| Platform | Save folder | Notes |
+|---|---|---|
+| Windows | `%APPDATA%\eidos\saves` | Roaming: a few hundred KiB that should follow the player. `portable.txt` beside the executable switches to `<exe dir>\saves`, as for the data root |
+| macOS | `~/Library/Application Support/eidos/saves` | inside the app container when sandboxed |
+| Linux | `$XDG_DATA_HOME/eidos/saves` (default `~/.local/share/eidos/saves`) | |
+| Android | `Context.getFilesDir()/eidos/saves` | app-private; the front end passes it to `bw_set_save_dir`, because only the Java side knows it |
+| iOS | `Library/Application Support/eidos/saves` in the app container | backed up (not excluded, unlike the data root); set by the front end through `bw_set_save_dir` |
+
+Resolution order (`sdk/save.h`): `bw_set_save_dir` (a front end, a
+`--save-dir` option, the tests), then the `BW_SAVE_DIR` environment
+variable, then the platform default above. With none (a mobile build whose
+front end has not set it yet) the game runs on in-memory state and says so.
+
+The folder holds three files, each written whole to a sibling `.tmp`,
+synced and swapped in, so a crash leaves the old file or the new one:
+
+| File | What | Written |
+|---|---|---|
+| `pokeblack.sav` | the cartridge's 512 KiB backup flash, a raw image (the format emulators use; a DeSmuME `.dsv` trailer is ignored on load) | one second after the game's last write, at power-off, at exit |
+| `firmware.bin` | the console's 256 KiB firmware flash (header, user settings, Wi-Fi settings) | at the end of each firmware write |
+| `firmware.ini` | the console's user settings, human-editable (`docs/firmware.md`) | only when asked for (`bw_firmware_write_default`); the port only reads it |
 
 ### Picking the ROM, per platform
 
-| Platform | Picker | What the core receives |
+SDL2 has no file dialog, so `install/picker.c` calls each platform's own,
+behind `bw_pick_rom` (filtered to `.nds`, with "All files" offered, since
+dumps arrive with other extensions). Every platform also takes the file
+dropped on the window (`SDL_DROPFILE`) and `--rom`, so a missing dialog is
+a message, never a dead end.
+
+| Platform | Picker | State |
 |---|---|---|
-| Windows | `IFileOpenDialog` | a UTF-16 path, converted to UTF-8 |
-| macOS | `NSOpenPanel` (security-scoped when sandboxed) | a UTF-8 path, while the scope is open |
-| Linux | the XDG desktop portal's file chooser (`org.freedesktop.portal.FileChooser`), falling back to GTK's `GtkFileChooserNative` | a path (under Flatpak a `/run/user/.../doc/` path the portal grants) |
-| Android | Storage Access Framework, `ACTION_OPEN_DOCUMENT` | a `content://` URI with no path: the front end opens it with `ContentResolver.openFileDescriptor`, and the core needs an entry point taking an open `FILE *` or descriptor (`fdopen` of the detached fd); planned |
-| iOS | `UIDocumentPickerViewController` (open in place) | a security-scoped URL; between `startAccessingSecurityScopedResource` and `stop...` its path opens with `fopen` |
+| Windows | `IFileOpenDialog` (COM), falling back to `GetOpenFileNameW`; a UTF-16 path converted to UTF-8 | built; `test_picker` opens it for real and answers it (below) |
+| macOS | `NSOpenPanel` in `install/picker_mac.m`, compiled only on Apple (`enable_language(OBJC)`), not restricted to `.nds`; a sandboxed app keeps read access to the chosen file for the life of the process | written, not compiled here (no macOS SDK on this machine) |
+| Linux | the XDG desktop portal's `FileChooser.OpenFile` over D-Bus, through `libdbus-1` loaded with `dlopen` (neither the build nor a machine without D-Bus needs it; the request path is predicted from the bus name and a handle token so the Response match is in place before the call), then `zenity`, then `kdialog` | written; syntax-checked against stand-in headers, not run |
+| Android | Storage Access Framework, `ACTION_OPEN_DOCUMENT` | deferred: `bw_pick_rom` says unavailable. The plan: the Java side starts the intent, takes the `content://` URI, opens it with `ContentResolver.openFileDescriptor`, and hands the detached fd to a core entry point that reads from an open `FILE *` (`fdopen`), which is the one core change it needs |
+| iOS | `UIDocumentPickerViewController` (open in place) | deferred, as Android: the picker returns a security-scoped URL; between `startAccessingSecurityScopedResource` and `stop...` its path opens with `fopen`, so no core change is needed, only the Objective-C picker beside `picker_mac.m` |
 
-The port is on SDL2 today, which has no file dialog; SDL 3's
-`SDL_ShowOpenFileDialog` covers Windows, macOS and Linux with one call and
-returns UTF-8 paths, so the desktop wizard can be one SDL screen once the
-platform layer moves to SDL 3 (until then, the three native calls in the
-table behind one small shim). Android and iOS need their native pickers
-through that shim either way.
+SDL 3's `SDL_ShowOpenFileDialog` covers Windows, macOS and Linux with one
+call; when the platform layer moves to SDL 3 it can replace the three
+desktop branches.
 
-### When the data is missing
+### When the data is missing during play
 
-At start-up, before the game's own boot, the engine checks the data root:
-`eidos_manifest.json` present, its `version` equal to the engine's
-`BW_INSTALL_VERSION`, and the files it opens first present
-(`bw_data_exists`).
+A file missing during play (deleted by hand, a failing disk) should stop
+with a message naming the file and telling the player to run setup again
+(`--reset-data`, then start), not crash inside the game's code; that is
+the file layer's job and not built yet. The wizard writes only into the
+data root (through the staged rename) and the config file; the player's
+saves live elsewhere and are never touched by an installation, a reset or
+a move.
 
-- **No data root, or no manifest**: a build with a window opens the wizard;
-  a headless build (tests, servers, `--no-window`) prints where it looked
-  and the `eidos_extract` command that would fill it, and exits with a
-  non-zero status. The engine never starts the game on partial data.
-- **An older installer's extraction**: re-extract from the remembered ROM
-  path if it is still there and hashes the same, with a progress screen;
-  otherwise ask for the ROM again with a sentence saying why.
-- **Another image's extraction** (the manifest's `rom_sha1` is not a known
-  good dump): the wizard, as for missing data.
-- **A file missing during play** (deleted by hand, a failing disk): the
-  file layer stops with a message naming the file and telling the player to
-  run the installer again, not a crash inside the game's code.
+### Testing it
 
-The wizard writes only into the data root (through the staged rename) and
-the config file; the player's saves live elsewhere and are never touched by
-an installation or a re-extraction.
+- `test_dataroot` (no game data, every configuration including MSVC): the
+  locations, the config round trip with a non-ASCII path, both spellings
+  of a data root, every check state trusted and not, the option parser,
+  the resolution order, the headless install of the synthetic cartridge
+  (refused as modified with nothing written, an archive refused, cancelled
+  half way with nothing left, installed with the test override and
+  remembered, a second run "already"), free space, move and reset (and
+  their refusals), `bw_setup_prepare` without a window.
+- `test_wizard` (SDL, `SDL_VIDEODRIVER=dummy`): the window driven by
+  scripted events through its `script` hook, the native dialog replaced by
+  its `pick` hook. An archive dropped and refused; a mouse click on
+  "Choose another file..."; the synthetic cartridge checked and written
+  (test override) to a folder named outside ASCII; Start; the same image
+  refused without the override; Escape during a check; closing the window;
+  a system with no dialog. It checks the headline and message of each
+  screen, that every frame has text on it, and writes a BMP of each screen
+  (`EIDOS_TEST_KEEP=1` keeps them). With `BW_ROM` set it also drops the
+  real ROM on the window, with no override, and checks the result is
+  playable.
+- `test_firstrun_rom` (`tests/firstrun_rom.cmake`, `BW_ROM`): the whole
+  headless path through `eidos_view` in a scratch eidos home: `--rom`
+  installs and the demo draws from the new data, a plain start finds it
+  through the saved setting, `--move-data`, `--reset-data`, and a start
+  with no data and no window fails with the message.
+- `test_picker` (`EIDOS_TEST_DIALOGS=1`, Windows): `bw_pick_rom` opens the
+  real dialog; a helper thread types the full path of a file named outside
+  ASCII into it and presses Open, then closes a second one: `BW_PICK_OK`
+  with the UTF-8 path, then `BW_PICK_CANCELLED`.

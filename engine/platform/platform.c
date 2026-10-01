@@ -1,5 +1,6 @@
 /*
- * engine/platform/platform.c -- SDL2 window, frame pacer, audio device.
+ * engine/platform/platform.c -- SDL2 window, keyboard, gamepads, the mouse
+ * as the stylus, frame pacer, audio device.
  *
  * See platform.h for the contract and for where the numbers come from.
  * Three things in here are decisions rather than transcription, and each is
@@ -16,7 +17,10 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "input.h"
 #include "platform.h"
+
+#define MAX_PADS 8
 
 #define SCREEN_W EIDOS_DS_SCREEN_WIDTH
 #define SCREEN_H EIDOS_DS_SCREEN_HEIGHT
@@ -35,6 +39,13 @@ struct EidosPlatform {
 
     const EidosKeyBinding *keymap;
     u32   keymap_count;
+    const EidosPadBinding *padmap;
+    u32   padmap_count;
+    SDL_GameController *pads[MAX_PADS];
+    int   pad_subsystem;            /* SDL_INIT_GAMECONTROLLER is up         */
+
+    int touch_down;                 /* the stylus, bottom-screen pixels      */
+    int touch_x, touch_y;
 
     u32 buttons;
     u32 buttons_prev;
@@ -115,6 +126,220 @@ static u32 read_keyboard(const EidosPlatform *p)
         }
     }
     return word;
+}
+
+/* ------------------------------------------------------------------ */
+/* Gamepads                                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Positional: SDL's A/B/X/Y are south/east/west/north on every pad once
+ * SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS is off (set in init), and the
+ * DS's A/B/X/Y are east/south/north/west, so each DS button lands where it
+ * sits on a DS.  The left stick doubles the d-pad and the triggers double
+ * the shoulders, past half their travel.
+ */
+static const EidosPadBinding k_default_padmap[] = {
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_B,             EIDOS_PAD_A },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_A,             EIDOS_PAD_B },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_Y,             EIDOS_PAD_X },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_X,             EIDOS_PAD_Y },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_LEFTSHOULDER,  EIDOS_PAD_L },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, EIDOS_PAD_R },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_START,         EIDOS_PAD_START },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_BACK,          EIDOS_PAD_SELECT },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_DPAD_UP,       EIDOS_PAD_UP },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_DPAD_DOWN,     EIDOS_PAD_DOWN },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_DPAD_LEFT,     EIDOS_PAD_LEFT },
+    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_DPAD_RIGHT,    EIDOS_PAD_RIGHT },
+    { EIDOS_PADBIND_AXIS_NEG, SDL_CONTROLLER_AXIS_LEFTY,         EIDOS_PAD_UP },
+    { EIDOS_PADBIND_AXIS_POS, SDL_CONTROLLER_AXIS_LEFTY,         EIDOS_PAD_DOWN },
+    { EIDOS_PADBIND_AXIS_NEG, SDL_CONTROLLER_AXIS_LEFTX,         EIDOS_PAD_LEFT },
+    { EIDOS_PADBIND_AXIS_POS, SDL_CONTROLLER_AXIS_LEFTX,         EIDOS_PAD_RIGHT },
+    { EIDOS_PADBIND_AXIS_POS, SDL_CONTROLLER_AXIS_TRIGGERLEFT,   EIDOS_PAD_L },
+    { EIDOS_PADBIND_AXIS_POS, SDL_CONTROLLER_AXIS_TRIGGERRIGHT,  EIDOS_PAD_R },
+};
+
+/* Half an axis's travel (SDL axes run -32768..32767, triggers 0..32767). */
+#define PAD_AXIS_THRESHOLD 16384
+
+const EidosPadBinding *eidos_default_padmap(u32 *count)
+{
+    if (count != NULL) {
+        *count = (u32)(sizeof(k_default_padmap) / sizeof(k_default_padmap[0]));
+    }
+    return k_default_padmap;
+}
+
+static SDL_JoystickID pad_id(SDL_GameController *gc)
+{
+    return SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gc));
+}
+
+static void pad_open(EidosPlatform *p, int device_index)
+{
+    SDL_GameController *gc;
+    SDL_JoystickID id;
+    int i, slot = -1;
+
+    if (!SDL_IsGameController(device_index)) {
+        return;
+    }
+    id = SDL_JoystickGetDeviceInstanceID(device_index);
+    for (i = 0; i < MAX_PADS; i++) {
+        if (p->pads[i] == NULL) {
+            if (slot < 0) {
+                slot = i;
+            }
+        } else if (pad_id(p->pads[i]) == id) {
+            return;                     /* already open                     */
+        }
+    }
+    if (slot < 0) {
+        return;
+    }
+    gc = SDL_GameControllerOpen(device_index);
+    if (gc != NULL) {
+        p->pads[slot] = gc;
+    }
+}
+
+static void pad_close(EidosPlatform *p, SDL_JoystickID id)
+{
+    int i;
+
+    for (i = 0; i < MAX_PADS; i++) {
+        if (p->pads[i] != NULL && pad_id(p->pads[i]) == id) {
+            SDL_GameControllerClose(p->pads[i]);
+            p->pads[i] = NULL;
+        }
+    }
+}
+
+int eidos_platform_pads(const EidosPlatform *p)
+{
+    int i, n = 0;
+
+    if (p == NULL) {
+        return 0;
+    }
+    for (i = 0; i < MAX_PADS; i++) {
+        n += p->pads[i] != NULL;
+    }
+    return n;
+}
+
+static int pad_binding_held(SDL_GameController *gc, const EidosPadBinding *b)
+{
+    int v;
+
+    if (b->kind == EIDOS_PADBIND_BUTTON) {
+        return b->index >= 0 && b->index < SDL_CONTROLLER_BUTTON_MAX &&
+               SDL_GameControllerGetButton(
+                   gc, (SDL_GameControllerButton)b->index) != 0;
+    }
+    if (b->index < 0 || b->index >= SDL_CONTROLLER_AXIS_MAX) {
+        return 0;
+    }
+    v = SDL_GameControllerGetAxis(gc, (SDL_GameControllerAxis)b->index);
+    if (b->kind == EIDOS_PADBIND_AXIS_POS) {
+        return v >= PAD_AXIS_THRESHOLD;
+    }
+    if (b->kind == EIDOS_PADBIND_AXIS_NEG) {
+        return v <= -PAD_AXIS_THRESHOLD;
+    }
+    return 0;
+}
+
+/* Rebuilt from the whole table on every pump, as the keyboard is.         */
+static u32 read_pads(const EidosPlatform *p)
+{
+    u32 word = 0;
+    u32 i;
+    int k;
+
+    for (k = 0; k < MAX_PADS; k++) {
+        if (p->pads[k] == NULL) {
+            continue;
+        }
+        for (i = 0; i < p->padmap_count; i++) {
+            if (pad_binding_held(p->pads[k], &p->padmap[i])) {
+                word |= p->padmap[i].button;
+            }
+        }
+    }
+    return word;
+}
+
+/* ------------------------------------------------------------------ */
+/* The stylus                                                          */
+/* ------------------------------------------------------------------ */
+
+static void layout_size(int layout, int gap, u32 *w, u32 *h);
+
+int eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
+                                   int win_h, int wx, int wy, int *x, int *y)
+{
+    u32 lw, lh;
+    int ox, oy, px, py, inside;
+
+    if (p == NULL || win_w <= 0 || win_h <= 0) {
+        return 0;
+    }
+    layout_size(p->layout, p->gap, &lw, &lh);
+    if (p->layout == EIDOS_LAYOUT_SIDE_BY_SIDE) {
+        ox = (int)SCREEN_W + p->gap;
+        oy = 0;
+    } else {
+        ox = 0;
+        oy = (int)SCREEN_H + p->gap;
+    }
+    /* Window point to layout pixel through the window's size now, floored
+     * (a point left of or above the window is off the panel, not on its
+     * first column).                                                      */
+    px = (int)(((s64)wx * (s64)lw - (wx < 0 ? win_w - 1 : 0)) / win_w) - ox;
+    py = (int)(((s64)wy * (s64)lh - (wy < 0 ? win_h - 1 : 0)) / win_h) - oy;
+    inside = px >= 0 && px < (int)SCREEN_W && py >= 0 && py < (int)SCREEN_H;
+    if (x != NULL) {
+        *x = px < 0 ? 0 : px >= (int)SCREEN_W ? (int)SCREEN_W - 1 : px;
+    }
+    if (y != NULL) {
+        *y = py < 0 ? 0 : py >= (int)SCREEN_H ? (int)SCREEN_H - 1 : py;
+    }
+    return inside;
+}
+
+static void read_stylus(EidosPlatform *p)
+{
+    int mx = 0, my = 0, ww = 0, wh = 0, x = 0, y = 0, inside;
+    Uint32 buttons = SDL_GetMouseState(&mx, &my);
+
+    if (!(buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) || p->window == NULL) {
+        p->touch_down = 0;
+        return;
+    }
+    SDL_GetWindowSize(p->window, &ww, &wh);
+    inside = eidos_platform_window_to_touch(p, ww, wh, mx, my, &x, &y);
+    if (!p->touch_down && !inside) {
+        return;                         /* a press off the panel            */
+    }
+    p->touch_down = 1;
+    p->touch_x = x;
+    p->touch_y = y;
+}
+
+int eidos_platform_touch(const EidosPlatform *p, int *x, int *y)
+{
+    if (p == NULL || !p->touch_down) {
+        return 0;
+    }
+    if (x != NULL) {
+        *x = p->touch_x;
+    }
+    if (y != NULL) {
+        *y = p->touch_y;
+    }
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -339,6 +564,12 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     } else {
         p->keymap = eidos_default_keymap(&p->keymap_count);
     }
+    if (cfg->padmap != NULL && cfg->padmap_count > 0) {
+        p->padmap = cfg->padmap;
+        p->padmap_count = cfg->padmap_count;
+    } else {
+        p->padmap = eidos_default_padmap(&p->padmap_count);
+    }
 
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -411,6 +642,19 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     }
     p->perf_start = SDL_GetPerformanceCounter();
 
+    /* Gamepads.  Positions, not labels, on Nintendo pads too (the default
+     * table is positional), set before the subsystem reads the hint.  A
+     * machine where the subsystem cannot start still runs, on the keyboard.
+     * Pads already plugged in arrive as SDL_CONTROLLERDEVICEADDED events at
+     * the first pump. */
+    SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
+    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == 0) {
+        p->pad_subsystem = 1;
+    } else {
+        fprintf(stderr, "eidos: no gamepad support (%s); keyboard only\n",
+                SDL_GetError());
+    }
+
     if (cfg->audio) {
         open_audio(p);
     }
@@ -428,6 +672,11 @@ void eidos_platform_quit(EidosPlatform *p)
     }
     if (p->audio_dev != 0) {
         SDL_CloseAudioDevice(p->audio_dev);
+    }
+    for (i = 0; i < MAX_PADS; i++) {
+        if (p->pads[i] != NULL) {
+            SDL_GameControllerClose(p->pads[i]);
+        }
     }
     for (i = 0; i < 2; i++) {
         if (p->tex[i] != NULL) {
@@ -467,14 +716,37 @@ int eidos_platform_pump(EidosPlatform *p)
                 p->shot_request = 1;
             }
             break;
+        case SDL_CONTROLLERDEVICEADDED:
+            if (p->pad_subsystem) {
+                pad_open(p, ev.cdevice.which);
+            }
+            break;
+        case SDL_CONTROLLERDEVICEREMOVED:
+            pad_close(p, (SDL_JoystickID)ev.cdevice.which);
+            break;
         default:
             break;
         }
     }
 
     p->buttons_prev = p->buttons;
-    p->buttons = read_keyboard(p);
+    p->buttons = read_keyboard(p) | read_pads(p);
     p->buttons_pressed = p->buttons & ~p->buttons_prev;
+    read_stylus(p);
+
+    /* The port's input layer takes it from here (sdk/input.h): it reaches
+     * KEYINPUT, the ARM7's XY halfword and the touch panel at the next
+     * frame boundary. */
+    {
+        BwInputState in;
+
+        memset(&in, 0, sizeof(in));
+        in.buttons = p->buttons;
+        in.touch = p->touch_down;
+        in.touch_x = p->touch_x;
+        in.touch_y = p->touch_y;
+        bw_input_set_host(&in);
+    }
     return p->quit ? 0 : 1;
 }
 

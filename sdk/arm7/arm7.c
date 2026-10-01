@@ -24,6 +24,8 @@
  * function with each wait turned into "return until the next step".
  */
 
+#include <stdint.h>
+
 #include "arm7.h"
 #include "dsmem.h"
 #include "pxi.h"
@@ -156,16 +158,25 @@ void bw_arm7_boot(void)
     bw_arm7_card_init();
     bw_arm7_fs_init();
     bw_arm7_snd_init();
+    bw_arm7_nvram_init();
+    bw_arm7_mic_init();
+    /* No wireless responder: arm7.h says why.                             */
+    bw_arm7_tp_init();
+    bw_arm7_pad_init();
 }
 
 void bw_arm7_reset(void)
 {
+    /* The files the chips stand for get what was written before power-off. */
+    bw_arm7_fs_reset();
+    bw_arm7_nvram_reset();
     g_arm7.booted = 0;
     g_arm7.stepping = 0;
     g_arm7.sync_state = SYNC_RX_START;
     g_arm7.sync_sum = 0;
     g_arm7.sync_i = 0;
     g_arm7.os_last_command = 0;
+    bw_arm7_tp_reset();
 }
 
 void bw_arm7_step(void)
@@ -178,5 +189,21 @@ void bw_arm7_step(void)
     bw_pxi_service();
     os_sync_step();
     bw_arm7_snd_step();     /* sound status and alarms, sdk/arm7/snd.h */
+    bw_arm7_fs_step();      /* the save file's delayed write            */
     g_arm7.stepping = 0;
+}
+
+void *bw_arm7_resolve(u32 value, u32 size, void *known, u32 known_size)
+{
+    if (known != NULL) {
+        u32 off = value - (u32)(uintptr_t)known;
+
+        if (off < known_size && size <= known_size - off)
+            return (u8 *)known + off;
+    }
+#if UINTPTR_MAX == 0xFFFFFFFFu
+    return (void *)(uintptr_t)value;    /* a 32-bit host: it is the pointer */
+#else
+    return NULL;
+#endif
 }

@@ -526,10 +526,32 @@ boundary, flips, affine and double-size through `g2d_obj_affine_render`,
 4bpp, 8bpp and extended palettes, the OBJ window from mode 2) and hands it
 over as non-overlapping full-screen poses. POWCNT1 bit 15 decides which
 engine is on which screen. Display mode 0 and forced blank are white,
-display mode 2 shows bank A..D directly. BG mode 6's large bitmap, mode
-7, main memory display, bitmap OBJs and mosaic are reported through
-`G2D_HW_UNSUP_*` flags rather than drawn wrong; the display capture is
-out of scope.
+display mode 2 shows bank A..D directly.
+
+The 3D layer is composed with the 3D frame's alpha: alpha 0 is
+transparent, so the 2D layers beneath show through, and any other alpha
+blends with a second target directly beneath by the 3D layer's own rule,
+`(3D * (A + 1) + 2D * (31 - A)) / 32`, EVA and EVB unused, whatever
+BLDCNT's effect says; BG0HOFS scrolls it. Everything after the layer mix
+runs in the hardware's 6 bits per channel: the compositor reports each
+pixel's 6-bit value (`G2dFrameDesc.out6`) and MASTER_BRIGHT is applied
+there (a 2D channel `c` enters as `2c + 1`, 0 as 0; that low bit is a
+documented choice). BG mosaic (text, affine, extended and bitmap BGs
+alike, resampled through the MOSAIC grid) and OBJ mosaic are drawn. The
+display capture (DISPCAPCNT) runs with the frame: source A the graphics
+screen (before the master brightness, composed even under a VRAM display)
+or the 3D frame, source B a VRAM bank, the A+B blend, the four sizes and
+the write and read offsets, into a bank in LCDC mode, and
+`g2d_hw_render_dsmem` clears the enable bit when the frame completes, as
+the hardware does. The game uses it: `0x80330010`/`0x80320010`
+(`func_0204EAD4`, `func_0204EB68`: the main screen captured into bank D or
+C and shown on the sub engine as a direct-colour bitmap BG, the two-screen
+3D arrangement) and `0x81330010` (`func_021C2784`: the 3D frame alone);
+ov203 sets every field from data. Still reported through
+`G2D_HW_UNSUP_*` flags rather than drawn wrong, deliberately, because the
+matched code sets none of them as a constant: BG mode 6's large bitmap,
+mode 7, main memory display and capture from main memory (no DMA feeds the
+display FIFO), and bitmap OBJs.
 
 **The tests**, `tests/test_hwcompose.c`, reset the port's own address
 space (`sdk/dsmem.c`) and write registers, palette, OAM and VRAM byte by
@@ -542,8 +564,10 @@ boundary, affine OBJs at identity and 2x in double size, WIN0 over WIN1,
 the OBJ window, alpha and brightness and the effect bit, the
 semi-transparent OBJ, affine BGs with and without wrap, the extended
 affine BG, both bitmap BGs, BG and OBJ extended palettes through banks E
-and I, the 3D layer, master brightness on each engine, the screen swap
-and display modes. With game data, the title screen (`titledemo.narc`
+and I, the 3D layer with its alpha, its own blend and BG0HOFS, master
+brightness on each engine in 6 bits, BG and OBJ mosaic, the display
+capture with the game's own DISPCAPCNT words, the screen swap and display
+modes. With game data, the title screen (`titledemo.narc`
 0/1/2) and the species 25 pose are put into VRAM, palette RAM and OAM the
 way the SDK would, and must come out **pixel-identical** to the asset
 path drawing the same content from the files: the title scrolled on the
@@ -564,7 +588,8 @@ its rasteriser. Pure C99, no SDL, no third-party code, and not even
 | `engine/g3d/nsbmd.c` | NSBMD/NSBTX containers, Nitro resource dictionaries, TEX0 records, the MDL0 shape dictionary and node dictionary, the render-command bytecode, the a/0/1/4 texture index |
 | `engine/g3d/texture.c` | all seven GX texture pixel formats |
 | `engine/g3d/gx.c` | the display-list interpreter: the packed command word, the whole opcode table, every vertex encoding, strip assembly |
-| `engine/g3d/raster.c` | the 256x192 software rasteriser, and the meeting point with the 2D compositor |
+| `engine/g3d/raster.c` | the 256x192 software rasteriser, the rear passes (edge marking, fog, anti-aliasing), and the meeting point with the 2D compositor |
+| `engine/g3d/light.c` | the DS lighting equation (four lights, diffuse, ambient, specular with the shininess table, emission), driven by `hw3d.c` |
 | `engine/g3d/hw3d.c` | the 3D hardware interface: the geometry FIFO and command ports, the 3D registers, the texture slots, `SWAP_BUFFERS` |
 
 **Where the rules come from.** In order of authority, and each file
@@ -837,18 +862,36 @@ and vector matrices read back through `MI_Copy64B`/`MI_Copy36B` from raw
 result addresses), every `GXSTAT` field the SDK polls including the
 `G3X_InitMtxStack` sequence and the `GXSTAT |= 0x8000` acknowledgement,
 `POS_TEST`, `VEC_TEST`, `BOX_TEST`, the viewport, toon and highlight, the
-alpha test, blending off, an unterminated vertex list, and the frame
-composed by `hwcompose` as BG0. **79 checks, 0 failures**, both pointer
-widths. Two interpreter fixes came out of it: opcode `0x2B` (`PLTT_BASE`)
+alpha test, blending off, an unterminated vertex list, the frame
+composed by `hwcompose` as BG0, the lighting equation (diffuse, ambient,
+emission, specular with and without the shininess table, the normal
+through the vector matrix, `DIF_AMB` bit 15), edge marking, fog (the
+table interpolation, the clear plane's fog bit, alpha-only), the
+w-buffer against the z-buffer, the rear-plane bitmap with its offset and
+depth, and anti-aliasing over a transparent and an opaque clear plane.
+**111 checks, 0 failures**, both pointer widths. Two interpreter fixes came out of it: opcode `0x2B` (`PLTT_BASE`)
 was missing from the parameter-count table, so a list using it stopped
 there, and `MTX_SCALE` in position+vector mode now scales the position
 matrix only, as the hardware does; `test_g3d`'s oracle numbers are
 unchanged by both.
 
-Not honoured, and reported per frame by `g3d_hw_unsupported()`: fog, edge
-marking, anti-aliasing, the rear-plane bitmap, the w-buffer, shadow
-polygons, and lighting (as in the interpreter, a vertex keeps its last
-`COLOR`). The hardware's polygon and vertex RAM limits are not imposed.
+The frame also honours what the game turns on (each found in the
+matched corpus): lighting (`engine/g3d/light.c`, the public lighting
+equation with up to four lights, the light vectors and normals through
+the vector matrix, the half vector and the shininess table), the
+w-buffer (`SWAP_BUFFERS` bit 1: `func_02046440`, ov021, ov057), edge
+marking with `EDGE_COLOR` (ov021, ov091, ov217), anti-aliasing (ov021,
+ov091, ov217, ov223, and G3X_Init's default), fog with its table, colour,
+offset, shift and alpha-only mode (enabled in ov119), the rear-plane
+bitmap (the SDK's `GX_SetBankForClearImage` path), and the polygon IDs
+and fog flags those passes need, including the clear plane's. The frame's
+alpha is the hardware's (a translucent pixel over the clear plane's alpha
+0 keeps its own alpha), which is what lets hwcompose see through and
+blend the 3D layer. The fixed point of the lighting and the coverage
+rule of the anti-aliasing are marked as approximations in their files.
+Still not drawn, and reported by `g3d_hw_unsupported()`: shadow polygons
+(no `POLYGON_ATTR` constant in the corpus selects mode 3). The hardware's
+polygon and vertex RAM limits are not imposed.
 
 ### What is not decoded, and is the next step
 
@@ -867,11 +910,11 @@ polygons, and lighting (as in the interpreter, a vertex keeps its last
   rotation. The packed completion is the one transform piece not on byte
   evidence; the paired BCA0 animation or the ARM9 matrix builder would
   settle it.
-- **Lighting.** The four light slots, the diffuse/ambient and
-  specular/emission material registers and the shininess table are
-  consumed with the right parameter counts so the stream stays aligned,
-  and are not interpreted. Nothing has shown that a map model enables
-  them, and inventing lighting would be a guess.
+- **Lighting on the asset path.** The display-list interpreter still
+  consumes the lighting commands without interpreting them, so an asset
+  render of a map model does not depend on lights nobody set. The
+  hardware path interprets them (`engine/g3d/light.c` through
+  `engine/g3d/hw3d.c`), so what the game's own code lights is lit.
 - **The texture matrix.** `TEXIMAGE_PARAM` bits 30-31 select a
   coordinate transform source; no map model in the corpus was found to
   need one and `map_shapes.py` records the same finding, so a texture
@@ -1010,15 +1053,30 @@ ctest:
 
 | SEQ | name | what it covers | notes | render | difference |
 | --- | --- | --- | --- | --- | --- |
-| 1062 | `SEQ_BGM_GYM` | PCM waves out of a real SWAR | 296 events, 22 rendered, 9 tracks, 116 BPM | peak 14960, RMS 3090.378 | **0 of 655360 samples** |
-| 1146 | `SEQ_BGM_BATTLEPINCH` | PSG square, with PCM alongside | 173 events, 35 rendered, 6 tracks, 180 BPM | peak 6052, RMS 2221.014 | **0 of 655360 samples** |
-| 1379 | `SEQ_SE_KOUKA_H` | PSG noise | 17 events, 12 rendered, 2 tracks, 89 BPM | peak 5751, RMS 1896.658 | **0 of 275032 samples** |
+| 1062 | `SEQ_BGM_GYM` | PCM waves out of a real SWAR | 2510 events, 176 rendered, 9 tracks, 116 BPM | peak 32000, RMS 6549.031 | **0 of 655360 samples** |
+| 1146 | `SEQ_BGM_BATTLEPINCH` | PSG square, with PCM alongside | 1110 events, 97 rendered, 6 tracks, 180 BPM | peak 27449, RMS 5658.633 | **0 of 655360 samples** |
+| 1379 | `SEQ_SE_KOUKA_H` | PSG noise | 24 events, 24 rendered, 2 tracks, 89 BPM | peak 30081, RMS 2514.572 | **0 of 275032 samples** |
 
 All three note event lists are identical to the oracle's, and the peak and
-RMS agree exactly because the buffers do. The busiest of the three needs
-**5 voices at once**, so the DS's 16 channels are not the binding
-constraint on any of them; the test reports that number and the streaming
-player counts the note-ons that found no free channel, which is zero here.
+RMS agree exactly because the buffers do. "Rendered" counts the notes that
+start inside the window; the rest of the list lies past it. The busiest of
+the three has **19 voices at once**: this model gives every note its own
+voice, where the DS shares 16 channels by priority, which is what the ARM7
+driver below does instead.
+
+**SSEQ offsets.** `OpenTrack`, `Jump` and `Call` count their 24-bit offsets
+from the DATA block's payload (the file's `data_offset`, 0x1C), not from
+the file: on this ROM's SDAT all 2,016 `OpenTrack` targets in 940
+sequences follow a track end or a return under that reading (9 under the
+file-absolute one), and all 9,945 `Jump` and `Call` targets are command
+boundaries (4,710 under the file-absolute one). Both `engine/audio` and the
+ARM7 driver read them that way. Before the fix the three sequences above
+had 296, 173 and 17 note events. aletheia's `sseqsynth.py` reads
+`OpenTrack` this way since its commit 1609c2263 but still takes `Jump` and
+`Call` targets as file offsets, so `tools/audio_oracle.py` probes the
+imported oracle with a nine-byte sequence and, only while the probe shows
+the file-absolute reading, adds `data_offset` to those two targets around
+its `run_track`; with the fix in aletheia the probe turns that off.
 
 **What is reproduced rather than improved, deliberately.** sseqsynth.py
 documents its own approximations, and the engine makes the same ones,
@@ -1037,6 +1095,50 @@ clock-rate fix changed the rendered file not at all, byte for byte) and
 deliberately left it. The engine reproduces it exactly, so that whoever
 fixes the seed fixes it in the tool first and this test then *measures* the
 change instead of hiding it.
+
+## The ARM7 sound driver
+
+The game does not call `engine/audio`. It calls the SDK's SND library,
+which sends command lists to the ARM7 over PXI tag 7; `sdk/arm7/snd.c` is
+the transport and `sdk/arm7/snd_driver.c` executes them, on two pieces of
+its own:
+
+| file | what it does |
+| --- | --- |
+| `sdk/arm7/snd_seq.c` | the sequencer: 16 players, a pool of 32 tracks, 16 extended channels allocated by priority, the SSEQ interpreter in real time with its prefix and variable commands, envelopes, the modulation LFO, sweeps and portamento |
+| `sdk/arm7/snd_hw.c` | the sound hardware: 16 channels (PCM8, PCM16, IMA-ADPCM with its loop state, PSG square on 8-13, noise on 14-15), two captures, SOUNDCNT's master volume and output selector, mixed in integers |
+
+The shapes are the SDK's own: `SNDWork`, `SNDPlayer`, `SNDTrack`,
+`SNDExChannel`, `SNDLfoParam` and the bank structures are read from the
+DWARF of `libsnd.TWL.HYB.a` with aletheia's `tools/sdkobj.py`, the player
+and track parameters live in byte images at those offsets (so
+`PLAYER_PARAM` and `TRACK_PARAM` are the stores the ARM9 means them to be),
+and `SND_ReadDriverInfo` gets `SNDWork` back in the DS layout. The
+arithmetic is `snd_util.o`'s: `SND_CalcTimer` from its listing, and the
+pitch, decibel-square and volume tables generated from formulas that
+reproduce the SDK's tables exactly (the test holds them to the SDK's
+sums). The ARM7 behaviour around them (the driver frame of 64 * 2728 bus
+cycles, the tempo counter's 240 per tick, the envelope in 1/128 dB from
+-92544, the SBNK envelope byte conversions, the decibel sum for a
+channel's level) is public NDS sound driver documentation; the hardware is
+GBATEK's. Where neither says, the source says "Choice:". Nothing is taken
+from ARM7 code.
+
+What that gives the game: a looping sequence loops forever from its loop
+point; the tempo ratio, track pitch, pan and volume, pitch bend,
+portamento, Tie and the LFO change the sound as it plays; the 16 hardware
+channels are shared between all players, a note taking the lowest-priority
+channel (a releasing note first) and being dropped when every channel
+outranks it; `SKIP_SEQ`, `ALLOCATABLE_CHANNEL`, mutes and the sequence
+variables (in the shared work, as the ARM9 reads them) work; and the
+direct channel commands, captures, master pan and the output selector drive
+the hardware model, which is how the game's own stream object
+(`func_020738C0`: a locked channel looping over a ring buffer, refilled on
+an alarm started with the channel by one `START_TIMER`) plays.
+`tests/test_snd.c` checks each of those, and with the data root plays
+`SEQ_SE_DECIDE2` and `SEQ_BGM_GYM` from main RAM and streams one of GYM's
+own waves through a ring buffer, which must equal the wave played in one
+piece sample for sample. The SDAT has no STRM entries.
 
 ## The frame skeleton
 
@@ -1077,14 +1179,15 @@ function writes reaches the renderer only through the vblank commit, that 32
 frames are exactly 280095 ticks, and the tick/millisecond conversions.
 
 **Under the game's own boot** (`demo/eidos_boot.c`, see "Running the game's
-boot") the same loop is the driver. The step is one iteration of NitroMain's
-loop, ending where the original waits for vblank, and the vblank hook does
-the hardware's half of the interrupt only: it sets DISPSTAT's vblank flag
-and raises IF bit 0 through the OS layer (`bw_os_raise_irq`). The OS layer
-owns IF; it takes the request at its next safe point, runs the handler the
-game installed in `OS_IRQTable` and wakes the threads waiting in
-`OS_WaitIrq`, as `OS_IrqHandler` does on the DS (docs/boot.md, "Threads,
-interrupts and the frame").
+boot") the same loop is the driver, and NitroMain's own loop runs as
+written: the loop has no step hook, and a frame is one call of the OS
+layer's halt hook, made when every game thread waits (NitroMain in
+`OS_WaitIrq` for the vblank). The vblank hook does the hardware's half of
+the interrupt only: it sets DISPSTAT's vblank flag and raises IF bit 0
+through the OS layer (`bw_os_raise_irq`). The OS layer owns IF; it takes
+the request when the halt returns, runs the handler the game installed in
+`OS_IRQTable` and wakes the threads waiting in `OS_WaitIrq`, as
+`OS_IrqHandler` does on the DS (docs/boot.md, "Running the boot").
 
 ## The game's scheduler, and the first matched code inside the frame
 
@@ -1402,6 +1505,20 @@ register. No key may be bound to two buttons: the word is rebuilt from the
 whole table on every pump, which is also why a key held across a focus change
 cannot leave a bit stuck down.
 
+**Gamepads** go through SDL's game controller API with a second table of the
+same kind (`EidosPadBinding`: a button, or an axis past half its travel). The
+default is positional, DS A/B/X/Y on the east/south/north/west face buttons
+(SDL is told to report positions on Nintendo pads too), the shoulders and
+triggers as L and R, Start and Back as START and SELECT, the d-pad and the
+left stick as the d-pad. Pads plugged in while running are picked up.
+
+**The stylus** is the left mouse button, or a finger, on the bottom screen,
+mapped through the window's current size. Every pump hands the buttons and
+the stylus to the port's input layer (`sdk/input.h`), which puts them where
+the game reads them, `KEYINPUT`, the ARM7's X/Y/hinge halfword and the touch
+panel's PXI protocol, at the next frame boundary. `docs/input.md` is the
+design, including the scripted input tests and the headless boot use.
+
 **The pacer runs at the DS's rate, not at 60 Hz.** A frame is 355 dots x 263
 lines x 6 clocks at 33513982 Hz = 560190 clocks, i.e. 59.8261 Hz and a period
 of 16715113 ns plus 3790034/33513982 of a nanosecond. The pacer keeps that
@@ -1440,7 +1557,7 @@ is written at 1x in the configured layout, as RGB24, so SDL writes a plain
 ## eidos_view, the first visible output
 
 ```
-build/eidos_view --data-root <extract/data> [--scale N] [--side-by-side]
+build/eidos_view [--data-root <extract/data>] [--scale N] [--side-by-side]
                  [--gap N] [--species N] [--map N] [--frames N]
                  [--shot PATH] [--shot-first PATH] [--anim-speed N]
                  [--no-audio] [--music [SEQ]]
@@ -1513,15 +1630,26 @@ the title screen. The pieces in the tree:
   under one run token, the interrupt controller, alarms and the tick;
 - `sdk/pxi.c` and `sdk/arm7/`, the FIFO between the processors and the ARM7
   stand-in that answers it;
+- `sdk/firmware.c`, `sdk/save.c` and the save chip, firmware flash and
+  microphone responders in `sdk/arm7/`: the owner's settings at power-on
+  from an editable `firmware.ini`, the game's save in `pokeblack.sav` (a
+  raw image, emulator-compatible, replaced atomically), the firmware flash
+  in `firmware.bin` (`docs/firmware.md`; the save folder per platform is in
+  `docs/installer.md`);
+- `sdk/input.c`, `sdk/arm7/pad.c` and `sdk/arm7/tp.c`, the buttons, the
+  hinge and the touch panel from the host or a script (`docs/input.md`),
+  and `sdk/cp.c`, the divider and square-root unit the touch calibration
+  divides on;
 - `sdk/fs.c` and `sdk/overlay.c`, the ROM file system and overlays onto the
   extract;
 - `bw_port_reset` (`sdk/port.h`), the one power-on: `bw_ds_reset`, then
-  `bw_os_reset`, then `bw_pxi_reset`, then the joins (PXI interrupt requests
-  go to the OS layer's latch, and every `OS_RestoreInterrupts` gives the
-  ARM7 its turn). The boot and every test that runs game code on the whole
-  machine call it rather than the three resets;
-- `stubs/reimpl_02005124.c`, NitroMain, and `demo/eidos_boot.c`, its
-  headless driver.
+  `bw_os_reset`, then `bw_pxi_reset`, then `bw_cp_reset` (the divider), then
+  the joins (PXI interrupt requests go to the OS layer's latch, and every
+  `OS_RestoreInterrupts` gives the ARM7 its turn). The boot and every test
+  that runs game code on the whole machine call it rather than the resets;
+- NitroMain (aletheia's `src/matched/arm9/func_02005124.c`, or
+  `stubs/reimpl_02005124.c` with an older checkout) and
+  `demo/eidos_boot.c`, its driver (headless, or `--window` with SDL2).
 
 ```sh
 cmake -S . -B build -G Ninja -DALETHEIA_ROOT=../bw_decomp -DEIDOS_BOOT=ON
@@ -1531,8 +1659,13 @@ cmake --build build --target eidos_boot
 
 With `EIDOS_BOOT` off (the default) `eidos_boot` builds without the game's
 code, says so and exits 0. With it on, CMake computes NitroMain's matched
-closure with `tools/closure.py` and links it; that link is the work in
-progress, and `docs/boot.md` tracks what it still needs.
+closure with `tools/closure.py`, `tools/bootlink.py` makes it link
+(names by address, the ARM9 image's data, the stubs it lists), and the
+boot runs: the system and heap initialisation complete and the run stops
+at the overlay layer's "overlay 10 is not in this build", the first of the
+two resident overlays the boot sequence loads before the frame loop
+(`test_boot_run` expects exactly that). `docs/boot.md`, "Running the boot",
+has what it took and what blocks the frame loop.
 
 ## Growing the source list
 
@@ -1593,9 +1726,13 @@ prints the file list behind each count. `docs/pointer-width.md` is that
 output plus the decision it supports.
 
 `tools/closure.py` reads the manifest shards in aletheia's `layout/matched/`
-and the `extern` declarations and `symbols:` header blocks of the matched
-sources, walks the call graph through matched files only, and sorts every
-remaining reference into one class:
+and, from each matched source, its `symbols:` header block and every name it
+needs from elsewhere (`extern` declarations, file-scope prototypes, and calls
+with no declaration in scope, which mwcc accepts); it resolves a name by
+spelling, then by DS address, including functions a unit defines beyond the
+lead its manifest entry names. It walks the call graph through matched files
+only and sorts every remaining reference into one class (the per-seed figures
+above predate this reader, which finds more):
 
 - `matched`, another matched source defines it: link that one too.
 - `sdk` / `runtime`, an SDK library symbol or an MSL runtime helper: it
@@ -1603,7 +1740,10 @@ remaining reference into one class:
 - `alias`, a matched function referenced under a different name prefix than
   the file that defines it uses. The DS build resolves relocations by
   address and does not care; a host linker resolves by name and does. Each
-  one needs a forwarder in `sdk/aliases.c`.
+  one needs a forwarder in `sdk/aliases.c`, or, in the boot, the per-file
+  rename `tools/bootlink.py` generates (docs/boot.md, "Linking the boot").
+- `const`, a linker symbol whose address is its value (`SDK_IRQ_STACKSIZE`,
+  the overlay ids): the boot's generated headers supply the value.
 - `open`, a game function at a known address that nothing in aletheia's
   `src/matched/` defines yet: it needs a `stubs/` entry.
 - `data`, a global object: it needs a `sdk/game_globals.c` entry.
@@ -1621,37 +1761,165 @@ for the fixture generator, a sibling checkout of aletheia, and an
 ROM. The standard library is the only hard dependency; SDL2 is optional and
 is needed only for `engine/platform/` and the `eidos_view` demo.
 
-**SDL2 without an installer.** `tools/fetch_sdl.py` downloads the official
-MinGW-w64 development package of SDL **2.32.10** from the libsdl-org GitHub
-release, verifies it against the SHA-256 recorded in the script, and unpacks
-it into `third_party/` (gitignored, so neither the archive nor the tree it
-unpacks to is ever committed). Standard library only; a fresh clone needs
-nothing but Python to get SDL2:
+**SDL2 without an installer.** `tools/fetch_sdl.py` downloads SDL
+**2.32.10** from the official libsdl-org GitHub release, verifies it against
+a SHA-256 recorded in the script (the same values as the asset digests
+GitHub publishes for that release), and unpacks it into a per-user cache
+**outside the repository**: `%LOCALAPPDATA%\eidos\sdl` on Windows,
+`~/Library/Caches/eidos/sdl` on macOS, `$XDG_CACHE_HOME/eidos/sdl` (or
+`~/.cache/eidos/sdl`) elsewhere, or `EIDOS_SDL_CACHE` when set. Nothing is
+ever written into the checkout, and every checkout and git worktree on the
+machine shares the one download. Standard library only. It knows three
+flavours of the same release:
+
+| flavour | archive | for |
+| --- | --- | --- |
+| `mingw` | `SDL2-devel-2.32.10-mingw.tar.gz` | MinGW-w64, x64 and x86 |
+| `vc` | `SDL2-devel-2.32.10-VC.zip` | `cl.exe` and `clang-cl`, x64 and x86 |
+| `source` | `SDL2-2.32.10.tar.gz` | anything else: built with CMake, with this build's own compiler, flags and toolchain file, into a prefix named after them |
 
 ```
-python tools/fetch_sdl.py            # download, verify, extract
-python tools/fetch_sdl.py --check    # report what is already there
+python tools/fetch_sdl.py                 # the host's default (mingw on Windows, source elsewhere)
+python tools/fetch_sdl.py --flavor vc     # one flavour; --flavor all for every one
+python tools/fetch_sdl.py --check         # report what the cache holds
 ```
 
-CMake looks in `third_party/` first, then for a system SDL2 CMake package,
-then for pkg-config's `sdl2.pc`, and prints which it found. With none of the
-three it says so and skips the platform layer and the demo: **every other
-target still builds, and every test but `test_view` still runs.**
-`-DEIDOS_SDL=OFF` forces that path, which is how the no-SDL build is checked.
-The version and the hash are pinned in the script rather than resolved at run
-time, because a recorded hash is the only part of a download a compromised
-mirror cannot satisfy; upgrading is two edits and a re-run.
+**How CMake finds it** (`cmake/sdl2.cmake`): it asks the script for the
+flavour this toolchain links (`vc` under MSVC and clang-cl, `mingw` under
+MinGW-w64, `source` otherwise; `-DEIDOS_SDL_FLAVOR=` overrides) at this
+build's pointer width, which never touches the network; then an older
+fetch's `third_party/SDL2-*` inside the checkout, if one is there; then an
+SDL2 CMake package (a system package, Homebrew, vcpkg, or `-DSDL2_DIR`);
+then pkg-config's `sdl2.pc`. With none of them it says so and skips the
+platform layer and the demo: **every other target still builds, and every
+test but `test_view` still runs.** `-DEIDOS_SDL=OFF` forces that path, which
+is how the no-SDL build is checked. On Windows `SDL2.dll` is copied next to
+`eidos_view.exe` after it links.
+
+**`-DEIDOS_SDL_FETCH=ON`** adds a last step: when nothing was found, run
+the script at configure time (download and verify, and for the `source`
+flavour build and install), then look in the cache again. It is **off by
+default** on purpose. A configure that reaches the network on its own is
+wrong exactly where reproducibility matters: distribution packaging and CI
+sandboxes forbid it, an offline machine would wait out a five-minute
+timeout, and what a build links should not depend on whether a download
+happened to succeed. The explicit fetch is one command, and after it the
+cache is found automatically. `tools/check.py` turns it on for the Windows
+configurations, so the whole matrix is one command on a fresh machine.
+
+The version and the hashes are pinned in the script rather than resolved at
+run time, because a recorded hash is the only part of a download a
+compromised mirror cannot satisfy; upgrading is changing the version and
+the three hashes (`--print-sha FILE` prints one) and re-running. An
+unpacked tree is used only if it carries the stamp the script writes after a
+verified, complete extraction, so an interrupted one is never picked up.
 
 ```
 # in the aletheia checkout:
 python tools/ndsrom.py extract "<your-rom>.nds" -o extract
 
 # in this repository:
-python tools/fetch_sdl.py
+python tools/fetch_sdl.py                 # Windows; on Linux/macOS install the package instead
 cmake -S . -B build -DALETHEIA_ROOT=../aletheia
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+### SDL2 on every platform
+
+None of the following can be tested on the Windows machine this port is
+developed on; the package names are the distributions' own.
+
+**Linux.** The development package, found through its CMake package or
+pkg-config:
+
+| distribution | 64-bit | 32-bit (the ILP32 configuration) |
+| --- | --- | --- |
+| Debian, Ubuntu | `libsdl2-dev` | `libsdl2-dev:i386` (after `dpkg --add-architecture i386`), with `gcc-multilib` |
+| Fedora | `SDL2-devel` | `SDL2-devel.i686`, with `glibc-devel.i686` |
+| Arch | `sdl2` | `lib32-sdl2` (multilib repository), with `lib32-glibc` |
+| openSUSE | `libSDL2-devel` | `libSDL2-devel-32bit` |
+| Alpine | `sdl2-dev` | none (no multilib) |
+
+Fedora 42 and later and Arch ship SDL2 as `sdl2-compat`, the SDL2 API
+implemented over SDL3; the package names above still resolve to it and it
+is meant to be a drop-in replacement. If the 32-bit package is missing,
+the configure-time link probe (below) reports SDL2 as not found for that
+build rather than failing half way through it, and
+`-DEIDOS_SDL_FETCH=ON` builds it from source for `-m32` instead.
+
+**macOS.** `brew install sdl2` (Homebrew) or `sudo port install libsdl2`
+(MacPorts). Homebrew installs both a CMake package and `sdl2.pc`; if CMake
+does not search Homebrew's prefix (`/opt/homebrew` on Apple silicon),
+configure with `-DCMAKE_PREFIX_PATH=$(brew --prefix)`. Only 64-bit builds
+exist on current macOS, so the ILP32 configuration is not available there.
+
+**The source fallback**, on any host with CMake and a C compiler:
+configure eidos with `-DEIDOS_SDL_FETCH=ON`. The script downloads the
+source release, verifies it, and builds it with the compiler, C flags,
+toolchain file and generator of the eidos build that asked, into
+`SDL2-2.32.10-<system>-<compiler>-<arch>-<hash>/` in the cache, so a GCC
+build, a Clang build and an `-m32` build each get their own. On Linux, SDL
+builds the video and audio back ends whose development headers are
+installed (X11 or Wayland, ALSA, PulseAudio or PipeWire); with none of them
+it still builds, with only the dummy drivers, which is enough for
+`test_view` but opens no window.
+
+**Android and iOS.** Not built yet; the route is SDL2's own templates.
+The SDL2 source release carries `android-project/` (a Gradle project whose
+`SDLActivity` loads the game as `libmain.so`, built with the NDK through
+CMake or ndk-build) and `Xcode/` (the iOS template and SDL's own
+`SDL.xcodeproj`). Three things differ from the desktop build:
+
+- **The entry point.** `engine/platform/platform.c` defines
+  `SDL_MAIN_HANDLED` and eidos owns `main()`. On Android and iOS SDL owns
+  the process entry (`SDLActivity` calls `SDL_main` in `libmain.so`; on iOS
+  SDL runs `UIApplicationMain` and calls `SDL_main` from it), so a mobile
+  build compiles the demo's `main` as `SDL_main` through `SDL_main.h` and
+  leaves `SDL_MAIN_HANDLED` undefined for that target.
+- **The data root.** No command line and no arbitrary paths: the player's
+  `extract/` goes under `SDL_GetPrefPath()` (Android: the app's internal
+  files directory, iOS: the app's sandbox), which the first-run extractor
+  in `install/` would write to.
+- **Input.** The DS keypad has no keyboard to come from; the touch screen
+  maps to SDL's touch events (`SDL_FINGERDOWN` and friends) on the bottom
+  screen's rectangle, and the buttons to an on-screen overlay or a game
+  controller (`SDL_GameController`).
+
+### SDL2 or SDL3
+
+SDL3 (3.2.0, January 2025; the 3.4 series now) is a new major version with
+a renamed and partly redesigned API; SDL2 2.32.x is in maintenance. The cost
+of moving is small and contained, because `engine/platform/platform.c`
+(about 600 lines) is the only file that includes SDL, and the demo and
+`test_view` see only `platform.h`. What would change there:
+
+- **Audio**, the only real rewrite: SDL3 replaces the device callback and
+  `SDL_LockAudioDevice` with an `SDL_AudioStream`
+  (`SDL_OpenAudioDeviceStream` with a get-callback, and
+  `SDL_LockAudioStream` around the mixer handover). Same shape, new calls.
+- **Renaming**: `SDL_RenderCopy` to `SDL_RenderTexture` (float rectangles),
+  `SDL_CreateRGBSurfaceWithFormatFrom` to `SDL_CreateSurfaceFrom`,
+  `SDL_FreeSurface` to `SDL_DestroySurface`, `SDL_KEYDOWN` and `SDL_QUIT` to
+  `SDL_EVENT_KEY_DOWN` and `SDL_EVENT_QUIT`, `SDL_NUM_SCANCODES` to
+  `SDL_SCANCODE_COUNT`, `#include <SDL3/SDL.h>`.
+- **Small semantic changes**: functions return `bool` (true on success)
+  instead of 0, `SDL_GetKeyboardState` returns `const bool *`,
+  `SDL_CreateWindow` drops the position arguments and `SDL_WINDOW_SHOWN`,
+  `SDL_CreateRenderer` takes a driver name and vsync is set separately
+  (`SDL_SetRenderVSync`), and the scale-quality hint becomes
+  `SDL_SetTextureScaleMode(..., SDL_SCALEMODE_NEAREST)` per texture.
+- **Build glue**: `find_package(SDL3)`, `SDL3::SDL3`, new archive names and
+  hashes in `tools/fetch_sdl.py`, `SDL3.dll`.
+
+Recommendation: **stay on SDL2 for now and move to SDL3 before the mobile
+ports**, as one change to `platform.c`, `cmake/sdl2.cmake` and the fetch
+script. Nothing the port uses today needs SDL3, and SDL2 is still what
+Debian, Ubuntu LTS and Alpine ship natively, while the distributions that
+moved ship `sdl2-compat`, so SDL2 code keeps building everywhere. What SDL3
+adds is what the later milestones want: a better touch, pen and gamepad
+model for the bottom screen and the buttons, proper high-DPI handling, and
+the actively developed Android and iOS back ends.
 
 **Without game data.** The fixtures and the four oracles are generated from
 the extracted ROM at build time, so a tree with no `extract/` used to fail
@@ -1729,6 +1997,12 @@ an accent would not open; it now reads the wide command line. It also found
 that `cmake/ilp32-toolchain.cmake` preferred `i686-w64-mingw32-gcc` on
 every host, so a Linux machine with MinGW installed got a Windows cross
 compiler for its "32-bit" build; the search is now split by host OS.
+On a Windows host the two MinGW configurations are native builds and run
+their tests directly. Every Windows configuration (`mingw-*`, `msvc-*`,
+`clangcl-x64`) configures with `-DEIDOS_SDL_FETCH=ON` and fails if it still
+has no SDL2, so the platform layer, `eidos_view` and `test_view` are part
+of what "ok" means there; the summary's `sdl` column says which
+configurations had it.
 
 Two portability fixes came out of the first Clang run: `sdk/os_alloc.c`
 computed alignment by subtracting a null pointer, which is undefined and
@@ -1766,7 +2040,7 @@ executables run on the same machine. Do not pass
 
 ```
 "C:\Program Files\Microsoft Visual Studio\<version>\Community\VC\Auxiliary\Build\vcvarsall.bat" x64_x86
-cmake -S . -B build-msvc32 -G Ninja -DALETHEIA_ROOT=..\aletheia -DEIDOS_SDL=OFF
+cmake -S . -B build-msvc32 -G Ninja -DALETHEIA_ROOT=..\aletheia -DEIDOS_SDL_FETCH=ON
 cmake --build build-msvc32
 ctest --test-dir build-msvc32 --output-on-failure
 ```
@@ -1781,17 +2055,14 @@ headers and CRT, and `vcvarsall.bat`) and a Windows SDK (the UCRT headers
 and `kernel32.lib`); clang-cl is
 `Microsoft.VisualStudio.Component.VC.Llvm.Clang`.
 
-**SDL2 under MSVC.** `tools/fetch_sdl.py` fetches the MinGW package, whose
-import library does not link with MSVC, so the MSVC configurations build with
-`-DEIDOS_SDL=OFF`. For the platform layer and the demo, either install SDL2
-with vcpkg (`vcpkg install sdl2:x64-windows` or `sdl2:x86-windows`, then
-configure with
-`-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake`), or unpack
-the official `SDL2-devel-<version>-VC.zip` from the same libsdl-org release
-anywhere outside the repository and configure with
-`-DSDL2_DIR=<unpacked>/cmake`. Either one is found by the existing
-`find_package(SDL2)` step; neither puts a binary in the repository. Copy the
-matching `SDL2.dll` next to `eidos_view.exe` before running it.
+**SDL2 under MSVC.** `cl.exe` and `clang-cl` link the `vc` flavour, the
+official `SDL2-devel-2.32.10-VC.zip` (`SDL2.lib` and `SDL2.dll` for x64 and
+x86); the MinGW import library does not link with `link.exe`. Run
+`python tools/fetch_sdl.py --flavor vc` once, or configure with
+`-DEIDOS_SDL_FETCH=ON`, and the platform layer, `eidos_view` and `test_view`
+build in all three Visual Studio configurations. vcpkg
+(`vcpkg install sdl2:x64-windows`, with its toolchain file) or
+`-DSDL2_DIR=<somewhere>/cmake` also work, through the `find_package` step.
 
 **No dialogs.** The Microsoft runtime reports `abort()`, a failed
 `assert()`, an invalid CRT argument and every debug-CRT error with a modal
@@ -1849,9 +2120,10 @@ aletheia's `tools/gcc-host/` (the MinGW-w64 archive ships
 whole of what it needs) and then on PATH, and falls back to `-m32` on the
 default compiler. It does not set `CMAKE_SYSTEM_NAME`: this is a same-OS,
 different-ABI build and ctest runs the executables exactly as it does the
-64-bit ones. SDL2 is not a problem either, because the devel package
+64-bit ones. SDL2 is not a problem either, because the MinGW devel package
 `tools/fetch_sdl.py` unpacks carries an `i686-w64-mingw32` tree beside the
-64-bit one and `CMakeLists.txt` picks the triplet by pointer width;
+64-bit one (and the VC package an `x86` library beside the `x64` one), and
+`cmake/sdl2.cmake` picks by pointer width;
 `-DEIDOS_SDL=OFF` is there for a host with no 32-bit SDL2.
 
 `CMakeLists.txt` then reads `CMAKE_SIZEOF_VOID_P` and decides one thing:
@@ -2399,6 +2671,41 @@ the ROM the `BW_ROM` environment variable names, into a folder named
 never stored in the repository. It also checks that a second run is a no-op
 and no staging is left. Without `BW_ROM` it reports itself skipped.
 
+### First run: the setup window
+
+On top of the core, `install/setup.c` decides where the data root is and
+whether it is playable, and `engine/platform/wizard.c` asks for the ROM
+when it is not. A front end calls `eidos_firstrun` before anything else;
+`demo/eidos_view` does, so it now starts the way the game will:
+
+- the data root is `--data-root`, else `BW_DATA_ROOT`, else the folder
+  saved in `config.txt`, else the platform default (`%LOCALAPPDATA%\eidos`,
+  `~/Library/Application Support/eidos`, `$XDG_DATA_HOME/eidos`, the app's
+  internal storage on Android; a `portable.txt` beside the executable
+  keeps everything beside it);
+- it is playable when its manifest names this installer version and the
+  known good dump and the first files are there (a folder named explicitly
+  needs only the NitroFS tree, so aletheia's own extract/ still runs);
+- when it is not, a window opens: one SDL screen drawn by eidos with its
+  own bitmap font, the same on every platform. It says what is needed,
+  takes the ROM from the platform's own file dialog (`install/picker.c`:
+  `IFileOpenDialog` on Windows, `NSOpenPanel` on macOS, the desktop portal
+  then zenity or kdialog on Linux) or dropped on the window, checks and
+  writes it on a worker thread with a progress bar and Cancel, and says in
+  plain words why a file was refused (an archive, another game, White, a
+  damaged or modified dump, no space);
+- `--rom <file>` does the same without a window, `--no-window` prints
+  what is missing instead of opening one, `--reset-data` deletes the data
+  eidos made, `--move-data <folder>` moves it.
+
+`test_dataroot` (every configuration, MSVC included) and `test_wizard` (the
+window under the dummy video driver, driven by scripted drops, clicks and
+keys) need no game data; with `BW_ROM` set, `test_wizard` also installs
+the real ROM through the window and `test_firstrun_rom` runs the headless
+path (install, reuse, move, reset) through `eidos_view`. `test_picker`
+opens the real Windows dialog and answers it from a helper thread when
+`EIDOS_TEST_DIALOGS=1`. `docs/installer.md` has the rest.
+
 ## Planned Milestones
 
 - [ ] **Milestone 1**: Portability pass
@@ -2462,12 +2769,11 @@ and no staging is left. Without `BW_ROM` it reports itself skipped.
         own: `src/matched/sub_0203101C.c` builds the list on the matched
         heap layer and `src/matched/sub_020310C4.c` is the step function
         `demo/eidos_view` installs
-  - [ ] The game's own boot runs the frame: NitroMain is supplied
-        (`stubs/reimpl_02005124.c`), and the machine it runs on is in the
-        tree and tested (the address space, the OS layer, the ARM7 stand-in,
-        the file system and overlays, one `bw_port_reset`); linking its
-        matched closure under `EIDOS_BOOT=ON` is in progress. See "Running
-        the game's boot"
+  - [ ] The game's own boot runs the frame: NitroMain and its matched
+        closure link under `EIDOS_BOOT=ON` and run through the system and
+        heap initialisation to the first overlay load (ov010, resident),
+        which this build does not compile; the frame loop waits on ov010
+        and ov011. See "Running the game's boot"
 - [ ] **Milestone 3**: 2D engine shim
   - [x] BG layers from tile and palette memory: NSCR screens, all four
         text screen sizes, 16- and 256-colour modes, scroll, priority and
@@ -2531,8 +2837,10 @@ and no staging is left. Without `BW_ROM` it reports itself skipped.
         parent/child tree and the per-shape node binding are decoded and
         applied, so a multi-node model's parts sit at the positions and
         orientations its joint matrices put them at
-        (`docs/g3d-nodes.md`); what is still missing is lighting, which
-        is parsed and not interpreted, and a pixel oracle
+        (`docs/g3d-nodes.md`); lighting, fog, edge marking,
+        anti-aliasing and the w-buffer are done on the hardware path
+        (`engine/g3d/light.c`, `engine/g3d/raster.c`); what is still
+        missing is a pixel oracle
 - [ ] **Milestone 5**: Audio
   - [x] SDAT sequencer and mixer (replacing ARM7 audio core): the SDAT
         container, SBNK instrument tables, SWAR/SWAV waves, the SSEQ
@@ -2546,25 +2854,40 @@ and no staging is left. Without `BW_ROM` it reports itself skipped.
   - [x] PSG square wave and noise channels: the eight duty settings, and the
         15-bit Galois LFSR clocked at the SND timer rate, bit-identical to
         the oracle on `SEQ_BGM_BATTLEPINCH` and `SEQ_SE_KOUKA_H`
-  - [ ] Music, sound effects, and Pokémon cries play accurately (the
-        sequencer renders all three and the cry path is the same one, but
-        the model it reproduces is the asset lane's: the ADSR curve, the
-        volume law and the pan law are documented approximations of the
-        hardware's, and Tie, portamento, modulation and the pitch wheel are
-        no-ops. Making those accurate needs the DS sound driver itself,
-        which is not decompiled yet, and it is what this test exists to
-        measure the change of)
+  - [ ] Music, sound effects, and Pokémon cries play accurately (the game's
+        SND commands play on the ARM7 driver, `sdk/arm7/snd_seq.c` and
+        `snd_hw.c`: SDK-shaped players, tracks and shared channels, the
+        SDK's own timer and volume arithmetic, Tie, portamento, the LFO,
+        the pitch wheel, loop points and direct-channel streams; its ARM7
+        side follows public driver documentation and has not been compared
+        with the DS's own output; `engine/audio` keeps the asset lane's
+        model for the oracle comparison)
   - [ ] The game's own sound calls reach it: nothing in `src/matched/` plays
         a sequence yet, so the SEQ id is still chosen by the demo
 - [ ] **Milestone 6**: Data pipeline & asset extraction
-  - [ ] First-run asset extractor from legally dumped ROM (the core is
-        in and verified on the real ROM: `install/` identifies the dump,
-        refuses a wrong game or a bad dump with a message, and extracts it
-        atomically into ndsrom.py's layout plus `arm9_dec.bin` and
-        `overlays_dec/`, 726 of 726 files identical to aletheia's own
-        extract, checked by `test_extract_rom` when `BW_ROM` is set; the
-        per-platform wizard is designed in `docs/installer.md` but not
-        built, and the readable-format conversion is not started)
+  - [x] First-run asset extractor from legally dumped ROM: `install/`
+        identifies the dump, refuses a wrong game or a bad dump with a
+        message, and extracts it atomically into ndsrom.py's layout plus
+        `arm9_dec.bin` and `overlays_dec/` (726 of 726 files identical to
+        aletheia's own extract, `test_extract_rom`); the setup window
+        (`engine/platform/wizard.c`, one SDL implementation for every
+        platform) opens when the data root is missing or not playable,
+        takes the ROM from the native file dialog or a drop, extracts it
+        with a progress bar and Cancel, and says why a file was refused;
+        `--rom`, `--no-window`, `--reset-data`, `--move-data`, and a data
+        location per platform (see "First run: the setup window").
+        Verified on Windows: the window driven by scripted events under the
+        dummy and the real Windows video driver, the real ROM installed
+        through it and through `eidos_view --rom`, the real
+        `IFileOpenDialog` opened and answered (`test_picker`), MinGW at
+        both widths, `install/setup.c` and the picker under MSVC x64, x86
+        and clang-cl. The Linux (portal, zenity, kdialog), macOS and
+        Android branches of the C files are syntax-checked with clang
+        against stand-in system headers only; `install/picker_mac.m` is not
+        compiled (no macOS SDK here); the Android and iOS pickers are
+        deferred with a plan in `docs/installer.md`
+  - [ ] Readable-format conversion of the extracted assets (not started;
+        split out of the box above, where it was listed as not started)
   - [x] File layer: VFS with mod overlay support (`sdk/vfs.c`: the data
         root and several mods in a manifest-ordered load order, whole-file
         overrides; `sdk/vfs_narc.c`: member-level NARC overrides that

@@ -13,6 +13,12 @@
  *       game thread left over from a previous run.
  *   bw_pxi_reset (sdk/pxi.c) installs the IPCSYNC, IPCFIFOCNT and send
  *       register hooks and powers the ARM7 stand-in off.
+ *   bw_firmware_apply (sdk/firmware.c) writes the user settings, MAC
+ *       address and wireless channels where the ARM7's boot code leaves
+ *       them before the ARM9 starts; it needs bw_ds_reset's cleared main RAM
+ *       and nothing else.
+ *   bw_cp_reset (sdk/cp.c) installs the divider and square-root unit's
+ *       access hook, which bw_ds_reset dropped with every other.
  *
  * Then the joins.  A PXI interrupt request must go into the OS layer's
  * latch: the PXI's default sink ORs the bit into the IF register's bytes,
@@ -24,7 +30,9 @@
  */
 
 #include "arm7/arm7.h"
+#include "cp.h"
 #include "dsmem.h"
+#include "firmware.h"
 #include "os.h"
 #include "port.h"
 #include "pxi.h"
@@ -36,8 +44,10 @@ void bw_port_reset(void)
     bw_pxi_set_irq_sink(NULL);
 
     bw_ds_reset();
+    bw_firmware_apply();
     bw_os_reset();
     bw_pxi_reset();
+    bw_cp_reset();
 
     bw_pxi_set_irq_sink(bw_os_raise_irq);
     bw_os_set_cpu_step(bw_arm7_step);

@@ -814,7 +814,10 @@ static void test_swap(void)
     fullscreen_quad(0x000A00C0u, 31u);
     w32(G3D_HW_SWAP_BUFFERS, 0u);
     g3d_hw_flush();
-    BW_CHECK_EQ("alpha test passes alpha 10 at ref 8", px(100, 100)[3], 255);
+    /* Drawn over the clear plane's alpha 0: the pixel keeps its own
+     * alpha, 10, for the 2D engine to blend with. */
+    BW_CHECK_EQ("alpha test passes alpha 10 at ref 8", px(100, 100)[3],
+                10u * 255u / 31u);
     /* blending off: a translucent polygon is drawn opaque */
     w16(G3D_HW_DISP3DCNT, 0x0000u);
     w32(G3D_HW_CLEAR_COLOR, (31u << 10) | (31u << 16));
@@ -836,13 +839,11 @@ static void test_swap(void)
     g3d_hw_flush();
     BW_CHECK_EQ("unterminated list drawn", px(128, 96)[0], 255);
 
-    /* flags for what the frame does not honour */
+    /* fog, edge marking and the w-buffer are honoured now: no flags */
     w16(G3D_HW_DISP3DCNT, 0x00A8u);
     w32(G3D_HW_SWAP_BUFFERS, 2u);
     g3d_hw_flush();
-    BW_CHECK_EQ("fog flagged", (g3d_hw_unsupported() & G3D_HW_UNSUP_FOG) != 0, 1);
-    BW_CHECK_EQ("edge flagged", (g3d_hw_unsupported() & G3D_HW_UNSUP_EDGE) != 0, 1);
-    BW_CHECK_EQ("w-buffer flagged", (g3d_hw_unsupported() & G3D_HW_UNSUP_WBUFFER) != 0, 1);
+    BW_CHECK_EQ("fog, edges, w-buffer: nothing flagged", g3d_hw_unsupported(), 0);
 
     /* the frame as BG0 of the main engine, on the top screen */
     w16(G3D_HW_DISP3DCNT, 0x0008u);
@@ -858,12 +859,311 @@ static void test_swap(void)
     BW_CHECK_EQ("top screen 3D red 0", top[(96u * 256u + 128u) * 4u], 0);
 }
 
+/* ------------------------------------------------------------------ */
+/* 5. Lighting and the rear passes                                     */
+/* ------------------------------------------------------------------ */
+
+/* A quad over clip-space [x0, x1] x [y0, y1] at depth z, identity
+ * matrices, under `attr`.  `pre` runs between BEGIN_VTXS and the first
+ * vertex (a NORMAL), or is NULL; `color` is a COLOR sent before BEGIN. */
+static void quad_at(u32 attr, u32 color, s32 x0, s32 y0, s32 x1, s32 y1,
+                    s32 z, const u32 *normal)
+{
+    w32(0x040004A4u, attr);
+    w32(0x04000480u, color);
+    w32(0x04000500u, 1u);
+    if (normal != NULL) {
+        w32(0x04000484u, *normal);
+    }
+    w32(0x0400048Cu, v16(x0, y0)); w32(0x0400048Cu, (u32)z & 0xFFFFu);
+    w32(0x0400048Cu, v16(x1, y0)); w32(0x0400048Cu, (u32)z & 0xFFFFu);
+    w32(0x0400048Cu, v16(x1, y1)); w32(0x0400048Cu, (u32)z & 0xFFFFu);
+    w32(0x0400048Cu, v16(x0, y1)); w32(0x0400048Cu, (u32)z & 0xFFFFu);
+    w32(0x04000504u, 0u);
+}
+
+static void swap(u32 param)
+{
+    w32(G3D_HW_SWAP_BUFFERS, param);
+    g3d_hw_flush();
+}
+
+static u32 rgb_at(u32 x, u32 y)
+{
+    const u8 *p = px(x, y);
+
+    return ((u32)p[0] << 16) | ((u32)p[1] << 8) | p[2];
+}
+
+static u32 e5(u32 c5)
+{
+    return c5 * 255u / 31u;
+}
+
+static void test_lighting(void)
+{
+    const u32 n_front = v10(0, 0, 511);          /* (0, 0, 511/512) */
+    u32 i;
+
+    boot();
+    w16(G3D_HW_DISP3DCNT, 0x0008u);
+    w32(G3D_HW_CLEAR_COLOR, 31u << 16);
+    w16(G3D_HW_CLEAR_DEPTH, 0x7FFFu);
+
+    /*
+     * Light 0 along (0, 0, -1), white; diffuse red, ambient blue 8,
+     * specular 0, emission green 4.  N = (0, 0, 4088) in 12 bits.
+     *   diffuse level  -(L . N) = 4088
+     *   red    31 * 31 * 4088 >> 17                     = 29
+     *   green  emission                                 = 4
+     *   blue   (8 * 31 << 12) >> 17 = 248 / 32           = 7
+     */
+    w32(0x040004C8u, v10(0, 0, -512));
+    w32(0x040004CCu, 0x7FFFu);
+    w32(0x040004C0u, 31u | (8u << 26));
+    w32(0x040004C4u, (4u << 21));
+    quad_at(0x001F00C1u, 0x7FFFu, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE, 0,
+            &n_front);
+    swap(0);
+    BW_CHECK_EQ("lit: diffuse + ambient + emission", rgb_at(100, 100),
+                (e5(29) << 16) | (e5(4) << 8) | e5(7));
+
+    /* No light enabled in POLYGON_ATTR: NORMAL leaves COLOR alone. */
+    quad_at(0x001F00C0u, 0x7FFFu, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE, 0,
+            &n_front);
+    swap(0);
+    BW_CHECK_EQ("no light enabled: COLOR", rgb_at(100, 100), 0xFFFFFFu);
+    /* Only light 1, black and with no direction: the emission alone. */
+    quad_at(0x001F00C2u, 0x7FFFu, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE, 0,
+            &n_front);
+    swap(0);
+    BW_CHECK_EQ("light 1 only: emission", rgb_at(100, 100), e5(4) << 8);
+
+    /*
+     * The normal goes through the vector matrix: a 180-degree turn about
+     * y (diag(-1, 1, -1), loaded in position+vector mode) faces it away,
+     * so the diffuse level is 0; the light vector was taken earlier, under
+     * the identity, and stays.
+     */
+    w32(0x04000440u, 2u);
+    w32(0x0400045Cu, (u32)-FX32_ONE); w32(0x0400045Cu, 0u); w32(0x0400045Cu, 0u);
+    w32(0x0400045Cu, 0u); w32(0x0400045Cu, (u32)FX32_ONE); w32(0x0400045Cu, 0u);
+    w32(0x0400045Cu, 0u); w32(0x0400045Cu, 0u); w32(0x0400045Cu, (u32)-FX32_ONE);
+    w32(0x0400045Cu, 0u); w32(0x0400045Cu, 0u); w32(0x0400045Cu, 0u);
+    quad_at(0x001F00C1u, 0x7FFFu, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE, 0,
+            &n_front);
+    swap(0);
+    BW_CHECK_EQ("normal turned away: no diffuse", rgb_at(100, 100),
+                (e5(0) << 16) | (e5(4) << 8) | e5(7));
+    w32(0x04000454u, 0u);
+
+    /*
+     * Specular only, white: the half vector of (0, 0, -1) is (0, 0, -1),
+     * shine level 4088^2 >> 12 = 4080, 31 * 31 * 4080 >> 17 = 29.  With
+     * the table on and every entry 0x80 (one half): 128 << 4 = 2048,
+     * 31 * 31 * 2048 >> 17 = 15.
+     */
+    w32(0x040004C0u, 0u);
+    w32(0x040004C4u, 0x7FFFu);
+    quad_at(0x001F00C1u, 0x7FFFu, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE, 0,
+            &n_front);
+    swap(0);
+    BW_CHECK_EQ("specular", rgb_at(100, 100), e5(29) * 0x010101u);
+    for (i = 0; i < 32u; i++) {
+        w32(0x040004D0u, 0x80808080u);
+    }
+    w32(0x040004C4u, 0x7FFFu | 0x8000u);
+    quad_at(0x001F00C1u, 0x7FFFu, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE, 0,
+            &n_front);
+    swap(0);
+    BW_CHECK_EQ("specular through the shininess table", rgb_at(100, 100),
+                e5(15) * 0x010101u);
+
+    /* DIF_AMB bit 15: the diffuse colour becomes the vertex colour. */
+    w32(0x04000480u, 0x7FFFu);
+    w32(0x040004C0u, (31u << 5) | 0x8000u);
+    w32(0x040004A4u, 0x001F00C0u);
+    w32(0x04000500u, 1u);
+    w32(0x0400048Cu, v16(-FX32_ONE, -FX32_ONE)); w32(0x0400048Cu, 0u);
+    w32(0x0400048Cu, v16(FX32_ONE, -FX32_ONE));  w32(0x0400048Cu, 0u);
+    w32(0x0400048Cu, v16(FX32_ONE, FX32_ONE));   w32(0x0400048Cu, 0u);
+    w32(0x0400048Cu, v16(-FX32_ONE, FX32_ONE));  w32(0x0400048Cu, 0u);
+    w32(0x04000504u, 0u);
+    swap(0);
+    BW_CHECK_EQ("DIF_AMB sets the vertex colour", rgb_at(100, 100), 0x00FF00u);
+}
+
+static void test_rear(void)
+{
+    static const s32 half = FX32_ONE / 2;
+    u8 *bank_c, *bank_d;
+    u32 i;
+
+    boot();
+
+    /*
+     * Edge marking: a red quad of polygon ID 8 over a black clear plane of
+     * ID 0, EDGE_COLOR[1] blue.  The quad covers screen x 64..191 and y
+     * 48..143; its outermost pixels have a clear neighbour, further away
+     * and of another ID, and turn blue; its inside stays red.
+     */
+    w16(G3D_HW_DISP3DCNT, 0x0028u);
+    w32(G3D_HW_CLEAR_COLOR, 31u << 16);
+    w16(G3D_HW_CLEAR_DEPTH, 0x7FFFu);
+    w16(G3D_HW_EDGE_COLOR + 2u, (u16)(31u << 10));
+    quad_at(0x081F00C0u, 31u, -half, -half, half, half, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("edge: left column", rgb_at(64, 100), 0x0000FFu);
+    BW_CHECK_EQ("edge: right column", rgb_at(191, 100), 0x0000FFu);
+    BW_CHECK_EQ("edge: top row", rgb_at(100, 48), 0x0000FFu);
+    BW_CHECK_EQ("edge: inside", rgb_at(65, 100), 0xFF0000u);
+    BW_CHECK_EQ("edge: the clear plane is not marked", rgb_at(63, 100), 0u);
+    /* The same ID as the clear plane: nothing to mark. */
+    quad_at(0x001F00C0u, 31u, -half, -half, half, half, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("edge: same ID as the clear plane", rgb_at(64, 100), 0xFF0000u);
+    /* The screen border is the clear plane. */
+    quad_at(0x081F00C0u, 31u, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("edge: screen border", rgb_at(0, 100), 0x0000FFu);
+    BW_CHECK_EQ("edge: one in from the border", rgb_at(1, 100), 0xFF0000u);
+
+    /*
+     * Fog: shift 0 (step 0x400), offset 0, table entry k = 4k, white fog
+     * of alpha 31.  The quad at z 0 has the rasteriser's depth 0x3FFFFF,
+     * 15-bit 0x3FFF: entries 14 and 15 (56, 60) at 1/1024 and 1023/1024,
+     * (56 * 1 + 60 * 1023) / 1024 = 59.  Red: (255 * 59 + 255 * 69) >> 7
+     * = 255, green and blue 255 * 59 >> 7 = 117.  The clear plane, with
+     * CLEAR_COLOR bit 15, is fogged too: depth 0x7FFF, entries 30 and 31,
+     * density 123, colour 255 * 123 >> 7 = 245, alpha (31 * 123) >> 7 = 29.
+     */
+    w16(G3D_HW_DISP3DCNT, 0x0088u);
+    w32(G3D_HW_CLEAR_COLOR, 0x8000u);
+    w32(G3D_HW_FOG_COLOR, 0x7FFFu | (31u << 16));
+    w16(G3D_HW_FOG_OFFSET, 0u);
+    for (i = 0; i < 8u; i++) {
+        u32 k = i * 4u;
+
+        w32(G3D_HW_FOG_TABLE + i * 4u, (k * 4u) | ((k + 1u) * 4u << 8)
+                                       | ((k + 2u) * 4u << 16)
+                                       | ((k + 3u) * 4u << 24));
+    }
+    quad_at(0x001F80C0u, 31u, -half, -half, half, half, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("fog on a fogged polygon", rgb_at(100, 100), 0xFF7575u);
+    BW_CHECK_EQ("fog on the clear plane", rgb_at(10, 10), 0xF5F5F5u);
+    BW_CHECK_EQ("fogged clear alpha", px(10, 10)[3], 29u * 255u / 31u);
+    quad_at(0x001F00C0u, 31u, -half, -half, half, half, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("no fog without POLYGON_ATTR bit 15", rgb_at(100, 100),
+                0xFF0000u);
+    w16(G3D_HW_DISP3DCNT, 0x00C8u);                /* alpha only */
+    quad_at(0x001F80C0u, 31u, -half, -half, half, half, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("alpha-only fog keeps the colour", rgb_at(100, 100), 0xFF0000u);
+
+    /*
+     * The w-buffer.  A projection whose w is the vertex z and whose z is
+     * the constant 0.5: a red quad at z 1 (w 1, z/w 0.5) drawn before a
+     * green one at z 2 (w 2, z/w 0.25).  By z the green one is nearer, by
+     * w the red one.
+     */
+    w16(G3D_HW_DISP3DCNT, 0x0008u);
+    w32(G3D_HW_CLEAR_COLOR, 31u << 16);
+    w32(0x04000440u, 0u);
+    {
+        static const s32 m[16] = {
+            FX32_ONE, 0, 0, 0,   0, FX32_ONE, 0, 0,
+            0, 0, 0, FX32_ONE,   0, 0, FX32_ONE / 2, 0,
+        };
+        for (i = 0; i < 16u; i++) {
+            w32(0x04000458u, (u32)m[i]);
+        }
+    }
+    w32(0x04000440u, 1u);
+    for (i = 0; i < 2u; i++) {
+        quad_at(0x001F00C0u, 31u, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE,
+                FX32_ONE, NULL);
+        quad_at(0x001F00C0u, 31u << 5, -2 * FX32_ONE, -2 * FX32_ONE,
+                2 * FX32_ONE, 2 * FX32_ONE, 2 * FX32_ONE, NULL);
+        swap(i == 0 ? 0u : 2u);
+        BW_CHECK_EQ(i == 0 ? "z-buffer: the smaller z/w wins"
+                           : "w-buffer: the smaller w wins",
+                    rgb_at(100, 100), i == 0 ? 0x00FF00u : 0xFF0000u);
+    }
+    w32(0x04000440u, 0u);
+    w32(0x04000454u, 0u);
+    w32(0x04000440u, 1u);
+
+    /*
+     * The rear-plane bitmap: banks C and D as texture slots 2 and 3,
+     * CLRIMAGE_OFFSET x 1, y 2, so screen (4, 4) shows image (5, 6).
+     */
+    w32(0x04000240u, 0x9B930000u);               /* C: slot 2, D: slot 3 */
+    bw_io_sync();
+    bank_c = bw_vram_bank(BW_VRAM_C, NULL);
+    bank_d = bw_vram_bank(BW_VRAM_D, NULL);
+    for (i = 0; i < 256u * 256u; i++) {
+        bw_wr16(bank_d + i * 2u, 0x7FFFu);       /* far everywhere */
+    }
+    bw_wr16(bank_c + (6u * 256u + 5u) * 2u, (u16)(0x8000u | (31u << 10)));
+    bw_wr16(bank_d + (6u * 256u + 5u) * 2u, 0x7FFFu);
+    w16(G3D_HW_CLRIMAGE_OFS, (u16)(1u | (2u << 8)));
+    w16(G3D_HW_DISP3DCNT, 0x4008u);
+    swap(0);
+    BW_CHECK_EQ("rear plane: image (5,6) at (4,4)", rgb_at(4, 4), 0x0000FFu);
+    BW_CHECK_EQ("rear plane: its alpha bit", px(4, 4)[3], 255);
+    BW_CHECK_EQ("rear plane: an empty pixel is transparent", px(5, 4)[3], 0);
+    /* Its depth: an image depth of 0 hides a polygon behind it. */
+    bw_wr16(bank_d + (6u * 256u + 5u) * 2u, 0u);
+    quad_at(0x001F00C0u, 31u << 5, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE,
+            0, NULL);
+    swap(0);
+    BW_CHECK_EQ("rear plane depth 0 in front", rgb_at(4, 4), 0x0000FFu);
+    BW_CHECK_EQ("polygon elsewhere", rgb_at(6, 4), 0x00FF00u);
+    w32(0x04000240u, 0u);
+    bw_io_sync();
+
+    /*
+     * Anti-aliasing: a red quad from screen x 10.5 to 20.25 (clip x
+     * -3760 / 4096 and -3448 / 4096).  Pixel 10 is half covered, coverage
+     * 16/32 less one = 15; it lies on the silhouette.  Over the clear
+     * plane's alpha 0 its colour stays and its alpha is (15 + 1) * 255 /
+     * 32 = 127; over an opaque black clear plane the colour is blended,
+     * 255 * 16 >> 5 = 127.  Pixel 15 is inside, pixel 19 fully covered.
+     */
+    w16(G3D_HW_DISP3DCNT, 0x0018u);
+    w32(G3D_HW_CLEAR_COLOR, 0u);
+    quad_at(0x001F00C0u, 31u, -3760, -FX32_ONE, -3448, FX32_ONE, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("AA over alpha 0: colour kept", rgb_at(10, 100), 0xFF0000u);
+    BW_CHECK_EQ("AA over alpha 0: alpha is the coverage", px(10, 100)[3], 127);
+    BW_CHECK_EQ("AA: inside untouched", px(15, 100)[3], 255);
+    BW_CHECK_EQ("AA: a fully covered end untouched", px(19, 100)[3], 255);
+    w32(G3D_HW_CLEAR_COLOR, 31u << 16);
+    quad_at(0x001F00C0u, 31u, -3760, -FX32_ONE, -3448, FX32_ONE, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("AA over black: blended", rgb_at(10, 100), 127u << 16);
+    w16(G3D_HW_DISP3DCNT, 0x0008u);
+    quad_at(0x001F00C0u, 31u, -3760, -FX32_ONE, -3448, FX32_ONE, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("AA off: the edge pixel is solid", rgb_at(10, 100), 0xFF0000u);
+
+    /* A shadow polygon is still not drawn, and says so. */
+    quad_at(0x001F00F0u, 31u, -FX32_ONE, -FX32_ONE, FX32_ONE, FX32_ONE, 0, NULL);
+    swap(0);
+    BW_CHECK_EQ("shadow flagged",
+                (g3d_hw_unsupported() & G3D_HW_UNSUP_SHADOW) != 0, 1);
+}
+
 int main(void)
 {
     test_identity();
     test_sdk_paths();
     test_status();
     test_swap();
+    test_lighting();
+    test_rear();
     g3d_target_free(&g_ref);
     BW_REPORT("test_g3dhw");
 }

@@ -1,47 +1,47 @@
 /*
  * demo/eidos_boot.c -- run the game's own ARM9 boot on the host.
  *
- * docs/boot.md is the plan.  This executable is its driver: it resets the DS
- * address space, points the file layer at the player's extract/, and runs
- * NitroMain (stubs/reimpl_02005124.c) under the frame loop in engine/frame/,
- * headless, for a fixed number of frames.  It has no window: the picture is
- * the render lane's business, and a run that reaches its last frame without
- * a panic is the result this step of the work is after.
+ * docs/boot.md is the plan.  This executable is its driver: it installs the
+ * player's ARM9 image (docs/armdata.md), resets the emulated machine, points
+ * the file layer at the player's extract/, and calls NitroMain, which never
+ * returns.  Time passes where the DS would let it pass: when every game
+ * thread is waiting (NitroMain's OS_WaitIrq for the vblank, among others),
+ * the idle thread halts, and the OS layer's halt hook (bw_os_set_halt_hook)
+ * is this file's frame: one pass of the frame loop in engine/frame/, which
+ * advances OS_GetTick, raises the vblank interrupt and, with a window,
+ * composes and shows both screens.  The interrupt is taken when the halt
+ * returns, the handler NitroMain installed runs, and the waiting thread
+ * wakes, as on the console.
  *
- *     eidos_boot [--data-root PATH] [--frames N]
+ *     eidos_boot [--data-root PATH] [--frames N] [--window] [--watchdog S]
+ *
+ * After N frames (default 600) it prints a summary and exits 0.  A panic on
+ * the way (a stub reached, an overlay not in this build) ends the run with
+ * the panic's message and a failure status, which is how the boot's test
+ * reads how far it got (tests/boot_run.cmake).  With --watchdog S, a run
+ * that passes no frame for S seconds (a game thread spinning on something
+ * the port never delivers) is reported with every thread's call chain
+ * (sdk/plat_crash.h) and ends with status 3.
  *
  * Two builds, chosen by the CMake option EIDOS_BOOT:
  *
- *   OFF (the default)  the boot is not linked.  The game's boot reaches
- *                      about 1400 matched translation units and, through
- *                      them, hundreds of SDK functions whose port shims the
- *                      other boot lanes are writing (sdk/dsmem.c, the OS
- *                      thread and interrupt layer, the ARM7 replies, the
- *                      overlay loader).  Until they land, the link cannot
- *                      succeed, so this build compiles only the parts that
- *                      link today: argument handling, the data root and the
- *                      frame loop.  It says so and exits 0, which keeps this
- *                      file compiling at both pointer widths in every build.
+ *   OFF (the default)  the boot is not linked.  This build compiles only
+ *                      argument handling and the data root, says so and
+ *                      exits 0, which keeps this file compiling at both
+ *                      pointer widths in every build.
  *
- *   ON                 the boot is linked: stubs/reimpl_02005124.c,
- *                      stubs/reimpl_02047990.c and the closure of
- *                      NitroMain's matched callees (CMakeLists.txt,
- *                      "eidos_boot").  The frame loop's step hook is
- *                      bw_nitromain_step (one iteration of NitroMain's loop,
- *                      ending where the original waits for vblank) and its
- *                      vblank hook raises the vblank interrupt, which runs
- *                      the handler NitroMain installed (func_0200520C) and
- *                      so satisfies the wait the next step tests.
+ *   ON                 the boot is linked: NitroMain and the closure of its
+ *                      matched callees (cmake/boot.cmake).  NitroMain is
+ *                      aletheia's matched src/matched/arm9/func_02005124.c,
+ *                      or stubs/reimpl_02005124.c with an older aletheia;
+ *                      both define NitroMain() as the original loop.
  *
- * The machine is reset with bw_port_reset (sdk/port.h): the address
- * space, the OS layer and the PXI, joined.  The vblank delivery here is the
- * hardware's half only: set DISPSTAT's vblank flag and, when DISPSTAT asks
- * for the interrupt, raise IF bit 0 through the OS layer
- * (bw_os_raise_irq), which owns IF.  The OS layer takes it at the safe
- * point that follows (bw_os_poll here, or the game's own interrupt
- * enables): IME, the CPSR I bit and IE decide, the handler NitroMain
- * installed in OS_IRQTable runs, and the threads waiting in OS_WaitIrq
- * wake, as OS_IrqHandler does on the DS.
+ * Sound: the ARM7 stand-in plays the game's SND command lists on
+ * engine/audio (sdk/arm7/snd.c).  With no audio device the driver's clock
+ * is run from here, one frame's worth of output frames per frame
+ * (bw_snd_render with no buffer), so sequences end and the sound alarms
+ * fire on time.  With a window and an audio device, the device's callback
+ * runs it instead.
  */
 
 #include <stdio.h>
@@ -49,6 +49,7 @@
 #include <string.h>
 
 #include "frame.h"
+#include "plat_crash.h"
 #include "port.h"
 
 #ifndef EIDOS_DEFAULT_DATA_ROOT
@@ -59,21 +60,69 @@
 #define EIDOS_BOOT 0
 #endif
 
+#ifndef EIDOS_BOOT_SDL
+#define EIDOS_BOOT_SDL 0
+#endif
+
 #define BOOT_DEFAULT_FRAMES 600u
 
 #if EIDOS_BOOT
 
+#include "armdata.h"
+#include "arm7/arm7.h"
+#include "arm7/snd.h"
+#include "audio.h"
 #include "dsmem.h"
+#include "g2d.h"
 #include "os.h"
 
-/* stubs/reimpl_02005124.c */
-void bw_nitromain_init(void);
-int  bw_nitromain_step(void);
+#if EIDOS_BOOT_SDL
+#include "platform.h"
+#endif
+
+/* aletheia's src/matched/arm9/func_02005124.c (or stubs/reimpl_02005124.c). */
+void NitroMain(void);
+
+/*
+ * Generated by tools/bootlink.py (cmake/boot.cmake): the link-time
+ * constants that are DS addresses.  After every bw_port_reset.
+ */
+void bw_boot_link_init(void);
+
+/* Generated by tools/armdata.py (cmake/armdata.cmake): the ARM9 image's
+ * data for everything this build compiles (docs/armdata.md). */
+extern const BwDataImage bw_arm9_data;
 
 #define REG_DISPSTAT 0x04000004u
 
 #define DISPSTAT_VBLANK_FLAG 0x0001u
 #define DISPSTAT_VBLANK_IRQ  0x0008u
+
+/* One DS frame is 560190 cycles of the 33513982 Hz system clock. */
+#define DS_FRAME_CLOCKS 560190u
+#define DS_CLOCK_HZ     33513982u
+
+typedef struct BootRun {
+    EidosFrameLoop loop;
+    u64 limit;         /* frames to run before the clean exit            */
+    u64 vblanks;       /* vblank interrupts raised                       */
+    u64 audio_rem;     /* the output-frame remainder, in clock units     */
+    u8 *top;
+    u8 *bottom;
+#if EIDOS_BOOT_SDL
+    EidosPlatform *plat;
+#endif
+} BootRun;
+
+static BootRun g_run;
+
+/* Frames passed, for the watchdog's thread (a 32-bit word: no tearing). */
+static volatile u32 g_frames_seen;
+
+static unsigned long long boot_progress(void)
+{
+    return g_frames_seen;
+}
 
 /*
  * The register file is plain memory (sdk/dsmem.h): the hardware's own
@@ -92,92 +141,212 @@ static void io_raw_write(u32 addr, u32 width, u32 v)
     memcpy((void *)bw_io(addr), &v, width);
 }
 
-typedef struct BootState {
-    u64 steps_run;     /* steps that ran a frame of NitroMain's loop       */
-    u64 steps_waited;  /* steps that found the vblank wait unsatisfied     */
-    u64 vblanks;       /* vblank interrupts raised                         */
-} BootState;
-
-static void boot_step(void *user)
+static void boot_finish(int status, const char *why)
 {
-    BootState *st = (BootState *)user;
-
-    if (bw_nitromain_step()) {
-        st->steps_run++;
-    } else {
-        st->steps_waited++;
+    printf("eidos_boot: %s after %llu frames, %llu vblank interrupts\n", why,
+           (unsigned long long)eidos_frame_count(&g_run.loop),
+           (unsigned long long)g_run.vblanks);
+    fflush(stdout);
+#if EIDOS_BOOT_SDL
+    if (g_run.plat != NULL) {
+        eidos_platform_quit(g_run.plat);
+        g_run.plat = NULL;
     }
+#endif
+    /* The game's threads are host threads blocked in the OS layer; the
+     * process ends with them, as the console's power switch would. */
+    exit(status);
 }
 
-static void deliver_vblank(void *user)
+/* The hardware's half of vblank: DISPSTAT's flag, and the request when
+ * DISPSTAT asks for it.  The OS layer takes it when the halt returns. */
+static void boot_vblank(void *user)
 {
-    BootState *st = (BootState *)user;
+    BootRun *run = (BootRun *)user;
     u32 dispstat = io_raw_read(REG_DISPSTAT, 2);
 
     io_raw_write(REG_DISPSTAT, 2, dispstat | DISPSTAT_VBLANK_FLAG);
     bw_io_sync();
     if (dispstat & DISPSTAT_VBLANK_IRQ) {
         bw_os_raise_irq(OS_IE_V_BLANK);
-        st->vblanks++;
+        run->vblanks++;
     }
-    bw_os_poll();
-
-    /* The flag drops again at line 0 of the next frame. */
-    io_raw_write(REG_DISPSTAT, 2,
-                 io_raw_read(REG_DISPSTAT, 2) & ~DISPSTAT_VBLANK_FLAG);
 }
 
-static int run_boot(u32 frames)
+#if EIDOS_BOOT_SDL
+static void boot_render(void *user, u8 *top, u8 *bottom)
 {
-    BootState st;
+    u32 unsupported[2];
+
+    (void)user;
+    (void)g2d_hw_render_dsmem(NULL, top, bottom, unsupported);
+}
+
+static void boot_audio(void *user, s16 *out, u32 frames)
+{
+    (void)user;
+    bw_snd_render(out, frames);
+}
+#endif
+
+/* The output frames one DS frame is worth, the remainder carried. */
+static u32 boot_audio_frames(BootRun *run)
+{
+    u64 num = (u64)BW_AUDIO_RATE * DS_FRAME_CLOCKS + run->audio_rem;
+    u32 n = (u32)(num / DS_CLOCK_HZ);
+
+    run->audio_rem = num % DS_CLOCK_HZ;
+    return n;
+}
+
+/* The halt hook: one frame of time passing. */
+static void boot_frame(void *user)
+{
+    BootRun *run = (BootRun *)user;
+    int audio_device = 0;
+
+    if (eidos_frame_count(&run->loop) >= run->limit) {
+        boot_finish(0, "ran");
+    }
+    /* Line 0 of the next frame: the vblank flag drops. */
+    io_raw_write(REG_DISPSTAT, 2,
+                 io_raw_read(REG_DISPSTAT, 2) & ~DISPSTAT_VBLANK_FLAG);
+
+    eidos_frame_run_one(&run->loop);
+    bw_arm7_tp_frame();
+    g_frames_seen++;
+
+#if EIDOS_BOOT_SDL
+    if (run->plat != NULL) {
+        if (!eidos_platform_pump(run->plat)) {
+            boot_finish(0, "window closed");
+        }
+        eidos_platform_present(run->plat, run->top, run->bottom);
+        audio_device = eidos_platform_audio_open(run->plat);
+        eidos_platform_wait_frame(run->plat);
+    }
+#endif
+    if (!audio_device) {
+        bw_snd_render(NULL, boot_audio_frames(run));
+    }
+}
+
+/*
+ * Back all of main RAM now.  sdk/dsmem.c commits its flat main RAM in
+ * 64 KiB pieces as addresses are first translated, and a pointer reached by
+ * arithmetic may run one piece past its translation.  The game goes much
+ * further than that: OS_InitArena hands it the whole arena (DS
+ * 0x02xxxxxx-0x023E0000, translated once at each end) and its heaps carve
+ * megabytes out of it by pointer arithmetic alone.  Translating one
+ * address in every piece commits them all, through dsmem's own interface.
+ */
+static void commit_main_ram(void)
+{
+    u32 addr;
+
+    for (addr = 0x02000000u; addr < 0x03000000u; addr += 0x10000u) {
+        (void)bw_ds_ptr(addr);
+    }
+}
+
+/* With a window when asked and this build has one; headless otherwise. */
+static void boot_window(EidosFrameHooks *hooks, int window)
+{
+#if EIDOS_BOOT_SDL
+    EidosPlatformConfig cfg;
+    size_t screen = (size_t)256 * 192 * 4;
+
+    if (!window) {
+        return;
+    }
+    memset(&cfg, 0, sizeof cfg);
+    cfg.title = "eidos boot";
+    cfg.audio = 1;
+    if (eidos_platform_init(&g_run.plat, &cfg) != 0) {
+        fprintf(stderr, "eidos_boot: no window; running headless\n");
+        g_run.plat = NULL;
+        return;
+    }
+    eidos_platform_set_audio(g_run.plat, boot_audio, NULL);
+    g_run.top = (u8 *)calloc(1, screen);
+    g_run.bottom = (u8 *)calloc(1, screen);
+    if (g_run.top == NULL || g_run.bottom == NULL) {
+        bw_panic("eidos_boot", 0, "out of memory for the screens");
+    }
+    hooks->render = boot_render;
+#else
+    (void)hooks;
+    if (window) {
+        fprintf(stderr, "eidos_boot: built without SDL; running headless\n");
+    }
+#endif
+}
+
+static int run_boot(u64 frames, int window, unsigned watchdog)
+{
     EidosFrameHooks hooks;
-    EidosFrameLoop loop;
-    u32 i;
 
-    memset(&st, 0, sizeof st);
+    memset(&g_run, 0, sizeof g_run);
+    g_run.limit = frames;
+
     memset(&hooks, 0, sizeof hooks);
-    hooks.step = boot_step;
-    hooks.vblank = deliver_vblank;
-    hooks.render = NULL;
-    hooks.user = &st;
+    hooks.step = NULL;              /* the game runs on its own threads */
+    hooks.vblank = boot_vblank;
+    hooks.user = &g_run;
+    boot_window(&hooks, window);
 
+    /* The image is installed before the first reset, which copies it into
+     * main RAM, binds the names and relocates the pointers. */
+    bw_data_install(&bw_arm9_data, 0);
     bw_port_reset();
-    eidos_frame_init(&loop, &hooks, NULL, NULL);
-    eidos_frame_set_current(&loop);
+    bw_boot_link_init();
+    commit_main_ram();
 
-    bw_nitromain_init();
-    for (i = 0; i < frames; i++) {
-        eidos_frame_run_one(&loop);
+    eidos_frame_init(&g_run.loop, &hooks, g_run.top, g_run.bottom);
+    eidos_frame_set_current(&g_run.loop);
+    bw_os_set_halt_hook(boot_frame, &g_run);
+    if (watchdog != 0) {
+        bw_plat_watchdog(watchdog, boot_progress);
     }
 
-    printf("eidos_boot: %u frames, %llu loop iterations, %llu waits, "
-           "%llu vblank interrupts\n",
-           (unsigned)frames, (unsigned long long)st.steps_run,
-           (unsigned long long)st.steps_waited,
-           (unsigned long long)st.vblanks);
-    return 0;
+    NitroMain();
+    bw_panic("NitroMain returned", 0x02005124u, "its loop has no exit");
+    return 3;
 }
 
 #endif /* EIDOS_BOOT */
 
 static void usage(void)
 {
-    fprintf(stderr, "usage: eidos_boot [--data-root PATH] [--frames N]\n");
+    fprintf(stderr, "usage: eidos_boot [--data-root PATH] [--frames N] [--window] "
+                    "[--watchdog SECONDS]\n");
 }
 
 int main(int argc, char **argv)
 {
     const char *data_root = NULL;
     unsigned long long frames = BOOT_DEFAULT_FRAMES;
+    int window = 0;
+    unsigned long watchdog = 0;
     int i;
 
+    bw_plat_crash_install();
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--data-root") == 0 && i + 1 < argc) {
             data_root = argv[++i];
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             char *end = NULL;
             frames = strtoull(argv[++i], &end, 10);
-            if (end == argv[i] || *end != '\0' || frames > 0xFFFFFFFFull) {
+            if (end == argv[i] || *end != '\0') {
+                usage();
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--window") == 0) {
+            window = 1;
+        } else if (strcmp(argv[i], "--watchdog") == 0 && i + 1 < argc) {
+            char *end = NULL;
+            watchdog = strtoul(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || watchdog > 86400ul) {
                 usage();
                 return 2;
             }
@@ -198,13 +367,14 @@ int main(int argc, char **argv)
     }
 
 #if EIDOS_BOOT
-    return run_boot((u32)frames);
+    return run_boot((u64)frames, window, (unsigned)watchdog);
 #else
+    (void)window;
+    (void)watchdog;
     printf("eidos_boot: built with EIDOS_BOOT=OFF, so the game's boot is not "
-           "linked into this binary (%u frames requested, data root '%s'). "
-           "Reconfigure with -DEIDOS_BOOT=ON once the boot lanes have "
-           "landed; docs/boot.md has the plan.\n",
-           (unsigned)frames, bw_data_root());
+           "linked into this binary (%llu frames requested, data root '%s'). "
+           "Reconfigure with -DEIDOS_BOOT=ON; docs/boot.md has the plan.\n",
+           frames, bw_data_root());
     return 0;
 #endif
 }

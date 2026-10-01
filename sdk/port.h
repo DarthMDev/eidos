@@ -274,6 +274,9 @@ u32  bw_heap_error(void);
  * zero. */
 long bw_heap_live_blocks(u32 heap_id);
 
+/* 0x02030524 (sdk/gx.c): bw_heap_error's halfword, as the game reads it. */
+u16  sub_02030524(void);
+
 /*
  * The arena the heaps are built in, EIDOS_HEAP_MATCHED only
  * (sdk/os_arena.c).  bw_arena_reset discards the old arena and allocates a
@@ -284,6 +287,18 @@ int  bw_arena_reset(u32 size);
 u32  bw_arena_used(void);
 u32  bw_arena_size(void);
 int  bw_arena_contains(const void *p);
+
+/*
+ * The SDK's arena table in the shared work area (sdk/os_arena.c), the
+ * boot's arena: OS_GetArenaHi/Lo and OS_SetArenaHi/Lo by arena id, and
+ * OS_AllocFromArenaLo on it (sub_02086788 uses it when no host arena is set
+ * up).  32-bit pointers only, like the boot.
+ */
+void *OS_GetArenaHi(u32 id);
+void *OS_GetArenaLo(u32 id);
+void  OS_SetArenaHi(u32 id, void *hi);
+void  OS_SetArenaLo(u32 id, void *lo);
+void *bw_os_alloc_from_arena_lo(u32 id, u32 size, u32 align);
 
 /* The release side of the counter the matched raw allocator increments.
  * Called by stubs/reimpl_02030164.c with the heap id it recovered from the
