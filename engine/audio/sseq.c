@@ -283,6 +283,14 @@ int bw_sseq_track_starts(const BwSseq *q, BwSseqTrackStart *starts, int cap)
 int bw_sseq_run_track(const u8 *data, size_t size, size_t start_pc, int track_index,
                       BwSeqNoteList *notes, BwTempoList *tempos, u32 *end_tick)
 {
+    return bw_sseq_run_track_ex(data, size, start_pc, track_index, notes, tempos,
+                                end_tick, NULL);
+}
+
+int bw_sseq_run_track_ex(const u8 *data, size_t size, size_t start_pc, int track_index,
+                         BwSeqNoteList *notes, BwTempoList *tempos, u32 *end_tick,
+                         int *looped)
+{
     size_t pc = start_pc;
     size_t call_stack[BW_AUDIO_MAX_CALL_DEPTH];
     int call_depth = 0;
@@ -351,7 +359,10 @@ int bw_sseq_run_track(const u8 *data, size_t size, size_t start_pc, int track_in
                     jumps[slot].pc = pc;
                     jumps[slot].visits = 0;
                 }
-                if (jumps[slot].visits >= BW_AUDIO_MAX_JUMP_REPEATS) goto done;
+                if (jumps[slot].visits >= BW_AUDIO_MAX_JUMP_REPEATS) {
+                    if (looped != NULL) *looped = 1;
+                    goto done;
+                }
                 jumps[slot].visits++;
                 pc = ev.offset;
             }

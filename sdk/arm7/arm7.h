@@ -16,7 +16,9 @@
  *   ctrdg.c  Slot-2 cartridge (tag 13)
  *   card.c   Slot-1 card pull-out (tag 14)
  *   fs.c     Slot-1 backup commands (tag 11, PXI_FIFO_TAG_FS)
- *   snd.c    sound command lists (tag 7)
+ *   snd.c    sound command lists (tag 7): the transport, sdk/arm7/snd.h
+ *   snd_driver.c  the sound driver behind it, on engine/audio (eidos
+ *            library only; the transport links without it)
  *
  * Each responder's protocol comes from the matched ARM9 side of the same
  * SDK module (aletheia src/matched/arm9_sdk/, named in each file) and from
@@ -98,10 +100,10 @@ typedef struct BwArm7Time {
 void bw_arm7_rtc_fix_time(const BwArm7Time *t);
 
 /*
- * The sound responder's completion counter.  The ARM9 reads it as
- * SNDi_SharedWork->finishCommandTag; the ARM7 firmware is told that
- * address in the first command list, which a 26-bit FIFO word cannot carry
- * for a host pointer, so the port binds it here instead.  NULL unbinds.
+ * The sound responder's completion counter, mirrored to an extra word.  The
+ * ARM9 reads SNDi_SharedWork->finishCommandTag, which the driver
+ * (sdk/arm7/snd.h) writes once the SHARED_WORK command has named it; this
+ * binding is for a transport running without a driver.  NULL unbinds.
  */
 void bw_arm7_snd_bind(volatile u32 *finish_command_tag);
 u32  bw_arm7_snd_lists(void);
