@@ -77,6 +77,11 @@
 #include "tcbl.h"
 #include "port_test.h"
 
+/* The matched block-header accessors the provenance check reads through. */
+extern u16   sub_020304B8(void *p);
+extern void *sub_020304C0(void *p);
+extern int   sub_020308B8(u8 *dst, const char *src);
+
 #define HEAP_ID    3u
 #define POOL_NODES 4u
 #define WORK_BYTES 16u
@@ -212,9 +217,6 @@ int main(void)
     /* The block header the matched raw allocator wrote in front of the
      * manager, read back through the matched accessors. */
     {
-        extern u16   sub_020304B8(void *p);
-        extern void *sub_020304C0(void *p);
-        extern int   sub_020308B8(u8 *dst, const char *src);
         u8 name[0x13];
 
         BW_CHECK_EQ("block header carries the heap id",

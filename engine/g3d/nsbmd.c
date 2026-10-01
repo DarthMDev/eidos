@@ -1092,7 +1092,8 @@ int g3d_model_load(G3dModel *out, const char *rel_path, u32 index,
     u32 raw_size, i, bmd_off;
     const u8 *mdl_block;
     u32 mdl_bsize;
-    G3dResDict model_dict, shape_rd, mat_rd;
+    G3dResDict model_dict, mat_rd;
+    G3dResDict shape_rd = {0};   /* set before use (shape_found >= 0) */
     const u8 *tail;
     u32 tail_size;
     u32 dict_offs[G3D_MAX_DICTS], n_dicts;

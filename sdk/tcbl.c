@@ -27,6 +27,7 @@ extern void *sub_020311B8(void *list, void (*func)(EidosTcblNode *, void *),
 extern void  sub_02031194(void *node);
 extern void  sub_0203115C(void *list);
 extern void  sub_020307B0(void *block);
+extern void *sub_02030FB4(void *node);
 
 EidosTcblList *bw_tcbl_create(u32 heap, u16 home_heap, u32 count,
                               u32 work_size)
@@ -81,8 +82,6 @@ EidosTcblNode *bw_tcbl_register(EidosTcblList *list,
 
 void *bw_tcbl_work(EidosTcblNode *node)
 {
-    extern void *sub_02030FB4(void *node);
-
     return node == NULL ? NULL : sub_02030FB4(node);
 }
 
