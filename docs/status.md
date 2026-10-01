@@ -30,9 +30,11 @@ is only partly done, it says which part.
 - **sdk/**: the SDK-name shims (`fs`, `mi`, `os_alloc`, `os_irq`, `gx`,
   `os_tick`) plus the port's own `narc`, `vfs`, `game_globals`, `aliases`
   and `panic`.
-- **Milestone 6, file layer (file granular)**: `sdk/vfs.c` owns the data
-  root and an optional mod overlay root and resolves a NitroFS path through
-  them (`test_vfs`).
+- **Milestone 6, file layer**: `sdk/vfs.c` owns the data root and a
+  manifest-ordered list of mod roots and resolves a NitroFS path through
+  them (`test_vfs`); `sdk/vfs_narc.c` applies member-level NARC overrides
+  (replace or add members, later mod wins) as one merged archive every
+  reader sees, the matched ones included (`test_vfs_members`).
 - **Milestone 4, 2D/3D integration**: `G2dLayer3d` puts the 3D output inside
   `g2d_frame_stack` as an ordinary layer, so a 2D BG can sit in front of or
   behind it, a window can hide it, and the colour effects blend with a 3D
@@ -73,10 +75,6 @@ is only partly done, it says which part.
   approximations (affine per-span texture interpolation, a conventional
   top-left fill rule) stay unverified. A frame captured from an emulator
   would close it.
-- **Milestone 6, member-level mod overlay**: overriding one member inside a
-  NARC (an editable decoded asset) needs the engine to load the decoded form
-  and repack it, or a member-level side table. Only whole-file overlay
-  exists today.
 - **Milestone 1, portability sweep**: the under-declared-globals sweep, and
   warning-free builds on Clang and MSVC (GCC is clean, with and without
   SDL2).

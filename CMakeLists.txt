@@ -304,7 +304,9 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_irq.c        # OS_DisableInterrupts/Restore/Terminate
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/gx.c            # the one GX name the heap layer reaches
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/tcbl.c          # the port's helper over tcbl.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs.c           # data root, mod overlay, path resolution
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs.c           # data root, mod list, path resolution
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs_narc.c      # member-level NARC overrides, the merged archive
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_dir.c      # path kind and directory listing, Win32 and POSIX
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/narc.c          # NARC framing, ARM9 rodata
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/game_globals.c  # the ARM9 globals the matched code names
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/aliases.c       # sub_/func_ spelling forwarders
@@ -1128,9 +1130,10 @@ target_include_directories(test_hwcompose PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/te
 target_link_libraries(test_hwcompose PRIVATE eidos)
 add_test(NAME test_hwcompose COMMAND test_hwcompose ${BW_DATA_ROOT_ABS})
 
-# The FS shim and the overlay registry: synthetic checks always, and the
-# real-data half when the data root's parent holds the extract's tables.
-foreach(t test_fs test_overlay)
+# The FS shim, the overlay registry and member-level mod overrides:
+# synthetic checks always, and the real-data half when the data root's
+# parent holds the extract's tables.
+foreach(t test_fs test_overlay test_vfs_members)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)

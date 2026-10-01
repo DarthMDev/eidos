@@ -48,7 +48,12 @@
  *     by file id);
  *   - a window of one (FS_OpenFileDirect: the SDK opens a ROM range
  *     [top, bottom), which the FAT turns into a file id and an offset);
- *   - a host buffer (FS_CreateFileFromMemory).
+ *   - a host buffer (FS_CreateFileFromMemory);
+ *   - an archive some mod changes member by member: the merged NARC
+ *     sdk/vfs_narc.c builds, served from memory under every open path
+ *     (by path, by file id, by ROM range), so the matched readers see one
+ *     consistent archive.  The slot keeps the merge cache's handle, an
+ *     index, and releases it on close.
  */
 
 #include <stdint.h>
@@ -58,6 +63,7 @@
 
 #include "port.h"
 #include "fs.h"
+#include "vfs.h"
 
 #define BW_FS_MAGIC     0x42574653u  /* 'BWFS' */
 #define BW_FS_MAX_OPEN  32u
@@ -79,6 +85,7 @@ typedef char bw_fs_record_fits[(sizeof(BwFsRecord) == BW_FSFILE_SIZE) ? 1 : -1];
 typedef struct BwFsSlot {
     FILE     *fp;    /* a host file, or NULL for a memory file  */
     const u8 *mem;   /* a host buffer, or NULL for a host file  */
+    u32       vfs;   /* bw_vfs_acquire handle, 0 when not merged */
     int       used;
 } BwFsSlot;
 
@@ -552,6 +559,7 @@ static int claim_slot(BwFsRecord *r, FILE *fp, const u8 *mem, u32 base, u32 size
         if (!g_slots[i].used) {
             g_slots[i].fp = fp;
             g_slots[i].mem = mem;
+            g_slots[i].vfs = 0;
             g_slots[i].used = 1;
             memset(r, 0, sizeof(*r));
             r->magic = BW_FS_MAGIC;
@@ -606,19 +614,60 @@ int bw_fs_open(void *file, const char *host_path)
     return open_window(file, host_path, 0, BW_FS_NO_ID, BW_FS_NO_ID);
 }
 
-static int open_id_window(void *file, u32 file_id, u32 base, u32 size)
+/*
+ * Open NitroFS path `rel` through the file layer as the window [base, base +
+ * size) (BW_FS_NO_ID: to the end).  When a mod changes the archive member by
+ * member the window is over the merged image; otherwise over the file
+ * bw_data_path names (mod overlay first).
+ */
+static int open_rel_window(void *file, const char *rel, u32 base, u32 size,
+                           u32 file_id)
 {
-    char rel[512];
+    BwFsRecord *r = (BwFsRecord *)file;
     char host[1200];
+    const u8 *data;
+    u32 total;
+    u32 handle;
+    int merged;
 
-    memset(file, 0, BW_FSFILE_SIZE);
-    if (bw_fs_path_of_id(file_id, rel, sizeof(rel)) != 0) {
+    memset(r, 0, sizeof(*r));
+    merged = bw_vfs_acquire(rel, &data, &total, &handle);
+    if (merged < 0) {
         return -1;
+    }
+    if (merged > 0) {
+        if (size == BW_FS_NO_ID) {
+            size = base <= total ? total - base : 0;
+        }
+        if (base > total || size > total - base ||
+            claim_slot(r, NULL, data, base, size, file_id) != 0) {
+            bw_vfs_release(handle);
+            memset(r, 0, sizeof(*r));
+            return -1;
+        }
+        g_slots[r->slot - 1].vfs = handle;
+        return 0;
     }
     if (bw_data_path(host, sizeof(host), rel) != 0) {
         return -1;
     }
     return open_window(file, host, base, size, file_id);
+}
+
+int bw_fs_open_rel(void *file, const char *rel)
+{
+    return open_rel_window(file, rel, 0, BW_FS_NO_ID, BW_FS_NO_ID);
+}
+
+static int open_id_window(void *file, u32 file_id, u32 base, u32 size)
+{
+    char rel[512];
+
+    memset(file, 0, BW_FSFILE_SIZE);
+    if (bw_fs_path_of_id(file_id, rel, sizeof(rel)) != 0) {
+        return -1;
+    }
+    return open_rel_window(file, rel, base, size, file_id);
 }
 
 int bw_fs_open_id(void *file, u32 file_id)
@@ -749,7 +798,6 @@ void FS_InitFile(void *file)
 
 BOOL FS_OpenFileEx(void *file, const char *path, u32 mode)
 {
-    char host[1200];
     const char *p;
     u32 id;
 
@@ -767,10 +815,10 @@ BOOL FS_OpenFileEx(void *file, const char *path, u32 mode)
     while (*p == '/') {
         p++;
     }
-    if (*p == '\0' || bw_data_path(host, sizeof(host), p) != 0) {
+    if (*p == '\0') {
         return FALSE;
     }
-    return bw_fs_open(file, host) == 0 ? TRUE : FALSE;
+    return bw_fs_open_rel(file, p) == 0 ? TRUE : FALSE;
 }
 
 BOOL FS_OpenFile(void *file, const char *path)
@@ -820,6 +868,13 @@ BOOL FS_OpenFileFast(void *file, BwFsFileID id)
  * when it is a real file id, otherwise the file whose extent contains the
  * range.  The host file is that id's extracted copy, and the window is the
  * range's offset inside it.
+ *
+ * A range that is the whole file opens the whole file the file layer
+ * serves, however long: a replacement or merged archive is rarely the
+ * cartridge copy's size, and the ROM range is only the game's name for "this
+ * file".  A strict sub-range keeps its offsets, which are the cartridge
+ * copy's; over a replaced or merged file they are only meaningful if the
+ * mod kept that layout (no matched caller opens a sub-range of an archive).
  */
 BOOL FS_OpenFileDirect(void *file, void *arc, u32 top, u32 bottom, u32 id)
 {
@@ -838,12 +893,17 @@ BOOL FS_OpenFileDirect(void *file, void *arc, u32 top, u32 bottom, u32 id)
         if (fat_entry(id, &ftop, &fbot) != 0 || top < ftop || bottom > fbot) {
             return FALSE;
         }
-        return open_id_window(file, id, top - ftop, bottom - top) == 0 ? TRUE : FALSE;
+        return open_id_window(file, id, top - ftop,
+                              (top == ftop && bottom == fbot) ? BW_FS_NO_ID
+                                                              : bottom - top) == 0
+                   ? TRUE : FALSE;
     }
     for (i = 0; i < n; i++) {
         if (fat_entry(i, &ftop, &fbot) == 0 && fbot > ftop &&
             ftop <= top && bottom <= fbot &&
-            open_id_window(file, i, top - ftop, bottom - top) == 0) {
+            open_id_window(file, i, top - ftop,
+                           (top == ftop && bottom == fbot) ? BW_FS_NO_ID
+                                                           : bottom - top) == 0) {
             return TRUE;
         }
     }
@@ -998,6 +1058,10 @@ BOOL FS_CloseFile(void *file)
     if (s->fp != NULL) {
         fclose(s->fp);
     }
+    if (s->vfs != 0) {
+        bw_vfs_release(s->vfs);
+    }
+    s->vfs = 0;
     s->fp = NULL;
     s->mem = NULL;
     s->used = 0;

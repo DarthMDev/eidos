@@ -18,9 +18,8 @@
  *   - a trailing separator on a root is stripped, so resolution does not
  *     produce a doubled slash.
  *
- * What is NOT tested, because it does not exist: overriding one member
- * inside a NARC.  The overlay is file granular; see README.md, "The file
- * layer".
+ * Member-level overrides and the multi-mod load order are
+ * tests/test_vfs_members.c.
  */
 
 #include <stdio.h>

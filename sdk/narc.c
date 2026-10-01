@@ -1,8 +1,10 @@
 /*
  * sdk/narc.c -- the port's NARC reader and the ARM9 rodata window.
  *
- * The data root and the mod overlay that a NitroFS path resolves through
- * live in sdk/vfs.c; this file calls bw_data_path like every other loader.
+ * The data root and the mods that a NitroFS path resolves through live in
+ * sdk/vfs.c, and member-level overrides in sdk/vfs_narc.c; this file opens
+ * through bw_fs_open_rel like every other loader, so what it frames is the
+ * merged archive when a mod changes members.
  *
  * A NARC is the container every `a/N/M/K` NitroFS file in this game is:
  *
@@ -157,7 +159,6 @@ static int read_at(void *file, u32 pos, void *dst, u32 size)
 
 int bw_arc_open(BwArcFile *arc, const char *rel_path)
 {
-    char path[1200];
     u8 hdr[16];
     u32 total;
     u32 pos;
@@ -166,10 +167,7 @@ int bw_arc_open(BwArcFile *arc, const char *rel_path)
 
     memset(arc, 0, sizeof(*arc));
 
-    if (bw_data_path(path, sizeof(path), rel_path) != 0) {
-        return -1;
-    }
-    if (bw_fs_open(arc->file, path) != 0) {
+    if (bw_fs_open_rel(arc->file, rel_path) != 0) {
         return -1;
     }
     total = bw_fs_size(arc->file);

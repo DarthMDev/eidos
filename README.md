@@ -1934,28 +1934,95 @@ clean.
 ## The file layer
 
 The port's data pipeline starts with `sdk/vfs.c`, the one place a
-NitroFS-relative path becomes a host path. It owns two roots: the data root
-`tools/ndsrom.py`'s `extract` wrote (the player's own ROM dump), and an
-optional **mod root** laid at the same relative layout. A path resolves to
-the overlay copy when a readable file exists there and to the base copy
-otherwise, so a mod ships whole replacement files and an absent one falls
-through. `BW_DATA_ROOT` and `BW_MOD_ROOT` set them from the environment, and
-an explicit `bw_set_data_root` / `bw_set_mod_root` call wins over both.
+NitroFS-relative path becomes a host path. It owns the **data root**
+`tools/ndsrom.py`'s `extract` wrote (the player's own ROM dump) and a list
+of **mod roots**, each laid at the same relative layout, in a load order in
+which a later mod wins. `BW_DATA_ROOT` and `BW_MOD_ROOT` set them from the
+environment (`BW_MOD_ROOT` may list several roots separated by `;`, on every
+host, since a Windows drive letter uses `:`), and an explicit
+`bw_set_data_root` / `bw_set_mod_root` call wins over both. `sdk/vfs.h` has
+the rest of the API: `bw_add_mod_root`, `bw_clear_mods`, the list in load
+order, and the merge calls below.
 
-What is implemented and tested: the two roots, their resolution order, the
-trailing-separator normalisation, and `bw_data_exists`. `tests/test_vfs.c`
-builds a base tree and a mod tree that disagree about one file and checks
-which copy wins, that the resolved path reads back, and that clearing the
-mod root restores base-only resolution (`test_vfs`, run by ctest, 13/13 in
-both pointer widths).
+A mod overrides game files at two granularities:
 
-What is not: the overlay is **file granular**. It replaces a whole NitroFS
-file (a whole NARC, or a raw asset), not one member inside a NARC. Editing
-one decoded asset inside an archive (the modding target above) needs the
-engine to load the decoded form and repack it, or a member-level side
-table, and neither exists yet. The other two items of the milestone are the
-first-run extractor and booting the game's own lists from the extracted
-tree; the second is gated on aletheia's boot path, which is not decompiled.
+- **Whole files.** `<mod>/a/0/1/6` as a regular file replaces the NitroFS
+  file `a/0/1/6`. A path resolves to the latest layer holding a regular file
+  there, the data root last (`bw_data_path`, `bw_data_exists`).
+- **Single archive members.** `<mod>/a/0/1/6/` as a *directory* holds loose
+  members: a file named `<index>` or `<index>.<ext>` (`12`, `0012.bin`,
+  `12.nclr`; the extension is free, leading zeros are allowed) replaces
+  member 12 of the archive, or **adds** it when the archive is shorter, so a
+  mod grows an archive (a new Pokemon, move, map) without repacking it.
+  Members past the original end that no mod fills are empty. Other names in
+  the directory (`README.txt`, `12.bin.bak`) are ignored; two files naming
+  the same index in one mod are an error, reported on stderr, and the
+  archive then fails to open rather than pick one. The member file holds the
+  member's own bytes in the game's format (an NCGR, a compressed blob, a
+  data record); converting from a readable format is a tool's job, not the
+  file layer's.
+
+Load order. Mods load in the order given, re-sorted stably by the `order`
+key of each mod's optional manifest, `<mod>/eidos_mod.txt`:
+
+    name  = Fairy type    # shown by tools; default: the directory name
+    order = 10            # signed integer, default 0; higher loads later
+
+For one archive the rule is a walk through the layers in load order: the
+latest layer holding a regular file supplies the base archive (a whole-file
+replacement discards every earlier mod's members of that archive), and
+every later mod's member directory is applied on top of it, a later mod
+winning for the same index. A member directory with no file under it in any
+layer is just a directory, not a new archive (`a/0/1` in a mod tree holds
+the replacement files `a/0/1/0..9`, whose names look like indices); a
+brand-new archive ships as a whole NARC. The format's own limit stays:
+BTAF's count is a u16, so 65535 members.
+
+How every reader sees it. The game's readers are matched code
+(`func_02048E34`, `func_02049578` and the rest): they read the NARC's header,
+BTAF and GMIF through `FS_SeekFile`/`FS_ReadFile` and trust the
+`imageBase`/`fatOffset`/`count` fields filled from the same bytes. So
+`sdk/vfs_narc.c` synthesises the merged archive as a complete NARC in
+memory, laid out exactly as the cartridge's are (header, BTAF, BTNF, GMIF,
+4-byte member alignment padded with 0xFF; repacking any of the 234 real
+archives from its own tables reproduces it byte for byte), and the FS shim
+serves it as a memory file under every open: `FS_OpenFile` by path,
+`bw_fs_open_id` / `FS_OpenFileFast` by file id, `FS_OpenFileDirect` by ROM
+range (a range covering the whole file opens the whole merged file), the
+archive id table, and `bw_arc_open`, which now opens through
+`bw_fs_open_rel`. Merged images are cached per path with a reference count
+held by the open files (the `FSFile` record stores the cache's index, never
+a pointer, so the 0x48-byte rule holds), dropped on any change to the roots
+or the mod list, and kept alive for a file still open across one.
+`bw_narc_pack`, `bw_vfs_build_merged` and `bw_vfs_member_overrides` are
+callable directly, for tests and mod tools. Two limits, stated: the ROM FAT
+the boot copies (`FS_LoadArchiveTables`) still holds the cartridge sizes,
+and a strict sub-range of an archive opened by ROM offset keeps the
+cartridge layout's offsets (no matched caller does either with an archive).
+Paths are narrow strings throughout, as fopen takes them;
+`sdk/plat_dir.c` is the one platform file (Win32 and POSIX) that tells a
+file from a directory and lists one.
+
+`tests/test_vfs.c` checks whole-file resolution (13 checks).
+`tests/test_vfs_members.c` builds a base tree and seven mod trees and reads
+every case three independent ways: `sdk/narc.c`'s reader plus the matched
+`func_02049578` on its handle, the matched readers by archive id
+(`func_02048DDC`, `func_02048E34`, `func_02048F4C`) over a synthetic name
+table, and `FS_OpenFile` of the archive, whose whole image must equal a NARC
+packed from the expected member list. Cases: no mods, an empty mod, a
+replaced member, members added past the end with a hole, two mods on one
+member in both load orders, a manifest's `order` and `name`, a whole file
+superseding earlier member directories and a member directory on top of a
+whole file, a duplicate index, members over a non-NARC, and an open file
+surviving a mod list change. With game data it also repacks all 234 real
+archives byte for byte, then replaces member 5 of the real `a/0/1/6` and adds
+one past its end, and reads both through the real ARM9 archive table and
+`func_02048E34` / `func_02048F4C`, by file id and by ROM range (**369 checks
+in both pointer widths**).
+
+The other two items of the milestone are the first-run extractor and
+booting the game's own lists from the extracted tree; the second is gated
+on aletheia's boot path, which is not decompiled.
 
 ### Archives by id, the way the game opens them
 
@@ -1974,9 +2041,9 @@ bottom of it:
   declares it (`u32 * volatile`), so it works at either pointer width, and
   the entries stay DS addresses.
 - the open-by-path SDK call at 0x02078C18 resolves such an address through
-  the ARM9 window to its string and the string through the file layer, **mod
-  overlay first**, so a mod's replacement archive is what the game's own
-  readers see. aletheia's `layout/symbols_sdk.txt` now names 0x02078C18
+  the ARM9 window to its string and the string through the file layer, **mods
+  first**, so a mod's replacement archive, or the merged archive its member
+  overrides make, is what the game's own readers see. aletheia's `layout/symbols_sdk.txt` now names 0x02078C18
   `FS_OpenFile`, but the matched file still calls it `CRYPTOi__BN_lshift1`,
   the name an earlier signature scan gave it, and passes the path as a DS
   address. The port defines that spelling as the address form of
@@ -2270,11 +2337,12 @@ message and nothing written, and 300 randomly damaged images (43 extracted,
         plus `arm9_dec.bin`, identical to aletheia's tools on a synthetic
         cartridge; the per-platform wizard, the readable-format conversion
         of DISTRIBUTION.md and a run against the real ROM are not)
-  - [ ] File layer: VFS with mod overlay support (the two roots, the
-        resolution order and `bw_data_exists` are implemented in `sdk/vfs.c`
-        and tested by `test_vfs`; the overlay is file granular, so
-        overriding one member inside a NARC is still open, see "The file
-        layer")
+  - [x] File layer: VFS with mod overlay support (`sdk/vfs.c`: the data
+        root and several mods in a manifest-ordered load order, whole-file
+        overrides; `sdk/vfs_narc.c`: member-level NARC overrides that
+        replace or add members, served to every reader, matched ones
+        included, as one merged archive; `test_vfs`, `test_vfs_members`,
+        see "The file layer")
   - [ ] Engine boots cleanly from extracted assets (needs aletheia's boot
         path, which is not decompiled)
 - [ ] **Milestone 7**: Gameplay integration
