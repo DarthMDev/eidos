@@ -9,8 +9,8 @@ writes into --out:
 
     synth.nds          the image
     oracle/            what aletheia's tools/ndsrom.py extract writes for it,
-                       plus arm9_dec.bin from tools/blz.py (what
-                       tools/delink.py writes)
+                       plus arm9_dec.bin and overlays_dec/ from tools/blz.py
+                       (what tools/delink.py writes)
     oracle_files.txt   one line per oracle file the C extractor must also
                        write: "<sha1> <size> <relative path>"; ndsrom.py's
                        rebuild bookkeeping (manifest.json, residue/) is left
@@ -23,10 +23,11 @@ the layout is chosen to cover what the extractor has to get right rather
 than to look like a real cartridge: nested directories, names that need
 sanitising (a reserved Windows name, characters Windows refuses, a trailing
 dot and space, a byte outside ASCII), overlay files in both the ARM9 and the
-ARM7 tables, a FAT entry nothing names, an empty FAT slot, a zero-length
-file, a DSi (TWL) header with arm9i/arm7i and both digest tables, an
-animated-icon banner, a non-padding blob between regions (ndsrom.py's
-residue), and an ARM9 binary packed by aletheia's own BLZ compressor with a
+ARM7 tables, a BLZ-compressed ARM9 overlay, a FAT entry nothing names, an
+empty FAT slot, a zero-length file, a DSi (TWL) header with arm9i/arm7i and
+both digest tables, an animated-icon banner, a non-padding blob between
+regions (ndsrom.py's residue), a correct header checksum and capacity byte,
+and an ARM9 binary packed by aletheia's own BLZ compressor with a
 0x4000-byte verbatim prefix, as the SDK packs a real one.
 
 aletheia is read, never written: tools/blz.py compresses the ARM9 image and
@@ -49,6 +50,17 @@ DEFAULT_ALETHEIA = os.path.normpath(os.path.join(ROOT, "..", "aletheia"))
 
 ROM_SIZE = 0x100000
 SEED = 0x45494453          # 'EIDS'
+
+
+def header_crc(h):
+    """CRC-16 of header bytes 0x000..0x15D (polynomial 0xA001 reflected,
+    initial 0xFFFF): the checksum at 0x15E that the console verifies."""
+    crc = 0xFFFF
+    for b in h[:0x15E]:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc
 
 
 def build_rom(blz):
@@ -82,7 +94,15 @@ def build_rom(blz):
     # --- files ---------------------------------------------------------
     # file ids 0..2 are overlays (two ARM9, one ARM7), 3.. NitroFS files,
     # then one orphan and one empty slot.
-    overlay_blobs = [noise(0x600), noise(0x480), noise(0x220)]
+    # Overlay 17 is BLZ-compressed, as most of the real cartridge's are: its
+    # table entry carries the decompressed size and the compressed flag, and
+    # the oracle's overlays_dec/ holds what tools/delink.py would decompress
+    # it to.
+    ov17_img = bytes(noise(0x80)) + b"".join(
+        struct.pack("<I", 0xE59F0000 | (i % 13) << 2) for i in range(0x180))
+    ov17 = blz.compress(ov17_img, 0)
+    assert len(ov17) < len(ov17_img)
+    overlay_blobs = [noise(0x600), ov17, noise(0x220)]
     fs_tree = [
         # (path components, size)
         (["a", "0", "0", "0"], 0x1200),
@@ -169,10 +189,12 @@ def build_rom(blz):
     fat_off = place(fat_bytes)
 
     # --- overlay tables (32-byte entries) ------------------------------
-    def ov_entry(ov_id, fid, load):
-        size = fat[fid][1] - fat[fid][0]
-        return struct.pack("<8I", ov_id, load, size, 0x40, 0, 0, fid, 0)
-    y9 = ov_entry(0, 0, 0x021D0000) + ov_entry(17, 1, 0x021E0000)
+    def ov_entry(ov_id, fid, load, size=None, last=0):
+        if size is None:
+            size = fat[fid][1] - fat[fid][0]
+        return struct.pack("<8I", ov_id, load, size, 0x40, 0, 0, fid, last)
+    y9 = (ov_entry(0, 0, 0x021D0000)
+          + ov_entry(17, 1, 0x021E0000, len(ov17_img), (1 << 24) | len(ov17)))
     y7 = ov_entry(3, 2, 0x037F8000)
     y9_off = place(y9)
     y7_off = place(y7)
@@ -201,6 +223,7 @@ def build_rom(blz):
     h[0x00C:0x010] = b"IRBO"
     h[0x010:0x012] = b"01"
     h[0x012] = 0x02                          # NTR + TWL
+    h[0x014] = 3                             # capacity 128 KiB << 3 = ROM_SIZE
     struct.pack_into("<4I", h, 0x20, arm9_off, 0x02000800, 0x02000000, len(arm9))
     struct.pack_into("<4I", h, 0x30, arm7_off, 0x02380000, 0x02380000, len(arm7))
     struct.pack_into("<4I", h, 0x40, fnt_off, len(fnt), fat_off, len(fat_bytes))
@@ -217,6 +240,7 @@ def build_rom(blz):
     struct.pack_into("<4I", h, 0x1F0, dsect_off, len(dsect), dblock_off, len(dblock))
     struct.pack_into("<I", h, 0x208, 0x23C0)
     struct.pack_into("<I", h, 0x210, ROM_SIZE)
+    struct.pack_into("<H", h, 0x15E, header_crc(h))
     rom[0:0x4000] = h
 
     counts = {
@@ -224,8 +248,9 @@ def build_rom(blz):
         "overlays": len(overlay_blobs),
         "orphans": 1,
         "arm9_dec_size": len(arm9_img),
+        "overlays_dec": 1,
     }
-    return bytes(rom), arm9_img, counts
+    return bytes(rom), arm9_img, {17: ov17_img}, counts
 
 
 def main(argv=None):
@@ -240,7 +265,7 @@ def main(argv=None):
 
     out = os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
-    rom, arm9_img, counts = build_rom(blz)
+    rom, arm9_img, ov_imgs, counts = build_rom(blz)
     rom_path = os.path.join(out, "synth.nds")
     with open(rom_path, "wb") as fh:
         fh.write(rom)
@@ -254,6 +279,22 @@ def main(argv=None):
     assert dec == arm9_img
     with open(os.path.join(oracle, "arm9_dec.bin"), "wb") as fh:
         fh.write(dec)
+
+    # overlays_dec/: tools/delink.py's step 3, the same call it makes.
+    with open(os.path.join(oracle, "y9.bin"), "rb") as fh:
+        y9 = fh.read()
+    for base in range(0, len(y9), 32):
+        ov_id, _ram, size = struct.unpack_from("<3I", y9, base)
+        last = struct.unpack_from("<I", y9, base + 28)[0]
+        if not (last >> 24) & 1:
+            continue
+        with open(os.path.join(oracle, "overlays", "y9_%04d.bin" % ov_id), "rb") as fh:
+            raw = fh.read()
+        img = blz.decompress(raw[:last & 0xFFFFFF], 0, expect_size=size)
+        assert img == ov_imgs[ov_id]
+        os.makedirs(os.path.join(oracle, "overlays_dec"), exist_ok=True)
+        with open(os.path.join(oracle, "overlays_dec", "y9_%04d.bin" % ov_id), "wb") as fh:
+            fh.write(img)
 
     lines = []
     for dirpath, _dirs, files in os.walk(oracle):
@@ -271,7 +312,7 @@ def main(argv=None):
     with open(os.path.join(out, "expect.txt"), "w", encoding="utf-8") as fh:
         fh.write("sha1 %s\n" % hashlib.sha1(rom).hexdigest())
         fh.write("files %d\n" % len(lines))
-        for k in ("fs_files", "overlays", "orphans", "arm9_dec_size"):
+        for k in ("fs_files", "overlays", "overlays_dec", "orphans", "arm9_dec_size"):
             fh.write("%s %d\n" % (k, counts[k]))
     return 0
 

@@ -11,20 +11,27 @@
  * everywhere:
  *
  *   1. identify: read the cartridge header, hash the whole image, and say
- *      which game and which dump it is (bw_rom_identify);
+ *      which game and which dump it is, and whether eidos takes it, in
+ *      words a player can act on (bw_rom_identify, bw_rom_verdict);
  *   2. extract: write the tree aletheia's tools/ndsrom.py extract writes
  *      (the NitroFS files under data/, the ARM9/ARM7 binaries, the overlay
- *      files and tables, the banner and the DSi regions), plus
- *      arm9_dec.bin, the BLZ-decompressed ARM9 image tools/delink.py
- *      writes, which is what the port reads its ARM9 constant tables out of
- *      (bw_rom_extract).
+ *      files and tables, the banner and the DSi regions), plus what
+ *      tools/delink.py derives from it: arm9_dec.bin, the BLZ-decompressed
+ *      ARM9 image the port reads its ARM9 constant tables out of, and
+ *      overlays_dec/, every compressed ARM9 overlay decompressed
+ *      (bw_rom_extract).  The output appears atomically: it is staged
+ *      beside the target and renamed into place when complete.
  *
- * The layout is ndsrom.py's on purpose: aletheia's asset tools, eidos's
- * oracles and eidos itself already read it, and tests/test_extract.c checks
- * the two extractors against each other file for file.  What this does not
- * write is ndsrom.py's rebuild bookkeeping (residue/ and its manifest.json),
- * which only matters for turning the tree back into a ROM; it writes
- * eidos_manifest.json instead, recording what was extracted from what.
+ * The layout is aletheia's on purpose: its asset tools, eidos's oracles and
+ * eidos itself already read it, tests/test_extract.c checks the two
+ * extractors against each other file for file on a synthetic cartridge,
+ * and test_extract_rom does the same on the player's ROM.  What this does
+ * not write is ndsrom.py's rebuild bookkeeping (residue/ and its
+ * manifest.json), which only matters for turning the tree back into a ROM,
+ * and the two files delink.py writes for aletheia's own tools only
+ * (arm9i_dec.bin, which needs a DSi key, and ov230d.bin, a disassembler
+ * view); docs/installer.md has the list.  It writes eidos_manifest.json
+ * instead, recording what was extracted from which image.
  *
  * The ROM is treated as untrusted input: every offset and size is checked
  * against the image before it is used, file names are sanitised exactly as
@@ -46,7 +53,9 @@
 
 #include "types.h"
 
-#define BW_INSTALL_VERSION "1"
+/* Bumped whenever the extracted tree changes shape, so a data root written
+ * by an older installer is re-extracted.  2: overlays_dec/ and rom_sha1. */
+#define BW_INSTALL_VERSION "2"
 
 /* ------------------------------------------------------------------ */
 /* SHA-1                                                               */
@@ -92,7 +101,7 @@ int bw_blz_decompress(const u8 *in, u32 in_len, u8 *out, u32 out_len,
 
 typedef enum BwGame {
     BW_GAME_UNKNOWN = 0,
-    BW_GAME_BLACK,          /* Pokemon Black, USA/Europe, NDSi enhanced */
+    BW_GAME_BLACK,          /* Pokemon Black, any region (game code IRB?) */
     BW_GAME_WHITE           /* not yet supported; recognised by game code */
 } BwGame;
 
@@ -102,29 +111,61 @@ typedef struct BwRomInfo {
     char   maker[3];        /* header 0x010 */
     u8     unit_code;       /* header 0x012; bit 1 = DSi (TWL) aware */
     u32    rom_size;        /* bytes in the file */
+    u32    capacity;        /* the chip size the header declares (0x014),
+                               0 if implausible */
+    int    header_crc_ok;   /* header 0x15E is the CRC-16 of 0x000..0x15D */
+    int    trimmed;         /* rom_size < capacity, header checksum good */
     u8     sha1[20];
     char   sha1_hex[41];
+    /* For a trimmed image: the SHA-1 of the file padded with 0xFF back to
+     * `capacity`, which is what the untrimmed dump hashes to when the
+     * trimmer cut only padding.  "" otherwise. */
+    char   padded_sha1_hex[41];
     BwGame game;            /* from the game code */
-    int    verified;        /* 1 if the SHA-1 is a known good dump */
+    int    verified;        /* 1 if the image (or, trimmed, its padded
+                               form) is a known good dump */
 } BwRomInfo;
 
 /* The one dump aletheia is built against (README.md there). */
 #define BW_BLACK_SHA1 "26ad0b9967aa279c4a266ee69f52b9b2332399a5"
 #define BW_BLACK_SIZE 268435456u
 
+/* The largest image identify and extract will open: twice the largest DS
+ * or DSi cartridge (4 Gbit).  Anything bigger is not a cartridge dump. */
+#define BW_ROM_MAX_SIZE 0x40000000u
+
 typedef void (*BwProgressFn)(void *ctx, u32 done, u32 total, const char *what);
 
 /*
  * Read the header and hash the whole image.  0 if the file is readable and
- * looks like a DS cartridge image at all (a header that fits, offsets
- * inside the file); -1 with `err` filled otherwise.  Whether it is a game
- * the port supports is `info->game` and `info->verified`, which the caller
- * decides what to do with.  `progress` (may be NULL) is told how far the
- * hash has got.
+ * looks like a DS cartridge image at all (it is not an archive, and a
+ * header fits); -1 with `err` filled otherwise, in words a player can act
+ * on.  Whether it is a game the port supports is bw_rom_verdict's
+ * question.  `progress` (may be NULL) is told how far the hash has got,
+ * with `what` "hashing".
  */
 int bw_rom_identify(const char *rom_path, BwRomInfo *info,
                     BwProgressFn progress, void *ctx,
                     char *err, size_t err_len);
+
+/*
+ * What to tell the player about an identified image.  Every front end
+ * shows the same message and makes the same decision: only BW_VERDICT_OK
+ * is extracted without an explicit override.
+ */
+typedef enum BwRomVerdict {
+    BW_VERDICT_OK = 0,      /* the known good dump of Pokemon Black, or it
+                               trimmed of padding only */
+    BW_VERDICT_NOT_DS,      /* the header is not a DS header */
+    BW_VERDICT_OTHER_GAME,  /* a DS game, not Pokemon Black */
+    BW_VERDICT_UNSUPPORTED, /* Pokemon White, or Black of another region */
+    BW_VERDICT_DAMAGED,     /* Black, but the header checksum is wrong or
+                               the image is cut short */
+    BW_VERDICT_MODIFIED     /* Black, whole, but not the known dump:
+                               damaged, patched or another revision */
+} BwRomVerdict;
+
+BwRomVerdict bw_rom_verdict(const BwRomInfo *info, char *msg, size_t msg_len);
 
 /* ------------------------------------------------------------------ */
 /* Extracting                                                          */
@@ -134,24 +175,59 @@ typedef struct BwExtractOptions {
     /* The game code the image must carry.  NULL accepts any; the default
      * front end passes "IRBO", which is what ndsrom.py insists on. */
     const char *require_gamecode;
-    /* Skip arm9_dec.bin (the only step that decompresses anything). */
-    int no_arm9_decompress;
+    /* Skip arm9_dec.bin and overlays_dec/ (the only steps that decompress
+     * anything). */
+    int no_decompress;
+    /* The image's SHA-1 as bw_rom_identify reported it, so the image is not
+     * hashed twice.  NULL: bw_rom_extract hashes it itself. */
+    const char *rom_sha1_hex;
+    /* Replace an existing eidos extraction of a different ROM in out_dir.
+     * Without it that is refused; an extraction of the same ROM by an
+     * older installer is always replaced, and one by this installer is
+     * left alone (see bw_rom_extract). */
+    int replace;
 } BwExtractOptions;
 
 typedef struct BwExtractResult {
     u32 fs_files;           /* NitroFS files written under data/ */
     u32 overlays;           /* overlay files written under overlays/ */
+    u32 overlays_dec;       /* decompressed overlays under overlays_dec/ */
     u32 orphans;            /* FAT entries nothing named */
     u32 regions;            /* every non-empty file written */
     u64 bytes;              /* bytes written, all files */
     u32 arm9_dec_size;      /* 0 if not written */
+    int already;            /* 1: out_dir already held this extraction and
+                               nothing was written */
 } BwExtractResult;
 
 /*
- * Extract `rom_path` into `out_dir` (created if missing).  0 on success, -1
- * with `err` filled on the first problem; a failed extraction may leave a
- * partial tree behind, which the caller should discard.  `progress` (may be
- * NULL) is called as files are written, with bytes done and bytes total.
+ * Extract `rom_path` into `out_dir`.  0 on success, -1 with `err` filled on
+ * the first problem.
+ *
+ * The output is atomic.  Everything is written into "<out_dir>.partial"
+ * (a sibling, so the final rename stays on one file system), the manifest
+ * last, and only a complete tree is renamed to `out_dir`.  A failure never
+ * leaves a half-written `out_dir`: on failure the staging directory is
+ * removed, and one left by a killed run is recognised by its marker file
+ * (or its manifest) and removed by the next run.
+ *
+ * An existing `out_dir`:
+ *   - absent, or an empty directory: extracted into;
+ *   - an extraction of the same ROM by this installer version (its
+ *     eidos_manifest.json says so): left alone, `result->already` = 1,
+ *     success.  This is the "resume": a completed extraction is reused,
+ *     an interrupted one starts again (it takes seconds, and a restart
+ *     cannot inherit a damaged file);
+ *   - an extraction of the same ROM by another installer version:
+ *     replaced;
+ *   - an extraction of another ROM: replaced if `opt->replace`, refused
+ *     otherwise;
+ *   - anything else (a file, or a directory with files eidos did not
+ *     write): refused.  The installer never deletes what it did not create.
+ *
+ * `progress` (may be NULL) is called as files are written, with KiB done
+ * and KiB total and the file just written; if the image has to be hashed
+ * first that is reported in bytes with `what` "hashing".
  */
 int bw_rom_extract(const char *rom_path, const char *out_dir,
                    const BwExtractOptions *opt, BwExtractResult *result,
@@ -166,13 +242,26 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
 void bw_fnt_sanitize(const u8 *raw, u32 len, char *out, size_t out_size);
 
 /* ------------------------------------------------------------------ */
-/* Files, with UTF-8 paths everywhere                                  */
+/* Files, with UTF-8 paths everywhere (install/fsutil.c)               */
 /* ------------------------------------------------------------------ */
 
 #include <stdio.h>
 
+enum { BW_PATH_NONE = 0, BW_PATH_FILE = 1, BW_PATH_DIR = 2 };
+
 FILE *bw_fopen_utf8(const char *path, const char *mode);
 /* mkdir -p.  0 on success (or if it already exists). */
 int   bw_mkdirs_utf8(const char *path);
+/* BW_PATH_NONE, BW_PATH_FILE (anything not a directory) or BW_PATH_DIR. */
+int   bw_path_kind_utf8(const char *path);
+/* 1 empty, 0 not, -1 not a readable directory. */
+int   bw_dir_is_empty_utf8(const char *path);
+/* Rename a file or directory; fails (-1) if `to` exists. */
+int   bw_rename_utf8(const char *from, const char *to);
+/* rm -r.  0 if `path` is gone afterwards (or never existed).  Links and
+ * junctions are removed, never followed. */
+int   bw_remove_tree_utf8(const char *path);
+/* The size of an open file, past 2 GiB where the platform allows. */
+int   bw_file_size(FILE *fp, u64 *size);
 
 #endif /* EIDOS_INSTALL_H */

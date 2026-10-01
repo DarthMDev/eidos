@@ -1,15 +1,19 @@
 /*
  * install/extract_main.c -- eidos_extract, the extractor on the command line.
  *
- *     eidos_extract <rom.nds>                  identify only
- *     eidos_extract <rom.nds> <out_dir>        identify, then extract
- *     eidos_extract --any <rom.nds> <out_dir>  accept any game code
+ *     eidos_extract <rom.nds>                      identify only
+ *     eidos_extract <rom.nds> <out_dir>            identify, then extract
+ *     eidos_extract --replace <rom.nds> <out_dir>  replace an extraction
+ *                                                  of a different ROM
+ *     eidos_extract --any <rom.nds> <out_dir>      extract an image that is
+ *                                                  not the supported dump
  *
  * The installer's front ends (the wizard on each platform) call the same
- * two functions this does; this is the version with no user interface
- * beyond a line of progress, for scripting and for checking a dump.  Exit
- * status: 0 extracted (or identified a supported dump), 1 refused or
- * failed, 2 usage.
+ * three functions this does (identify, verdict, extract) and show the same
+ * messages; this is the version with no user interface beyond a line of
+ * progress, for scripting and for checking a dump.  Exit status: 0
+ * extracted, already extracted, or identified the supported dump; 1
+ * refused or failed; 2 usage.
  */
 
 #include <stdio.h>
@@ -54,15 +58,21 @@ static char **utf8_argv(int *argc)
 static void progress(void *ctx, u32 done, u32 total, const char *what)
 {
     static int last = -1;
+    static const char *phase = NULL;
+    const char *label = strcmp(what, "hashing") == 0 ? "hashing   " : (const char *)ctx;
     int pct = total ? (int)((u64)done * 100u / total) : 100;
 
-    (void)what;
+    if (label != phase) {
+        phase = label;
+        last = -1;
+    }
     if (pct != last) {
-        fprintf(stderr, "\r  %s %3d%%", (const char *)ctx, pct);
+        fprintf(stderr, "\r  %s %3d%%", label, pct);
         if (pct == 100) {
             fputc('\n', stderr);
         }
-        last = pct == 100 ? -1 : pct;
+        fflush(stderr);
+        last = pct;
     }
 }
 
@@ -71,8 +81,11 @@ int main(int argc, char **argv)
     BwRomInfo info;
     BwExtractOptions opt;
     BwExtractResult res;
-    char err[512];
+    BwRomVerdict verdict;
+    char err[1024];
+    char msg[512];
     int any = 0;
+    int replace = 0;
     int a = 1;
 
 #ifdef _WIN32
@@ -84,57 +97,73 @@ int main(int argc, char **argv)
     }
 #endif
 
-    if (a < argc && strcmp(argv[a], "--any") == 0) {
-        any = 1;
-        a++;
+    for (; a < argc && strncmp(argv[a], "--", 2) == 0; a++) {
+        if (strcmp(argv[a], "--any") == 0) {
+            any = 1;
+        } else if (strcmp(argv[a], "--replace") == 0) {
+            replace = 1;
+        } else {
+            argc = 0;                   /* unknown option: usage */
+            break;
+        }
     }
     if (argc - a < 1 || argc - a > 2) {
-        fprintf(stderr, "usage: %s [--any] <rom.nds> [out_dir]\n", argv[0]);
+        fprintf(stderr, "usage: eidos_extract [--any] [--replace] <rom.nds> [out_dir]\n");
         return 2;
     }
 
-    if (bw_rom_identify(argv[a], &info, progress, (void *)"hashing  ",
+    if (bw_rom_identify(argv[a], &info, progress, (void *)"hashing   ",
                         err, sizeof(err)) != 0) {
         fprintf(stderr, "eidos_extract: %s\n", err);
         return 1;
     }
+    verdict = bw_rom_verdict(&info, msg, sizeof(msg));
     printf("title     %s\n", info.title);
     printf("gamecode  %s (maker %s, unit code 0x%02X%s)\n", info.gamecode,
            info.maker, info.unit_code, (info.unit_code & 2) ? ", DSi enhanced" : "");
-    printf("size      %u bytes\n", (unsigned)info.rom_size);
+    printf("size      %u bytes%s\n", (unsigned)info.rom_size,
+           info.trimmed ? " (trimmed)" : "");
     printf("sha1      %s\n", info.sha1_hex);
-    printf("game      %s\n",
-           info.game == BW_GAME_BLACK ? "Pokemon Black" :
-           info.game == BW_GAME_WHITE ? "Pokemon White (not supported yet)" :
-                                        "not a game eidos knows");
-    printf("dump      %s\n", info.verified
-           ? "verified (the dump aletheia is built against)"
-           : "not the verified dump");
+    if (info.trimmed) {
+        printf("padded    %s\n", info.padded_sha1_hex);
+    }
+    printf("verdict   %s\n", msg);
+    fflush(stdout);
 
     if (argc - a == 1) {
-        return info.verified ? 0 : 1;
+        return verdict == BW_VERDICT_OK ? 0 : 1;
     }
-    if (!any && info.game != BW_GAME_BLACK) {
-        fprintf(stderr, "eidos_extract: refusing a ROM that is not Pokemon Black "
-                        "(pass --any to extract it anyway)\n");
-        return 1;
-    }
-    if (!info.verified) {
-        fprintf(stderr, "eidos_extract: warning: this is not the dump aletheia is "
-                        "verified against; extracting anyway\n");
+    if (verdict != BW_VERDICT_OK) {
+        if (!any) {
+            fprintf(stderr, "eidos_extract: refused (pass --any to extract it "
+                            "anyway, for testing only)\n");
+            return 1;
+        }
+        fprintf(stderr, "eidos_extract: warning: extracting an image that is "
+                        "not the supported dump (--any)\n");
     }
 
     memset(&opt, 0, sizeof(opt));
     opt.require_gamecode = any ? NULL : "IRBO";
+    opt.rom_sha1_hex = info.sha1_hex;
+    opt.replace = replace;
     if (bw_rom_extract(argv[a], argv[a + 1], &opt, &res, progress,
                        (void *)"extracting", err, sizeof(err)) != 0) {
         fprintf(stderr, "\neidos_extract: %s\n", err);
+        if (strstr(err, "different ROM") != NULL) {
+            fprintf(stderr, "eidos_extract: pass --replace to replace it\n");
+        }
         return 1;
     }
-    printf("extracted %u files (%u NitroFS, %u overlays, %u orphans), "
-           "%llu bytes; arm9_dec.bin %u bytes\n",
+    if (res.already) {
+        printf("already extracted: %s holds this ROM's extraction; nothing written\n",
+               argv[a + 1]);
+        return 0;
+    }
+    printf("extracted %u files (%u NitroFS, %u overlays, %u decompressed "
+           "overlays, %u orphans), %llu bytes; arm9_dec.bin %u bytes\n",
            (unsigned)res.regions, (unsigned)res.fs_files, (unsigned)res.overlays,
-           (unsigned)res.orphans, (unsigned long long)res.bytes,
-           (unsigned)res.arm9_dec_size);
+           (unsigned)res.overlays_dec, (unsigned)res.orphans,
+           (unsigned long long)res.bytes, (unsigned)res.arm9_dec_size);
     return 0;
 }
