@@ -70,6 +70,17 @@
         }                                                                  \
     } while (0)
 
+/* A 64-bit equality, for values a 32-bit long cannot hold.               */
+static void CHECK_EQ64(const char *label, s64 got, s64 want)
+{
+    bw_checks++;
+    if (got != want) {
+        bw_failures++;
+        printf("  FAIL %-40s got %lld, want %lld\n", label, (long long)got,
+               (long long)want);
+    }
+}
+
 /* sdk/pxi.c's PXI_InitFifo shim names these two matched OS functions; the
  * boot links them from aletheia, and this test never runs PXI_InitFifo.    */
 void OS_SetIrqFunction(u32 intr, void (*function)(void));
@@ -482,12 +493,12 @@ static void test_tables(void)
      * VolumeTable from libsnd.TWL.HYB.a (measured with tools/sdkobj.py's
      * readers): the generated tables are the SDK's. */
     bw_snd_table_sums(sum, weighted);
-    BW_CHECK_EQ("tables: pitch sum", (long long)sum[0], 22248808LL);
-    BW_CHECK_EQ("tables: pitch weighted", (long long)weighted[0], 11748945286LL);
-    BW_CHECK_EQ("tables: decibel-square sum", (long long)sum[1], -54129LL);
-    BW_CHECK_EQ("tables: decibel-square weighted", (long long)weighted[1], -754298LL);
-    BW_CHECK_EQ("tables: volume sum", (long long)sum[2], 30610LL);
-    BW_CHECK_EQ("tables: volume weighted", (long long)weighted[2], 16515296LL);
+    CHECK_EQ64("tables: pitch sum", sum[0], 22248808LL);
+    CHECK_EQ64("tables: pitch weighted", weighted[0], 11748945286LL);
+    CHECK_EQ64("tables: decibel-square sum", sum[1], -54129LL);
+    CHECK_EQ64("tables: decibel-square weighted", weighted[1], -754298LL);
+    CHECK_EQ64("tables: volume sum", sum[2], 30610LL);
+    CHECK_EQ64("tables: volume weighted", weighted[2], 16515296LL);
 
     BW_CHECK_EQ("timer: unchanged at pitch 0", bw_snd_calc_timer(1023, 0), 1023);
     BW_CHECK_EQ("timer: an octave up halves", bw_snd_calc_timer(1000, 768), 500);

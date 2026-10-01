@@ -52,6 +52,9 @@ if(IS_ABSOLUTE "${BW_DATA_ROOT}")
 else()
     set(BW_DATA_ROOT_ABS "${ALETHEIA_ROOT}/${BW_DATA_ROOT}")
 endif()
+# Forward slashes: the path becomes a C string literal (EIDOS_DEFAULT_DATA_ROOT),
+# where a Windows backslash would start an escape sequence.
+file(TO_CMAKE_PATH "${BW_DATA_ROOT_ABS}" BW_DATA_ROOT_ABS)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
