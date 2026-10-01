@@ -16,6 +16,9 @@
 #     the build does not compile (sdk/overlay.c), which is the boundary of
 #     the port's code, not a port bug;
 #   - all FRAMES frames ran ("eidos_boot: ran after N frames").
+# With 8-byte pointers (-DLP64=1) the boot cannot run (docs/armdata.md,
+# "Pointer width"); the test then checks that it refuses with the data
+# layer's own message rather than crashing.
 # Anything else fails with the run's output: a stub reached, a crash, a hang
 # (the watchdog's report), another panic.  When the overlays a stop names
 # join the build, the boot runs further and this test keeps passing as long
@@ -38,6 +41,13 @@ execute_process(COMMAND "${BOOT}" --data-root "${DATA}" --frames ${FRAMES}
     ERROR_VARIABLE err
     TIMEOUT 600)
 set(all "${out}${err}")
+if(LP64)
+    if(all MATCHES "the boot needs an ILP32 build")
+        message(STATUS "the LP64 boot refused as designed")
+        return()
+    endif()
+    message(FATAL_ERROR "the LP64 boot did not refuse cleanly (exit ${rc}):\n${all}")
+endif()
 if(all MATCHES "PANIC in FS_LoadOverlay at 0x[0-9A-F]+: overlay [0-9]+ \\([^)]*\\) is not in this build")
     string(REGEX MATCH "overlay [0-9]+ \\([^)]*\\) is not in this build" stop "${all}")
     message(STATUS "the boot stopped at the overlay boundary: ${stop}")

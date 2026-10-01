@@ -259,8 +259,6 @@ struct BwEnvModule {
 
 struct BwEnvModule g_EnvModule;
 
-#if EIDOS_HEAP_MATCHED
-
 /*
  * The NitroSystem root heap list, 0x02146B60/0x02146B64.  func_020606D0 (the
  * heap-head initialiser) appends every new top-level heap to it and
@@ -268,7 +266,10 @@ struct BwEnvModule g_EnvModule;
  * those names the list `g_02146B64` where the first says `sRootList`; the
  * DS links both to one word by address, a host links by name, so
  * CMakeLists.txt compiles func_020606A8.c with `g_02146B64` defined to
- * `sRootList` and this is the one object both see.
+ * `sRootList` and this is the one object both see.  Defined at both pointer
+ * widths: the LP64 heap floor never touches it, but the game's boot
+ * (EIDOS_BOOT) compiles the matched heap files at either width and links
+ * against it (tools/armdata.py lists it as a port object).
  */
 struct BwFndList {
     void *head;
@@ -279,6 +280,8 @@ struct BwFndList {
 
 struct BwFndList sRootList;
 int              sRootListInitialized;
+
+#if EIDOS_HEAP_MATCHED
 
 /* The resource record sub_0202FC48 reads, per heap. */
 struct BwEnvRes {
@@ -592,10 +595,8 @@ void bw_game_globals_register(void)
     BW_REG(0x02146954u, g_EnvModule, 0x10u);
     BW_REG(BW_WATCH_ID_ADDRESS, g_020A7820, 4u);
     BW_REG(0x020A7834u, sub_0203101C_File, (u32)sizeof(sub_0203101C_File));
-#if EIDOS_HEAP_MATCHED
     BW_REG(0x02146B60u, sRootListInitialized, 4u);
     BW_REG(0x02146B64u, sRootList, 0x0Cu);
-#endif
 
     bw_data_reset_bind();
 }

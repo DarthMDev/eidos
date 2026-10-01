@@ -55,8 +55,8 @@ from the port's own C:
 Two modes:
 
     bootlink.py plan --aletheia-root R --seed S ... --exclude-file F
-                     --shim-sources L --library-matched M --asm-dir D
-                     --out-dir O
+                     --shim-sources L --port-sources P --library-matched M
+                     --asm-dir D [--define NAME=VALUE] --out-dir O
         configure time: writes O/boot_matched.txt (the sources to compile),
         O/boot_asm.txt (asm-bodied files and how each is handled),
         O/boot_asm_subst.txt (sdk/asm replacements to compile) and
@@ -64,7 +64,8 @@ Two modes:
         shims' definitions disagree.
 
     bootlink.py generate --aletheia-root R --plan-dir O --shim-sources L
-                     --port-sources P --out-dir G
+                     --port-sources P --armdata-header H
+                     [--define NAME=VALUE] --out-dir G
         build time: writes one header per translation unit
         (G/include/<name>.h), G/boot_link.c and
         G/boot_link_report.txt.
@@ -87,6 +88,11 @@ import closure  # noqa: E402
 DATA_ADDR_NAME = re.compile(r"^[A-Za-z]+_([0-9A-Fa-f]{8})$")
 BW_REG = re.compile(r"\bBW_REG\(\s*(0x[0-9A-Fa-f]+)u?\s*,\s*([A-Za-z_]\w*)")
 DTCM_LO, DTCM_HI = 0x02FE0000, 0x02FE4000
+# A function whose whole body is one call (an alias forwarder):
+# `T name(params) { [return] [(cast)] callee(...); }`.
+FORWARDER = re.compile(
+    r"\b([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*\{\s*(?:return\s+)?(?:\([^()]*\)\s*)?"
+    r"([A-Za-z_]\w*)\s*\([^;{}]*\)\s*;\s*\}")
 
 VENEERS = closure.VENEERS
 DS_LO, DS_HI = 0x02000000, 0x08000000
@@ -193,6 +199,7 @@ class Shims:
         self.defines = {}            # name -> defining file
         self.dups = []
         self.data_at = {}            # DS address -> data object name
+        self.forwards = {}           # name -> the one function its body calls
         for path in paths:
             if not os.path.exists(path):
                 continue             # generated at build time (overlay table)
@@ -202,8 +209,11 @@ class Shims:
             else:
                 sc = scan_file(path)
                 with open(path, encoding="utf-8", errors="replace") as fh:
-                    for addr, name in BW_REG.findall(fh.read()):
-                        self.data_at.setdefault(int(addr, 16), name)
+                    text = fh.read()
+                for addr, name in BW_REG.findall(text):
+                    self.data_at.setdefault(int(addr, 16), name)
+                for name, callee in FORWARDER.findall(text):
+                    self.forwards.setdefault(name, callee)
             for name in sorted(sc.defined - sc.statics):
                 if name in self.defines and self.defines[name] != path:
                     self.dups.append((name, self.defines[name], path))
@@ -364,7 +374,18 @@ def plan(args):
         repl = os.path.join(asm_dir, os.path.basename(source))
         return repl if os.path.exists(repl) else None
 
-    shim_addrs = {idx._name_addr(n) for n in shims.defines} - {None}
+    # A shim that only forwards to the address's other spelling
+    # (sdk/aliases.c: sub_02060C5C calls func_02060C5C) is a second name for
+    # the matched function, not a replacement of it.
+    shim_addrs = set()
+    for n in shims.defines:
+        addr = idx._name_addr(n)
+        if addr is None:
+            continue
+        callee = shims.forwards.get(n)
+        if callee is not None and idx._name_addr(callee) == addr:
+            continue
+        shim_addrs.add(addr)
     clashes = {}
     for source in sources:
         if source in library or asm_replacement(source):
@@ -851,6 +872,8 @@ def main(argv=None):
     p.add_argument("--asm-dir")
     p.add_argument("--port-sources",
                    help="file listing the boot's port sources, whose calls seed the walk")
+    p.add_argument("--define", action="append", default=[],
+                   help="NAME=VALUE a port #if depends on (repeatable)")
     p.add_argument("--out-dir", required=True)
     g = sub.add_parser("generate")
     g.add_argument("--aletheia-root", required=True)

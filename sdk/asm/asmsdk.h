@@ -269,6 +269,13 @@ void func_027314A4(void);
  * function on a context (state at +0x00, block at +0x14). */
 void func_02081E7C(void *context);                               /* 0x02081E7C */
 
+/* OS_TryLockCartridge (sdk/asm/OS_LockCartridge.c) */
+s32 func_02084DA4(u32 lockID);                                   /* 0x02084DA4 */
+s32 OS_TryLockCartridge(u16 lockID);
+
+/* TWL-only placeholder (sdk/asm/func_02730468.c). */
+void func_02730468(void);                                        /* 0x02730468 */
+
 /* OS_TryLockCard (sdk/asm/OS_LockCard.c) */
 s32 func_02084E38(u32 lockID);                                   /* 0x02084E38 */
 s32 OS_TryLockCard(u16 lockID);

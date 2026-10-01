@@ -12,6 +12,7 @@ reported as skipped, not failed, and says why.
     python tools/check.py --only gcc-ilp32 asan-ilp32
     python tools/check.py --list
     python tools/check.py --data-root ../aletheia/extract/data
+    python tools/check.py --only msvc-x86 --define EIDOS_BOOT=ON
 
 The configurations:
 
@@ -302,7 +303,15 @@ def main(argv=None):
     ap.add_argument("--only", nargs="+", metavar="CONFIG",
                     help="run just these configurations")
     ap.add_argument("--list", action="store_true", help="list configurations")
+    ap.add_argument("--define", action="append", default=[], metavar="NAME=VALUE",
+                    help="an extra CMake cache entry for every configuration "
+                         "(repeatable), e.g. EIDOS_BOOT=ON for the game's boot")
     args = ap.parse_args(argv)
+    for d in args.define:
+        if "=" not in d:
+            print("check.py: --define wants NAME=VALUE, got %r" % d)
+            return 2
+    extra = ["-D" + d for d in args.define]
 
     if args.list:
         for name in CONFIGS:
@@ -327,7 +336,8 @@ def main(argv=None):
     results = []
     for n in names:
         print("[*] %s ..." % n, flush=True)
-        results.append(check_one(n, CONFIGS[n], build_root, aletheia,
+        cfg = dict(CONFIGS[n], args=CONFIGS[n]["args"] + extra)
+        results.append(check_one(n, cfg, build_root, aletheia,
                                  args.data_root, generator))
 
     print()

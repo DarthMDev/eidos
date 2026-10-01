@@ -1077,14 +1077,15 @@ function writes reaches the renderer only through the vblank commit, that 32
 frames are exactly 280095 ticks, and the tick/millisecond conversions.
 
 **Under the game's own boot** (`demo/eidos_boot.c`, see "Running the game's
-boot") the same loop is the driver. The step is one iteration of NitroMain's
-loop, ending where the original waits for vblank, and the vblank hook does
-the hardware's half of the interrupt only: it sets DISPSTAT's vblank flag
-and raises IF bit 0 through the OS layer (`bw_os_raise_irq`). The OS layer
-owns IF; it takes the request at its next safe point, runs the handler the
-game installed in `OS_IRQTable` and wakes the threads waiting in
-`OS_WaitIrq`, as `OS_IrqHandler` does on the DS (docs/boot.md, "Threads,
-interrupts and the frame").
+boot") the same loop is the driver, and NitroMain's own loop runs as
+written: the loop has no step hook, and a frame is one call of the OS
+layer's halt hook, made when every game thread waits (NitroMain in
+`OS_WaitIrq` for the vblank). The vblank hook does the hardware's half of
+the interrupt only: it sets DISPSTAT's vblank flag and raises IF bit 0
+through the OS layer (`bw_os_raise_irq`). The OS layer owns IF; it takes
+the request when the halt returns, runs the handler the game installed in
+`OS_IRQTable` and wakes the threads waiting in `OS_WaitIrq`, as
+`OS_IrqHandler` does on the DS (docs/boot.md, "Running the boot").
 
 ## The game's scheduler, and the first matched code inside the frame
 
@@ -1520,8 +1521,9 @@ the title screen. The pieces in the tree:
   go to the OS layer's latch, and every `OS_RestoreInterrupts` gives the
   ARM7 its turn). The boot and every test that runs game code on the whole
   machine call it rather than the three resets;
-- `stubs/reimpl_02005124.c`, NitroMain, and `demo/eidos_boot.c`, its
-  headless driver.
+- NitroMain (aletheia's `src/matched/arm9/func_02005124.c`, or
+  `stubs/reimpl_02005124.c` with an older checkout) and
+  `demo/eidos_boot.c`, its driver (headless, or `--window` with SDL2).
 
 ```sh
 cmake -S . -B build -G Ninja -DALETHEIA_ROOT=../bw_decomp -DEIDOS_BOOT=ON
@@ -1531,8 +1533,13 @@ cmake --build build --target eidos_boot
 
 With `EIDOS_BOOT` off (the default) `eidos_boot` builds without the game's
 code, says so and exits 0. With it on, CMake computes NitroMain's matched
-closure with `tools/closure.py` and links it; that link is the work in
-progress, and `docs/boot.md` tracks what it still needs.
+closure with `tools/closure.py`, `tools/bootlink.py` makes it link
+(names by address, the ARM9 image's data, the stubs it lists), and the
+boot runs: the system and heap initialisation complete and the run stops
+at the overlay layer's "overlay 10 is not in this build", the first of the
+two resident overlays the boot sequence loads before the frame loop
+(`test_boot_run` expects exactly that). `docs/boot.md`, "Running the boot",
+has what it took and what blocks the frame loop.
 
 ## Growing the source list
 
@@ -2437,12 +2444,11 @@ and no staging is left. Without `BW_ROM` it reports itself skipped.
         own: `src/matched/sub_0203101C.c` builds the list on the matched
         heap layer and `src/matched/sub_020310C4.c` is the step function
         `demo/eidos_view` installs
-  - [ ] The game's own boot runs the frame: NitroMain is supplied
-        (`stubs/reimpl_02005124.c`), and the machine it runs on is in the
-        tree and tested (the address space, the OS layer, the ARM7 stand-in,
-        the file system and overlays, one `bw_port_reset`); linking its
-        matched closure under `EIDOS_BOOT=ON` is in progress. See "Running
-        the game's boot"
+  - [ ] The game's own boot runs the frame: NitroMain and its matched
+        closure link under `EIDOS_BOOT=ON` and run through the system and
+        heap initialisation to the first overlay load (ov010, resident),
+        which this build does not compile; the frame loop waits on ov010
+        and ov011. See "Running the game's boot"
 - [ ] **Milestone 3**: 2D engine shim
   - [x] BG layers from tile and palette memory: NSCR screens, all four
         text screen sizes, 16- and 256-colour modes, scroll, priority and

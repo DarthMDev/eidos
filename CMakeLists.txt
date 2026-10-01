@@ -52,6 +52,9 @@ if(IS_ABSOLUTE "${BW_DATA_ROOT}")
 else()
     set(BW_DATA_ROOT_ABS "${ALETHEIA_ROOT}/${BW_DATA_ROOT}")
 endif()
+# Forward slashes: the path becomes a C string literal (EIDOS_DEFAULT_DATA_ROOT),
+# where a Windows backslash would be an escape sequence.
+file(TO_CMAKE_PATH "${BW_DATA_ROOT_ABS}" BW_DATA_ROOT_ABS)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
@@ -1593,15 +1596,14 @@ endif()
 # eidos_boot -- the game's own ARM9 boot (docs/boot.md)
 # ---------------------------------------------------------------------------
 #
-# demo/eidos_boot.c runs NitroMain (stubs/reimpl_02005124.c) under the frame
-# loop, headless.  It is always built; what it links depends on EIDOS_BOOT:
+# demo/eidos_boot.c runs NitroMain on the OS layer, the frame loop as its
+# halt hook.  It is always built; what it links depends on EIDOS_BOOT:
 #
 #   OFF (default)  only the parts that link today.  The executable reports
 #                  that the boot is not linked and exits 0.
-#   ON             NitroMain, the one unmatched callee it needs
-#                  (stubs/reimpl_02047990.c), and the closure of NitroMain's
-#                  matched callees, with the names, constants and stubs
-#                  tools/bootlink.py generates to make it link.
+#   ON             NitroMain and the closure of its matched callees, with
+#                  the names, data bindings and stubs tools/bootlink.py and
+#                  tools/armdata.py generate to make it link.
 #                  cmake/boot.cmake has the details, including the one list
 #                  of matched files the port's shims replace.
 option(EIDOS_BOOT
