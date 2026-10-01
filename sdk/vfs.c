@@ -1,26 +1,24 @@
 /*
- * sdk/vfs.c -- the file layer: the data root, the optional mod overlay, and
- * the resolution of a NitroFS-relative path to a host path.
+ * sdk/vfs.c -- the file layer: the data root, the mods laid over it in a
+ * load order, and the resolution of a NitroFS-relative path to a host path.
  *
- * This is the first piece of the port's data pipeline.  It owns two roots:
+ * This is the first piece of the port's data pipeline.  It owns the layers:
  *
  *     data root   the directory tools/ndsrom.py's `extract` wrote, the one
  *                 holding `a/0/0/2` (the player's own extracted ROM)
- *     mod root    an optional overlay, laid at the same relative layout,
- *                 whose readable files shadow the data root's
+ *     mod roots   zero or more overlays, laid at the same relative layout,
+ *                 in a load order where a later mod wins (sdk/vfs.h)
  *
- * A path resolves to the overlay copy when one exists and to the base copy
- * otherwise, so a mod ships whole replacement files and an absent file falls
- * through.  The lookup happens here and nowhere else; every loader that
- * opens a NitroFS path calls bw_data_path, so there is one resolution.
+ * At file granularity a path resolves to the latest layer holding a regular
+ * file there, so a mod ships whole replacement files and an absent file
+ * falls through.  The lookup happens here and nowhere else; every loader
+ * that opens a NitroFS path calls bw_data_path (or the FS shim, which calls
+ * it), so there is one resolution.
  *
- * What this is NOT, stated so a later reader does not assume it: the overlay
- * is file granular.  It replaces a whole NitroFS file (a NARC, a raw asset),
- * not one member inside a NARC.  Overriding a single decoded asset inside an
- * archive needs the engine to load the decoded form and repack it (or a
- * member-level side table), neither of which exists yet; see README.md, "The
- * file layer".  No game data is in this file and nothing here interprets a
- * byte of it.
+ * Member granularity is sdk/vfs_narc.c: a mod *directory* at an archive's
+ * path supplies single members, and the FS shim reads the merged archive it
+ * builds.  This file only keeps the list it walks.  No game data is in this
+ * file and nothing here interprets a byte of it.
  */
 
 #include <stdio.h>
@@ -28,30 +26,19 @@
 #include <string.h>
 
 #include "port.h"
+#include "vfs.h"
+#include "plat_dir.h"
 
 /* ------------------------------------------------------------------ */
-/* Roots                                                               */
+/* Data root                                                           */
 /* ------------------------------------------------------------------ */
 
 static char g_data_root[1024] = "extract/data";
 static int  g_data_root_set;
 
-static char g_mod_root[1024];
-static int  g_mod_root_set;
-
-static void set_root(char *dst, size_t cap, int *flag,
-                     const char *path, int empty_is_clear)
+/* Copy `path` (length n) to dst, dropping trailing separators. */
+static void copy_root(char *dst, size_t cap, const char *path, size_t n)
 {
-    size_t n;
-
-    if (path == NULL || *path == '\0') {
-        if (empty_is_clear) {
-            dst[0] = '\0';
-            *flag = 1;
-        }
-        return;
-    }
-    n = strlen(path);
     if (n >= cap) {
         n = cap - 1;
     }
@@ -60,12 +47,17 @@ static void set_root(char *dst, size_t cap, int *flag,
     while (n > 0 && (dst[n - 1] == '/' || dst[n - 1] == '\\')) {
         dst[--n] = '\0';
     }
-    *flag = 1;
 }
 
 void bw_set_data_root(const char *path)
 {
-    set_root(g_data_root, sizeof(g_data_root), &g_data_root_set, path, 0);
+    /* There is no sane empty data root, so an empty path is a no-op. */
+    if (path == NULL || *path == '\0') {
+        return;
+    }
+    copy_root(g_data_root, sizeof(g_data_root), path, strlen(path));
+    g_data_root_set = 1;
+    bw_vfs_flush();
 }
 
 const char *bw_data_root(void)
@@ -73,49 +65,276 @@ const char *bw_data_root(void)
     if (!g_data_root_set) {
         const char *env = getenv("BW_DATA_ROOT");
 
+        g_data_root_set = 1;
         if (env != NULL && *env != '\0') {
             bw_set_data_root(env);
-        } else {
-            g_data_root_set = 1;
         }
     }
     return g_data_root;
+}
+
+/* ------------------------------------------------------------------ */
+/* The mod list                                                        */
+/* ------------------------------------------------------------------ */
+
+#define BW_MOD_MANIFEST "eidos_mod.txt"
+
+typedef struct BwMod {
+    char *root;
+    char *name;
+    int   order;
+} BwMod;
+
+static BwMod *g_mods;
+static u32    g_mod_count;
+static u32    g_mod_cap;
+static int    g_mods_set;
+
+static char *dup_n(const char *s, size_t n)
+{
+    char *d = (char *)malloc(n + 1);
+
+    if (d != NULL) {
+        memcpy(d, s, n);
+        d[n] = '\0';
+    }
+    return d;
+}
+
+static void free_mod(BwMod *m)
+{
+    free(m->root);
+    free(m->name);
+    m->root = NULL;
+    m->name = NULL;
+}
+
+static int is_space(char c)
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+/* Trim [*s, *e) of surrounding blanks. */
+static void trim(const char **s, const char **e)
+{
+    while (*s < *e && is_space(**s)) {
+        (*s)++;
+    }
+    while (*e > *s && is_space((*e)[-1])) {
+        (*e)--;
+    }
+}
+
+/*
+ * Read `<root>/eidos_mod.txt` if there is one.  A missing manifest is not an
+ * error: the defaults (the directory name, order 0) apply.  A malformed
+ * `order` value is reported and ignored rather than guessed at.
+ */
+static void read_manifest(BwMod *m)
+{
+    char path[1200];
+    char line[512];
+    FILE *fp;
+
+    if (strlen(m->root) + 1 + sizeof(BW_MOD_MANIFEST) > sizeof(path)) {
+        return;
+    }
+    sprintf(path, "%s/%s", m->root, BW_MOD_MANIFEST);
+    fp = fopen(path, "rb");
+    if (fp == NULL) {
+        return;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        const char *ks = line;
+        const char *ke;
+        const char *vs;
+        const char *ve;
+        char *hash = strchr(line, '#');
+        char *eq;
+
+        if (hash != NULL) {
+            *hash = '\0';
+        }
+        eq = strchr(line, '=');
+        if (eq == NULL) {
+            continue;
+        }
+        ke = eq;
+        vs = eq + 1;
+        ve = line + strlen(line);
+        trim(&ks, &ke);
+        trim(&vs, &ve);
+        if ((size_t)(ke - ks) == 4 && memcmp(ks, "name", 4) == 0 && ve > vs) {
+            char *n = dup_n(vs, (size_t)(ve - vs));
+
+            if (n != NULL) {
+                free(m->name);
+                m->name = n;
+            }
+        } else if ((size_t)(ke - ks) == 5 && memcmp(ks, "order", 5) == 0) {
+            char num[32];
+            char *end;
+            long v;
+
+            if (ve - vs <= 0 || (size_t)(ve - vs) >= sizeof(num)) {
+                fprintf(stderr, "vfs: %s: bad order value, ignored\n", path);
+                continue;
+            }
+            memcpy(num, vs, (size_t)(ve - vs));
+            num[ve - vs] = '\0';
+            v = strtol(num, &end, 10);
+            if (*end != '\0' || v < -1000000L || v > 1000000L) {
+                fprintf(stderr, "vfs: %s: bad order value '%s', ignored\n", path, num);
+                continue;
+            }
+            m->order = (int)v;
+        }
+    }
+    fclose(fp);
+}
+
+void bw_clear_mods(void)
+{
+    u32 i;
+
+    for (i = 0; i < g_mod_count; i++) {
+        free_mod(&g_mods[i]);
+    }
+    free(g_mods);
+    g_mods = NULL;
+    g_mod_count = 0;
+    g_mod_cap = 0;
+    g_mods_set = 1;
+    bw_vfs_flush();
+}
+
+/* Append one root of length n (not terminated).  0, or -1. */
+static int add_root_n(const char *path, size_t n)
+{
+    char root[1024];
+    const char *base;
+    BwMod m;
+    u32 at;
+
+    g_mods_set = 1;
+    copy_root(root, sizeof(root), path, n);
+    if (root[0] == '\0') {
+        return -1;
+    }
+    m.root = dup_n(root, strlen(root));
+    base = m.root == NULL ? NULL : m.root + strlen(m.root);
+    while (base != NULL && base > m.root && base[-1] != '/' && base[-1] != '\\') {
+        base--;
+    }
+    m.name = base == NULL ? NULL : dup_n(base, strlen(base));
+    m.order = 0;
+    if (m.root == NULL || m.name == NULL) {
+        free_mod(&m);
+        return -1;
+    }
+    read_manifest(&m);
+
+    if (g_mod_count == g_mod_cap) {
+        u32 cap = g_mod_cap == 0 ? 4 : g_mod_cap * 2;
+        BwMod *grown = (BwMod *)realloc(g_mods, cap * sizeof(*grown));
+
+        if (grown == NULL) {
+            free_mod(&m);
+            return -1;
+        }
+        g_mods = grown;
+        g_mod_cap = cap;
+    }
+
+    /* Stable insertion: after every mod whose order is <= this one's. */
+    at = g_mod_count;
+    while (at > 0 && g_mods[at - 1].order > m.order) {
+        g_mods[at] = g_mods[at - 1];
+        at--;
+    }
+    g_mods[at] = m;
+    g_mod_count++;
+    bw_vfs_flush();
+    return 0;
+}
+
+int bw_add_mod_root(const char *path)
+{
+    if (path == NULL) {
+        g_mods_set = 1;
+        return -1;
+    }
+    return add_root_n(path, strlen(path));
+}
+
+/* Replace the list with the ';'-separated roots in `list` (NULL clears). */
+static void set_mod_list(const char *list)
+{
+    bw_clear_mods();
+    while (list != NULL && *list != '\0') {
+        const char *s = list;
+        const char *e = strchr(list, ';');
+
+        if (e == NULL) {
+            e = list + strlen(list);
+        }
+        list = *e == ';' ? e + 1 : e;
+        trim(&s, &e);
+        if (e > s) {
+            (void)add_root_n(s, (size_t)(e - s));
+        }
+    }
+}
+
+static void mods_init(void)
+{
+    if (!g_mods_set) {
+        set_mod_list(getenv("BW_MOD_ROOT"));   /* marks the list set */
+    }
 }
 
 void bw_set_mod_root(const char *path)
 {
     /*
      * An empty or NULL path clears the overlay, which is what lets a caller
-     * turn one off after a run; for the data root an empty path is a no-op
-     * because there is no sane empty data root.
+     * turn one off after a run.
      */
-    set_root(g_mod_root, sizeof(g_mod_root), &g_mod_root_set, path, 1);
+    set_mod_list(path);
 }
 
 const char *bw_mod_root(void)
 {
-    if (!g_mod_root_set) {
-        const char *env = getenv("BW_MOD_ROOT");
+    mods_init();
+    return g_mod_count == 0 ? "" : g_mods[g_mod_count - 1].root;
+}
 
-        bw_set_mod_root(env);   /* NULL or empty disables, and marks it set */
-    }
-    return g_mod_root;
+u32 bw_mod_count(void)
+{
+    mods_init();
+    return g_mod_count;
+}
+
+const char *bw_mod_root_at(u32 i)
+{
+    mods_init();
+    return i < g_mod_count ? g_mods[i].root : NULL;
+}
+
+const char *bw_mod_name_at(u32 i)
+{
+    mods_init();
+    return i < g_mod_count ? g_mods[i].name : NULL;
+}
+
+int bw_mod_order_at(u32 i)
+{
+    mods_init();
+    return i < g_mod_count ? g_mods[i].order : 0;
 }
 
 /* ------------------------------------------------------------------ */
 /* Resolution                                                          */
 /* ------------------------------------------------------------------ */
-
-static int file_readable(const char *path)
-{
-    FILE *fp = fopen(path, "rb");
-
-    if (fp == NULL) {
-        return 0;
-    }
-    fclose(fp);
-    return 1;
-}
 
 static int join(char *out, size_t out_size, const char *root, const char *rel)
 {
@@ -132,26 +351,41 @@ static int join(char *out, size_t out_size, const char *root, const char *rel)
     return 0;
 }
 
+int bw_vfs_file_layer(const char *rel)
+{
+    char cand[1200];
+    u32 i;
+
+    mods_init();
+    /*
+     * A regular file, not merely something fopen accepts: on POSIX fopen
+     * opens a directory, and a directory at an archive's path in a mod is
+     * a member override (sdk/vfs_narc.c), not a replacement file.
+     */
+    for (i = g_mod_count; i > 0; i--) {
+        if (join(cand, sizeof(cand), g_mods[i - 1].root, rel) == 0 &&
+            bw_plat_path_kind(cand) == BW_PATH_FILE) {
+            return (int)(i - 1);
+        }
+    }
+    if (join(cand, sizeof(cand), bw_data_root(), rel) == 0 &&
+        bw_plat_path_kind(cand) == BW_PATH_FILE) {
+        return -1;
+    }
+    return BW_LAYER_NONE;
+}
+
 int bw_data_path(char *out, size_t out_size, const char *rel)
 {
-    const char *mod = bw_mod_root();
+    int layer = bw_vfs_file_layer(rel);
 
-    if (mod != NULL && *mod != '\0') {
-        char cand[1200];
-
-        if (join(cand, sizeof(cand), mod, rel) == 0 && file_readable(cand)) {
-            return join(out, out_size, mod, rel);
-        }
+    if (layer >= 0) {
+        return join(out, out_size, g_mods[layer].root, rel);
     }
     return join(out, out_size, bw_data_root(), rel);
 }
 
 int bw_data_exists(const char *rel)
 {
-    char path[1200];
-
-    if (bw_data_path(path, sizeof(path), rel) != 0) {
-        return 0;
-    }
-    return file_readable(path) ? 1 : 0;
+    return bw_vfs_file_layer(rel) != BW_LAYER_NONE ? 1 : 0;
 }

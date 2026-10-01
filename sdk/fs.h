@@ -65,6 +65,7 @@ int bw_fs_id_of_path(const char *path, u32 *file_id);
  */
 int bw_fs_open(void *file, const char *host_path);
 int bw_fs_open_id(void *file, u32 file_id);
+int bw_fs_open_rel(void *file, const char *rel);   /* see sdk/port.h */
 int bw_fs_open_memory(void *file, const void *data, u32 size);
 u32 bw_fs_size(void *file);
 

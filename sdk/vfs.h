@@ -1,0 +1,130 @@
+/*
+ * sdk/vfs.h -- the file layer's mod list and member-level NARC overrides.
+ *
+ * sdk/port.h declares the two roots and the path resolution every loader
+ * uses (bw_set_data_root, bw_set_mod_root, bw_data_path); this header is the
+ * rest of the file layer: several mods in a load order, and the merged view
+ * of an archive some of whose members a mod replaces or adds.  README.md,
+ * "The file layer", is the user-facing description of the mod tree.
+ *
+ * The model, in one paragraph.  There is one base layer (the data root) and
+ * zero or more mod roots in a load order; a later mod wins over an earlier
+ * one.  A NitroFS path `rel` resolves, at file granularity, to the latest
+ * layer holding a regular file at `rel` (bw_data_path).  On top of that file,
+ * every later mod that holds a *directory* at `rel` contributes members: a
+ * file `<mod>/<rel>/<index>[.<ext>]` replaces member `index`, or adds it if
+ * the archive is shorter, and later mods win over earlier ones for the same
+ * index.  The result is synthesised as a whole NARC in memory and every
+ * reader (the FS shim, the matched readers, sdk/narc.c) sees only that.
+ */
+
+#ifndef BW_PORT_VFS_H
+#define BW_PORT_VFS_H
+
+#include <stddef.h>
+
+#include "types.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ------------------------------------------------------------------ */
+/* The mod list                                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A mod root is a directory laid out like the data root.  It may hold a
+ * manifest, `eidos_mod.txt`, of `key = value` lines (`#` starts a comment,
+ * unknown keys are ignored so later versions can add some):
+ *
+ *     name  = Fairy type        # shown by tools; default: the directory name
+ *     order = 10                # load order key, a signed integer; default 0
+ *
+ * Mods load in ascending `order`; mods with equal `order` keep the order
+ * they were added in.  A later mod wins.
+ *
+ * bw_set_mod_root (sdk/port.h) replaces the whole list with the roots in its
+ * argument, which may name several separated by ';' (the separator on every
+ * host, since a Windows drive letter uses ':').  BW_MOD_ROOT is parsed the
+ * same way the first time the list is consulted, unless a call came first.
+ * bw_add_mod_root appends one root and re-sorts.  Every change drops the
+ * cached merged archives (bw_vfs_flush).
+ */
+void        bw_clear_mods(void);
+int         bw_add_mod_root(const char *path);   /* 0, or -1 (empty, no memory) */
+u32         bw_mod_count(void);
+const char *bw_mod_root_at(u32 i);   /* load order: 0 loads first, wins least */
+const char *bw_mod_name_at(u32 i);
+int         bw_mod_order_at(u32 i);
+
+/*
+ * The layer `rel` resolves to at file granularity: -1 for the data root,
+ * 0..bw_mod_count()-1 for a mod, or BW_LAYER_NONE when no layer holds a
+ * regular file there.  bw_data_path is this plus a join.
+ */
+#define BW_LAYER_NONE (-2)
+int bw_vfs_file_layer(const char *rel);
+
+/* ------------------------------------------------------------------ */
+/* Member-level NARC overrides                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The NARC format's limit: BTAF's count is a u16 and the matched readers
+ * keep it in a u16, so an archive holds at most 65535 members (indices
+ * 0..65534).  This is the cartridge format's limit, not one the port adds.
+ */
+#define BW_NARC_MAX_MEMBERS 0xFFFFu
+
+/*
+ * Pack `count` members into a NARC laid out the way the game's archives are
+ * (header, BTAF, BTNF, GMIF; every member starts on a 4-byte boundary and is
+ * padded with 0xFF, the last one included).  `btnf` is the whole BTNF chunk
+ * to copy (NULL for the minimal 16-byte nameless one).  `data[i]` may be NULL
+ * when `sizes[i]` is 0.  On success *out is a malloc'd image the caller
+ * frees.  Returns 0, or -1 (too many members, too large, no memory, a bad
+ * BTNF).  Repacking a real archive's members with its own BTNF reproduces it
+ * byte for byte.
+ */
+int bw_narc_pack(const u8 *const *data, const u32 *sizes, u32 count,
+                 const u8 *btnf, u32 btnf_size, u8 **out, u32 *out_size);
+
+/*
+ * Number of member files the mods contribute to `rel` (counting an index
+ * once however many mods supply it), 0 when none do, -1 when a mod
+ * directory is malformed (two files naming the same index in one mod).
+ */
+int bw_vfs_member_overrides(const char *rel);
+
+/*
+ * Build the merged archive for `rel` from scratch: the file-granular winner
+ * with every later mod's members applied.  Returns 1 and a malloc'd image
+ * in *out (the caller frees), 0 when no mod contributes a member (read the
+ * file bw_data_path names instead), or -1 on an error, which is also
+ * reported on stderr: the winning file is not a NARC, a member file cannot
+ * be read, the result would exceed the format.
+ */
+int bw_vfs_build_merged(const char *rel, u8 **out, u32 *out_size);
+
+/*
+ * The cached form the FS shim uses.  Returns 1 with the merged image in
+ * *data and *size and a handle to release when the file closes, 0 when there is
+ * nothing to merge, -1 on an error.  The image stays valid until released,
+ * even across a mod list change; an image nobody holds is rebuilt after one.
+ */
+int  bw_vfs_acquire(const char *rel, const u8 **data, u32 *size, u32 *handle);
+void bw_vfs_release(u32 handle);
+
+/*
+ * Forget every cached merged archive (images still held stay valid until
+ * released).  The mod list calls it on every change; a tool that rewrites a
+ * mod's files while the game runs calls it too.
+ */
+void bw_vfs_flush(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* BW_PORT_VFS_H */

@@ -148,9 +148,10 @@ limit the port owns:
   the matched code that indexes it keeps working; the limit that remains is
   the one written into matched code (a count compared against a constant),
   and those sites are recorded as they are found, not worked around.
-- Assets reach the game through the VFS and its mod overlay (`sdk/vfs.c`);
-  member-level NARC overrides are the next step there, so a mod adds one
-  sprite or one map without repacking an archive.
+- Assets reach the game through the VFS and its mods (`sdk/vfs.c`), and a
+  mod can replace or add single NARC members (`sdk/vfs_narc.c`), so it adds
+  one sprite or one map without repacking an archive; an archive grows past
+  its cartridge count up to the format's 65535.
 - Where the port substitutes behaviour (a shim, an overlay registry entry, a
   hook point), it is a replaceable function or table, not hard-wired, so AI,
   scripts and procs can be swapped by a mod later.

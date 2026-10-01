@@ -31,23 +31,29 @@ void        bw_set_data_root(const char *path);
 const char *bw_data_root(void);
 
 /*
- * An optional mod overlay laid over the data root.  A NitroFS-relative path
- * resolves to `<mod_root>/<rel>` when that file is readable and to
- * `<data_root>/<rel>` otherwise, so a mod ships whole replacement files at
- * the same layout as the extract tree.  Off by default; BW_MOD_ROOT in the
- * environment turns it on, and an explicit call wins over that.
+ * Mods laid over the data root, in a load order where a later mod wins
+ * (sdk/vfs.h has the list API, the manifest and the member-level rules).  At
+ * file granularity a NitroFS-relative path resolves to `<mod_root>/<rel>`
+ * for the latest mod holding a regular file there and to `<data_root>/<rel>`
+ * otherwise, so a mod ships whole replacement files at the same layout as
+ * the extract tree.  A mod may instead hold a directory at an archive's path
+ * whose files `<index>[.<ext>]` replace or add single members; the FS shim
+ * serves the merged archive (sdk/vfs_narc.c).  Off by default; BW_MOD_ROOT
+ * in the environment turns it on (several roots separated by ';'), and an
+ * explicit call wins over that.
  *
- * This is file granular: it replaces a whole NitroFS file, not one member
- * inside a NARC.  Member-level overlay (editing one decoded asset inside an
- * archive without repacking it) is not implemented; README.md, "The file
- * layer", says what that would need.
+ * bw_set_mod_root replaces the whole list with the ';'-separated roots in
+ * `path`; NULL or "" clears it.  bw_mod_root returns the root that wins
+ * most (the last in load order), or "" with no mods.
  */
 void        bw_set_mod_root(const char *path);
 const char *bw_mod_root(void);
 
 /*
  * Join the data root and a NitroFS-relative path such as "a/0/1/6" into
- * `out`, consulting the mod overlay first.  Returns 0 on success, -1 if it
+ * `out`, consulting the mods first (latest first, regular files only).  This
+ * is the file-granular answer: an archive with member overrides is read
+ * through bw_fs_open_rel, which applies them.  Returns 0 on success, -1 if it
  * would not fit.  The path written is the resolved one even when the file
  * is absent; `bw_data_exists` is the reader that tells the two apart.
  */
@@ -127,8 +133,16 @@ int bw_fs_open(void *file, const char *host_path);
 u32 bw_fs_size(void *file);
 
 /*
- * Open a NARC under the data root ("a/0/1/6") and fill in imageBase,
- * fatOffset and count from its chunk table.  Returns 0 on success.
+ * Open NitroFS-relative path `rel` through the file layer: the merged
+ * archive when a mod overrides members of it, else the file bw_data_path
+ * names.  Every open the FS shim performs for a NitroFS path goes here.
+ */
+int bw_fs_open_rel(void *file, const char *rel);
+
+/*
+ * Open a NARC under the data root ("a/0/1/6"), through the mods and their
+ * member overrides, and fill in imageBase, fatOffset and count from its
+ * chunk table.  Returns 0 on success.
  */
 int  bw_arc_open(BwArcFile *arc, const char *rel_path);
 void bw_arc_close(BwArcFile *arc);
