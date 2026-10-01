@@ -264,8 +264,21 @@ set(BW_MATCHED_SOURCES
 # The shim and the stubs
 # ---------------------------------------------------------------------------
 
+# The overlay registry's table (sdk/overlay.h), generated from aletheia's
+# layout.json and manifest shards and this build's own source list by
+# tools/overlay_table.py.  Generated rather than committed because its
+# coverage columns move with every aletheia wave and every source added
+# here.  It is regenerated when the script, layout.json, symbols_sdk.txt,
+# any overlay shard present at configure time, or the build's source list
+# changes; a shard added by a new wave is picked up at the next configure.
+set(BW_OVERLAY_TABLE ${CMAKE_CURRENT_BINARY_DIR}/overlay_table.c)
+set(BW_BUILD_SOURCE_LIST ${CMAKE_CURRENT_BINARY_DIR}/eidos_sources.txt)
+file(GLOB BW_OVERLAY_SHARDS ${ALETHEIA_ROOT}/layout/matched/ov*/*.json)
+
 set(BW_SDK_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/fs.c            # FS_SeekFile/ReadFile/CloseFile
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/fs.c            # the ROM file system onto the extract
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/overlay.c       # overlays: compiled in, checked on load
+    ${BW_OVERLAY_TABLE}                             # generated, see below
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi.c            # MI_CpuCopy/Fill family
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_alloc.c      # OS heap onto malloc
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_arena.c      # OS_AllocFromArenaLo, the heaps' arena
@@ -437,6 +450,24 @@ add_library(eidos STATIC
     ${BW_STUB_SOURCES}
     ${BW_ENGINE_SOURCES}
 )
+# The source list the overlay table reads: every source of the library, as
+# the generator expression sees it once all target_sources calls are in.
+file(GENERATE OUTPUT ${BW_BUILD_SOURCE_LIST}
+     CONTENT "$<JOIN:$<TARGET_PROPERTY:eidos,SOURCES>,\n>\n")
+add_custom_command(
+    OUTPUT ${BW_OVERLAY_TABLE}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/overlay_table.py
+            --aletheia-root ${ALETHEIA_ROOT}
+            --sources ${BW_BUILD_SOURCE_LIST}
+            --out ${BW_OVERLAY_TABLE}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/overlay_table.py
+            ${ALETHEIA_ROOT}/layout/layout.json
+            ${ALETHEIA_ROOT}/layout/symbols_sdk.txt
+            ${BW_OVERLAY_SHARDS}
+            ${BW_BUILD_SOURCE_LIST}
+    COMMENT "Generating the overlay table from ${ALETHEIA_ROOT}/layout"
+    VERBATIM)
+
 # Port code that has to know which heap floor it is sitting on (the
 # initialiser, the forwarders, the tests) reads this.
 if(EIDOS_HEAP_MATCHED)
@@ -1021,6 +1052,22 @@ foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_heap 
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# The FS shim and the overlay registry: synthetic checks always, and the
+# real-data half when the data root's parent holds the extract's tables.
+foreach(t test_fs test_overlay)
+    add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
+    target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(${t} PRIVATE eidos)
+    add_test(NAME ${t} COMMAND ${t} ${BW_DATA_ROOT_ABS})
+endforeach()
+# Loading an overlay whose code is not in the build must stop at the load and
+# say which overlay and which function.  The process aborts, so the check
+# runs through tests/expect_panic.cmake (see its header for why).
+add_test(NAME test_overlay_refuses
+    COMMAND ${CMAKE_COMMAND} -DCMD=$<TARGET_FILE:test_overlay> -DARG1=--load -DARG2=9
+            "-DEXPECT=PANIC in FS_LoadOverlay at 0x02155160: overlay 9 [(]0x02155160[.][.]0x021A8260[)] is not in this build: first missing function [A-Za-z_0-9]+ at 0x021"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_panic.cmake)
 
 add_executable(test_extract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract.c)
 target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

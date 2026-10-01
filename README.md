@@ -1710,6 +1710,16 @@ host such a declaration cannot carry a pointer. Neither function is in the
 current closure; when a TU that declares them that way enters it, the fix is a
 wrapper include in the port layer, never an edit to the matched file.
 
+One about the FS shim, not yet load bearing: 0x02078C18 (`FS_OpenFile`)
+takes a path. `src/matched/arm9/func_02020DEC.c` and
+`ov107_func_021F0850.c` pass a `char *`, `unit_02048DDC.c` passes a `u32` ARM9
+address under the name `CRYPTOi__BN_lshift1`, and `func_020461F4.c` passes a
+`u32` under `func_02078C18`. `sdk/fs.c` defines the pointer form for the SDK
+name and the address spelling, and the `u32` form for `CRYPTOi__BN_lshift1`,
+so every caller in the build today gets the type it declared. When
+`func_020461F4` enters an LP64 build it needs a wrapper include that routes its
+call to the address form.
+
 ## Host toolchain on Windows without an installer
 
 eidos builds with any C99 compiler. On a machine without Visual Studio or
@@ -1844,11 +1854,11 @@ bottom of it:
 - the open-by-path SDK call at 0x02078C18 resolves such an address through
   the ARM9 window to its string and the string through the file layer, **mod
   overlay first**, so a mod's replacement archive is what the game's own
-  readers see. aletheia's `layout/symbols_sdk.txt` labels 0x02078C18
-  `CRYPTOi__BN_lshift1` and the matched file calls it by that name; the call
-  site (a freshly initialised file object, a path address, then seeks and
-  reads) says it is `FS_OpenFile`. The port defines it under the name the
-  matched file uses and records the mislabel in `sdk/fs.c`.
+  readers see. aletheia's `layout/symbols_sdk.txt` now names 0x02078C18
+  `FS_OpenFile`, but the matched file still calls it `CRYPTOi__BN_lshift1`,
+  the name an earlier signature scan gave it, and passes the path as a DS
+  address. The port defines that spelling as the address form of
+  `FS_OpenFile` and records the history in `sdk/fs.c`.
 - `bw_arm9_set_image` installs an ARM9 image from memory, for a caller that
   already holds it (the first-run extractor, a test).
 
@@ -1860,6 +1870,91 @@ code with the matched one. It also covers D00's byte-offset mode, the
 out-of-range member reaching the game's assert sink, the mod overlay winning
 and falling through, and the open shim's refusals. **82 checks in both
 pointer widths.**
+
+### The ROM file system the boot sets up
+
+The boot calls `FS_Init(1)` and then sizes and fills the FAT/FNT cache through
+the matched `FS_TryLoadTable` (aletheia files it as `dwc_startutilityex.c`),
+which bottoms out in `FS_LoadArchiveTables` (`func_0207A5C8`). aletheia
+matches all of libfs, but every path through it ends in a cartridge read, so
+`sdk/fs.c` is a shim over the extracted tree with the SDK's surface:
+`FS_Init`, `FS_SetDefaultDMA`, `FS_InitFile`, `FS_OpenFile`/`FS_OpenFileEx`
+by path, `FS_ConvertPathToFileID` + `FS_OpenFileFast` by file id,
+`FS_OpenFileDirect` by ROM range, `FS_CreateFileFromMemory`, seek, read,
+length, position and close, under the SDK names and the `func_<address>`
+spellings the matched callers use.
+
+- The extract's `fat.bin` and `fnt.bin` (beside the data root) are the tables.
+  Paths resolve through the FNT the way the SDK resolves them (`rom:` prefix,
+  leading slash, ASCII case, `.` and `..`), and a file id resolves back to its
+  NitroFS path and then through the file layer, mod overlay first.
+- `FS_LoadArchiveTables` answers the SDK's own size,
+  `(fat + fnt + 32 + 31) & ~31`, and copies both tables into the block at its
+  first 32-byte boundary, so the boot's arena block has its DS size and DS
+  contents and every later arena address keeps its DS distance.
+- `FS_OpenFileDirect` turns a ROM range into the FAT entry that holds it and a
+  window into that file, which is what lets a reader built on ROM offsets run
+  over a directory of extracted files.
+- The 0x48-byte `FSFile` rule is unchanged: the record in it holds an index
+  into a table of open host files or buffers, never a pointer.
+
+`tests/test_fs.c` checks all of it against a hand-built four-file tree and
+hand-built tables (no game data), and, given a data root, round-trips every
+named file id of the real FNT, opens real archives by path and by ROM range
+and compares their bytes, and checks the table cache against the two files.
+**111 checks in both pointer widths.**
+
+### Overlays
+
+In the port an overlay is compiled in, not loaded. `sdk/overlay.c`
+implements `FS_LoadOverlayInfo`, `FS_LoadOverlayImage`, `FS_StartOverlay`,
+`FS_EndOverlay`, `FS_UnloadOverlayImage`, `FS_LoadOverlay` and
+`FS_UnloadOverlay` (and `func_020792B8`, the unload's spelling in the game's
+overlay manager, `sub_02034A3C`) over a registry with one entry per overlay:
+the overlay table's own eight words, every function aletheia's metadata knows
+in it with its status (open, matched, present in this build), and its static
+initialisers.
+
+- `FS_LoadOverlayInfo` returns the same eight words as the ROM's `y9.bin`,
+  plus the file's ROM extent from the FAT.
+- Loading an overlay that is not all present **panics at the load**, naming
+  the overlay, its RAM range, the lowest-addressed missing function and
+  whether aletheia has matched it, and the overlay's coverage:
+  `overlay 9 (0x02155160..0x021A8260) is not in this build: first missing
+  function func_02155168 at 0x02155168 (matched in aletheia, not compiled
+  into this build); 0 of 1621 known functions present, 1604 matched`.
+- Loading a present overlay calls the image hook
+  (`bw_overlay_set_image_hook`), which must put the overlay's data and .bss
+  back to load-time state, then runs its static initialisers, then marks it
+  resident and evicts any resident overlay sharing its RAM. With no hook the
+  load panics rather than running code over stale data.
+
+The table is generated at build time by `tools/overlay_table.py` from
+aletheia's `layout/layout.json`, its manifest shards, `layout/symbols_sdk.txt`
+and the `symbols:` blocks and externs of the matched overlay sources, plus the
+build's own source list (which decides "present"). Addresses, sizes and names
+only. It is generated rather than committed because its coverage columns move
+with every aletheia wave and every source the build adds; `python
+tools/overlay_table.py --summary` prints it (237 overlays, about 23,000 known
+functions, 18,500 of them matched, none present yet).
+
+Two limits, stated so nobody relies on more. The function list is a **lower
+bound**: aletheia commits no per-overlay list of function starts, only the
+matched ones, so a function nothing matched names is invisible here, and an
+overlay could be reported present while one is missing. And 1046 function
+names repeat across overlays that share RAM (`func_02155244` is in ov9 and
+ov10), so compiling two such overlays into one executable needs per-overlay
+symbol names; the registry keys every function by overlay and address, so
+it is ready for that, but the build is not yet. Only ov230 has static
+initialisers (five; aletheia's `docs/MATCHING.md`), and the generator refuses
+any other non-empty list rather than guess.
+
+`tests/test_overlay.c` checks the registry against a synthetic four-overlay
+table, checks the generated table's shape, and, given a data root, compares
+all 237 `FS_LoadOverlayInfo` headers word for word with `y9.bin`, the file
+extents with the FAT, and ov230's initialisers with its decompressed image.
+`test_overlay_refuses` checks the panic message. **70 checks in both pointer
+widths.**
 
 ## The first-run extractor (install/)
 
