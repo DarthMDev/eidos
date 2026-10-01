@@ -4,7 +4,7 @@
 #
 #   eidos_armdata(<prefix>
 #       SOURCES_LIST <file>       the build's sources, one path per line
-#       [REGION arm9]             or ovNNN (overlays: generator only for now)
+#       [REGION arm9]             or ovNNN (compiled overlays use cmake/overlays.cmake)
 #       [MATCHED <src>...])       the matched sources to compile with the
 #                                 header force-included
 #
@@ -46,7 +46,7 @@ function(eidos_armdata prefix)
     if(A_REGION STREQUAL "arm9")
         file(GLOB listings ${ALETHEIA_ROOT}/asm/arm9/*.s)
     else()
-        file(GLOB listings ${ALETHEIA_ROOT}/asm/${A_REGION}/*.s)
+        file(GLOB listings ${ALETHEIA_ROOT}/asm/overlays/${A_REGION}.s)
     endif()
 
     add_custom_command(

@@ -161,8 +161,10 @@ and before the first `bw_ds_reset`, `bw_data_install(&bw_arm9_data, 0)`.
 ## Overlays
 
 `tools/armdata.py --region ovNNN` describes one overlay: its copy range,
-its `.bss`, the relocations `data_objects.json` and `asm/ovNNN/` give, and
-the names. The runtime refuses an overlay image (`BW_DATA_E_UNSUPPORTED`)
-until the overlay loader calls it at load time; the copy source is then the
-overlay's own decompressed file, and the names in an overlay's range are
-bound only while it is loaded.
+its `.bss`, the relocations `data_objects.json` and the overlay's listing
+(`asm/overlays/ovNNN.s`) give, and the names. Compiled overlays use
+`tools/ovlink.py` instead, which writes one `BwDataImage` per overlay with
+the overlay's own pointer variables (`bw_dsref_ovNNN_<name>`) and its
+relocations resolved per overlay; `sdk/overlay_image.c` runs `bw_data_load`,
+`bw_data_bind` and `bw_data_relocate` on it at every load, with the bytes out
+of the overlay's own decompressed file (`docs/overlays.md`).

@@ -1,0 +1,187 @@
+#
+# cmake/overlays.cmake -- compile game overlays into an executable
+# (tools/ovlink.py, sdk/overlay_image.c; docs/overlays.md is the design).
+#
+#   eidos_overlays(<name>
+#       TARGET <target>            the executable (or library) that links them
+#       OVERLAYS <ids | ALL | TITLE>
+#       [ROOT <dir>]               the aletheia tree (default ALETHEIA_ROOT)
+#       [LINK_SOURCES <src>...]    every other C source in the link, so that
+#                                  only names nothing defines get stubs
+#       [ARM9_STUBS])              stub the ARM9 functions the overlays call
+#                                  that LINK_SOURCES does not define (a link
+#                                  without the boot)
+#
+# At configure time tools/ovlink.py plans the set and writes, under
+# ${CMAKE_BINARY_DIR}/ovl/<name>/, one forced-include header per translation
+# unit, the per-overlay C (stubs, data image, static initialisers) and the
+# trampolines.  Each matched source goes through tools/dsaddr.py into the
+# same directory (not the shared dsaddr/ tree: the same file may be
+# compiled by two sets with different headers) and is compiled with its
+# header.  Everything lands in an object library <name>_ovl whose objects
+# are added to TARGET.
+#
+# The program installs the set with
+#     extern const BwOvlImageSet bw_ovl_set_<name>;
+#     bw_ovl_install(&bw_ovl_set_<name>, flags);
+#
+# Nothing here reads a game byte.
+#
+
+set(EIDOS_OVLINK_TOOL ${CMAKE_CURRENT_LIST_DIR}/../tools/ovlink.py)
+get_filename_component(EIDOS_OVLINK_TOOL "${EIDOS_OVLINK_TOOL}" ABSOLUTE)
+get_filename_component(_eidos_ovl_tools "${EIDOS_OVLINK_TOOL}" DIRECTORY)
+
+# The warnings a matched overlay source raises under GCC 14 and Clang that
+# only an edit of the source could silence (the same set cmake/boot.cmake
+# gives the boot's matched files, plus the ones the overlays add): each is
+# reproduced exactly from the DS code, none is a host porting problem.
+#   implicit-int                 `func_02165E8C(Rec *r)`: C89's implicit int
+#   builtin-declaration-mismatch the file's own memcpy/memset prototypes
+#   char-subscripts, address, sequence-point, comment: as mwcc accepted them
+if(MSVC)
+    set(EIDOS_OVL_MATCHED_OPTIONS ${EIDOS_MATCHED_COMPILE_OPTIONS} ${EIDOS_MATCHED_PRAGMA_OPTION})
+    if(EIDOS_CLANG_CL)
+        list(APPEND EIDOS_OVL_MATCHED_OPTIONS
+            -Wno-unused-label -Wno-implicit-int -Wno-sign-compare -Wno-parentheses
+            -Wno-unused-function -Wno-implicit-fallthrough -Wno-switch
+            -Wno-return-type -Wno-tautological-constant-out-of-range-compare
+            -Wno-incompatible-library-redeclaration -Wno-pointer-sign
+            -Wno-int-conversion -Wno-incompatible-pointer-types
+            -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast
+            -Wno-unused-but-set-variable -Wno-missing-field-initializers
+            -Wno-shift-count-overflow -Wno-constant-conversion -Wno-comment)
+    else()
+        #   C4431  missing type specifier, int assumed (C89 implicit int)
+        #   C4013  undefined; assuming extern returning int (none left after
+        #          ovlink's declarations, kept off for the builtin case)
+        #   C4102  unreferenced label   C4057/C4047/C4024/C4133 pointer forms
+        #   C4018/C4389 signed/unsigned compare   C4146 unary minus on unsigned
+        #   C4706  assignment in a condition      C4701/C4703 maybe-uninitialised
+        #   C4715  not all control paths return   C4127 constant condition
+        #   C4310  cast truncates a constant      C4305 truncation
+        #   C4312/C4311 pointer/integer widths    C4152 function/data pointer
+        #   C4054/C4055 the same, older           C4113 parameter lists differ
+        #   C4028  parameter differs from declaration   C4090 const qualifiers
+        #   C4029  declared parameter list differs      C4098 void returns a value
+        #   C4204/C4221 non-constant initialisers       C4005 macro redefinition
+        list(APPEND EIDOS_OVL_MATCHED_OPTIONS
+            /wd4431 /wd4013 /wd4102 /wd4057 /wd4047 /wd4024 /wd4133 /wd4018
+            /wd4389 /wd4146 /wd4706 /wd4701 /wd4703 /wd4715 /wd4127 /wd4310
+            /wd4305 /wd4312 /wd4311 /wd4152 /wd4054 /wd4055 /wd4113 /wd4028
+            /wd4090 /wd4029 /wd4098 /wd4204 /wd4221 /wd4005 /wd4295 /wd4334)
+    endif()
+else()
+    set(EIDOS_OVL_MATCHED_OPTIONS
+        -Wno-unused-parameter -Wno-unused-variable -Wno-missing-prototypes
+        -Wno-unused-but-set-variable -Wno-implicit-fallthrough
+        -Wno-sign-compare -Wno-parentheses -Wno-unused-function
+        -Wno-unused-label -Wno-unknown-pragmas -Wno-switch -Wno-return-type
+        -Wno-type-limits -Wno-cast-function-type -Wno-implicit-int
+        -Wno-builtin-declaration-mismatch -Wno-char-subscripts -Wno-address
+        -Wno-sequence-point -Wno-comment)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        list(APPEND EIDOS_OVL_MATCHED_OPTIONS
+            -Wno-incompatible-library-redeclaration -Wno-pointer-sign
+            -Wno-tautological-constant-out-of-range-compare)
+    endif()
+    # Casts between pointers and integers of another width: with 8-byte
+    # pointers the pointer-width question docs/pointer-width.md measures,
+    # and at either width a few SDK files cast a u16 or a u64 to a pointer
+    # on purpose.
+    list(APPEND EIDOS_OVL_MATCHED_OPTIONS
+        -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast)
+endif()
+
+function(eidos_overlays name)
+    cmake_parse_arguments(A "ARM9_STUBS" "TARGET;ROOT" "OVERLAYS;LINK_SOURCES" ${ARGN})
+    if(NOT A_TARGET)
+        message(FATAL_ERROR "eidos_overlays(${name}): TARGET is required")
+    endif()
+    if(NOT A_ROOT)
+        set(A_ROOT ${ALETHEIA_ROOT})
+    endif()
+    get_filename_component(A_ROOT "${A_ROOT}" ABSOLUTE)
+    if(NOT A_OVERLAYS)
+        set(A_OVERLAYS TITLE)
+    endif()
+    set(dir ${CMAKE_BINARY_DIR}/ovl/${name})
+    file(MAKE_DIRECTORY ${dir})
+
+    set(link_list)
+    foreach(s ${A_LINK_SOURCES})
+        get_filename_component(s "${s}" ABSOLUTE)
+        list(APPEND link_list "${s}")
+    endforeach()
+    string(REPLACE ";" "\n" link_txt "${link_list}")
+    file(WRITE ${dir}/link_sources.txt "${link_txt}\n")
+    string(REPLACE ";" "," ids_arg "${A_OVERLAYS}")
+
+    set(stub_arg)
+    if(A_ARM9_STUBS)
+        set(stub_arg --arm9-stubs)
+    endif()
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} ${EIDOS_OVLINK_TOOL}
+                --aletheia-root ${A_ROOT}
+                --overlays ${ids_arg}
+                --link-sources ${dir}/link_sources.txt
+                --set-name ${name}
+                --out-dir ${dir}
+                ${stub_arg} --summary
+        RESULT_VARIABLE rc
+        OUTPUT_VARIABLE out
+        ERROR_VARIABLE err)
+    if(NOT rc EQUAL 0)
+        message(FATAL_ERROR "eidos_overlays(${name}): tools/ovlink.py failed (${rc}):\n${err}")
+    endif()
+    string(STRIP "${out}" out)
+    string(REPLACE "\n" "\n   " out "${out}")
+    message(STATUS "Overlays ${name}:\n   ${out}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${EIDOS_OVLINK_TOOL}
+        ${_eidos_ovl_tools}/armdata.py
+        ${_eidos_ovl_tools}/overlay_table.py
+        ${_eidos_ovl_tools}/ovlink_exclusions.txt
+        ${A_ROOT}/layout/layout.json)
+
+    file(STRINGS ${dir}/ovl_units.txt units)
+    set(copies)
+    foreach(line ${units})
+        string(REPLACE "|" ";" parts "${line}")
+        list(GET parts 1 src)
+        list(GET parts 2 hdr)
+        file(RELATIVE_PATH rel "${A_ROOT}" "${src}")
+        set(copy ${dir}/src/${rel})
+        get_filename_component(src_dir "${src}" DIRECTORY)
+        add_custom_command(
+            OUTPUT ${copy}
+            COMMAND ${Python3_EXECUTABLE} ${EIDOS_DSADDR_TOOL} ${src} -o ${copy} --name ${src}
+            DEPENDS ${src} ${EIDOS_DSADDR_TOOL}
+            COMMENT "dsaddr ${rel} (overlays ${name})"
+            VERBATIM)
+        if(MSVC)
+            set(fi "/FI${hdr}")
+        else()
+            set(fi "-include;${hdr}")
+        endif()
+        set_source_files_properties(${copy} PROPERTIES
+            GENERATED TRUE
+            INCLUDE_DIRECTORIES "${src_dir}"
+            OBJECT_DEPENDS "${hdr}"
+            COMPILE_OPTIONS "${fi};${EIDOS_OVL_MATCHED_OPTIONS}")
+        list(APPEND copies ${copy})
+    endforeach()
+
+    file(STRINGS ${dir}/ovl_c.txt link_c)
+    set(gen_c ${link_c} ${dir}/ovl_dispatch.c ${dir}/ovl_arm9_stubs.c)
+    add_library(${name}_ovl OBJECT ${copies} ${gen_c})
+    target_include_directories(${name}_ovl PRIVATE
+        $<TARGET_PROPERTY:eidos,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_definitions(${name}_ovl PRIVATE
+        $<TARGET_PROPERTY:eidos,INTERFACE_COMPILE_DEFINITIONS>)
+    target_sources(${A_TARGET} PRIVATE $<TARGET_OBJECTS:${name}_ovl>)
+    list(LENGTH copies n)
+    set(${name}_OVL_UNITS ${n} PARENT_SCOPE)
+    set(${name}_OVL_DIR ${dir} PARENT_SCOPE)
+endfunction()

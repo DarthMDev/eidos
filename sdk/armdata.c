@@ -27,6 +27,10 @@
  *      every pointer word in the copy.  A pointer word inside a port
  *      object's DS range was left out by the generator: its owner fills it.
  *
+ * An overlay's image (img->overlay >= 0, docs/overlays.md) goes through the
+ * same three steps when sdk/overlay_image.c loads it, with its bytes out of
+ * the overlay's own file; its host objects are filled but not registered.
+ *
  * Every pointer word is checked against the image before it is rewritten:
  * the metadata says which address the word holds, and a different value
  * means the image is not the build aletheia describes.  That is a panic at
@@ -39,6 +43,7 @@
 #include "port.h"
 #include "dsmem.h"
 #include "armdata.h"
+#include "overlay_image.h"
 
 #define PIECE 0x10000u            /* sdk/dsmem.c commits main RAM in 64 KiB */
 #define MAX_RANGES 16
@@ -117,9 +122,6 @@ int bw_data_load(const BwDataImage *img)
     u32 i;
 
     g_flat_img = NULL;
-    if (img->overlay >= 0) {
-        return fail(BW_DATA_E_UNSUPPORTED, 0, "overlay data images are not wired yet");
-    }
     if (img->range_count > MAX_RANGES) {
         return fail(BW_DATA_E_LAYOUT, 0, "more ranges than sdk/armdata.c keeps");
     }
@@ -137,7 +139,17 @@ int bw_data_load(const BwDataImage *img)
                         "range is not one flat block of main RAM; "
                         "bw_data_load must run before anything is registered");
         }
-        if (r->copy) {
+        if (r->copy && img->overlay >= 0) {
+            /* An overlay: image_addr is an offset into its own file. */
+            const void *src = bw_ovl_file_bytes((u32)img->overlay, r->image_addr, r->size);
+            if (src == NULL) {
+                return fail(BW_DATA_E_NOIMAGE, (u32)img->overlay,
+                            "the overlay's file (extract/overlays_dec/ or "
+                            "extract/overlays/) is missing or shorter than "
+                            "layout.json says");
+            }
+            memcpy(dst, src, r->size);
+        } else if (r->copy) {
             const void *src = bw_arm9_rodata(r->image_addr, r->size);
             if (src == NULL) {
                 return fail(BW_DATA_E_NOIMAGE, r->image_addr,
@@ -164,7 +176,12 @@ int bw_data_load(const BwDataImage *img)
                 memcpy(o->host, g_flat[k] + off, n);
             }
         }
-        bw_ds_register(o->addr, o->host, o->size, o->name);
+        /* An overlay's objects are not registered: the window passes to
+         * the next overlay and a registration cannot be withdrawn
+         * (docs/overlays.md, "Data"). */
+        if (img->overlay < 0) {
+            bw_ds_register(o->addr, o->host, o->size, o->name);
+        }
     }
     g_flat_img = img;
     return BW_DATA_OK;

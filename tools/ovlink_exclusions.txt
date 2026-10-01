@@ -1,0 +1,7 @@
+# tools/ovlink_exclusions.txt -- matched overlay sources tools/ovlink.py leaves
+# out of a compiled overlay, one per line: the path as aletheia's manifest
+# spells it, then the reason.  The functions such a file defines become stubs
+# that panic when reached (docs/overlays.md, "What the build lacks").
+#
+# Sources whose bodies are mwcc `asm` are left out without a line here: the
+# tool finds them itself and says so in its report.

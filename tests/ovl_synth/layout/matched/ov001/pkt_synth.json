@@ -1,0 +1,33 @@
+{
+ "tool": "synthetic",
+ "region": "ov001",
+ "functions": [
+  {
+   "name": "func_02200000",
+   "address": "0x02200000",
+   "kind": "game",
+   "region": "ov001",
+   "source": "src/matched/ov/ov001_func_02200000.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  },
+  {
+   "name": "func_02200010",
+   "address": "0x02200010",
+   "kind": "game",
+   "region": "ov001",
+   "source": "src/matched/ov/ov001_func_02200010.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  },
+  {
+   "name": "func_02200040",
+   "address": "0x02200040",
+   "kind": "game",
+   "region": "ov001",
+   "source": "src/matched/ov/ov001_func_02200040.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  }
+ ]
+}

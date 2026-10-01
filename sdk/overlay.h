@@ -126,6 +126,22 @@ typedef void (*BwOverlayImageHook)(const BwOverlayDesc *overlay);
 
 void bw_overlay_set_image_hook(BwOverlayImageHook hook);
 
+/*
+ * Overlays compiled into the executable (sdk/overlay_image.c installs this;
+ * docs/overlays.md).  For an overlay `compiled` answers 1 for, the loader
+ * skips the all-present check above (a compiled overlay is loadable with
+ * stubs in it; reaching one panics), calls `load` in place of the image
+ * hook, and `start` in place of the table's static initialisers.  NULL
+ * removes it.
+ */
+typedef struct BwOverlayProvider {
+    int  (*compiled)(u32 id);
+    void (*load)(const BwOverlayDesc *overlay);
+    void (*start)(const BwOverlayDesc *overlay);
+} BwOverlayProvider;
+
+void bw_overlay_set_provider(const BwOverlayProvider *provider);
+
 /* 1 if overlay `id` is resident (loaded and not since unloaded or overlaid). */
 int bw_overlay_is_loaded(u32 id);
 

@@ -1,0 +1,15 @@
+{
+ "tool": "synthetic",
+ "region": "arm9",
+ "functions": [
+  {
+   "name": "func_02100000",
+   "address": "0x02100000",
+   "kind": "game",
+   "region": "arm9",
+   "source": "src/matched/arm9/func_02100000.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  }
+ ]
+}

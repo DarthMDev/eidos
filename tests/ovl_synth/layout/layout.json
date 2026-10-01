@@ -1,0 +1,53 @@
+{
+ "note": "synthetic layout for tests/test_ovlink.c: two overlays sharing one window, a third in another; no game data",
+ "overlays": [
+  {
+   "id": 0,
+   "file_id": 0,
+   "ram_start": 35651584,
+   "ram_end": 35652096,
+   "code_size": 512,
+   "bss_size": 32,
+   "bss_start": 35652096,
+   "bss_end": 35652128,
+   "static_init_start": 35652092,
+   "static_init_end": 35652096,
+   "static_init_count": 1,
+   "flags": 0,
+   "compressed": false,
+   "compressed_size": 0
+  },
+  {
+   "id": 1,
+   "file_id": 1,
+   "ram_start": 35651584,
+   "ram_end": 35652096,
+   "code_size": 512,
+   "bss_size": 32,
+   "bss_start": 35652096,
+   "bss_end": 35652128,
+   "static_init_start": 35652092,
+   "static_init_end": 35652096,
+   "static_init_count": 1,
+   "flags": 0,
+   "compressed": false,
+   "compressed_size": 0
+  },
+  {
+   "id": 2,
+   "file_id": 2,
+   "ram_start": 36700160,
+   "ram_end": 36700416,
+   "code_size": 256,
+   "bss_size": 0,
+   "bss_start": 36700416,
+   "bss_end": 36700416,
+   "static_init_start": 36700412,
+   "static_init_end": 36700416,
+   "static_init_count": 1,
+   "flags": 0,
+   "compressed": false,
+   "compressed_size": 0
+  }
+ ]
+}

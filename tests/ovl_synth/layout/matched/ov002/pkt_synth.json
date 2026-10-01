@@ -1,0 +1,15 @@
+{
+ "tool": "synthetic",
+ "region": "ov002",
+ "functions": [
+  {
+   "name": "func_02300000",
+   "address": "0x02300000",
+   "kind": "game",
+   "region": "ov002",
+   "source": "src/matched/ov/ov002_func_02300000.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  }
+ ]
+}

@@ -35,8 +35,8 @@ This script reads only metadata, never game bytes:
                              and to which address
   layout/matched/**/*.json   which function is at which address
   layout/symbols_sdk.txt     SDK functions by address
-  asm/<region>/*.s           only the `-> symbol` annotations of the
-                             reassembly listings (which word points at which
+  asm/arm9/*.s               only the `-> symbol` annotations of the
+  asm/overlays/ovNNN.s       reassembly listings (which word points at which
                              symbol); the words themselves are not read
   the build's sources        `symbols:` blocks, extern declarations and the
                              definitions each file makes
@@ -54,8 +54,9 @@ time out of the player's own file.
         --out-c bw_arm9_data.c --out-h bw_arm9_data.h [--summary]
 
 `--region ovNNN` selects an overlay instead of the ARM9 static module (the
-copy ranges and relocations then describe that overlay's image); the
-runtime side of overlays is not wired yet (docs/armdata.md).
+copy ranges and relocations then describe that overlay's image).  Compiled
+overlays get their tables from tools/ovlink.py, which reuses this module
+(docs/overlays.md).
 
 Standard library only.
 """
@@ -509,7 +510,8 @@ def listing_annotations(root: str, region: str, layout: Layout):
     if region == "arm9":
         files = sorted(glob.glob(os.path.join(root, "asm", "arm9", "*.s")))
     else:
-        files = sorted(glob.glob(os.path.join(root, "asm", region, "*.s")))
+        # aletheia keeps one listing per overlay, asm/overlays/ovNNN.s.
+        files = sorted(glob.glob(os.path.join(root, "asm", "overlays", region + ".s")))
     bases = {"arm9_main": layout.load_address}
     lay_path = os.path.join(root, "layout", "layout.json")
     with open(lay_path, encoding="utf-8") as fh:

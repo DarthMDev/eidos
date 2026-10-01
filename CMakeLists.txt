@@ -305,6 +305,7 @@ set(BW_PXI_SOURCES
 set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/fs.c            # the ROM file system onto the extract
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/overlay.c       # overlays: compiled in, checked on load
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/overlay_image.c # compiled overlays: window copy, names, trampolines
     ${BW_OVERLAY_TABLE}                             # generated, see below
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi.c            # MI_CpuCopy/Fill family
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_alloc.c      # OS heap onto malloc
@@ -505,6 +506,7 @@ endif()
 # a matched file is set on eidos_dsaddr_path() of it.
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/dsaddr.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/armdata.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/overlays.cmake)
 set(BW_MATCHED_ORIGINALS ${BW_MATCHED_SOURCES})
 eidos_dsaddr(BW_MATCHED_SOURCES ${BW_MATCHED_SOURCES})
 
@@ -1455,6 +1457,56 @@ add_test(NAME test_extract_rom
 set_tests_properties(test_extract_rom PROPERTIES
     SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 900)
 
+# --- overlays compiled in (tools/ovlink.py, sdk/overlay_image.c) -------------
+#
+# test_ovlink: the synthetic tree in tests/ovl_synth/ (two overlays sharing a
+# window, a third calling into it, an ARM9 caller), built with the same
+# eidos_overlays() the boot uses; the overlay files are byte patterns the
+# test makes.  No game data.
+add_executable(test_ovlink
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ovlink.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/ovl_synth/src/matched/arm9/func_02100000.c)
+target_include_directories(test_ovlink PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_ovlink PRIVATE eidos)
+eidos_overlays(synth
+    TARGET test_ovlink
+    ROOT ${CMAKE_CURRENT_SOURCE_DIR}/tests/ovl_synth
+    OVERLAYS 0 1 2
+    LINK_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/ovl_synth/src/matched/arm9/func_02100000.c)
+add_test(NAME test_ovlink COMMAND test_ovlink)
+add_test(NAME test_ovlink_stub COMMAND ${CMAKE_COMMAND}
+    -DCMD=$<TARGET_FILE:test_ovlink> -DARG1=--stub
+    "-DEXPECT=PANIC in overlay stub at 0x02200030: overlay 0: function 0x02200030 is not in this build"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_panic.cmake)
+add_test(NAME test_ovlink_none COMMAND ${CMAKE_COMMAND}
+    -DCMD=$<TARGET_FILE:test_ovlink> -DARG1=--none
+    "-DEXPECT=PANIC in overlay trampoline at 0x02200000: func_02200000: called with no overlay resident"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_panic.cmake)
+
+# test_ovlink_real: ov088 and ov179, every matched source of each, linked
+# against the eidos library with the ARM9 functions it lacks stubbed, then
+# loaded from the player's extract through FS_LoadOverlay.  Always built (the
+# metadata is always there); without the extract it reports itself skipped.
+set(BW_OVL_LIBRARY_SOURCES
+    ${BW_MATCHED_ORIGINALS} ${BW_SDK_SOURCES} ${BW_STUB_SOURCES} ${BW_ENGINE_SOURCES})
+add_executable(test_ovlink_real ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ovlink_real.c)
+target_include_directories(test_ovlink_real PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_ovlink_real PRIVATE eidos)
+eidos_overlays(title_test
+    TARGET test_ovlink_real
+    OVERLAYS 88 179
+    LINK_SOURCES ${BW_OVL_LIBRARY_SOURCES}
+    ARM9_STUBS)
+add_test(NAME test_ovlink_real COMMAND test_ovlink_real ${BW_DATA_ROOT_ABS})
+set_tests_properties(test_ovlink_real PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+add_test(NAME test_ovlink_real_stub COMMAND ${CMAKE_COMMAND}
+    -DCMD=$<TARGET_FILE:test_ovlink_real> -DARG1=${BW_DATA_ROOT_ABS} -DARG2=--arm9
+    "-DEXPECT=PANIC in overlay ARM9 stub at 0x0202F0B0: func_0202F0B0: ARM9 function an overlay calls"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_panic.cmake)
+if(NOT EIDOS_DATA_TESTS)
+    set_tests_properties(test_ovlink_real_stub PROPERTIES DISABLED TRUE)
+endif()
+
 # --- the ARM9 image's data (sdk/armdata.c, tools/armdata.py) ----------------
 #
 # test_armdata_gen: the generator against a synthetic aletheia tree written
@@ -1694,6 +1746,57 @@ $<JOIN:$<TARGET_PROPERTY:eidos_boot_game,SOURCES>,
         SOURCES_LIST ${CMAKE_CURRENT_BINARY_DIR}/eidos_boot_sources.txt
         MATCHED ${EIDOS_BOOT_MATCHED})
     target_sources(eidos_boot_game PRIVATE ${bw_arm9_data_C})
+endif()
+
+# --- Overlays compiled into eidos_boot (docs/overlays.md) --------------------
+#
+# EIDOS_OVERLAYS names the overlays tools/ovlink.py compiles into eidos_boot:
+# ids separated by ';' (9;10;88), ALL, or TITLE (the title path: ov009, ov010,
+# ov011, ov013, ov017, ov228, ov088, ov179; docs/title-closure.md).  Empty
+# means TITLE when EIDOS_BOOT is ON and none otherwise.  With
+# EIDOS_OVERLAYS_ARM9_STUBS the ARM9 functions the overlays call that the
+# link lacks are panicking stubs (tools/ovlink.py --arm9-stubs); off, they
+# are link errors that name what the boot's closure has to grow by.
+# eidos_boot installs the set with bw_ovl_install(&bw_ovl_set_boot, 0).
+set(EIDOS_OVERLAYS "" CACHE STRING
+    "Overlays compiled into eidos_boot: ids separated by ';', ALL, TITLE, or empty")
+option(EIDOS_OVERLAYS_ARM9_STUBS
+       "Stub the ARM9 functions the compiled overlays call and the link lacks" ON)
+set(_eidos_ovls "${EIDOS_OVERLAYS}")
+if(_eidos_ovls STREQUAL "" AND EIDOS_BOOT)
+    set(_eidos_ovls TITLE)
+endif()
+if(NOT _eidos_ovls STREQUAL "")
+    set(_ovl_link ${BW_OVL_LIBRARY_SOURCES})
+    if(EIDOS_BOOT)
+        list(APPEND _ovl_link ${EIDOS_BOOT_MATCHED}
+            ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02005124.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02047990.c)
+    endif()
+    set(_ovl_stub_opt)
+    if(EIDOS_OVERLAYS_ARM9_STUBS)
+        set(_ovl_stub_opt ARM9_STUBS)
+    endif()
+    eidos_overlays(boot
+        TARGET eidos_boot
+        OVERLAYS ${_eidos_ovls}
+        LINK_SOURCES ${_ovl_link}
+        ${_ovl_stub_opt})
+    target_compile_definitions(eidos_boot PRIVATE EIDOS_OVERLAYS=1)
+    message(STATUS "EIDOS_OVERLAYS: ${_eidos_ovls}, ${boot_OVL_UNITS} matched sources")
+
+    # test_ovlink_title: every overlay of the set loaded from the extract in
+    # turn, its tables checked against the player's files.
+    add_executable(test_ovlink_title
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ovlink_title.c
+        $<TARGET_OBJECTS:boot_ovl>)
+    target_include_directories(test_ovlink_title PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    if(TARGET eidos_boot_game)
+        target_link_libraries(test_ovlink_title PRIVATE eidos_boot_game)
+    endif()
+    target_link_libraries(test_ovlink_title PRIVATE eidos)
+    add_test(NAME test_ovlink_title COMMAND test_ovlink_title ${BW_DATA_ROOT_ABS})
+    set_tests_properties(test_ovlink_title PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 endif()
 
 # --- No modal dialogs under MSVC ---------------------------------------------
