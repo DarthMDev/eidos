@@ -24,6 +24,17 @@ The configurations:
     nosdl-lp64    -DEIDOS_SDL=OFF: the build a machine without SDL2 gets
     mingw-x64     Windows x64 with MinGW-w64, tests under wine64 if present
     mingw-x86     Windows x86, the same, tests under a 32-bit wine if present
+    msvc-x64      Visual Studio's cl.exe, x64 (LLP64), Windows only
+    msvc-x86      Visual Studio's cl.exe, x86: the ILP32 reference under MSVC
+    clangcl-x64   Visual Studio's clang-cl, x64, Windows only
+
+The MSVC configurations find Visual Studio with vswhere, load its developer
+environment (vcvarsall.bat x64 or x64_x86) into the child processes only,
+and build with Ninja.  They are skipped, with the reason, on a host that is
+not Windows, has no Visual Studio, or has Visual Studio without the C++
+build tools.  They build with -DEIDOS_SDL=OFF: the MinGW SDL2 that
+tools/fetch_sdl.py fetches does not link with MSVC (README.md, "Building
+with MSVC").
 
 Without game data the data-driven tests are registered as disabled and are
 reported in the count; pass --data-root to run them.  Standard library only.
@@ -38,6 +49,17 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+# The Visual Studio component that carries cl.exe, its headers and its
+# libraries for x86 and x64, and the one that adds clang-cl.  A Visual Studio
+# installed without the first can still have a cl.exe under VC/Tools/MSVC,
+# but no vcvarsall.bat, no headers and no CRT, and compiles nothing.
+VS_VC_COMPONENT = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+VS_CLANG_COMPONENT = "Microsoft.VisualStudio.Component.VC.Llvm.Clang"
+
+# GCC and Clang print "warning:", cl.exe "warning C4100:", link.exe
+# "warning LNK4098:".
+WARNING_RE = re.compile(r"\bwarning(?: [A-Z]+\d+)?\s*:")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_ALETHEIA = os.path.normpath(os.path.join(ROOT, "..", "aletheia"))
@@ -62,7 +84,72 @@ CONFIGS = {
                         args=["-DCMAKE_SYSTEM_NAME=Windows", "-DEIDOS_SDL=OFF"]),
     "mingw-x86":   dict(cc="i686-w64-mingw32-gcc", cross="wine",
                         args=["-DCMAKE_SYSTEM_NAME=Windows", "-DEIDOS_SDL=OFF"]),
+    # Visual Studio.  `vcvars` is the vcvarsall.bat argument that picks the
+    # target: x64_x86 is the x64-hosted compiler for 32-bit x86, whose
+    # executables run on the same machine.  No toolchain file: under MSVC the
+    # pointer width comes from the environment (cmake/msvc.cmake).
+    "msvc-x64":    dict(cc="cl", vcvars="x64", args=["-DEIDOS_SDL=OFF"]),
+    "msvc-x86":    dict(cc="cl", vcvars="x64_x86", args=["-DEIDOS_SDL=OFF"]),
+    "clangcl-x64": dict(cc="clang-cl", vcvars="x64", clang=True,
+                        args=["-DEIDOS_SDL=OFF"]),
 }
+
+
+def find_vs(clang=False):
+    """(installation path, None) for a Visual Studio with the C++ build tools
+    (and clang-cl, if `clang`), or (None, the reason there is none)."""
+    if os.name != "nt":
+        return None, "not a Windows host"
+    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    vswhere = os.path.join(pf86, "Microsoft Visual Studio", "Installer",
+                           "vswhere.exe")
+    if not os.path.isfile(vswhere):
+        return None, "no Visual Studio (vswhere.exe not found)"
+
+    def ask(*requires):
+        cmd = [vswhere, "-latest", "-products", "*",
+               "-property", "installationPath"]
+        if requires:
+            cmd += ["-requires"] + list(requires)
+        out = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+        return out.splitlines()[0] if out else None
+
+    if not ask():
+        return None, "no Visual Studio installation"
+    path = ask(VS_VC_COMPONENT)
+    if not path:
+        return None, ("Visual Studio without the C++ build tools (%s)"
+                      % VS_VC_COMPONENT)
+    if clang:
+        path = ask(VS_VC_COMPONENT, VS_CLANG_COMPONENT)
+        if not path:
+            return None, "Visual Studio without clang-cl (%s)" % VS_CLANG_COMPONENT
+    return path, None
+
+
+def vs_env(install, arch, clang=False):
+    """(the environment `vcvarsall.bat arch` produces, None), or (None, why).
+
+    The environment is handed to the child processes only; this process's
+    own is left alone, so one run can mix MSVC and MinGW configurations."""
+    bat = os.path.join(install, "VC", "Auxiliary", "Build", "vcvarsall.bat")
+    if not os.path.isfile(bat):
+        return None, "no vcvarsall.bat in " + install
+    p = subprocess.run('cmd /s /c ""%s" %s >nul && set"' % (bat, arch),
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        return None, "vcvarsall.bat %s failed" % arch
+    env = {}
+    for line in p.stdout.splitlines():
+        key, sep, val = line.partition("=")
+        if sep and key:
+            # Windows names are case-insensitive ("Path"); a dict is not.
+            env[key.upper()] = val
+    if clang:
+        # vcvarsall does not put Visual Studio's own LLVM on PATH.
+        llvm = os.path.join(install, "VC", "Tools", "Llvm", "x64", "bin")
+        env["PATH"] = llvm + os.pathsep + env.get("PATH", "")
+    return env, None
 
 
 def find_wine(name):
@@ -73,9 +160,10 @@ def find_wine(name):
     return None
 
 
-def run(cmd, log, cwd=None):
+def run(cmd, log, cwd=None, env=None):
     with open(log, "w", encoding="utf-8", errors="replace") as fh:
-        p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=cwd)
+        p = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=cwd,
+                           env=env)
     return p.returncode
 
 
@@ -94,7 +182,20 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
     res = {"name": name, "status": "FAIL", "warnings": 0, "tests": "",
            "note": ""}
 
-    if cfg["cc"] and not shutil.which(cfg["cc"]):
+    env = None
+    if cfg.get("vcvars"):
+        install, why = find_vs(cfg.get("clang", False))
+        if install:
+            env, why = vs_env(install, cfg["vcvars"], cfg.get("clang", False))
+        if env is None:
+            res.update(status="skip", note=why)
+            return res
+        # Visual Studio's CMake component ships a Ninja; without it, NMake is
+        # the generator every developer environment has.
+        generator = ("Ninja" if shutil.which("ninja", path=env.get("PATH"))
+                     else "NMake Makefiles")
+
+    if cfg["cc"] and not shutil.which(cfg["cc"], path=(env or {}).get("PATH")):
         res.update(status="skip", note="%s not installed" % cfg["cc"])
         return res
 
@@ -110,7 +211,7 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
     if wine:
         cmd.append("-DCMAKE_CROSSCOMPILING_EMULATOR=" + wine)
     cfg_log = os.path.join(bdir, "check-configure.log")
-    if run(cmd, cfg_log) != 0:
+    if run(cmd, cfg_log, env=env) != 0:
         text = tail(cfg_log)
         # A 32-bit configuration on a host without the 32-bit runtime fails
         # in CMake's own compiler check; that is a missing package, not a
@@ -126,10 +227,10 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
         return res
 
     build_log = os.path.join(bdir, "check-build.log")
-    rc = run(["cmake", "--build", bdir], build_log)
+    rc = run(["cmake", "--build", bdir], build_log, env=env)
     with open(build_log, encoding="utf-8", errors="replace") as fh:
         blog = fh.read()
-    res["warnings"] = len(re.findall(r"\bwarning:", blog))
+    res["warnings"] = len(WARNING_RE.findall(blog))
     if rc != 0:
         res["note"] = "build failed, see " + build_log
         print(tail(build_log))
@@ -141,7 +242,8 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
         return res
 
     test_log = os.path.join(bdir, "check-test.log")
-    rc = run(["ctest", "--test-dir", bdir, "--output-on-failure"], test_log)
+    rc = run(["ctest", "--test-dir", bdir, "--output-on-failure"], test_log,
+             env=env)
     tlog = tail(test_log, 400)
     m = re.search(r"(\d+)% tests passed, (\d+) tests failed out of (\d+)", tlog)
     disabled = len(re.findall(r"Not Run \(Disabled\)", tlog))
@@ -157,7 +259,7 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
     if res["warnings"]:
         res["note"] = "warnings, see " + build_log
         for line in blog.splitlines():
-            if "warning:" in line:
+            if WARNING_RE.search(line):
                 print("  " + line)
         return res
     res["status"] = "ok"

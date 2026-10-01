@@ -1550,6 +1550,63 @@ now goes through `uintptr_t`; and `cmake/ilp32-toolchain.cmake` used to add
 compiler now gets `-m32` too, and a configure that asked for ILP32 and got
 8-byte pointers is a fatal error.
 
+### Building with MSVC
+
+MSVC's settings live in `cmake/msvc.cmake`, which `CMakeLists.txt` includes
+whenever CMake reports `MSVC` (both `cl.exe` and `clang-cl`): `/W4 /utf-8`,
+the CRT's Annex K deprecations turned off at their source
+(`_CRT_SECURE_NO_WARNINGS`, `_CRT_NONSTDC_NO_WARNINGS`), the narrowing
+warnings C4244/C4242/C4267 off because GCC and Clang only report those under
+`-Wconversion`, which the port does not enable on any compiler, and the
+matched sources' three suppressions spelled `/wd4100 /wd4101 /wd4189`
+(`-Wno-...` under clang-cl). Plain `char` is signed under MSVC already, so
+nothing is passed for it; `/J`, which an earlier revision passed, makes it
+*unsigned*, and `sdk/types.h` now fails the build if plain `char` is not
+signed on any compiler.
+
+The pointer width comes from the developer environment, not from a
+toolchain file: `vcvarsall.bat x64` builds LP64 (LLP64, strictly), and
+`vcvarsall.bat x64_x86` builds the 32-bit reference configuration, whose
+executables run on the same machine. Do not pass
+`cmake/ilp32-toolchain.cmake` with `cl.exe`.
+
+```
+"C:\Program Files\Microsoft Visual Studio\<version>\Community\VC\Auxiliary\Build\vcvarsall.bat" x64_x86
+cmake -S . -B build-msvc32 -G Ninja -DALETHEIA_ROOT=..\aletheia -DEIDOS_SDL=OFF
+cmake --build build-msvc32
+ctest --test-dir build-msvc32 --output-on-failure
+```
+
+`tools/check.py` has the same three as `msvc-x64`, `msvc-x86` and
+`clangcl-x64`: it finds Visual Studio with `vswhere`, loads `vcvarsall.bat`
+into the child processes only, and skips each with the reason when it
+cannot (not Windows, no Visual Studio, no C++ build tools, no clang-cl).
+The build needs the Visual Studio components
+`Microsoft.VisualStudio.Component.VC.Tools.x86.x64` (the compiler, its
+headers and CRT, and `vcvarsall.bat`) and a Windows SDK (the UCRT headers
+and `kernel32.lib`); clang-cl is
+`Microsoft.VisualStudio.Component.VC.Llvm.Clang`.
+
+**SDL2 under MSVC.** `tools/fetch_sdl.py` fetches the MinGW package, whose
+import library does not link with MSVC, so the MSVC configurations build with
+`-DEIDOS_SDL=OFF`. For the platform layer and the demo, either install SDL2
+with vcpkg (`vcpkg install sdl2:x64-windows` or `sdl2:x86-windows`, then
+configure with
+`-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake`), or unpack
+the official `SDL2-devel-<version>-VC.zip` from the same libsdl-org release
+anywhere outside the repository and configure with
+`-DSDL2_DIR=<unpacked>/cmake`. Either one is found by the existing
+`find_package(SDL2)` step; neither puts a binary in the repository. Copy the
+matching `SDL2.dll` next to `eidos_view.exe` before running it.
+
+**Status.** Not yet built: the Visual Studio 2022 and 2026 installations on
+the development machine have `cl.exe` but not the C++ build tools component
+or a Windows SDK, so there is no `vcvarsall.bat`, no `stdio.h` and no CRT
+(`cl` stops at `C1034: stdio.h: no include path set`), and `check.py` reports
+all three configurations as skipped for that reason. Everything above is
+written against MSVC's documented behaviour and has not been through a
+compiler yet; expect a first run to surface warnings to fix.
+
 ## Pointer width, and the reference configuration
 
 **ILP32 is the reference configuration for eidos until the field code is in.
@@ -1661,8 +1718,11 @@ neither grows nor needs eight-byte alignment on a 64-bit host. `sdk/fs.c`
 asserts the size at compile time.
 
 **6. `char` is signed.** `-char signed` is part of the pinned DS compiler
-configuration; the CMake build passes `-fsigned-char` (`/J` on MSVC) so the
-host agrees.
+configuration; the CMake build passes `-fsigned-char` to GCC and Clang so
+the host agrees. MSVC's plain `char` is signed by default and gets no flag
+(its `/J` would make it unsigned; see "Building with MSVC"). `sdk/types.h`
+asserts the signedness at compile time, so a configuration that gets it
+wrong fails to build.
 
 ## What is substituted, and why
 
@@ -1928,7 +1988,10 @@ message and nothing written, and 300 randomly damaged images (43 extracted,
   - [ ] Warning-free builds on GCC, Clang, and MSVC (warning-free on the
         pinned MinGW-w64 GCC, on Linux GCC 13 and Clang 18 at both pointer
         widths, and under ASan/UBSan, all checked by `tools/check.py`;
-        MSVC not yet tried)
+        MSVC configured in `cmake/msvc.cmake` with `msvc-x64`, `msvc-x86`
+        and `clangcl-x64` in `tools/check.py`, not yet built: the
+        development machine's Visual Studio lacks the C++ build tools and a
+        Windows SDK, see "Building with MSVC")
 - [ ] **Milestone 2**: Platform layer (SDL2)
   - [x] Window creation and input handling: an integer scale of the DS
         layout, stacked or side by side, a configurable SDL scancode table

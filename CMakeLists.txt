@@ -158,10 +158,14 @@ message(STATUS "Pointer width: ${CMAKE_SIZEOF_VOID_P} bytes; tcbl sources: "
 # `-char signed` is part of the pinned DS compiler configuration (see
 # aletheia's docs/AGENT-BRIEF.md); the host must agree, because matched code
 # that stores into a plain `char` and compares it against a negative value
-# behaves differently otherwise.
+# behaves differently otherwise.  sdk/types.h checks it at compile time.
+#
+# MSVC (cl.exe and clang-cl) is configured in cmake/msvc.cmake: its plain
+# char is already signed, so it gets no flag for it (in particular not /J,
+# which makes char unsigned).
 #
 if(MSVC)
-    add_compile_options(/W3 /J /wd4996)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/msvc.cmake)
 else()
     add_compile_options(-Wall -Wextra -fsigned-char)
     # The matched sources are written to reproduce mwccarm's output, not to
@@ -478,6 +482,9 @@ endif()
 # for SSE2 instead gives the same 64-bit rounding at every step that every
 # other target already has.  It is applied to the audio sources only: the
 # rest of the engine is integer arithmetic and does not care.
+#
+# MSVC needs nothing: its 32-bit x86 compiler has defaulted to /arch:SSE2
+# since Visual Studio 2012, so double arithmetic is already done in SSE2.
 include(CheckCCompilerFlag)
 set(BW_AUDIO_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/sdat.c
@@ -649,7 +656,11 @@ endif()
 # for the same function differ between translation units by design, and a
 # local that is never read is sometimes what fixes the register allocation
 # (src/matched/func_02060814.c's `feature`).
-if(NOT MSVC)
+# Under MSVC the same three are spelled in cmake/msvc.cmake.
+if(MSVC)
+    set_source_files_properties(${BW_MATCHED_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS}")
+else()
     set_source_files_properties(${BW_MATCHED_SOURCES} PROPERTIES
         COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
 endif()
