@@ -154,6 +154,7 @@ void bw_arm7_boot(void)
     bw_arm7_os_init();
     bw_arm7_pm_init();
     bw_arm7_rtc_init();
+    bw_arm7_tp_init();
     bw_arm7_ctrdg_init();
     bw_arm7_card_init();
     bw_arm7_fs_init();

@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "plat_crash.h"
 #include "port.h"
 
 void bw_panic(const char *what, u32 address, const char *detail)
@@ -27,6 +28,9 @@ void bw_panic(const char *what, u32 address, const char *detail)
         fprintf(stderr, ": %s", detail);
     }
     fputc('\n', stderr);
+    if (bw_plat_crash_installed()) {
+        bw_plat_backtrace();
+    }
     fflush(stderr);
 #ifdef _MSC_VER
     /* The MSVC runtime's abort() opens a modal "Debug Error!" dialog in a

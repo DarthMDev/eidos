@@ -271,6 +271,7 @@ static void safe_point(void)
 
 void bw_os_poll(void)
 {
+    bw_os_cpu_step();
     safe_point();
 }
 
@@ -288,6 +289,9 @@ void OS_Halt(void)
         BwOsHaltHook hook;
         void *user;
 
+        /* The other processor runs while this one is halted: a reply the
+         * ARM9 waits for is produced here. */
+        bw_os_cpu_step();
         bw_os_alarm_poll();
         bw_os_lock();
         if (g_if & bw_io_read32(BW_REG_IE)) {

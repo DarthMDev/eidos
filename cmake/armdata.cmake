@@ -5,8 +5,11 @@
 #   eidos_armdata(<prefix>
 #       SOURCES_LIST <file>       the build's sources, one path per line
 #       [REGION arm9]             or ovNNN (overlays: generator only for now)
-#       [MATCHED <src>...])       the matched sources to compile with the
+#       [MATCHED <src>...]        the matched sources to compile with the
 #                                 header force-included
+#       [BIND <src>...])          port sources whose data names are bound
+#                                 like a matched file's; the caller includes
+#                                 the header in them itself
 #
 # Writes <build>/armdata/<prefix>.c and <prefix>.h and sets <prefix>_C and
 # <prefix>_H in the caller's scope.  The .c goes into the target that links
@@ -29,7 +32,7 @@ set(EIDOS_ARMDATA_EXCLUSIONS ${CMAKE_CURRENT_LIST_DIR}/../tools/armdata_exclusio
 get_filename_component(EIDOS_ARMDATA_EXCLUSIONS "${EIDOS_ARMDATA_EXCLUSIONS}" ABSOLUTE)
 
 function(eidos_armdata prefix)
-    cmake_parse_arguments(A "" "SOURCES_LIST;REGION" "MATCHED" ${ARGN})
+    cmake_parse_arguments(A "" "SOURCES_LIST;REGION" "MATCHED;BIND" ${ARGN})
     if(NOT A_SOURCES_LIST)
         message(FATAL_ERROR "eidos_armdata(${prefix}): SOURCES_LIST is required")
     endif()
@@ -49,17 +52,24 @@ function(eidos_armdata prefix)
         file(GLOB listings ${ALETHEIA_ROOT}/asm/${A_REGION}/*.s)
     endif()
 
+    set(bind_args)
+    foreach(src ${A_BIND})
+        list(APPEND bind_args --bind-source ${src})
+    endforeach()
+
     add_custom_command(
         OUTPUT ${out_c} ${out_h}
         COMMAND ${Python3_EXECUTABLE} ${EIDOS_ARMDATA_TOOL}
                 --aletheia-root ${ALETHEIA_ROOT}
                 --sources ${A_SOURCES_LIST}
                 --region ${A_REGION}
+                ${bind_args}
                 --exclusions ${EIDOS_ARMDATA_EXCLUSIONS}
                 --out-c ${out_c} --out-h ${out_h}
         DEPENDS ${EIDOS_ARMDATA_TOOL}
                 ${EIDOS_ARMDATA_EXCLUSIONS}
                 ${A_SOURCES_LIST}
+                ${A_BIND}
                 ${ALETHEIA_ROOT}/layout/layout.json
                 ${ALETHEIA_ROOT}/layout/data_objects.json
                 ${ALETHEIA_ROOT}/layout/symbols_sdk.txt
