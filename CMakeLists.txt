@@ -1471,7 +1471,7 @@ target_link_libraries(test_ovlink PRIVATE eidos)
 eidos_overlays(synth
     TARGET test_ovlink
     ROOT ${CMAKE_CURRENT_SOURCE_DIR}/tests/ovl_synth
-    OVERLAYS 0 1 2
+    OVERLAYS 0 1 2 230
     LINK_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/ovl_synth/src/matched/arm9/func_02100000.c)
 add_test(NAME test_ovlink COMMAND test_ovlink)
 add_test(NAME test_ovlink_stub COMMAND ${CMAKE_COMMAND}

@@ -144,6 +144,10 @@ function(eidos_overlays name)
         ${_eidos_ovl_tools}/overlay_table.py
         ${_eidos_ovl_tools}/ovlink_exclusions.txt
         ${A_ROOT}/layout/layout.json)
+    # The set's shard directories and listings (ovlink writes the list): a
+    # matched file added to one of them reruns the plan at the next build.
+    file(STRINGS ${dir}/ovl_depends.txt deps)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${deps})
 
     file(STRINGS ${dir}/ovl_units.txt units)
     set(copies)

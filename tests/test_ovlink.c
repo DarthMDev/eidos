@@ -21,6 +21,8 @@
  *   - a call with no declaration in scope (C89 implicit int) links, and so
  *     does a file carrying a second copy of a function another file owns;
  *   - a Thumb function's address written as a literal is that function;
+ *   - a static initialiser list (the shape of ov230's, the only one in the
+ *     game) runs at load, in order;
  *
  * and, through tests/expect_panic.cmake:
  *
@@ -64,17 +66,29 @@ int   func_02200000(int x);
 #define WIN     0x02200000u
 #define WIN_B   0x02300000u
 
-static const BwOverlayDesc k_descs[3] = {
-    /* id ram   code    bss    sinit             file comp funcs   sinits */
-    { 0, WIN,   0x200u, 0x20u, WIN + 0x1FCu, WIN + 0x200u, 0, 0, 0, 0, 0, 0, 0, 0 },
-    { 1, WIN,   0x200u, 0x20u, WIN + 0x1FCu, WIN + 0x200u, 1, 0, 0, 0, 0, 0, 0, 0 },
-    { 2, WIN_B, 0x100u, 0x00u, WIN_B + 0xFCu, WIN_B + 0x100u, 2, 0, 0, 0, 0, 0, 0, 0 },
-};
-static const BwOverlayTable k_table = { k_descs, 3, NULL, 0, NULL, 0 };
+#define WIN_SI  0x02188400u    /* ov230's: its five initialisers' addresses */
+
+/* The registry indexes by id, so the table runs to 230; the ids between
+ * are empty windows. */
+static BwOverlayDesc  k_descs[231];
+static BwOverlayTable k_table = { k_descs, 231, NULL, 0, NULL, 0 };
+
+static void desc(u32 id, u32 ram, u32 code, u32 bss)
+{
+    BwOverlayDesc *d = &k_descs[id];
+
+    memset(d, 0, sizeof(*d));
+    d->id = id;
+    d->ram_address = ram;
+    d->ram_size = code;
+    d->bss_size = bss;
+    d->file_id = id;
+}
 
 static u8 g_file0[0x200];
 static u8 g_file1[0x200];
 static u8 g_file2[0x100];
+static u8 g_file230[0x1600];
 
 static void put32(u8 *p, u32 v)
 {
@@ -91,6 +105,8 @@ static u32 ds_word(u32 addr)
 
 static void setup(void)
 {
+    u32 i;
+
     memset(g_file0, 0xA5, sizeof(g_file0));      /* code bytes: anything */
     memset(g_file1, 0x5A, sizeof(g_file1));
     memset(g_file2, 0x3C, sizeof(g_file2));
@@ -101,12 +117,22 @@ static void setup(void)
     put32(g_file1 + 0x100, 3);                   /* ov001's table          */
     put32(g_file1 + 0x180, WIN + 0x01u);         /* -> func_02200000 thumb */
 
+    memset(g_file230, 0x77, sizeof(g_file230));
+    for (i = 0; i < 231; i++) {
+        desc(i, 0, 0, 0);
+    }
+    desc(0, WIN, 0x200u, 0x20u);
+    desc(1, WIN, 0x200u, 0x20u);
+    desc(2, WIN_B, 0x100u, 0);
+    desc(230, WIN_SI, 0x1600u, 0x20u);
+
     bw_ds_reset();
     bw_overlay_use_table(&k_table);
     bw_overlay_sdk_init();
     bw_ovl_set_file(0, g_file0, sizeof(g_file0));
     bw_ovl_set_file(1, g_file1, sizeof(g_file1));
     bw_ovl_set_file(2, g_file2, sizeof(g_file2));
+    bw_ovl_set_file(230, g_file230, sizeof(g_file230));
     bw_ovl_install(&bw_ovl_set_synth, BW_DATA_ALLOW_UNRELOCATED);
 }
 
@@ -184,6 +210,10 @@ int main(int argc, char **argv)
     BW_CHECK_EQ("ov0 .bss counter restarts", ov000_func_02200040(), 1);
     BW_CHECK_EQ("ARM9 -> ov0 again", func_02100000(5), 12);
     BW_CHECK_EQ("by its own name", ov000_func_02200000(0), 7);
+
+    /* Static initialisers: ov230's five, in table order, at load. */
+    BW_REQUIRE("load ov230", FS_LoadOverlay(0, 230));
+    BW_CHECK_EQ("static initialisers ran in order", ds_word(WIN_SI + 0x1600u), 12345);
 
     bw_ovl_install(NULL, 0);
     bw_overlay_use_table(NULL);

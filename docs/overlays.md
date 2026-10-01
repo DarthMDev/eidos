@@ -72,7 +72,9 @@ function. With nothing resident, or a resident overlay this build does not
 compile, it panics naming the address and what is resident. Code pointers
 the overlay's data holds into another window, and ARM9 sources' calls into a
 window, take the same trampolines; ovlink scans the link's other sources for
-the latter.
+the latter. ARM9 data holds no pointer into an overlay window (none of the
+1613 pointer words `data_objects.json` and the ARM9 listings list), so the
+ARM9 image's relocations never need one.
 
 A trampoline forwards its arguments, so it has a prototype: the definition's
 of the first compiled overlay that has a function at the address, normalised
@@ -117,6 +119,9 @@ last is what the window holds, as on the DS. A load is, in
    and rewrite it: to the overlay's own function (`ovNNN_<name>`, or its
    stub), to an ARM9 function the link defines (a trap that panics if not),
    to a trampoline for another window, or to `bw_ds_ptr` of a data target.
+   A data target in another overlay's window is that window's bytes, i.e.
+   whichever overlay is loaded there when the pointer is followed, which is
+   what the DS does.
 
 Unloading needs nothing: the bytes stay until the next overlay is copied over
 them, and the loader stops calling the overlay resident.

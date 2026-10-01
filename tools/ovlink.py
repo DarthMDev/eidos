@@ -1684,6 +1684,15 @@ def main(argv=None):
     write_dispatch(link, os.path.join(out, "ovl_dispatch.c"), args.set_name)
     write_arm9_stubs(link, os.path.join(out, "ovl_arm9_stubs.c"), args.arm9_stubs)
     write_if_changed(os.path.join(out, "ovl_units.txt"), "".join(x + "\n" for x in units))
+    # What a re-run depends on beyond the tool: the overlays' shard
+    # directories (a new matched file adds a shard there) and listings.
+    deps = []
+    for oid in link.ids:
+        for rel in ("layout/matched/ov%03d" % oid, "asm/overlays/ov%03d.s" % oid):
+            path = os.path.join(link.root, rel)
+            if os.path.exists(path):
+                deps.append(path.replace("\\", "/"))
+    write_if_changed(os.path.join(out, "ovl_depends.txt"), "".join(x + "\n" for x in deps))
     needs = ["%s %s %s" % (n, hx(a) if a is not None else "-",
                            "defined" if d else "missing")
              for n, (a, d) in sorted(link.arm9_needs.items())]

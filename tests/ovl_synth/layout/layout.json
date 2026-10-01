@@ -48,6 +48,22 @@
    "flags": 0,
    "compressed": false,
    "compressed_size": 0
+  },
+  {
+   "id": 230,
+   "file_id": 230,
+   "ram_start": 35161088,
+   "ram_end": 35166720,
+   "code_size": 5632,
+   "bss_size": 32,
+   "bss_start": 35166720,
+   "bss_end": 35166752,
+   "static_init_start": 35166696,
+   "static_init_end": 35166716,
+   "static_init_count": 6,
+   "flags": 0,
+   "compressed": false,
+   "compressed_size": 0
   }
  ]
 }
