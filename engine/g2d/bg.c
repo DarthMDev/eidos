@@ -502,31 +502,38 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
                 continue;   /* the window hides this BG at this pixel */
             }
             /*
-             * The 3D layer occupies one hardware layer number.  It is
-             * opaque over its whole buffer, so it emits one sample and
-             * takes the slot: no text or affine layer at this index is
-             * consulted.
+             * The 3D layer occupies one hardware layer number and takes
+             * the slot: no text or affine layer at this index is
+             * consulted.  Its alpha-0 pixels are transparent, so the walk
+             * carries on to the next layer number there; BG0HOFS moves
+             * the buffer sideways with a 512-pixel period.
              */
             if (desc->g3d != NULL && desc->g3d->enabled
                 && desc->g3d->priority == prio
                 && desc->g3d->bg_index == bgi) {
-                if (desc->g3d->rgba != NULL
-                    && x >= 0 && y >= 0
-                    && (u32)x < desc->g3d->width
-                    && (u32)y < desc->g3d->height) {
-                    const u8 *src = desc->g3d->rgba
-                        + ((size_t)(u32)y * desc->g3d->width + (u32)x) * 4u;
+                const G2dLayer3d *l3 = desc->g3d;
+                u32 bx = (u32)(x + l3->hofs) & 0x1FFu;
 
-                    out[count].pal = NULL;
-                    out[count].color_index = 0;
-                    out[count].is_obj = 0;
-                    out[count].is_3d = 1;
-                    out[count].is_raster = 0;
-                    out[count].rgb[0] = src[0];
-                    out[count].rgb[1] = src[1];
-                    out[count].rgb[2] = src[2];
-                    out[count].layer = bgi;
-                    count++;
+                if (l3->rgba != NULL && x >= 0 && y >= 0
+                    && bx < l3->width && (u32)y < l3->height) {
+                    const u8 *src = l3->rgba
+                        + ((size_t)(u32)y * l3->width + bx) * 4u;
+
+                    if (src[3] != 0) {
+                        u32 a5 = ((u32)src[3] * 31u + 127u) / 255u;
+
+                        out[count].pal = NULL;
+                        out[count].color_index = 0;
+                        out[count].is_obj = 0;
+                        out[count].is_3d = 1;
+                        out[count].is_raster = 0;
+                        out[count].rgb[0] = src[0];
+                        out[count].rgb[1] = src[1];
+                        out[count].rgb[2] = src[2];
+                        out[count].alpha5 = (u8)(a5 != 0 ? a5 : 1u);
+                        out[count].layer = bgi;
+                        count++;
+                    }
                 }
                 continue;
             }
@@ -610,6 +617,107 @@ static void stack_color(const G2dFrameDesc *desc, const G2dFrameSample *stack,
     rgb[2] = px[2];
 }
 
+/*
+ * The 6-bit stage's value of one output pixel: a 2D result is a palette
+ * colour's expansion (or a 2D effect's 5-bit result's), widened by
+ * g2d_c5to6; a 3D pixel passed through, or the 3D blend's 6-bit result
+ * expanded by g2d_c6to8, folds back exactly through g2d_c8to6.
+ */
+static void six_of(const u8 out[3], int is3d, u8 o6[3])
+{
+    u32 i;
+
+    for (i = 0; i < 3u; i++) {
+        if (!is3d) {
+            o6[i] = (u8)g2d_c5to6(((u32)out[i] * 31u + 127u) / 255u);
+        } else {
+            o6[i] = (u8)g2d_c8to6(out[i]);
+        }
+    }
+}
+
+/*
+ * The colour effects at one pixel, `out` holding the topmost colour on
+ * entry.  Returns non-zero when what is left in `out` is a 3D colour (the
+ * pixel passed through, or the 3D layer's own blend), zero when it is a 2D
+ * colour or a 2D effect's 5-bit result: which of the two six_of needs.
+ */
+static int blend_pixel(const G2dFrameDesc *desc, const G2dFrameSample *stack,
+                       u32 n, const u8 top[3], u32 top_bit, u32 x, u32 y,
+                       u8 *out)
+{
+    int top3d = (n > 0 && stack[0].is_3d) ? 1 : 0;
+    u8 below[3];
+    u32 below_bit;
+
+    /*
+     * The DS rule, in the order the hardware applies it: the window at
+     * this pixel must allow the effect, the topmost pixel must belong to
+     * the first target set, and for alpha the pixel directly beneath it
+     * must belong to the second target set.  Nothing else blends.
+     */
+    if ((g2d_window_mask(desc->windows, (s32)x, (s32)y)
+         & G2D_LAYER_EFFECT) == 0) {
+        return top3d;
+    }
+    /*
+     * The 3D layer's own blend comes first: a 3D pixel on top of a second
+     * target is mixed with it by its per-pixel alpha, EVA and EVB unused,
+     * whatever the effect field says (g2d.h, G2dLayer3d).  Otherwise the
+     * 3D pixel takes the ordinary rules below as a BG0 pixel.
+     */
+    if (top3d) {
+        stack_color(desc, stack, n, 1, below, &below_bit);
+        if ((below_bit & desc->blend->second) != 0) {
+            u8 c6[3];
+
+            if (stack[0].alpha5 >= 31u) {
+                return 1;   /* (3D * 32 + 2D * 0) / 32: the 3D pixel */
+            }
+            g2d_blend_3d(top, below, stack[0].alpha5, c6);
+            out[0] = g2d_c6to8(c6[0]);
+            out[1] = g2d_c6to8(c6[1]);
+            out[2] = g2d_c6to8(c6[2]);
+            return 1;
+        }
+    }
+    /*
+     * A semi-transparent OBJ is the other exception: such a pixel counts
+     * as a first target whatever BLDCNT's bit 4 says and is alpha blended
+     * whatever its effect field says, provided the pixel beneath it is a
+     * second target.  When it is not, the OBJ falls through to the
+     * ordinary rule below (so a brightness effect still applies to it if
+     * BLDCNT names the OBJ layer).
+     */
+    if (n > 0 && stack[0].is_obj && stack[0].layer < desc->n_objs
+        && desc->objs[stack[0].layer].semi) {
+        stack_color(desc, stack, n, 1, below, &below_bit);
+        if ((below_bit & desc->blend->second) != 0) {
+            g2d_blend_alpha(top, below, desc->blend->eva,
+                            desc->blend->evb, out);
+            return 0;
+        }
+    }
+    if (desc->blend->effect == G2D_BLEND_NONE) {
+        return top3d;
+    }
+    if ((top_bit & desc->blend->first) == 0) {
+        return top3d;
+    }
+    if (desc->blend->effect == G2D_BLEND_ALPHA) {
+        stack_color(desc, stack, n, 1, below, &below_bit);
+        if ((below_bit & desc->blend->second) == 0) {
+            return top3d;
+        }
+        g2d_blend_alpha(top, below, desc->blend->eva,
+                        desc->blend->evb, out);
+    } else {
+        g2d_blend_brightness(top, desc->blend->evy,
+                             desc->blend->effect == G2D_BLEND_BRIGHT_UP, out);
+    }
+    return 0;
+}
+
 void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
                             u8 *rgba)
 {
@@ -619,9 +727,9 @@ void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
         for (x = 0; x < width; x++) {
             u8 *out = rgba + ((size_t)y * width + x) * 4u;
             G2dFrameSample stack[2];
-            u8 top[3], below[3];
-            u32 top_bit, below_bit;
-            u32 n;
+            u8 top[3];
+            u32 top_bit, n;
+            int is3d;
 
             n = g2d_frame_stack(desc, (s32)x, (s32)y, stack, 2);
             stack_color(desc, stack, n, 0, top, &top_bit);
@@ -631,55 +739,12 @@ void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
             out[2] = top[2];
             out[3] = 255;
 
-            if (desc->blend == NULL) {
-                continue;
+            is3d = (n > 0 && stack[0].is_3d) ? 1 : 0;
+            if (desc->blend != NULL) {
+                is3d = blend_pixel(desc, stack, n, top, top_bit, x, y, out);
             }
-            /*
-             * The DS rule, in the order the hardware applies it: the
-             * window at this pixel must allow the effect, the topmost
-             * pixel must belong to the first target set, and for alpha
-             * the pixel directly beneath it must belong to the second
-             * target set.  Nothing else blends.
-             */
-            if ((g2d_window_mask(desc->windows, (s32)x, (s32)y)
-                 & G2D_LAYER_EFFECT) == 0) {
-                continue;
-            }
-            /*
-             * A semi-transparent OBJ is the one exception, and it comes
-             * first: such a pixel counts as a first target whatever
-             * BLDCNT's bit 4 says and is alpha blended whatever its
-             * effect field says, provided the pixel beneath it is a
-             * second target.  When it is not, the OBJ falls through to
-             * the ordinary rule below (so a brightness effect still
-             * applies to it if BLDCNT names the OBJ layer).
-             */
-            if (n > 0 && stack[0].is_obj && stack[0].layer < desc->n_objs
-                && desc->objs[stack[0].layer].semi) {
-                stack_color(desc, stack, n, 1, below, &below_bit);
-                if ((below_bit & desc->blend->second) != 0) {
-                    g2d_blend_alpha(top, below, desc->blend->eva,
-                                    desc->blend->evb, out);
-                    continue;
-                }
-            }
-            if (desc->blend->effect == G2D_BLEND_NONE) {
-                continue;
-            }
-            if ((top_bit & desc->blend->first) == 0) {
-                continue;
-            }
-            if (desc->blend->effect == G2D_BLEND_ALPHA) {
-                stack_color(desc, stack, n, 1, below, &below_bit);
-                if ((below_bit & desc->blend->second) == 0) {
-                    continue;
-                }
-                g2d_blend_alpha(top, below, desc->blend->eva,
-                                desc->blend->evb, out);
-            } else {
-                g2d_blend_brightness(top, desc->blend->evy,
-                                     desc->blend->effect
-                                     == G2D_BLEND_BRIGHT_UP, out);
+            if (desc->out6 != NULL) {
+                six_of(out, is3d, desc->out6 + ((size_t)y * width + x) * 3u);
             }
         }
     }

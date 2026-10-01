@@ -719,6 +719,38 @@ void g2d_blend_alpha(const u8 first[3], const u8 second[3],
 void g2d_blend_brightness(const u8 first[3], u32 evy, int up, u8 out[3]);
 
 /*
+ * The display's own precision.  The 2D engines produce 15-bit colour, the
+ * 3D engine 18-bit, and everything after the layer mix (the 3D layer's
+ * alpha blend, the master brightness, the LCD) runs on 6 bits per channel.
+ *
+ *   g2d_c5to6    a 2D (palette) channel into the 6-bit stage: 0 stays 0,
+ *                anything else is 2c + 1, so 31 is 63 and full white stays
+ *                full white.  [AP] that the low bit is set for a non-zero
+ *                channel is the convention this file picks: public
+ *                documentation says the 15-bit colour is widened to 18
+ *                bits, not how the new bit is filled.
+ *   g2d_c8to6    an 8-bit host channel folded to 6 bits, round to nearest
+ *                (exact for every c6 * 255 / 63 expansion, which is what
+ *                the 3D rasteriser's blends produce).
+ *   g2d_c6to8    a 6-bit channel expanded for the host, c * 255 / 63.
+ *
+ * g2d_blend_3d is the 3D layer's own alpha blend with the 2D pixel
+ * directly beneath it: (3D * (A + 1) + 2D * (31 - A)) / 32 per channel, A
+ * the 3D pixel's 5-bit alpha, EVA and EVB unused.  `top` is the 3D
+ * pixel's 8-bit colour, `below` a palette colour's 8-bit expansion; the
+ * result is 6-bit.
+ *
+ * g2d_master_bright6 is MASTER_BRIGHT on one 6-bit pixel: up is
+ * c + (63 - c) * f / 16, down c - c * f / 16, f the factor with 17..31
+ * reading as 16, in place.
+ */
+u32  g2d_c5to6(u32 c5);
+u32  g2d_c8to6(u8 c8);
+u8   g2d_c6to8(u32 c6);
+void g2d_blend_3d(const u8 top[3], const u8 below[3], u32 alpha5, u8 out6[3]);
+void g2d_master_bright6(u8 c6[3], u32 factor, int up);
+
+/*
  * A 3D layer as one stackable layer.  This is the piece g3d_compose_over
  * does not close: that helper only puts a 3D frame behind a whole 2D frame
  * at the backdrop, whereas here the 3D output is an ordinary layer at its
@@ -727,18 +759,38 @@ void g2d_blend_brightness(const u8 first[3], u32 evy, int up, u8 out[3]);
  * depend on g3d for this: the layer is a raw RGBA buffer in the geometry
  * g3d writes, and whatever produced it is the caller's business.
  *
- * The hardware 3D layer is a full framebuffer, not a sprite, so it covers
- * every pixel of its buffer and `bg_index` is the layer it occupies: the
- * caller must not also supply a text or affine BG at that index (the 3D
- * layer wins that slot in g2d_frame_stack).  A pixel outside the buffer, or
- * a layer the window hides, contributes nothing.
+ * The hardware 3D layer is a full framebuffer, not a sprite, and `bg_index`
+ * is the layer it occupies: the caller must not also supply a text or
+ * affine BG at that index (the 3D layer owns that slot in g2d_frame_stack).
+ * A pixel outside the buffer, a pixel whose alpha is 0, or a layer the
+ * window hides, contributes nothing, and the layers beneath show through,
+ * as they do on hardware where the rendered frame's alpha 0 (nothing drawn
+ * over a clear colour of alpha 0) is transparent to the 2D engine.
+ *
+ * Any other alpha is the 3D pixel's 5-bit alpha (the 8-bit value folded,
+ * so 255 is 31), and it is what the layer blends with: wherever the pixel
+ * directly beneath a 3D pixel is a BLDCNT second target, the two are mixed
+ * by g2d_blend_3d with the 3D alpha, whatever BLDCNT's effect and first
+ * target bits say (EVA and EVB are not used; this is the same exception
+ * the semi-transparent OBJ makes).  [AP] that BLDCNT's first-target bit
+ * for BG0 is not required: public documentation describes the 3D blend as
+ * using the per-pixel alpha in place of the coefficients and does not
+ * settle that bit; an opaque 3D pixel (alpha 31) comes out unchanged by
+ * the blend either way.  Where the pixel beneath is not a second target,
+ * the ordinary rules apply to the 3D pixel as a BG0 pixel (brightness).
+ *
+ * `hofs` is BG0HOFS, the 3D layer's one scroll: screen x shows buffer
+ * column (x + hofs) mod 512, and a column past the buffer is transparent.
+ * [AP] the 512-pixel period with its second half empty is how this file
+ * reads the register's 9 bits; there is no vertical scroll.
  */
 typedef struct G2dLayer3d {
-    const u8 *rgba;    /* width*height*4, R,G,B,A, opaque */
+    const u8 *rgba;    /* width*height*4, R,G,B,A; A == 0 is transparent */
     u32 width, height;
     u32 priority;      /* 0..3, like a BG; lower draws in front */
     u32 bg_index;      /* 0..3: the hardware layer number it occupies */
     int enabled;
+    s32 hofs;          /* BG0HOFS, 0..511 */
 } G2dLayer3d;
 
 /*
@@ -775,6 +827,14 @@ typedef struct G2dFrameDesc {
     const G2dBlend         *blend;     /* NULL: no colour effect  */
     const G2dLayerRaster   *rasters;   /* pre-resolved BG layers  */
     u32                     n_rasters;
+    /*
+     * Optional, width*height*3: every output pixel's colour in the 6-bit
+     * stage that follows the layer mix (g2d_c5to6 of a 2D result, the 3D
+     * blend's own 6-bit result, the 3D pixel folded by g2d_c8to6).  What
+     * the master brightness and the display capture work on; NULL when
+     * the caller does not need it.
+     */
+    u8                     *out6;
 } G2dFrameDesc;
 
 void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
@@ -792,6 +852,7 @@ typedef struct G2dFrameSample {
     int is_3d;          /* rgb[] holds the pixel; pal/color_index unused */
     int is_raster;      /* likewise, out of a G2dLayerRaster            */
     u8  rgb[3];
+    u8  alpha5;         /* a 3D sample's alpha, 1..31                   */
     u32 layer;
 } G2dFrameSample;
 
@@ -854,6 +915,13 @@ typedef struct G2dHwState {
     const u8 *bg_extpal[2][4];   /* the four BG extended palette slots   */
     const u8 *obj_extpal[2];     /* the OBJ extended palette             */
     const u8 *lcdc_bank[4];      /* banks A..D, for display mode 2       */
+    /*
+     * Banks A..D again, writable, for the display capture: a bank's entry
+     * is non-NULL only while VRAMCNT has it enabled in LCDC mode (MST 0),
+     * which is the one mapping the capture unit writes to (and reads its
+     * VRAM source B from).  All NULL: the capture does nothing.
+     */
+    u8       *capture_bank[4];
 } G2dHwState;
 
 /*
@@ -865,8 +933,45 @@ typedef struct G2dHwState {
 #define G2D_HW_UNSUP_DISPLAY_MODE 0x02u  /* main memory display, or a     */
                                          /* VRAM display on the sub engine */
 #define G2D_HW_UNSUP_BITMAP_OBJ   0x04u  /* OBJ mode 3                    */
-#define G2D_HW_UNSUP_MOSAIC       0x08u  /* mosaic is ignored, not drawn  */
+#define G2D_HW_UNSUP_MOSAIC       0x08u  /* the mosaic bit on the 3D BG0  */
 #define G2D_HW_UNSUP_NO_3D        0x10u  /* BG0 is 3D but no 3D frame     */
+#define G2D_HW_UNSUP_CAPTURE_FIFO 0x20u  /* capture source B = main       */
+                                         /* memory display FIFO (read as  */
+                                         /* transparent black)            */
+
+/*
+ * DISPCAPCNT (0x04000064), the display capture: while bit 31 is set the
+ * frame g2d_hw_render draws is also captured, as on hardware where the
+ * capture runs through the frame after the bit is set and the bit clears
+ * when it completes.  g2d_hw_render does the capture (into
+ * G2dHwState.capture_bank); clearing bit 31 is the register file's owner's
+ * business: g2d_hw_render_dsmem clears it in the live register file.
+ *
+ *   source A    bit 24: 0 the main engine's graphics screen (BG, OBJ and 3D
+ *               after the colour effects, before the master brightness;
+ *               composed even when the display mode shows something else),
+ *               alpha 1 everywhere; 1 the 3D frame alone, alpha = its
+ *               alpha != 0.
+ *   source B    bit 25: 0 VRAM, the bank DISPCNT bits 18-19 select, from
+ *               bits 26-27 * 32 KiB, alpha = bit 15; 1 the main memory
+ *               display FIFO, which no DMA feeds here (flagged).
+ *   mode        bits 29-30: 0 A, 1 B, 2 and 3 A and B blended:
+ *               (A * Aa * EVA + B * Ba * EVB) / 16 per 5-bit channel,
+ *               clamped to 31, alpha (Aa and EVA > 0) or (Ba and EVB > 0);
+ *               EVA bits 0-4 and EVB bits 8-12, above 16 read as 16.
+ *   destination bits 16-17 the bank (A..D), bits 18-19 * 32 KiB the offset,
+ *               bits 20-21 the size (128x128, 256x64, 256x128, 256x192);
+ *               written as BGR555 with the alpha in bit 15, the address
+ *               wrapping inside the bank's 128 KiB.
+ *
+ * [AP] source B is read as the same linear pixel stream the destination
+ * is written as (pixel i of the capture at read offset + 2i); for the
+ * 256-wide sizes every reading agrees, for 128x128 public documentation
+ * does not settle the stride.  A graphics-screen pixel enters the capture
+ * as its 6-bit stage value halved (g2d_c5to6 inverted exactly for 2D
+ * colours), a 3D pixel as its 8-bit value folded to 6 bits and halved.
+ */
+#define G2D_HW_DISPCAPCNT 0x04000064u
 
 /*
  * One engine's screen into a 256x192 RGBA buffer (R, G, B, A, every pixel
