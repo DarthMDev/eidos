@@ -27,6 +27,7 @@
 #include "arm7.h"
 #include "dsmem.h"
 #include "pxi.h"
+#include "snd.h"
 
 #define BW_OS_SYNC_WINDOW   0x02FFFFF0u
 
@@ -176,5 +177,6 @@ void bw_arm7_step(void)
     bw_arm7_boot();
     bw_pxi_service();
     os_sync_step();
+    bw_arm7_snd_step();     /* sound status and alarms, sdk/arm7/snd.h */
     g_arm7.stepping = 0;
 }

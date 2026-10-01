@@ -338,6 +338,13 @@ int bw_sseq_track_starts(const BwSseq *q, BwSseqTrackStart *starts, int cap);
 int bw_sseq_run_track(const u8 *data, size_t size, size_t start_pc, int track_index,
                       BwSeqNoteList *notes, BwTempoList *tempos, u32 *end_tick);
 
+/* As bw_sseq_run_track, and sets *looped (when non-NULL) to 1 if the track
+ * ended because a backward Jump was refused: the sequence loops on the DS,
+ * and the interpreter's one-repeat rule is what cut it here. */
+int bw_sseq_run_track_ex(const u8 *data, size_t size, size_t start_pc, int track_index,
+                         BwSeqNoteList *notes, BwTempoList *tempos, u32 *end_tick,
+                         int *looped);
+
 void bw_seq_note_list_free(BwSeqNoteList *l);
 void bw_tempo_list_free(BwTempoList *l);
 
@@ -405,6 +412,51 @@ long   bw_audio_note_timer_ticks(double freq_hz, double *actual_hz);
 double bw_audio_note_freq_hz(int played_note);
 
 /* ------------------------------------------------------------------ */
+/* Where a sequence's bytes come from                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Everything a render needs, as plain byte ranges, so the same sequencer
+ * runs on an SDAT slot (the direct path) and on what the game loaded into
+ * its own memory and named in an SND command (sdk/arm7/snd_driver.c).
+ *
+ * `seq` is the range every SSEQ offset (OpenTrack, Jump, Call) is measured
+ * from, and `seq_start` is where track 0's first command is, relative to
+ * it.  The two readings that exist meet here:
+ *
+ *   - the SND command path passes what the ARM9 passed: seqBase and
+ *     seqOffset.  Measured against this ROM's 1,970 OpenTrack commands, the
+ *     byte before a target offset counted from seqBase (file + 0x1C) is a
+ *     track's closing 0xFF in 1,304 of them and never a split command, so
+ *     offsets are relative to the DATA block's payload;
+ *   - bw_audio_seq_source_sdat() keeps the reading the oracle
+ *     (sseqsynth.py) makes, `seq` = the whole file and `seq_start` = 0x1C,
+ *     which treats offsets as file-absolute.  That is 0x1C early for every
+ *     OpenTrack, Jump and Call, and so differs from the command path in any
+ *     sequence that has one; it is kept because tests/test_audio.c holds
+ *     the engine to the oracle exactly.
+ *
+ * `bank` is the SBNK file image and `wave_arc` the SWAR file image in each
+ * of the bank's four slots (size 0: no bank, or an empty slot).
+ * `volume` is the SEQ record's volume, 0 meaning unity as in the direct
+ * path; `bank_index` is only reported back in BwAudioRender.
+ */
+typedef struct {
+    BwBlob seq;
+    u32    seq_start;
+    BwBlob bank;
+    BwBlob wave_arc[4];
+    u8     volume;
+    u32    bank_index;
+} BwAudioSeqSource;
+
+/* The source for SDAT slot `seq_index`, borrowing the SDAT's bytes.
+ * `bank_override` < 0 uses the SEQ record's own bank.  Returns 0, or -1
+ * when the SEQ record or its file is missing or not an SSEQ. */
+int bw_audio_seq_source_sdat(const BwSdat *s, u32 seq_index, long bank_override,
+                             BwAudioSeqSource *out);
+
+/* ------------------------------------------------------------------ */
 /* Rendering a whole sequence (the oracle-comparable path)             */
 /* ------------------------------------------------------------------ */
 
@@ -443,6 +495,10 @@ typedef struct {
 int  bw_audio_render_seq(const BwSdat *s, u32 seq_index, long bank_override,
                          double max_seconds, BwAudioRender *out);
 void bw_audio_render_free(BwAudioRender *r);
+/* The same render from a source (bw_audio_render_seq is this over
+ * bw_audio_seq_source_sdat). */
+int  bw_audio_render_source(const BwAudioSeqSource *src, double max_seconds,
+                            BwAudioRender *out);
 
 /* ------------------------------------------------------------------ */
 /* The streaming player (the platform layer's audio callback)          */
@@ -463,6 +519,36 @@ void bw_audio_player_mix(BwAudioPlayer *p, s16 *out, u32 frames);
 /* How many note-ons found no free channel out of BW_AUDIO_CHANNELS. */
 u32  bw_audio_player_voice_overflows(const BwAudioPlayer *p);
 u64  bw_audio_player_frames(const BwAudioPlayer *p);
+
+/* A player over a source (bw_audio_player_create is this over
+ * bw_audio_seq_source_sdat).  The source's bytes are borrowed and must
+ * outlive the player. */
+BwAudioPlayer *bw_audio_player_create_source(const BwAudioSeqSource *src,
+                                             double max_seconds, int loop);
+/* What bw_audio_player_mix() rounds: `frames` stereo frames of the player's
+ * output already scaled by its level, as doubles, written (not added) to
+ * `left` and `right`.  bw_audio_player_mix() is exactly this followed by
+ * round-half-to-even and the clamp, so a caller that sums several players
+ * before rounding gets the same bits as bw_audio_player_mix() when only
+ * one is sounding. */
+void bw_audio_player_render(BwAudioPlayer *p, double *left, double *right, u32 frames);
+/* Every prepared note has started and finished and the end of the
+ * sequence has been reached, and the player does not loop. */
+int  bw_audio_player_finished(const BwAudioPlayer *p);
+/* Whether the sequence loops on the DS (a track ended at a refused
+ * backward Jump), and whether this player restarts at its end. */
+int  bw_audio_player_seq_loops(const BwAudioPlayer *p);
+void bw_audio_player_set_loop(BwAudioPlayer *p, int loop);
+/* Sequence ticks (48 to the quarter) played so far, across restarts. */
+u64  bw_audio_player_tick(const BwAudioPlayer *p);
+/* Bit n set for each track number the sequence opened (track 0 always). */
+u32  bw_audio_player_track_mask(const BwAudioPlayer *p);
+/* Bit n set while voice n is sounding. */
+u32  bw_audio_player_voice_mask(const BwAudioPlayer *p);
+/* A gain for the notes track `track_no` (0-15, the SSEQ's own numbering)
+ * starts from now on; 1.0 is the default and leaves the arithmetic
+ * untouched, 0.0 mutes. */
+void bw_audio_player_set_track_gain(BwAudioPlayer *p, int track_no, double gain);
 
 #ifdef __cplusplus
 }

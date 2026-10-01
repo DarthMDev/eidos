@@ -484,6 +484,11 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/sseq.c     # the SSEQ interpreter
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/mixer.c    # one voice: resample, ADSR, PSG
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/player.c   # render and stream a sequence
+
+    # The ARM7's sound driver over engine/audio: SND commands from tag 7,
+    # the shared work, the alarms (sdk/arm7/snd.h).  Not in BW_PXI_SOURCES:
+    # the transport (sdk/arm7/snd.c) links without it, and test_pxi does.
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_driver.c
 )
 
 add_library(eidos STATIC
@@ -512,6 +517,10 @@ add_custom_command(
 
 # Port code that has to know which heap floor it is sitting on (the
 # initialiser, the forwarders, the tests) reads this.
+# In the library the sound transport installs the engine/audio driver at
+# ARM7 power-on (sdk/arm7/snd.c); test_pxi compiles the transport alone.
+target_compile_definitions(eidos PRIVATE BW_ARM7_SND_DRIVER=1)
+
 if(EIDOS_HEAP_MATCHED)
     target_compile_definitions(eidos PUBLIC EIDOS_HEAP_MATCHED=1)
 else()
@@ -568,6 +577,7 @@ set(BW_AUDIO_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/sseq.c
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/mixer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio/player.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd_driver.c
 )
 if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT MSVC)
     check_c_compiler_flag("-msse2 -mfpmath=sse" BW_HAVE_SSE2_MATH)
@@ -1098,6 +1108,85 @@ target_include_directories(test_audio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_audio PRIVATE eidos)
 add_test(NAME test_audio COMMAND test_audio ${BW_DATA_ROOT_ABS} ${BW_AUDIO_ORACLE_DIR})
 eidos_data_test(test_audio bw_audio_oracle)
+
+# The ARM7 sound driver through the PXI wire (sdk/arm7/snd.h): synthetic
+# command lists against engine/audio driven directly, needing no data; and
+# the same with real sequences copied into main RAM from the SDAT, which
+# needs the data root.
+add_executable(test_snd ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_snd.c)
+target_include_directories(test_snd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_snd PRIVATE eidos)
+add_test(NAME test_snd COMMAND test_snd)
+add_test(NAME test_snd_data COMMAND test_snd ${BW_DATA_ROOT_ABS})
+if(NOT EIDOS_DATA_TESTS)
+    set_tests_properties(test_snd_data PROPERTIES DISABLED TRUE)
+endif()
+
+# The game's own SND library (aletheia's matched snd_*.o functions) driving
+# the same driver.  4-byte pointers only: the matched files' views of
+# snd_command.o's .bss agree with each other only there (the test's header
+# says how).  Each file defines its address spelling and calls the SDK
+# spelling of its neighbours, so the SDK names are defined to the address
+# names on the command line, which leaves the files untouched.
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(BW_SND_TEST_MATCHED
+        arm9_sdk/PXI_SendWordByFifo.c
+        arm9_sdk/PXI_SetFifoRecvCallback.c
+        arm9_sdk/func_020885EC.c            # PXI_IsCallbackReady
+        arm9_sdk/func_020898A8.c            # SND_CommandInit
+        arm9_sdk/func_02089978.c            # SND_RecvCommandReply
+        arm9_sdk/func_02089A78.c            # SND_AllocCommand
+        arm9_sdk/func_02089B00.c            # SND_PushCommand
+        arm9_sdk/SND_FlushCommand.c
+        arm9_sdk/func_02089CD4.c            # SND_WaitForCommandProc
+        arm9_sdk/func_02089D40.c            # SND_GetCurrentCommandTag
+        arm9_sdk/func_02089D6C.c            # SND_IsFinishedCommandTag
+        arm9_sdk/func_02089DBC.c            # SND_CountFreeCommand
+        arm9_sdk/func_02089DF8.c            # SND_CountReservedCommand
+        arm9_sdk/func_02089E34.c            # SND_CountWaitingCommand
+        arm9_sdk/func_02089E50.c            # PxiFifoCallback
+        arm9_sdk/func_02089E74.c            # InitPXI
+        arm9_sdk/func_02089ED8.c            # RequestCommandProc
+        arm9_sdk/func_02089F00.c            # AllocCommand
+        arm9_sdk/func_02089F48.c            # IsCommandAvailable
+        arm9_sdk/func_02089F88.c            # SND_AlarmInit
+        arm9_sdk/func_02089FE0.c            # SNDi_SetAlarmHandler
+        arm9_sdk/func_0208A010.c            # SNDi_CallAlarmHandler
+        arm9_sdk/func_0208A07C.c            # SND_GetChannelStatus
+        arm9_sdk/func_0208A0A4.c            # SND_ReadTrackInfo
+        arm9_sdk/func_0208A1AC.c            # SNDi_GetFinishedCommandTag
+        arm9_sdk/func_0208A1D0.c            # SNDi_InitSharedWork
+        arm9_sdk/func_0208A2BC.c            # SND_AssignWaveArc
+        arm9_sdk/func_02089804.c            # PushCommand_impl
+        arm9_sdk/func_02089350.c            # SND_PrepareSeq
+        arm9_sdk/func_02089330.c            # SND_StopSeq
+        arm9_sdk/func_020897B4.c            # SNDi_SetPlayerParam
+        arm9_sdk/func_0208970C.c            # SND_SetMasterVolume
+        arm9_sdk/func_02089540.c            # SND_SetupAlarm
+        arm9_sdk/func_020894B4.c            # SND_StartTimer
+        arm9_sdk/func_02089794.c            # SND_ReadDriverInfo
+    )
+    set(_bw_snd_matched)
+    foreach(_rel ${BW_SND_TEST_MATCHED})
+        list(APPEND _bw_snd_matched ${ALETHEIA_ROOT}/src/matched/${_rel})
+    endforeach()
+    # The library's own rewrite of these, if a later wave adds them to it,
+    # would collide; until then the test owns the copies.
+    eidos_dsaddr(_bw_snd_matched ${_bw_snd_matched})
+    if(NOT MSVC)
+        set_source_files_properties(${_bw_snd_matched} PROPERTIES
+            COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
+    endif()
+    set_source_files_properties(${_bw_snd_matched} PROPERTIES COMPILE_DEFINITIONS
+        "InitPXI=func_02089E74;SNDi_InitSharedWork=func_0208A1D0;SND_AllocCommand=func_02089A78;SND_PushCommand=func_02089B00;SND_RecvCommandReply=func_02089978;SNDi_GetFinishedCommandTag=func_0208A1AC;IsCommandAvailable=func_02089F48;AllocCommand=func_02089F00;SND_CountWaitingCommand=func_02089E34;SND_CountFreeCommand=func_02089DBC;SND_CountReservedCommand=func_02089DF8;RequestCommandProc=func_02089ED8;SND_IsFinishedCommandTag=func_02089D6C;PxiFifoCallback=func_02089E50;SNDi_CallAlarmHandler=func_0208A010;PushCommand_impl=func_02089804;SNDi_SetAlarmHandler=func_02089FE0;PXI_IsCallbackReady=func_020885EC;sCommandBss=sFreeList")
+    add_executable(test_snd_matched
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_snd_matched.c
+        ${_bw_snd_matched})
+    target_include_directories(test_snd_matched PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_snd_matched PRIVATE eidos)
+    add_test(NAME test_snd_matched COMMAND test_snd_matched)
+    set_tests_properties(test_snd_matched PROPERTIES TIMEOUT 60)
+endif()
 
 # The synthetic engine tests need neither game data nor an oracle: every
 # expected pixel in them is computed on paper from the hardware rule under
