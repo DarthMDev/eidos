@@ -417,8 +417,9 @@ double bw_audio_note_freq_hz(int played_note);
 
 /*
  * Everything a render needs, as plain byte ranges, so the same sequencer
- * runs on an SDAT slot (the direct path) and on what the game loaded into
- * its own memory and named in an SND command (sdk/arm7/snd_driver.c).
+ * runs on an SDAT slot (the direct path) and on bytes anywhere in memory.
+ * The game's SND commands are played by the ARM7 driver's own real-time
+ * sequencer instead (sdk/arm7/snd_seq.c), which reads offsets the same way.
  *
  * `seq` is the range every SSEQ offset (OpenTrack, Jump, Call) is measured
  * from, and `seq_start` is where track 0's first command is, relative to
@@ -428,9 +429,8 @@ double bw_audio_note_freq_hz(int played_note);
  * sequences follow a track end (0xFF) or a return (0xFD) under that reading
  * (9 under a file-absolute one), and all 9,945 Jump and Call targets land on
  * a command boundary of the payload's linear disassembly (4,710 under the
- * file-absolute one).  Both paths therefore pass the payload: the SND
- * command path seqBase and seqOffset as the ARM9 sent them, and
- * bw_audio_seq_source_sdat() the file's payload with `seq_start` 0.
+ * file-absolute one).  So bw_audio_seq_source_sdat() passes the file's
+ * payload with `seq_start` 0, the same range the ARM9 names with seqBase.
  *
  * `bank` is the SBNK file image and `wave_arc` the SWAR file image in each
  * of the bank's four slots (size 0: no bank, or an empty slot).

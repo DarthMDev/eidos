@@ -1010,15 +1010,30 @@ ctest:
 
 | SEQ | name | what it covers | notes | render | difference |
 | --- | --- | --- | --- | --- | --- |
-| 1062 | `SEQ_BGM_GYM` | PCM waves out of a real SWAR | 296 events, 22 rendered, 9 tracks, 116 BPM | peak 14960, RMS 3090.378 | **0 of 655360 samples** |
-| 1146 | `SEQ_BGM_BATTLEPINCH` | PSG square, with PCM alongside | 173 events, 35 rendered, 6 tracks, 180 BPM | peak 6052, RMS 2221.014 | **0 of 655360 samples** |
-| 1379 | `SEQ_SE_KOUKA_H` | PSG noise | 17 events, 12 rendered, 2 tracks, 89 BPM | peak 5751, RMS 1896.658 | **0 of 275032 samples** |
+| 1062 | `SEQ_BGM_GYM` | PCM waves out of a real SWAR | 2510 events, 176 rendered, 9 tracks, 116 BPM | peak 32000, RMS 6549.031 | **0 of 655360 samples** |
+| 1146 | `SEQ_BGM_BATTLEPINCH` | PSG square, with PCM alongside | 1110 events, 97 rendered, 6 tracks, 180 BPM | peak 27449, RMS 5658.633 | **0 of 655360 samples** |
+| 1379 | `SEQ_SE_KOUKA_H` | PSG noise | 24 events, 24 rendered, 2 tracks, 89 BPM | peak 30081, RMS 2514.572 | **0 of 275032 samples** |
 
 All three note event lists are identical to the oracle's, and the peak and
-RMS agree exactly because the buffers do. The busiest of the three needs
-**5 voices at once**, so the DS's 16 channels are not the binding
-constraint on any of them; the test reports that number and the streaming
-player counts the note-ons that found no free channel, which is zero here.
+RMS agree exactly because the buffers do. "Rendered" counts the notes that
+start inside the window; the rest of the list lies past it. The busiest of
+the three has **19 voices at once**: this model gives every note its own
+voice, where the DS shares 16 channels by priority, which is what the ARM7
+driver below does instead.
+
+**SSEQ offsets.** `OpenTrack`, `Jump` and `Call` count their 24-bit offsets
+from the DATA block's payload (the file's `data_offset`, 0x1C), not from
+the file: on this ROM's SDAT all 2,016 `OpenTrack` targets in 940
+sequences follow a track end or a return under that reading (9 under the
+file-absolute one), and all 9,945 `Jump` and `Call` targets are command
+boundaries (4,710 under the file-absolute one). Both `engine/audio` and the
+ARM7 driver read them that way. Before the fix the three sequences above
+had 296, 173 and 17 note events. aletheia's `sseqsynth.py` reads
+`OpenTrack` this way since its commit 1609c2263 but still takes `Jump` and
+`Call` targets as file offsets, so `tools/audio_oracle.py` probes the
+imported oracle with a nine-byte sequence and, only while the probe shows
+the file-absolute reading, adds `data_offset` to those two targets around
+its `run_track`; with the fix in aletheia the probe turns that off.
 
 **What is reproduced rather than improved, deliberately.** sseqsynth.py
 documents its own approximations, and the engine makes the same ones,
@@ -1037,6 +1052,50 @@ clock-rate fix changed the rendered file not at all, byte for byte) and
 deliberately left it. The engine reproduces it exactly, so that whoever
 fixes the seed fixes it in the tool first and this test then *measures* the
 change instead of hiding it.
+
+## The ARM7 sound driver
+
+The game does not call `engine/audio`. It calls the SDK's SND library,
+which sends command lists to the ARM7 over PXI tag 7; `sdk/arm7/snd.c` is
+the transport and `sdk/arm7/snd_driver.c` executes them, on two pieces of
+its own:
+
+| file | what it does |
+| --- | --- |
+| `sdk/arm7/snd_seq.c` | the sequencer: 16 players, a pool of 32 tracks, 16 extended channels allocated by priority, the SSEQ interpreter in real time with its prefix and variable commands, envelopes, the modulation LFO, sweeps and portamento |
+| `sdk/arm7/snd_hw.c` | the sound hardware: 16 channels (PCM8, PCM16, IMA-ADPCM with its loop state, PSG square on 8-13, noise on 14-15), two captures, SOUNDCNT's master volume and output selector, mixed in integers |
+
+The shapes are the SDK's own: `SNDWork`, `SNDPlayer`, `SNDTrack`,
+`SNDExChannel`, `SNDLfoParam` and the bank structures are read from the
+DWARF of `libsnd.TWL.HYB.a` with aletheia's `tools/sdkobj.py`, the player
+and track parameters live in byte images at those offsets (so
+`PLAYER_PARAM` and `TRACK_PARAM` are the stores the ARM9 means them to be),
+and `SND_ReadDriverInfo` gets `SNDWork` back in the DS layout. The
+arithmetic is `snd_util.o`'s: `SND_CalcTimer` from its listing, and the
+pitch, decibel-square and volume tables generated from formulas that
+reproduce the SDK's tables exactly (the test holds them to the SDK's
+sums). The ARM7 behaviour around them (the driver frame of 64 * 2728 bus
+cycles, the tempo counter's 240 per tick, the envelope in 1/128 dB from
+-92544, the SBNK envelope byte conversions, the decibel sum for a
+channel's level) is public NDS sound driver documentation; the hardware is
+GBATEK's. Where neither says, the source says "Choice:". Nothing is taken
+from ARM7 code.
+
+What that gives the game: a looping sequence loops forever from its loop
+point; the tempo ratio, track pitch, pan and volume, pitch bend,
+portamento, Tie and the LFO change the sound as it plays; the 16 hardware
+channels are shared between all players, a note taking the lowest-priority
+channel (a releasing note first) and being dropped when every channel
+outranks it; `SKIP_SEQ`, `ALLOCATABLE_CHANNEL`, mutes and the sequence
+variables (in the shared work, as the ARM9 reads them) work; and the
+direct channel commands, captures, master pan and the output selector drive
+the hardware model, which is how the game's own stream object
+(`func_020738C0`: a locked channel looping over a ring buffer, refilled on
+an alarm started with the channel by one `START_TIMER`) plays.
+`tests/test_snd.c` checks each of those, and with the data root plays
+`SEQ_SE_DECIDE2` and `SEQ_BGM_GYM` from main RAM and streams one of GYM's
+own waves through a ring buffer, which must equal the wave played in one
+piece sample for sample. The SDAT has no STRM entries.
 
 ## The frame skeleton
 
@@ -2514,14 +2573,14 @@ and no staging is left. Without `BW_ROM` it reports itself skipped.
   - [x] PSG square wave and noise channels: the eight duty settings, and the
         15-bit Galois LFSR clocked at the SND timer rate, bit-identical to
         the oracle on `SEQ_BGM_BATTLEPINCH` and `SEQ_SE_KOUKA_H`
-  - [ ] Music, sound effects, and Pokémon cries play accurately (the
-        sequencer renders all three and the cry path is the same one, but
-        the model it reproduces is the asset lane's: the ADSR curve, the
-        volume law and the pan law are documented approximations of the
-        hardware's, and Tie, portamento, modulation and the pitch wheel are
-        no-ops. Making those accurate needs the DS sound driver itself,
-        which is not decompiled yet, and it is what this test exists to
-        measure the change of)
+  - [ ] Music, sound effects, and Pokémon cries play accurately (the game's
+        SND commands play on the ARM7 driver, `sdk/arm7/snd_seq.c` and
+        `snd_hw.c`: SDK-shaped players, tracks and shared channels, the
+        SDK's own timer and volume arithmetic, Tie, portamento, the LFO,
+        the pitch wheel, loop points and direct-channel streams; its ARM7
+        side follows public driver documentation and has not been compared
+        with the DS's own output; `engine/audio` keeps the asset lane's
+        model for the oracle comparison)
   - [ ] The game's own sound calls reach it: nothing in `src/matched/` plays
         a sequence yet, so the SEQ id is still chosen by the demo
 - [ ] **Milestone 6**: Data pipeline & asset extraction

@@ -17,8 +17,9 @@
  *   card.c   Slot-1 card pull-out (tag 14)
  *   fs.c     Slot-1 backup commands (tag 11, PXI_FIFO_TAG_FS)
  *   snd.c    sound command lists (tag 7): the transport, sdk/arm7/snd.h
- *   snd_driver.c  the sound driver behind it, on engine/audio (eidos
- *            library only; the transport links without it)
+ *   snd_driver.c  the sound driver behind it, with snd_seq.c (the
+ *            sequencer) and snd_hw.c (the sound hardware) (eidos library
+ *            only; the transport links without them)
  *
  * Each responder's protocol comes from the matched ARM9 side of the same
  * SDK module (aletheia src/matched/arm9_sdk/, named in each file) and from
