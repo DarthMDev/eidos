@@ -70,9 +70,8 @@ that stands for it. The rewrite is purely textual on the cast, so the
 compiled code is the matched code with one function-call-shaped address in
 place of a constant; nothing else moves. The 342 I/O literals that are not
 inside a cast (`#define REG_BASE 0x04000000`, arithmetic, comparisons) are
-left alone and found the honest way: a host fault at a DS-shaped address is
-diagnosed by `bw_ds_ptr`'s companion `bw_ds_fault_hint`, and the site gets a
-port-side wrapper.
+left alone: `tools/dsaddr.py` lists them, and each one that a built file
+reaches gets a port-side wrapper before that file joins the build.
 
 Literals that name a game global's own address are not rewritten: a matched
 file reaches globals through `extern` names, which `sdk/game_globals.c` and
@@ -137,3 +136,22 @@ worktree, and is integrated by one person.
 | fs | `sdk/fs.c` additions, `sdk/overlay.c` |
 | title | `docs/title-closure.md` (analysis only) |
 | msvc | `cmake/msvc.cmake`, `tools/check.py` MSVC configurations |
+
+## Modding is a design constraint, not a later feature
+
+eidos is meant to carry new Pokemon, moves, sprites, NPCs, maps and AI
+(Milestone 8, and the mod suite built on it). Nothing here may freeze a DS
+limit the port owns:
+
+- Game tables are host objects registered with `bw_ds_register`, not fixed
+  DS memory, so a table can be defined larger than the cartridge's copy and
+  the matched code that indexes it keeps working; the limit that remains is
+  the one written into matched code (a count compared against a constant),
+  and those sites are recorded as they are found, not worked around.
+- Assets reach the game through the VFS and its mod overlay (`sdk/vfs.c`);
+  member-level NARC overrides are the next step there, so a mod adds one
+  sprite or one map without repacking an archive.
+- Where the port substitutes behaviour (a shim, an overlay registry entry, a
+  hook point), it is a replaceable function or table, not hard-wired, so AI,
+  scripts and procs can be swapped by a mod later.
+
