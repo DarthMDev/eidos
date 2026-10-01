@@ -308,9 +308,19 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/narc.c          # NARC framing, ARM9 rodata
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/game_globals.c  # the ARM9 globals the matched code names
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/aliases.c       # sub_/func_ spelling forwarders
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_tick.c       # OS_GetTick onto the frame loop
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/dsmem.c         # the DS address space: registry, regions, I/O, VRAM
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/host_vm.c       # reserve/commit for main RAM (the one OS-specific file)
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_tick.c       # OS_GetTick onto the frame loop, OS_InitTick
+    # The OS layer the boot runs on (docs/boot.md, "Threads, interrupts and
+    # the frame").  os_interrupt/os_alarm/os_system read the register file,
+    # so they need sdk/dsmem.c; nothing in the library pulls them in until a
+    # caller of theirs is linked.
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_thread.c   # host mutex/condvar/thread, Win32 and POSIX
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_thread.c     # OSThread on host threads, one run token
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_interrupt.c  # IE/IF/IME, the IRQ handler, OS_Halt, OS_WaitIrq
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_alarm.c      # alarms on the tick
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_system.c     # console/boot type, MPU, ARM7 sync
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_argument.c   # the deliver argument
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/panic.c
     ${BW_PXI_SOURCES}
 )
@@ -531,6 +541,12 @@ check_library_exists(m pow "" BW_HAVE_LIBM)
 if(BW_HAVE_LIBM)
     target_link_libraries(eidos PUBLIC m)
 endif()
+
+# sdk/plat_thread.c: pthreads off Windows (Threads::Threads is empty where
+# the C library already has them, and on Win32).
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+target_link_libraries(eidos PUBLIC Threads::Threads)
 
 # engine/audio is required to agree with its Python oracle *exactly* (see
 # engine/audio/audio.h and tests/test_audio.c), and on 32-bit x86 the
@@ -1234,6 +1250,27 @@ if(_bw_pxi_pm_matched)
 endif()
 add_test(NAME test_pxi COMMAND test_pxi)
 set_tests_properties(test_pxi PROPERTIES TIMEOUT 30)
+
+# The OS layer's tests.  They need the register file; until sdk/dsmem.c is
+# in the tree they link tests/os_dsmem_double.c, a minimal stand-in for it,
+# and nothing else does.  test_os_irq also compiles aletheia's matched
+# OS_SetIrqFunction.c and OS_GetIrqFunction.c as written: the table writers
+# the shim's dispatcher has to agree with.
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/sdk/dsmem.c)
+    set(BW_OS_TEST_EXTRA)
+else()
+    set(BW_OS_TEST_EXTRA ${CMAKE_CURRENT_SOURCE_DIR}/tests/os_dsmem_double.c)
+endif()
+foreach(t test_os_thread test_os_irq test_os_alarm)
+    add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c ${BW_OS_TEST_EXTRA})
+    target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(${t} PRIVATE eidos)
+    add_test(NAME ${t} COMMAND ${t})
+    set_tests_properties(${t} PROPERTIES TIMEOUT 60)
+endforeach()
+target_sources(test_os_irq PRIVATE
+    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/OS_SetIrqFunction.c
+    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/OS_GetIrqFunction.c)
 
 add_executable(test_extract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract.c)
 target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

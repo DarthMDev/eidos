@@ -1,0 +1,48 @@
+/*
+ * sdk/plat_thread.h -- the host threading primitives the OS shims run on.
+ *
+ * sdk/os_thread.c runs every game OSThread on a host thread and lets exactly
+ * one of them execute game code at a time (docs/boot.md, "Threads,
+ * interrupts and the frame").  That needs three primitives and nothing else:
+ * a mutex, a condition variable and a way to start and join a thread.  They
+ * are the only platform-specific code in the OS layer, and sdk/plat_thread.c
+ * holds the two implementations (Win32 and POSIX) behind this interface.
+ *
+ * Every object is opaque and heap-allocated, so no platform header leaks
+ * into the files that include this one.  Creation failures panic: the OS
+ * layer cannot run a game thread without them and has nothing to fall back
+ * to.
+ */
+
+#ifndef BW_PORT_PLAT_THREAD_H
+#define BW_PORT_PLAT_THREAD_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct BwMutex  BwMutex;
+typedef struct BwCond   BwCond;
+typedef struct BwThread BwThread;
+
+BwMutex *bw_mutex_create(void);
+void     bw_mutex_destroy(BwMutex *m);
+void     bw_mutex_lock(BwMutex *m);
+void     bw_mutex_unlock(BwMutex *m);
+
+BwCond  *bw_cond_create(void);
+void     bw_cond_destroy(BwCond *c);
+/* Atomically release `m`, wait, and re-acquire it.  May wake spuriously.  */
+void     bw_cond_wait(BwCond *c, BwMutex *m);
+void     bw_cond_broadcast(BwCond *c);
+
+/* Start `fn(arg)` on a new host thread.                                   */
+BwThread *bw_thread_start(void (*fn)(void *arg), void *arg);
+/* Wait for the thread to return, then release the handle.                 */
+void      bw_thread_join(BwThread *t);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* BW_PORT_PLAT_THREAD_H */
