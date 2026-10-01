@@ -135,17 +135,27 @@
  * polygon untextured), bit 1 (toon or highlight for polygon mode 2, with
  * the TOON_TABLE registers), bit 2 with ALPHA_TEST_REF (the alpha test),
  * bit 3 (alpha blending; off draws a translucent polygon opaque, [AP] for
- * the texture's own alpha, which still blends), CLEAR_COLOR (colour, alpha,
- * [AP] the fog and polygon-ID bits are ignored), CLEAR_DEPTH (scaled onto
- * the rasteriser's 23-bit depth), VIEWPORT (folded into the clip-space x/y
- * of each vertex emitted under it, so the rasteriser's fixed full-screen
- * transform lands it in the viewport; [AP] a polygon is clipped to the
- * screen, not to the viewport rectangle).  Not honoured, and reported per
- * frame through g3d_hw_unsupported(): fog (bit 7), edge marking (bit 5),
- * anti-aliasing (bit 4), the rear-plane bitmap (bit 14), the w-buffer
- * (SWAP_BUFFERS bit 1), shadow polygons, and lighting (NORMAL while
- * POLYGON_ATTR enables a light: the vertex keeps its last COLOR, as in the
- * interpreter).  DISP_1DOT_DEPTH is stored and not applied.  The hardware's
+ * the texture's own alpha, which still blends), bit 4 (anti-aliasing,
+ * raster.c's approximation), bit 5 with EDGE_COLOR (edge marking), bit 7
+ * with bit 6, bits 8-11, FOG_COLOR, FOG_OFFSET and FOG_TABLE (fog), bit 14
+ * with CLRIMAGE_OFFSET (the rear-plane bitmap: colour from texture slot 2,
+ * depth and fog flag from slot 3, scrolled), CLEAR_COLOR (colour, alpha,
+ * the fog bit and the polygon ID the edge marking compares against),
+ * CLEAR_DEPTH (scaled onto the rasteriser's 23-bit depth), SWAP_BUFFERS
+ * bit 1 (the w-buffer), VIEWPORT (folded into the clip-space x/y of each
+ * vertex emitted under it, so the rasteriser's fixed full-screen transform
+ * lands it in the viewport; [AP] a polygon is clipped to the screen, not
+ * to the viewport rectangle), and the lighting: DIF_AMB, SPE_EMI,
+ * LIGHT_VECTOR, LIGHT_COLOR and SHININESS feed engine/g3d/light.c, and a
+ * NORMAL under a POLYGON_ATTR that enables a light sets the vertex colour
+ * to the lighting equation's result (DIF_AMB bit 15 sets it to the
+ * diffuse colour).  The frame's alpha is the hardware's: alpha 0 where
+ * nothing was drawn over a clear alpha of 0, a translucent pixel's own
+ * alpha there, so the 2D engine sees through and blends with the 3D layer
+ * as it does on hardware.  Not honoured, and reported per frame through
+ * g3d_hw_unsupported(): shadow polygons (no matched source draws one: the
+ * POLYGON_ATTR constants in the corpus all have mode 0).
+ * DISP_1DOT_DEPTH is stored and not applied.  The hardware's
  * 2048-polygon / 6144-vertex limits are not imposed (modding: docs/boot.md);
  * RAM_COUNT reports the true counts saturated to the register's fields.
  *
@@ -222,6 +232,8 @@ typedef struct Hw3d {
     u32  unsup, unsup_frame;
     u32  disp3dcnt;           /* latched for the frame being rendered */
     u8   toon[32 * 3];
+
+    G3dLight light;
 
     TexCacheEntry *cache;
     u32 n_cache, cap_cache;
@@ -620,6 +632,93 @@ static void cache_clear(void)
 /* SWAP_BUFFERS                                                        */
 /* ------------------------------------------------------------------ */
 
+/* The clear depth in the rasteriser's units: 15 bits onto its 23-bit z,
+ * or [AP] in a w-buffered frame the 24-bit value the hardware widens it to
+ * (d * 0x200, plus 0x1FF at 0x7FFF), compared with w directly. */
+static s32 clear_depth_of(const G3dTarget *t, u32 cd)
+{
+    if (t->wbuffer) {
+        return (s32)(cd * 0x200u + (cd == 0x7FFFu ? 0x1FFu : 0u));
+    }
+    return cd == 0x7FFFu ? G3D_DEPTH_FAR : (s32)((cd << 8) | (cd >> 7));
+}
+
+/*
+ * The clear: CLEAR_COLOR and CLEAR_DEPTH, or with DISP3DCNT bit 14 the
+ * rear-plane bitmap, a 256x256 image whose colour (BGR555, bit 15 the
+ * alpha) is texture slot 2 and whose depth (bits 0-14) and fog flag (bit
+ * 15) are slot 3, scrolled by CLRIMAGE_OFFSET (x bits 0-7, y bits 8-15)
+ * with wrapping.  Either way every pixel takes the clear polygon ID
+ * (CLEAR_COLOR bits 24-29); the fog flag is CLEAR_COLOR bit 15 for the
+ * plain clear.
+ */
+static void clear_planes(G3dTarget *t, u32 d3, u32 cc, u32 cd)
+{
+    u32 n = t->width * t->height, i;
+    u8 fog = (u8)((cc & 0x8000u) ? G3D_PIX_FOG : 0u);
+    s32 depth = clear_depth_of(t, cd);
+
+    g3d_target_clear(t, c5to8(cc), c5to8(cc >> 5), c5to8(cc >> 10),
+                     (u8)(((cc >> 16) & 0x1Fu) * 255u / 31u));
+    for (i = 0; i < n; i++) {
+        t->depth[i] = depth;
+        t->pid[i] = (u8)((cc >> 24) & 0x3Fu);
+        t->pflag[i] = fog;
+    }
+    if (d3 & 0x4000u) {
+        u32 ofs = bw_io_read16(G3D_HW_CLRIMAGE_OFS);
+        u32 x, y;
+
+        for (y = 0; y < t->height; y++) {
+            for (x = 0; x < t->width; x++) {
+                u32 at = ((((y + (ofs >> 8)) & 0xFFu) * 256u)
+                          + ((x + ofs) & 0xFFu)) * 2u;
+                const u8 *c = bw_vram_slot(BW_VSLOT_TEX, 0x40000u + at, NULL);
+                const u8 *d = bw_vram_slot(BW_VSLOT_TEX, 0x60000u + at, NULL);
+                u16 cv = c != NULL ? bw_rd16(c) : 0;
+                u16 dv = d != NULL ? bw_rd16(d) : 0;
+                size_t o = (size_t)y * t->width + x;
+
+                g3d_bgr555((u16)(cv & 0x7FFFu), &t->rgba[o * 4u],
+                           &t->rgba[o * 4u + 1u], &t->rgba[o * 4u + 2u]);
+                t->rgba[o * 4u + 3u] = (u8)((cv & 0x8000u) ? 255u : 0u);
+                t->depth[o] = clear_depth_of(t, dv & 0x7FFFu);
+                t->pflag[o] = (u8)((dv & 0x8000u) ? G3D_PIX_FOG : 0u);
+            }
+        }
+    }
+}
+
+/* Edge marking, fog and anti-aliasing, in the hardware's order. */
+static void rear_passes(G3dTarget *t, u32 d3, u32 cc, u32 cd)
+{
+    u32 i;
+
+    if (d3 & 0x0020u) {
+        u16 edge[8];
+
+        for (i = 0; i < 8u; i++) {
+            edge[i] = bw_io_read16(G3D_HW_EDGE_COLOR + i * 2u);
+        }
+        g3d_target_edge_mark(t, edge, (cc >> 24) & 0x3Fu,
+                             clear_depth_of(t, cd));
+    }
+    if (d3 & 0x0080u) {
+        u8 table[32];
+
+        for (i = 0; i < 32u; i++) {
+            table[i] = (u8)(bw_io_read16(G3D_HW_FOG_TABLE + (i & ~1u))
+                            >> ((i & 1u) * 8u));
+        }
+        g3d_target_fog(t, table, bw_io_read32(G3D_HW_FOG_COLOR),
+                       bw_io_read16(G3D_HW_FOG_OFFSET), (d3 >> 8) & 0xFu,
+                       (d3 & 0x0040u) != 0);
+    }
+    if (d3 & 0x0010u) {
+        g3d_target_antialias(t);
+    }
+}
+
 static void render_frame(void)
 {
     G3dTarget *t = &g_hw.front;
@@ -633,21 +732,9 @@ static void render_frame(void)
     }
     g_hw.disp3dcnt = d3;
 
-    if (d3 & 0x0080u) { unsup |= G3D_HW_UNSUP_FOG; }
-    if (d3 & 0x0020u) { unsup |= G3D_HW_UNSUP_EDGE; }
-    if (d3 & 0x0010u) { unsup |= G3D_HW_UNSUP_ANTIALIAS; }
-    if (d3 & 0x4000u) { unsup |= G3D_HW_UNSUP_REARPLANE; }
-    if (g_hw.swap_param & 2u) { unsup |= G3D_HW_UNSUP_WBUFFER; }
-
-    g3d_target_clear(t, c5to8(cc), c5to8(cc >> 5), c5to8(cc >> 10),
-                     c5to8(cc >> 16));
-    if (cd != 0x7FFFu) {
-        s32 d = (s32)((cd << 8) | (cd >> 7));
-        u32 n = t->width * t->height;
-        for (i = 0; i < n; i++) {
-            t->depth[i] = d;
-        }
-    }
+    t->wbuffer = (g_hw.swap_param >> 1) & 1u;
+    t->aa = (d3 >> 4) & 1u;
+    clear_planes(t, d3, cc, cd);
 
     t->alpha_ref = (d3 & 4u) ? (bw_io_read16(G3D_HW_ALPHA_TEST_REF) & 0x1Fu) : 0u;
     for (i = 0; i < 32u; i++) {
@@ -670,9 +757,9 @@ static void render_frame(void)
 
     g3d_raster_geom(t, &g_hw.geom, lookup, NULL);
     cache_clear();
+    rear_passes(t, d3, cc, cd);
 
-    g_hw.unsup_frame = unsup | (g_hw.unsup & G3D_HW_UNSUP_LIGHTING);
-    g_hw.unsup &= ~(u32)G3D_HW_UNSUP_LIGHTING;
+    g_hw.unsup_frame = unsup;
     g_hw.have_frame = 1;
 }
 
@@ -695,6 +782,14 @@ static void swap_buffers(u32 param)
 /* ------------------------------------------------------------------ */
 /* Executing a command                                                 */
 /* ------------------------------------------------------------------ */
+
+/* The current vertex colour, as COLOR would set it. */
+static void set_color(u16 c)
+{
+    g_hw.gx.cr = c5to8(c);
+    g_hw.gx.cg = c5to8((u32)c >> 5);
+    g_hw.gx.cb = c5to8((u32)c >> 10);
+}
 
 static void exec(u32 op, const u32 *par)
 {
@@ -738,11 +833,29 @@ static void exec(u32 op, const u32 *par)
         }
         break;
     }
-    case 0x21:      /* NORMAL: lighting is not computed */
-        if (g_hw.gx.poly_attr_pending & 0xFu) {
-            g_hw.unsup |= G3D_HW_UNSUP_LIGHTING;
-        }
+    case 0x21:      /* NORMAL: the lighting equation under a lit polygon */
         run_cmd(op, par, n);
+        if (G3D_ATTR_LIGHTS(g_hw.gx.poly_attr) != 0) {
+            set_color(g3d_light_normal(&g_hw.light, &st->vec, par[0],
+                                       G3D_ATTR_LIGHTS(g_hw.gx.poly_attr)));
+        }
+        break;
+    case 0x30:      /* DIF_AMB, bit 15: the diffuse colour is the vertex's */
+        if (g3d_light_dif_amb(&g_hw.light, par[0])) {
+            set_color((u16)(par[0] & 0x7FFFu));
+        }
+        break;
+    case 0x31:      /* SPE_EMI */
+        g3d_light_spe_emi(&g_hw.light, par[0]);
+        break;
+    case 0x32:      /* LIGHT_VECTOR, through the vector matrix now */
+        g3d_light_vector(&g_hw.light, &st->vec, par[0]);
+        break;
+    case 0x33:      /* LIGHT_COLOR */
+        g3d_light_color(&g_hw.light, par[0]);
+        break;
+    case 0x34:      /* SHININESS */
+        g3d_light_shininess(&g_hw.light, par);
         break;
     case 0x40:      /* BEGIN_VTXS: closes a list left open */
         if (g_hw.gx.batch_open) {
@@ -937,6 +1050,7 @@ void g3d_hw_reset(void)
     g_hw.cache = cache;
     g_hw.cap_cache = cap;
     g3d_gx_init(&g_hw.gx, &g_hw.geom);
+    g3d_light_init(&g_hw.light);
     g_hw.viewport = FULL_VIEWPORT;
     if (g_hw.front.rgba != NULL) {
         g3d_target_clear(&g_hw.front, 0, 0, 0, 0);

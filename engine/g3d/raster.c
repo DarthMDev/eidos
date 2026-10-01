@@ -75,7 +75,12 @@ int g3d_target_init(G3dTarget *t, u32 width, u32 height)
     }
     t->rgba = (u8 *)calloc((size_t)width * height, 4);
     t->depth = (s32 *)malloc((size_t)width * height * sizeof(s32));
-    if (t->rgba == NULL || t->depth == NULL) {
+    t->pid = (u8 *)calloc((size_t)width * height, 1);
+    t->pflag = (u8 *)calloc((size_t)width * height, 1);
+    t->cov = (u8 *)calloc((size_t)width * height, 1);
+    t->under = (u8 *)calloc((size_t)width * height, 4);
+    if (t->rgba == NULL || t->depth == NULL || t->pid == NULL
+        || t->pflag == NULL || t->cov == NULL || t->under == NULL) {
         g3d_target_free(t);
         return -1;
     }
@@ -92,6 +97,10 @@ void g3d_target_free(G3dTarget *t)
     }
     free(t->rgba);
     free(t->depth);
+    free(t->pid);
+    free(t->pflag);
+    free(t->cov);
+    free(t->under);
     memset(t, 0, sizeof(*t));
 }
 
@@ -105,6 +114,11 @@ void g3d_target_clear(G3dTarget *t, u8 r, u8 g, u8 b, u8 a)
         t->rgba[i * 4 + 2] = b;
         t->rgba[i * 4 + 3] = a;
         t->depth[i] = G3D_DEPTH_FAR;
+    }
+    if (t->pid != NULL) {
+        memset(t->pid, 0, n);
+        memset(t->pflag, 0, n);
+        memset(t->cov, 31, n);
     }
 }
 
@@ -252,11 +266,16 @@ static u32 modulate5(u32 a5, u32 b5)
 /* One pixel                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * One pixel of a polygon.  `cov5` is its coverage, 31 except at a span end
+ * when the target records coverage (G3dTarget.aa).
+ */
 static void put_pixel(G3dTarget *t, u32 x, u32 y, s32 depth,
-                      const u8 col[3], u32 alpha5)
+                      const u8 col[3], u32 alpha5, u32 attr, u32 cov5)
 {
     size_t o = ((size_t)y * t->width + x);
     u8 *px = t->rgba + o * 4u;
+    u8 fog = (u8)(G3D_ATTR_FOG(attr) ? G3D_PIX_FOG : 0u);
 
     /* [HW] the alpha test: with it enabled (DISP3DCNT bit 2) a pixel
      * whose alpha is not above ALPHA_TEST_REF is not drawn.  alpha_ref is
@@ -268,6 +287,17 @@ static void put_pixel(G3dTarget *t, u32 x, u32 y, s32 depth,
         return;
     }
     if (alpha5 >= 31u) {
+        if (t->pid != NULL) {
+            /* An opaque pixel: its polygon ID, its fog flag, and, for a
+             * partly covered span end, what it covers (anti-aliasing). */
+            t->pid[o] = (u8)G3D_ATTR_ID(attr);
+            t->pflag[o] = (u8)(G3D_PIX_OPAQUE | fog);
+            t->cov[o] = (u8)cov5;
+            if (cov5 < 31u) {
+                memcpy(t->under + o * 4u, px, 4u);
+                t->pflag[o] |= G3D_PIX_EDGE;
+            }
+        }
         px[0] = col[0];
         px[1] = col[1];
         px[2] = col[2];
@@ -275,14 +305,37 @@ static void put_pixel(G3dTarget *t, u32 x, u32 y, s32 depth,
         t->depth[o] = depth;
         return;
     }
-    /* [HW] translucent blend in 5-bit alpha; [AP] the depth buffer is
-     * not written, which is the DS's default for translucent polygons
-     * and is what keeps a translucent surface from hiding what is
-     * behind it. */
-    px[0] = (u8)((col[0] * alpha5 + px[0] * (31u - alpha5)) / 31u);
-    px[1] = (u8)((col[1] * alpha5 + px[1] * (31u - alpha5)) / 31u);
-    px[2] = (u8)((col[2] * alpha5 + px[2] * (31u - alpha5)) / 31u);
-    px[3] = 255;
+    /* [HW] a translucent pixel over a pixel of alpha 0 (the clear plane
+     * with a clear alpha of 0) is written as it is, its alpha included:
+     * there is nothing to blend with, and the 2D engine blends the 3D
+     * layer by that alpha.  Over anything else the colour is blended in
+     * 5-bit alpha and the alpha is the larger of the two. */
+    if (px[3] == 0) {
+        px[0] = col[0];
+        px[1] = col[1];
+        px[2] = col[2];
+        px[3] = (u8)(alpha5 * 255u / 31u);
+    } else {
+        u8 a8 = (u8)(alpha5 * 255u / 31u);
+
+        px[0] = (u8)((col[0] * alpha5 + px[0] * (31u - alpha5)) / 31u);
+        px[1] = (u8)((col[1] * alpha5 + px[1] * (31u - alpha5)) / 31u);
+        px[2] = (u8)((col[2] * alpha5 + px[2] * (31u - alpha5)) / 31u);
+        if (a8 > px[3]) {
+            px[3] = a8;
+        }
+    }
+    /* [HW] POLYGON_ATTR bit 11 lets a translucent polygon update the
+     * depth buffer; [AP] otherwise it is not written, the default that
+     * keeps a translucent surface from hiding what is behind it.  [AP]
+     * the fog flag of a translucent pixel is the old flag ANDed with the
+     * polygon's. */
+    if (G3D_ATTR_XLU_DEPTH(attr)) {
+        t->depth[o] = depth;
+    }
+    if (t->pflag != NULL) {
+        t->pflag[o] = (u8)((t->pflag[o] & ~G3D_PIX_FOG) | (t->pflag[o] & fog));
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -375,10 +428,18 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
         sv[i].x = (s32)(((s64)in[i].x * hx) / w + hx);
         sv[i].y = (s32)(hy - ((s64)in[i].y * hy) / w);
         dz = (((s64)in[i].z + w) * DEPTH_MAX) / (2 * w);
+        if (t->wbuffer) {
+            /* [HW] SWAP_BUFFERS bit 1: the depth is w itself; [AP]
+             * interpolated affinely across the face like z/w is. */
+            dz = w;
+            if (dz > (s64)G3D_DEPTH_FAR - 1) {
+                dz = (s64)G3D_DEPTH_FAR - 1;
+            }
+        }
         if (dz < 0) {
             dz = 0;
         }
-        if (dz > DEPTH_MAX) {
+        if (!t->wbuffer && dz > DEPTH_MAX) {
             dz = DEPTH_MAX;
         }
         sv[i].depth = (s32)dz;
@@ -466,6 +527,7 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                 u8 col[3];
                 u8 hl[3] = { 0, 0, 0 };
                 u32 a5 = alpha5;
+                u32 cov;
 
                 /* [AP] affine interpolation across the span: no
                  * per-pixel perspective divide.  See this file's header. */
@@ -534,7 +596,23 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                         col[k] = (u8)(c > 255u ? 255u : c);
                     }
                 }
-                put_pixel(t, (u32)x, (u32)y, p.depth, col, a5);
+                cov = 31u;
+                if (t->aa && a5 >= 31u && (x == x0 || x == x1)) {
+                    /* [AP] the coverage of a span end: the part of the
+                     * pixel's width inside [L, R), in 32nds less one.
+                     * Vertical coverage (an edge crossing the pixel's
+                     * height) is not measured. */
+                    s32 lo = x << SUBPIX, hi = lo + SUB_ONE;
+                    s32 c0 = L->x > lo ? L->x : lo;
+                    s32 c1 = R->x < hi ? R->x : hi;
+                    s32 span_px = c1 - c0;
+
+                    if (span_px < SUB_ONE) {
+                        cov = (u32)(span_px > 0 ? span_px : 0) * 32u / SUB_ONE;
+                        cov = cov > 0 ? cov - 1u : 0u;
+                    }
+                }
+                put_pixel(t, (u32)x, (u32)y, p.depth, col, a5, attr, cov);
             }
         }
     }
@@ -706,6 +784,205 @@ void g3d_compose_over(const void *frame_desc, const G3dTarget *t,
                 out[1] = c.g;
                 out[2] = c.b;
                 out[3] = 255;
+            }
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* The rear passes: edge marking, fog, anti-aliasing                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * [HW] Edge marking (DISP3DCNT bit 5): a pixel an opaque polygon drew is
+ * an edge when one of its four neighbours holds a different polygon ID
+ * and lies further away; it takes EDGE_COLOR[ID / 8].  A neighbour past
+ * the screen border is the clear plane (its ID and depth).  [AP] the
+ * colour replaces the pixel's outright, alpha kept, after the translucent
+ * polygons were drawn over it.
+ */
+void g3d_target_edge_mark(G3dTarget *t, const u16 edge[8], u32 clear_id,
+                          s32 clear_depth)
+{
+    static const s32 k_dx[4] = { -1, 1, 0, 0 };
+    static const s32 k_dy[4] = { 0, 0, -1, 1 };
+    u8 *mark;
+    u32 x, y, k;
+
+    if (t->pid == NULL) {
+        return;
+    }
+    mark = (u8 *)calloc((size_t)t->width * t->height, 1);
+    if (mark == NULL) {
+        return;
+    }
+    for (y = 0; y < t->height; y++) {
+        for (x = 0; x < t->width; x++) {
+            size_t o = (size_t)y * t->width + x;
+
+            if ((t->pflag[o] & G3D_PIX_OPAQUE) == 0) {
+                continue;
+            }
+            for (k = 0; k < 4u; k++) {
+                s32 nx = (s32)x + k_dx[k], ny = (s32)y + k_dy[k];
+                u32 nid;
+                s32 nd;
+
+                if (nx < 0 || ny < 0 || (u32)nx >= t->width
+                    || (u32)ny >= t->height) {
+                    nid = clear_id;
+                    nd = clear_depth;
+                } else {
+                    size_t n = (size_t)(u32)ny * t->width + (u32)nx;
+
+                    nid = t->pid[n];
+                    nd = t->depth[n];
+                }
+                if (nid != t->pid[o] && t->depth[o] < nd) {
+                    mark[o] = 1;
+                    break;
+                }
+            }
+        }
+    }
+    for (x = 0; x < t->width * t->height; x++) {
+        if (mark[x]) {
+            g3d_bgr555(edge[(t->pid[x] >> 3) & 7u], &t->rgba[x * 4u],
+                       &t->rgba[x * 4u + 1u], &t->rgba[x * 4u + 2u]);
+        }
+    }
+    free(mark);
+}
+
+/*
+ * [HW] Fog (DISP3DCNT bit 7) on every pixel whose fog flag is set (an
+ * opaque polygon with POLYGON_ATTR bit 15, or the clear plane with
+ * CLEAR_COLOR bit 15).  The depth, in the hardware's 15-bit units, is
+ * looked up in the 32-entry table: entry i sits at FOG_OFFSET +
+ * (i + 1) * (0x400 >> shift), the density is entry 0 before the first and
+ * entry 31 after the last and is interpolated linearly between two, and a
+ * density of 127 is full fog (128).  Then per channel
+ *     out = (fog * density + pixel * (128 - density)) / 128
+ * and the same for the alpha; with DISP3DCNT bit 6 only the alpha.
+ * [AP] the 15-bit depth is this rasteriser's 23-bit z shifted down by 8
+ * (by 9 for a w-buffered frame, whose depth is w in 20.12), and the colour
+ * is blended on the 8-bit expansion.
+ */
+void g3d_target_fog(G3dTarget *t, const u8 table[32], u32 color, u32 offset,
+                    u32 shift, int alpha_only)
+{
+    u32 step = shift > 10u ? 0u : 0x400u >> shift;
+    u8 fr, fg, fb;
+    u32 fa = (color >> 16) & 0x1Fu;
+    u32 i;
+
+    if (t->pflag == NULL) {
+        return;
+    }
+    g3d_bgr555((u16)(color & 0x7FFFu), &fr, &fg, &fb);
+    offset &= 0x7FFFu;
+    for (i = 0; i < t->width * t->height; i++) {
+        s32 dd = t->depth[i];
+        u32 d, den;
+        u8 *px = t->rgba + (size_t)i * 4u;
+
+        if ((t->pflag[i] & G3D_PIX_FOG) == 0) {
+            continue;
+        }
+        if (dd < 0) {
+            dd = 0;
+        }
+        d = (u32)dd >> (t->wbuffer ? 9 : 8);
+        if (d > 0x7FFFu) {
+            d = 0x7FFFu;
+        }
+        if (step == 0u) {
+            den = d > offset ? table[31] : table[0];
+        } else if (d <= offset + step) {
+            den = table[0];
+        } else if (d >= offset + step * 32u) {
+            den = table[31];
+        } else {
+            u32 rel = d - offset - step;
+            u32 k = rel / step, f = rel % step;
+
+            den = ((u32)table[k] * (step - f) + (u32)table[k + 1u] * f) / step;
+        }
+        den &= 0x7Fu;
+        if (den == 127u) {
+            den = 128u;
+        }
+        if (!alpha_only) {
+            px[0] = (u8)((fr * den + px[0] * (128u - den)) >> 7);
+            px[1] = (u8)((fg * den + px[1] * (128u - den)) >> 7);
+            px[2] = (u8)((fb * den + px[2] * (128u - den)) >> 7);
+        }
+        {
+            u32 a5 = ((u32)px[3] * 31u + 127u) / 255u;
+
+            a5 = (fa * den + a5 * (128u - den)) >> 7;
+            px[3] = (u8)(a5 * 255u / 31u);
+        }
+    }
+}
+
+/*
+ * [AP] Anti-aliasing (DISP3DCNT bit 4).  The hardware blends the edge
+ * pixels of opaque polygons with what lies beneath by their coverage.  The
+ * raster records, at each span end of an opaque polygon, the part of the
+ * pixel's width the span covers (G3dTarget.cov) and what was there before
+ * (G3dTarget.under); this pass blends those pixels that sit on a
+ * silhouette, a four-neighbour drawn by no opaque polygon or by one with a
+ * different polygon ID, as (pixel * (cov + 1) + beneath * (31 - cov)) / 32.
+ * Over a beneath of alpha 0 the colour is kept and the coverage becomes
+ * the alpha, so the 2D engine does the blend.  An edge shared by two
+ * polygons of one ID is not blended, which keeps a mesh's inner edges
+ * from showing the background.  Vertical coverage is not measured.
+ */
+void g3d_target_antialias(G3dTarget *t)
+{
+    static const s32 k_dx[4] = { -1, 1, 0, 0 };
+    static const s32 k_dy[4] = { 0, 0, -1, 1 };
+    u32 x, y, k;
+
+    if (t->pflag == NULL) {
+        return;
+    }
+    for (y = 0; y < t->height; y++) {
+        for (x = 0; x < t->width; x++) {
+            size_t o = (size_t)y * t->width + x;
+            u32 c = t->cov[o];
+            int sil = 0;
+            u8 *px = t->rgba + o * 4u;
+            const u8 *un = t->under + o * 4u;
+
+            if ((t->pflag[o] & (G3D_PIX_OPAQUE | G3D_PIX_EDGE))
+                != (G3D_PIX_OPAQUE | G3D_PIX_EDGE) || c >= 31u) {
+                continue;
+            }
+            for (k = 0; k < 4u && !sil; k++) {
+                s32 nx = (s32)x + k_dx[k], ny = (s32)y + k_dy[k];
+                size_t n;
+
+                if (nx < 0 || ny < 0 || (u32)nx >= t->width
+                    || (u32)ny >= t->height) {
+                    continue;
+                }
+                n = (size_t)(u32)ny * t->width + (u32)nx;
+                if ((t->pflag[n] & G3D_PIX_OPAQUE) == 0
+                    || t->pid[n] != t->pid[o]) {
+                    sil = 1;
+                }
+            }
+            if (!sil) {
+                continue;
+            }
+            if (un[3] == 0) {
+                px[3] = (u8)((c + 1u) * 255u / 32u);
+                continue;
+            }
+            for (k = 0; k < 3u; k++) {
+                px[k] = (u8)((px[k] * (c + 1u) + un[k] * (31u - c)) >> 5);
             }
         }
     }
