@@ -36,6 +36,14 @@ typedef int16_t  s16;
 typedef int32_t  s32;
 typedef int64_t  s64;
 
+/*
+ * Plain char is signed, as it is under the pinned DS compiler (`-char
+ * signed`).  The build asks for it on every compiler (README.md, "Portability
+ * rules", rule 6); this fails to compile, with a negative array size, on a
+ * configuration that did not get it.
+ */
+typedef char bw_plain_char_is_signed[((char)-1 < 0) ? 1 : -1];
+
 typedef volatile uint8_t  vu8;
 typedef volatile uint16_t vu16;
 typedef volatile uint32_t vu32;
