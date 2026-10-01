@@ -738,9 +738,11 @@ static void test_real(const char *data_root)
                     && bw_audio_render_source(&sdat_src, 20.0, &r1) == 0) {
                     src.volume = sdat_src.volume;
                     if (bw_audio_render_source(&src, 20.0, &r2) == 0) {
-                        printf("  SEQ_BGM_GYM: %d note events with the SDK's "
-                               "offsets, %d with the oracle's\n",
+                        printf("  SEQ_BGM_GYM: %d note events from main RAM, "
+                               "%d from the SDAT\n",
                                r2.note_events_total, r1.note_events_total);
+                        BW_CHECK_EQ("real: SDAT path reads the same offsets",
+                                    r1.note_events_total, r2.note_events_total);
                         bw_audio_render_free(&r2);
                     }
                     bw_audio_render_free(&r1);
