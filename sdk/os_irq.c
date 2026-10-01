@@ -65,6 +65,7 @@
 #include <stdlib.h>
 
 #include "os.h"
+#include "plat_crash.h"
 #include "port.h"
 
 #define CPSR_IF (OS_INTRMODE_IRQ_DISABLE | OS_INTRMODE_FIQ_DISABLE)
@@ -80,11 +81,16 @@ void bw_os_set_proc_irq(int on)             { g_in_irq = on; }
 void bw_os_set_safe_point(void (*fn)(void)) { g_safe_point = fn; }
 void bw_os_set_cpu_step(void (*fn)(void))   { g_cpu_step = fn; }
 
-static void after_restore(void)
+void bw_os_cpu_step(void)
 {
     if (g_cpu_step != NULL) {
         g_cpu_step();
     }
+}
+
+static void after_restore(void)
+{
+    bw_os_cpu_step();
     if (!(g_cpsr & OS_INTRMODE_IRQ_DISABLE) && g_safe_point != NULL) {
         g_safe_point();
     }
@@ -143,7 +149,11 @@ void OS_Terminate(void)
     fflush(stdout);
     fprintf(stderr, "eidos: OS_Terminate (0x02088234): the game asked the OS "
                     "to stop, which on this path means the heap was "
-                    "exhausted\n");
+                    "exhausted (in the game's boot: whatever its caller "
+                    "found fatal)\n");
+    if (bw_plat_crash_installed()) {
+        bw_plat_backtrace();
+    }
     exit(EXIT_FAILURE);
 }
 

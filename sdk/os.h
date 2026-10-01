@@ -275,6 +275,13 @@ void bw_os_set_safe_point(void (*fn)(void));
  */
 void bw_os_set_cpu_step(void (*fn)(void));
 
+/*
+ * Run that step now.  Also called where the ARM9 waits rather than
+ * restores: every turn of OS_Halt's wait (an ARM9 halted on a PXI reply
+ * must let the ARM7 produce it) and bw_os_poll.
+ */
+void bw_os_cpu_step(void);
+
 /* The tail of the IRQ handler: wake OS_WaitIrq's queue, switch if asked.  */
 void bw_os_irq_thread_switch(void);
 

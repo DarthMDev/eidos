@@ -620,6 +620,11 @@ class Model:
         self.exclusions = load_exclusions(args.exclusions)
         self.sources = []
         self.missing = []
+        # Port sources compiled with the header like matched ones (the
+        # boot's transliterations of asm functions name game data by its
+        # matched spelling): their names are bound too.
+        self.bind_also = {os.path.normcase(os.path.abspath(p))
+                          for p in getattr(args, "bind_source", [])}
         outs = {os.path.normcase(os.path.abspath(p))
                 for p in (args.out_c, args.out_h) if p}
         for path in args.source_paths:
@@ -661,6 +666,8 @@ class Model:
         return path
 
     def _is_matched(self, path: str, text: str) -> bool:
+        if os.path.normcase(os.path.abspath(path)) in self.bind_also:
+            return True
         p = os.path.abspath(path).replace("\\", "/").lower()
         src = (self.root.replace("\\", "/") + "/src/").lower()
         if p.startswith(src):
@@ -1204,6 +1211,9 @@ def main(argv=None) -> int:
                     help="file listing the build's sources, one path per line")
     ap.add_argument("--source", action="append", default=[],
                     help="one source path (repeatable)")
+    ap.add_argument("--bind-source", action="append", default=[],
+                    help="a port source compiled with the header: bind the "
+                         "data names it uses like a matched file's (repeatable)")
     ap.add_argument("--region", default="arm9")
     ap.add_argument("--exclusions", default=DEFAULT_EXCLUSIONS)
     ap.add_argument("--out-c")
@@ -1217,7 +1227,7 @@ def main(argv=None) -> int:
     ap.add_argument("--strict", action="store_true",
                     help="exit 1 on any warning or unresolved name")
     args = ap.parse_args(argv)
-    paths = list(args.source)
+    paths = list(args.source) + list(args.bind_source)
     for lst in args.sources:
         with open(lst, encoding="utf-8") as fh:
             for line in fh:

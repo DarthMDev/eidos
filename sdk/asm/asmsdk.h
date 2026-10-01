@@ -149,6 +149,130 @@ u64   OSi_SearchTitleIdFromList(u64 titleId, u64 mask);
 void  func_027313E8(u32 dmaNo);
 void  PMi_PreSleepForNdma(u32 dmaNo);
 
+/* ==================================================================
+ * The boot closure's second batch (EIDOS_BOOT).  cmake/boot.cmake picks
+ * each up by file name in place of the matched asm source; they are
+ * checked by the boot run (tests/boot_run.cmake), not by
+ * tests/test_asmsdk_glue.c.
+ * ================================================================== */
+
+struct OSEvent;
+struct OSMutex;
+struct NCFGConfig;
+struct PMiGenCallbackInfo;
+
+/* ------------------------------------------------------------------ */
+/* Cache maintenance (os_cache.o): no-ops on a coherent host            */
+/* ------------------------------------------------------------------ */
+
+void DC_InvalidateRange(void *startAddr, u32 nBytes);             /* 0x020862B8 */
+void func_020862B8(void *startAddr, u32 nBytes);
+void DC_StoreRange(const void *startAddr, u32 nBytes);            /* 0x020862D4 */
+void func_020862D4(const void *startAddr, u32 nBytes);
+void DC_FlushRange(const void *startAddr, u32 nBytes);            /* 0x020862F0 */
+void func_020862F0(const void *startAddr, u32 nBytes);
+void DC_WaitWriteBufferEmpty(void);                               /* 0x02086314 */
+
+/* ------------------------------------------------------------------ */
+/* BIOS calls and spin waits                                           */
+/* ------------------------------------------------------------------ */
+
+void func_0200421A(const void *srcp, void *destp, u32 dmaCntData); /* 0x0200421A, SVC_CpuSet */
+void func_02004490(s32 count);                                    /* 0x02004490 */
+void SVC_WaitByLoop(s32 count);
+void func_020879F8(u32 cycle);                                    /* 0x020879F8 */
+void OS_SpinWaitCpuCycles(u32 cycle);
+int  func_020834B8(int val, int *ptr);                            /* 0x020834B8 */
+u32  MI_SwapWord(u32 setData, volatile u32 *destp);
+
+/* ------------------------------------------------------------------ */
+/* OS                                                                  */
+/* ------------------------------------------------------------------ */
+
+void OS_InitEvent(struct OSEvent *event);                         /* 0x020882DC */
+BOOL OS_IsRunOnEmulator(void);                                    /* 0x02085D24 */
+void OS_UnlockMutex(struct OSMutex *mutex);                       /* 0x02086078 */
+void func_02086078(void *mutex);
+s32  func_02084E10(u32 lockID);                                   /* 0x02084E10, OS_UnlockCard */
+void func_02086E40(void);                                         /* 0x02086E40 */
+void OSi_ExceptionHandler(void);
+
+/* ------------------------------------------------------------------ */
+/* MI, CARD, NVRAM, PM, RTC                                            */
+/* ------------------------------------------------------------------ */
+
+void MI_InitWramManager(void);                                    /* 0x02082198 */
+void func_02082198(void);
+u32  CARD_GetBackupSectorSize(void);                              /* 0x02076B6C */
+void CARD_LockBackup(u16 lock_id);                                /* 0x02075E9C */
+void func_02075E9C(u16 lock_id);
+void func_02075DC8(BOOL enable);                                  /* 0x02075DC8, CARD_Enable */
+BOOL NVRAMi_IsInitialized(void);                                  /* 0x020841E8 */
+void PM_DeletePostSleepCallback(struct PMiGenCallbackInfo *info); /* 0x0208C884 */
+void func_0208C884(void *info);
+void PMi_SetDispOffCount(void);                                   /* 0x0208C944 */
+BOOL RTCi_ReadRawDateTimeAsync(void);                             /* 0x02088EEC */
+BOOL RTCi_ReadRawDateAsync(void);                                 /* 0x02088EFC */
+BOOL RTCi_ReadRawTimeAsync(void);                                 /* 0x02088F0C */
+void func_02088ED4(void);                                         /* 0x02088ED4 */
+void RtcWaitBusy(void);
+
+/* ------------------------------------------------------------------ */
+/* SND interface (snd_interface.o)                                     */
+/* ------------------------------------------------------------------ */
+
+void SND_SetPlayerTempoRatio(int playerNo, int ratio);            /* 0x020893B8 */
+void func_020893B8(u8 playerNo, u32 ratio);
+void SND_SetPlayerVolume(int playerNo, int volume);               /* 0x020893D0 */
+void func_020893D0(u32 playerNo, s32 volume);
+void SND_SetPlayerChannelPriority(int playerNo, int prio);        /* 0x020893E8 */
+void func_020893E8(u8 playerNo, u32 prio);
+void SND_SetTrackVolume(int playerNo, u32 trackBitMask, int volume);  /* 0x02089400 */
+void func_02089400(u8 playerNo, u32 trackBitMask, int volume);
+void SND_SetTrackPitch(int playerNo, u32 trackBitMask, int pitch);    /* 0x0208941C */
+void func_0208941C(u8 playerNo, u32 trackBitMask, u32 pitch);
+void SND_SetTrackPan(int playerNo, u32 trackBitMask, int pan);        /* 0x02089438 */
+void func_02089438(u8 playerNo, u32 trackBitMask, u32 pan);
+void SND_SetTrackModDepth(int playerNo, u32 trackBitMask, int depth); /* 0x02089454 */
+void func_02089454(u8 playerNo, u32 trackBitMask, u32 depth);
+void SND_SetTrackModSpeed(int playerNo, u32 trackBitMask, int speed); /* 0x02089470 */
+void func_02089470(u8 playerNo, u32 trackBitMask, u32 speed);
+
+/* ------------------------------------------------------------------ */
+/* Wi-Fi libraries                                                     */
+/* ------------------------------------------------------------------ */
+
+int  DWCi_Language(void);                                         /* 0x020461E4 */
+u8   func_020461E4(void);
+int  NCFG_ReadConfig(struct NCFGConfig *config, void *work);      /* 0x0205FAA8 */
+void func_0205FAA8(u8 *config, u32 work);
+
+/* ------------------------------------------------------------------ */
+/* ITCM reset path (os_reset.o, scfg_proc.o)                           */
+/* ------------------------------------------------------------------ */
+
+BOOL func_01FF82A8(const u8 *src, u32 len, const void *digest);   /* 0x01FF82A8 */
+void func_01FF8460(void);                                         /* 0x01FF8460 */
+void OSi_DoBoot(void);
+void func_01FF8540(BOOL ontwl);                                   /* 0x01FF8540 */
+void OSi_ReloadRomData(int ontwl);
+void func_01FF87D4(int cpuSpeed);                                 /* 0x01FF87D4 */
+void SCFGi_SwitchCpuSpeed(int cpuSpeed);
+
+/* TWL-only placeholders the NITRO boot never reaches (see each file). */
+void func_0272EA74(void);
+void func_0272F8A8(int a0, int a1, int a2, int a3, int a4, int a5, void *a6, int a7, unsigned int a8);
+void func_027313AC(void);
+void func_027314A4(void);
+
+/* MATHi_SHA1ProcessBlock (sdk/asm/func_02081E7C.c): the SHA-1 compression
+ * function on a context (state at +0x00, block at +0x14). */
+void func_02081E7C(void *context);                               /* 0x02081E7C */
+
+/* OS_TryLockCard (sdk/asm/OS_LockCard.c) */
+s32 func_02084E38(u32 lockID);                                   /* 0x02084E38 */
+s32 OS_TryLockCard(u16 lockID);
+
 #ifdef __cplusplus
 }
 #endif

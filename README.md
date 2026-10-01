@@ -1593,9 +1593,13 @@ prints the file list behind each count. `docs/pointer-width.md` is that
 output plus the decision it supports.
 
 `tools/closure.py` reads the manifest shards in aletheia's `layout/matched/`
-and the `extern` declarations and `symbols:` header blocks of the matched
-sources, walks the call graph through matched files only, and sorts every
-remaining reference into one class:
+and, from each matched source, its `symbols:` header block and every name it
+needs from elsewhere (`extern` declarations, file-scope prototypes, and calls
+with no declaration in scope, which mwcc accepts); it resolves a name by
+spelling, then by DS address, including functions a unit defines beyond the
+lead its manifest entry names. It walks the call graph through matched files
+only and sorts every remaining reference into one class (the per-seed figures
+above predate this reader, which finds more):
 
 - `matched`, another matched source defines it: link that one too.
 - `sdk` / `runtime`, an SDK library symbol or an MSL runtime helper: it
@@ -1603,7 +1607,10 @@ remaining reference into one class:
 - `alias`, a matched function referenced under a different name prefix than
   the file that defines it uses. The DS build resolves relocations by
   address and does not care; a host linker resolves by name and does. Each
-  one needs a forwarder in `sdk/aliases.c`.
+  one needs a forwarder in `sdk/aliases.c`, or, in the boot, the per-file
+  rename `tools/bootlink.py` generates (docs/boot.md, "Linking the boot").
+- `const`, a linker symbol whose address is its value (`SDK_IRQ_STACKSIZE`,
+  the overlay ids): the boot's generated headers supply the value.
 - `open`, a game function at a known address that nothing in aletheia's
   `src/matched/` defines yet: it needs a `stubs/` entry.
 - `data`, a global object: it needs a `sdk/game_globals.c` entry.

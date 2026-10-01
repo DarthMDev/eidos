@@ -13,9 +13,10 @@ The ARM9 entry point (`crt0`) calls the game's `NitroMain` at `0x02005124`
 (`OS_InitTick`, `OS_InitAlarm`, `RTC_Init`, `GX_Init`, `FS_Init`, the DWC
 utility arena, the power manager), then enters the frame loop.
 
-`tools/closure.py` seeded at `0x02005328` reaches 69 matched translation
-units and **no unmatched game function**. What the port has to supply is 48
-SDK names and 45 ARM9 data objects. Everything past the first overlay load
+`tools/closure.py` seeded at NitroMain's eighteen direct callees reaches
+about 1330 matched translation units (1471 when the files the port's shims
+replace are followed too); "Linking the boot" below is what it takes to
+link them. Everything past the first overlay load
 (title screen, field, battle) lives in overlays, which are about 61% matched;
 those screens wait on aletheia, and `docs/title-closure.md` lists exactly
 which unmatched functions block the title screen.
@@ -134,6 +135,71 @@ single-core assumptions true. Interrupts are delivered on the main thread at
 the points the DS would deliver them: vblank from `engine/frame/`, timers
 and alarms from `OS_GetTick`'s clock.
 
+## Linking the boot
+
+`-DEIDOS_BOOT=ON` links NitroMain and its closure into `eidos_boot`
+(`cmake/boot.cmake`, `tools/bootlink.py`). The matched files are compiled
+unchanged; what a host linker needs beyond them is generated, per build,
+from aletheia's layout and the port's own sources.
+
+**The closure.** `tools/closure.py` reads, for each matched file, every name
+it needs from elsewhere: `extern` declarations (with attributes, struct
+bodies and several declarators), file-scope prototypes, and calls with no
+declaration at all. A name resolves by spelling first, then by DS address
+(the file's `symbols:` block, a `func_`/`sub_` spelling, the SDK table), and
+an address resolves to the matched unit that defines a function there even
+when the manifest lists only the unit's lead function. Names whose address
+is their value (`SDK_IRQ_STACKSIZE`, `ov010_id`) are their own class,
+`const`. The walk stops at the files a shim replaces.
+
+**What is left out.** Three kinds of matched file are not compiled:
+
+- the files a port shim replaces: the single list `EIDOS_BOOT_SHIM_REPLACED`
+  in `cmake/boot.cmake`, grouped by shim. The configure fails if a file in
+  the closure defines a name a shim defines and is not on the list;
+- the files whose bodies are mwcc `asm` (88 in the closure). A file
+  `sdk/asm/<same name>.c` takes the place of one automatically; until it
+  exists, every function the file defines is a stub;
+- the files the eidos library already compiles.
+
+**Names by address.** The DS links by address, a host by name. Each
+translation unit gets a forced-include header (`-include`, `/FI`) that
+renames, for that file only, each spelling to the defined one (`RTC_Init` to
+`func_02088788`, `func_02088610` to the shim's `PXI_SendWordByFifo`), about
+940 renames in all. Where one file names one object twice with two types,
+the second spelling reads through a pointer to the first instead.
+
+**Implicit declarations.** 34 callees in 22 matched files have no
+declaration; mwcc compiled them as `int f()` and GCC 14 rejects them. The
+header declares each as `int f()` (C99's non-prototype form, the
+declaration the DS code was compiled against), or `long long f()` when its
+definition returns 64 bits.
+
+**Link-time constants.** 13 names are linker symbols whose address is the
+value. The header turns each into `(*bw_lc_NAME)`, a pointer whose value is
+the constant; a value inside the DS address space is `bw_ds_ptr(value)`,
+set by `bw_boot_link_init()` after `bw_ds_reset`. So
+`SDK_AUTOLOAD_DTCM_START` and `SDK_AUTOLOAD_MAIN_TWL_START` both name the
+bytes at DS 0x02FE0000: the vblank handler's flag, `OS_WaitIrq` and
+`sdk/os_interrupt.c`'s check word are one word. DTCM objects no shim defines
+are pinned the same way.
+
+**Stubs, generated and listed** in `<build>/boot/gen/boot_link_report.txt`:
+
+- `boot_data_stub.c`: the ARM9 data objects nothing defines (about 270),
+  zero-filled and registered at their DS addresses by
+  `bw_boot_data_register()`. TEMPORARY: the data lane's definitions,
+  passed as `EIDOS_BOOT_DATA_SOURCES`, replace it name by name.
+- `boot_link.c`: a panicking stub for each function nothing defines,
+  marked `open` (about 25: unmatched game code, ARM9 calls into overlays,
+  veneers) or `asm body` (70, waiting for `sdk/asm/`).
+
+With the stubs, `eidos_boot` links warning-free at both pointer widths. At
+ILP32 it starts, runs into `func_02005328`'s first calls and stops at the
+first asm stub it reaches (`OS_GetInitArenaHi`). At LP64 the boot's matched
+files raise 532 pointer/integer cast warnings, silenced for those files
+only: it links, and it is not expected to run (docs/pointer-width.md).
+
 ## Lanes
 
 Each lane owns the files named here and nothing else, works in its own
@@ -148,6 +214,7 @@ worktree, and is integrated by one person.
 | arm7 | `sdk/pxi.c`, `sdk/arm7/*.c` (PM, RTC, CARD, CTRDG, SND replies) |
 | render | `engine/g2d/hwcompose.c`, `tests/test_hwcompose.c` |
 | fs | `sdk/fs.c` additions, `sdk/overlay.c` |
+| link | `tools/closure.py`, `tools/bootlink.py`, `cmake/boot.cmake` |
 | title | `docs/title-closure.md` (analysis only) |
 | msvc | `cmake/msvc.cmake`, `tools/check.py` MSVC configurations |
 

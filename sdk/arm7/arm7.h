@@ -13,6 +13,7 @@
  *            OSi_SyncWithOtherProc handshake in shared memory
  *   pm.c     power manager (tag 8)
  *   rtc.c    real-time clock (tag 5), answered from the host clock
+ *   tp.c     touch panel (tag 6): single and automatic sampling
  *   ctrdg.c  Slot-2 cartridge (tag 13)
  *   card.c   Slot-1 card pull-out (tag 14)
  *   fs.c     Slot-1 backup commands (tag 11, PXI_FIFO_TAG_FS)
@@ -62,6 +63,7 @@ void bw_arm7_step(void);
 void bw_arm7_os_init(void);
 void bw_arm7_pm_init(void);
 void bw_arm7_rtc_init(void);
+void bw_arm7_tp_init(void);
 void bw_arm7_ctrdg_init(void);
 void bw_arm7_card_init(void);
 void bw_arm7_fs_init(void);
@@ -107,6 +109,14 @@ void bw_arm7_rtc_fix_time(const BwArm7Time *t);
  */
 void bw_arm7_snd_bind(volatile u32 *finish_command_tag);
 u32  bw_arm7_snd_lists(void);
+
+/*
+ * The touch panel: whether the stylus is down and where, in the panel's raw
+ * 12-bit units (what the next sample reports), and the once-a-frame call
+ * that delivers automatic sampling's results (the frame driver makes it).
+ */
+void bw_arm7_tp_set_touch(int down, u32 x, u32 y);
+void bw_arm7_tp_frame(void);
 
 /* Words the ARM9 sent on the Slot-2 tag.                                 */
 u32 bw_arm7_ctrdg_words(void);
