@@ -186,23 +186,23 @@ endif()
 #
 set(BW_MATCHED_SOURCES
     # --- archive reading -------------------------------------------------
-    ${ALETHEIA_ROOT}/src/matched/func_02049578.c   # member index -> absolute position
-    ${ALETHEIA_ROOT}/src/matched/func_020495F4.c   # stream read
-    ${ALETHEIA_ROOT}/src/matched/func_0204944C.c   # read a range inside a member
-    ${ALETHEIA_ROOT}/src/matched/func_02048D00.c   # open by id, read whole member, close
-    ${ALETHEIA_ROOT}/src/matched/func_02048F4C.c   # the two-argument front of it
-    ${ALETHEIA_ROOT}/src/matched/unit_02048DDC.c   # open an archive by id; resolve a member
-    ${ALETHEIA_ROOT}/src/matched/sub_02034734.c    # the assert sink the readers call
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02049578.c   # member index -> absolute position
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_020495F4.c   # stream read
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_0204944C.c   # read a range inside a member
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02048D00.c   # open by id, read whole member, close
+    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_02048F4C.c   # the two-argument front of it
+    ${ALETHEIA_ROOT}/src/matched/arm9/unit_02048DDC.c   # open an archive by id; resolve a member
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02034734.c    # the assert sink the readers call
 
     # --- message text ----------------------------------------------------
-    ${ALETHEIA_ROOT}/src/matched/func_02045E3C.c   # the message-bank string cipher
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02045E3C.c   # the message-bank string cipher
 
     # --- personal data and the stat formula ------------------------------
-    ${ALETHEIA_ROOT}/src/matched/unit_0201AFD4.c   # species + form -> member index
-    ${ALETHEIA_ROOT}/src/matched/unit_0201ADA4.c   # read the 0x3C-byte record
-    ${ALETHEIA_ROOT}/src/matched/unit_02019C54.c   # one-entry memo over that read
-    ${ALETHEIA_ROOT}/src/matched/unit_02019B04.c   # nature multiplier
-    ${ALETHEIA_ROOT}/src/matched/sub_02018A7C.c    # the six-stat recalculation
+    ${ALETHEIA_ROOT}/src/matched/arm9/unit_0201AFD4.c   # species + form -> member index
+    ${ALETHEIA_ROOT}/src/matched/arm9/unit_0201ADA4.c   # read the 0x3C-byte record
+    ${ALETHEIA_ROOT}/src/matched/arm9/unit_02019C54.c   # one-entry memo over that read
+    ${ALETHEIA_ROOT}/src/matched/arm9/unit_02019B04.c   # nature multiplier
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02018A7C.c    # the six-stat recalculation
 
     # --- the heap layer --------------------------------------------------
     #
@@ -214,28 +214,28 @@ set(BW_MATCHED_SOURCES
     # a pointer-bearing struct through a DS byte offset, and the one 0x1c
     # that does appear is a block header with no pointers in it, so it is
     # 0x1c on any target.
-    ${ALETHEIA_ROOT}/src/matched/unit_0202FBAC.c   # the four heap-record accessors
-    ${ALETHEIA_ROOT}/src/matched/sub_02030098.c    # the raw allocator
-    ${ALETHEIA_ROOT}/src/matched/sub_02030344.c    # checked heap id -> arena dump
-    ${ALETHEIA_ROOT}/src/matched/sub_02030428.c    # heap id -> arena
-    ${ALETHEIA_ROOT}/src/matched/sub_0203046C.c    # heap id -> live block count
-    ${ALETHEIA_ROOT}/src/matched/sub_020304B8.c    # the block header's heap id
-    ${ALETHEIA_ROOT}/src/matched/sub_020304C0.c    # the block header's provenance record
-    ${ALETHEIA_ROOT}/src/matched/sub_02030734.c    # the allocation entry point
-    ${ALETHEIA_ROOT}/src/matched/sub_020307B0.c    # the release entry point
-    ${ALETHEIA_ROOT}/src/matched/sub_02030880.c    # stamp the provenance pair
-    ${ALETHEIA_ROOT}/src/matched/sub_020308B8.c    # read it back and validate it
-    ${ALETHEIA_ROOT}/src/matched/sub_02030958.c    # the out-of-memory reporter
-    ${ALETHEIA_ROOT}/src/matched/sub_02030984.c    # the watched-allocation audit
-    ${ALETHEIA_ROOT}/src/matched/sub_020309B8.c    # the free-side audit
-    ${ALETHEIA_ROOT}/src/matched/sub_02030A00.c    # the watch filter
-    ${ALETHEIA_ROOT}/src/matched/sub_02030A2C.c    # the free-side watch filter
+    ${ALETHEIA_ROOT}/src/matched/arm9/unit_0202FBAC.c   # the four heap-record accessors
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030098.c    # the raw allocator
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030344.c    # checked heap id -> arena dump
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030428.c    # heap id -> arena
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_0203046C.c    # heap id -> live block count
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_020304B8.c    # the block header's heap id
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_020304C0.c    # the block header's provenance record
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030734.c    # the allocation entry point
+    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/sub_020307B0.c    # the release entry point
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030880.c    # stamp the provenance pair
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_020308B8.c    # read it back and validate it
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030958.c    # the out-of-memory reporter
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030984.c    # the watched-allocation audit
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_020309B8.c    # the free-side audit
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030A00.c    # the watch filter
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030A2C.c    # the free-side watch filter
 
     # The expanded heap's front door: round the request and pick the end of
     # the heap by the sign of the alignment.  Arena-independent, so it is in
     # every configuration; what it dispatches to is decided by
     # EIDOS_HEAP_MATCHED below.
-    ${ALETHEIA_ROOT}/src/matched/func_02060CA0.c   # round the request, pick the end
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060CA0.c   # round the request, pick the end
 
     # --- tcbl.c, the game's task-callback list ---------------------------
     #
@@ -255,9 +255,9 @@ set(BW_MATCHED_SOURCES
     # All nine are added below, or replaced by stubs/reimpl_ stand-ins, by
     # EIDOS_TCBL_MATCHED.  README.md, "Why nine matched files are out of the
     # LP64 build", records the reason for each.
-    ${ALETHEIA_ROOT}/src/matched/sub_0203101C.c    # the constructor
-    ${ALETHEIA_ROOT}/src/matched/sub_02030FC8.c    # build the free list
-    ${ALETHEIA_ROOT}/src/matched/sub_020310C4.c    # one pass of the runner
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_0203101C.c    # the constructor
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030FC8.c    # build the free list
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_020310C4.c    # one pass of the runner
 )
 
 # ---------------------------------------------------------------------------
@@ -314,31 +314,31 @@ set(BW_STUB_SOURCES
 # bodies with the pair declared as an array; README.md, "The heap
 # environment", has the finding.
 set(BW_HEAP_MATCHED
-    ${ALETHEIA_ROOT}/src/matched/sub_0202FC48.c    # the heap environment constructor
-    ${ALETHEIA_ROOT}/src/matched/sub_0202FDC4.c    # carve a child heap from a parent
-    ${ALETHEIA_ROOT}/src/matched/func_0202FED8.c   # bind it to a spare entry
-    ${ALETHEIA_ROOT}/src/matched/func_02060C5C.c   # create an expanded heap over a region
-    ${ALETHEIA_ROOT}/src/matched/func_02060814.c   # the expanded heap's head
-    ${ALETHEIA_ROOT}/src/matched/func_020606D0.c   # the common heap head, root list
-    ${ALETHEIA_ROOT}/src/matched/func_020606A8.c   # the list that contains a heap
-    ${ALETHEIA_ROOT}/src/matched/unit_02060614.c   # list walk, find by address
-    ${ALETHEIA_ROOT}/src/matched/func_02060468.c   # init a list
-    ${ALETHEIA_ROOT}/src/matched/func_02060480.c   # first append
-    ${ALETHEIA_ROOT}/src/matched/func_020604AC.c   # append
-    ${ALETHEIA_ROOT}/src/matched/func_020607E8.c   # write a block header
-    ${ALETHEIA_ROOT}/src/matched/func_02060764.c   # a block's extent
-    ${ALETHEIA_ROOT}/src/matched/func_02060790.c   # unlink a block
-    ${ALETHEIA_ROOT}/src/matched/func_020607B8.c   # link a block after another
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_0202FC48.c    # the heap environment constructor
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_0202FDC4.c    # carve a child heap from a parent
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_0202FED8.c   # bind it to a spare entry
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060C5C.c   # create an expanded heap over a region
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060814.c   # the expanded heap's head
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_020606D0.c   # the common heap head, root list
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_020606A8.c   # the list that contains a heap
+    ${ALETHEIA_ROOT}/src/matched/arm9/unit_02060614.c   # list walk, find by address
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060468.c   # init a list
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060480.c   # first append
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_020604AC.c   # append
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_020607E8.c   # write a block header
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060764.c   # a block's extent
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060790.c   # unlink a block
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_020607B8.c   # link a block after another
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060888.c  # the carve (see above)
-    ${ALETHEIA_ROOT}/src/matched/func_02060A08.c   # the head-end walk
-    ${ALETHEIA_ROOT}/src/matched/func_02060ABC.c   # the tail-end walk
-    ${ALETHEIA_ROOT}/src/matched/func_02030164.c   # the raw free
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060A08.c   # the head-end walk
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060ABC.c   # the tail-end walk
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02030164.c   # the raw free
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060E30.c  # the expanded heap's free (see above)
-    ${ALETHEIA_ROOT}/src/matched/func_02060B6C.c   # return a region, coalescing
-    ${ALETHEIA_ROOT}/src/matched/func_02060E6C.c   # total free bytes
-    ${ALETHEIA_ROOT}/src/matched/func_02060E94.c   # largest allocatable block
-    ${ALETHEIA_ROOT}/src/matched/func_02091588.c   # abs, under the above
-    ${ALETHEIA_ROOT}/src/matched/func_02060F90.c   # an allocated block's size
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060B6C.c   # return a region, coalescing
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060E6C.c   # total free bytes
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060E94.c   # largest allocatable block
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02091588.c   # abs, under the above
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02060F90.c   # an allocated block's size
 )
 set(BW_HEAP_REIMPL
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060A08.c  # the head-end walk
@@ -358,15 +358,15 @@ endif()
 # lists enters the library; the symbols are the same either way, so nothing
 # above or below this line knows which it got.
 set(BW_TCBL_MATCHED
-    ${ALETHEIA_ROOT}/src/matched/sub_02030EF0.c    # row address
-    ${ALETHEIA_ROOT}/src/matched/sub_02030F34.c    # free-list push
-    ${ALETHEIA_ROOT}/src/matched/func_02030F04.c   # free-list pop
-    ${ALETHEIA_ROOT}/src/matched/sub_02030FB4.c    # the work accessor
-    ${ALETHEIA_ROOT}/src/matched/sub_02030F50.c    # reset a node
-    ${ALETHEIA_ROOT}/src/matched/sub_02030F70.c    # unlink one and free it
-    ${ALETHEIA_ROOT}/src/matched/sub_020311B8.c    # register a callback
-    ${ALETHEIA_ROOT}/src/matched/sub_02031194.c    # destroy one node
-    ${ALETHEIA_ROOT}/src/matched/sub_0203115C.c    # destroy every node
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030EF0.c    # row address
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030F34.c    # free-list push
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02030F04.c   # free-list pop
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030FB4.c    # the work accessor
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030F50.c    # reset a node
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030F70.c    # unlink one and free it
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_020311B8.c    # register a callback
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_02031194.c    # destroy one node
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_0203115C.c    # destroy every node
 )
 set(BW_TCBL_REIMPL
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030EF0.c  # row address
@@ -664,9 +664,9 @@ endif()
 #   0x02146B64  sRootList (func_020606D0.c)   g_02146B64 (func_020606A8.c)
 #   0x02146954  g_EnvModule (everywhere)      g_02146954 (func_0202FED8.c)
 if(EIDOS_HEAP_MATCHED)
-    set_source_files_properties(${ALETHEIA_ROOT}/src/matched/func_020606A8.c
+    set_source_files_properties(${ALETHEIA_ROOT}/src/matched/arm9/func_020606A8.c
         PROPERTIES COMPILE_DEFINITIONS "g_02146B64=sRootList")
-    set_source_files_properties(${ALETHEIA_ROOT}/src/matched/func_0202FED8.c
+    set_source_files_properties(${ALETHEIA_ROOT}/src/matched/arm9/func_0202FED8.c
         PROPERTIES COMPILE_DEFINITIONS "g_02146954=g_EnvModule")
 endif()
 
