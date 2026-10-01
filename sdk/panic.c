@@ -28,5 +28,12 @@ void bw_panic(const char *what, u32 address, const char *detail)
     }
     fputc('\n', stderr);
     fflush(stderr);
+#ifdef _MSC_VER
+    /* The MSVC runtime's abort() opens a modal "Debug Error!" dialog in a
+     * debug build and asks Windows Error Reporting for a dump in any build.
+     * The message above is the report; a dialog would stall an unattended
+     * run, and the expected-panic tests are unattended. */
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     abort();
 }
