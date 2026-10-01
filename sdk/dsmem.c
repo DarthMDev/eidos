@@ -70,6 +70,12 @@
  * that updates another hooked register should do it with bw_io_write*, so
  * that register's hook runs too.
  *
+ * Access hooks (sdk/dsmem_ext.h) are the other kind: a range of I/O
+ * addresses whose every translation calls a function before the pointer is
+ * returned, and whose function also runs at the top of bw_io_sync.  They
+ * exist for ports (the geometry FIFO), where a stream of stores to one
+ * address is the data and a compare against the last sync sees one value.
+ *
  * Threads.  The game runs one thread at a time under the port's run token
  * (docs/boot.md, "Threads, interrupts and the frame"), so nothing here
  * locks.  There is no lazy global initialisation either: bw_ds_reset builds
@@ -124,6 +130,16 @@ struct IoHook {
 #define IO_HOOK_MAX 128
 static struct IoHook g_hooks[IO_HOOK_MAX];
 static int           g_hook_count;
+
+/* access hooks (sdk/dsmem_ext.h): one call per translation in a range */
+struct IoAccess {
+    u32            lo, hi;
+    BwIoAccessHook fn;
+};
+
+#define IO_ACCESS_MAX 4
+static struct IoAccess g_access[IO_ACCESS_MAX];
+static int             g_access_count;
 
 /* the registry */
 struct RegEntry {
@@ -409,10 +425,49 @@ void bw_io_hook(u32 addr, u32 width, BwIoWriteHook hook)
     memcpy(&g_io_synced[idx], &g_io[idx], width);
 }
 
+void bw_io_access_hook(u32 lo, u32 hi, BwIoAccessHook fn)
+{
+    int i;
+
+    if (fn == NULL || hi <= lo || io_checked(lo, 1, "bw_io_access_hook") < 0
+        || io_checked(hi - 1u, 1, "bw_io_access_hook") < 0) {
+        bw_panic("bw_io_access_hook", lo, "empty range or no function");
+    }
+    for (i = 0; i < g_access_count; i++) {
+        if (lo < g_access[i].hi && g_access[i].lo < hi) {
+            bw_panic("bw_io_access_hook", lo, "overlaps another access hook");
+        }
+    }
+    if (g_access_count >= IO_ACCESS_MAX) {
+        bw_panic("bw_io_access_hook", lo, "access hook table full");
+    }
+    g_access[g_access_count].lo = lo;
+    g_access[g_access_count].hi = hi;
+    g_access[g_access_count].fn = fn;
+    g_access_count++;
+}
+
+static void io_access(u32 addr)
+{
+    int i;
+
+    for (i = 0; i < g_access_count; i++) {
+        if (addr >= g_access[i].lo && addr < g_access[i].hi) {
+            g_access[i].fn(addr, 0);
+            return;
+        }
+    }
+}
+
 void bw_io_sync(void)
 {
     int i;
 
+    /* Drain whatever an access hook left pending before comparing, so a
+     * register the drain updates is seen by this very sync. */
+    for (i = 0; i < g_access_count; i++) {
+        g_access[i].fn(0, 1);
+    }
     for (i = 0; i < g_hook_count; i++) {
         const struct IoHook h = g_hooks[i];
         u32 before;
@@ -685,7 +740,13 @@ void *bw_ds_try_ptr(u32 addr)
         return &g_wram[addr & (BW_DS_WRAM_SIZE - 1u)];
     case BW_DS_IO_BASE >> 24:
         idx = io_index(addr, 1);
-        return idx >= 0 ? (void *)&g_io[idx] : NULL;
+        if (idx < 0) {
+            return NULL;
+        }
+        if (g_access_count > 0) {
+            io_access(addr);
+        }
+        return (void *)&g_io[idx];
     case BW_DS_PAL_BASE >> 24:
         return &g_pal[addr & (BW_DS_PAL_SIZE - 1u)];
     case BW_DS_VRAM_BASE >> 24: {
@@ -811,6 +872,7 @@ void bw_ds_reset(void)
     memcpy(g_io_synced, g_io, sizeof(g_io));
 
     g_hook_count = 0;
+    g_access_count = 0;
     g_reg_count = 0;
     g_ready = 1;
 

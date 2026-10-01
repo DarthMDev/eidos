@@ -103,7 +103,7 @@ static const u8 g3d_param_count[G3D_OPCODE_LIMIT] = {
     /* 0x10 */ 1,    0,    1,    1,    1,    0,    16,   12,
     /* 0x18 */ 16,   12,   9,    3,    3,    0xFF, 0xFF, 0xFF,
     /* 0x20 */ 1,    1,    1,    2,    1,    1,    1,    1,
-    /* 0x28 */ 1,    1,    1,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    /* 0x28 */ 1,    1,    1,    1,    0xFF, 0xFF, 0xFF, 0xFF,
     /* 0x30 */ 1,    1,    1,    1,    32,   0xFF, 0xFF, 0xFF,
     /* 0x38 */ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     /* 0x40 */ 1,    0,    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -121,6 +121,11 @@ static const u8 g3d_param_count[G3D_OPCODE_LIMIT] = {
 static u32 param_count(u8 op)
 {
     return op < G3D_OPCODE_LIMIT ? g3d_param_count[op] : 0xFFu;
+}
+
+u32 g3d_gx_param_count(u32 op)
+{
+    return op <= 0xFFu ? param_count((u8)op) : 0xFFu;
 }
 
 static s32 sx16(u32 v)
@@ -382,9 +387,17 @@ u32 g3d_gx_run(G3dGx *gx, const u8 *data, u32 size, u32 start,
                 load_mtx(gx, par, 9u, 1);
                 break;
             case 0x1B: { /* MTX_SCALE */
+                /* In position+vector mode the hardware scales the position
+                 * matrix only: a scale would denormalise the directional
+                 * matrix the lights use. */
                 G3dMtx m;
+                u32 mode = gx->mtx.mode;
                 g3d_mtx_scale(&m, (fx32)par[0], (fx32)par[1], (fx32)par[2]);
+                if (mode == G3D_MTX_MODE_POSVEC) {
+                    gx->mtx.mode = G3D_MTX_MODE_POSITION;
+                }
                 g3d_mtx_stack_mult(&gx->mtx, &m);
+                gx->mtx.mode = mode;
                 break;
             }
             case 0x1C: { /* MTX_TRANS */

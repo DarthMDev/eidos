@@ -341,6 +341,11 @@ typedef struct G3dGx {
 
 void g3d_gx_init(G3dGx *gx, G3dGeom *out);
 
+/* Parameter words opcode `op` takes, or 0xFF for a byte the hardware does
+ * not define as a command.  The one table g3d_gx_run decodes with, so the
+ * hardware FIFO (engine/g3d/hw3d.c) frames commands exactly as it does. */
+u32 g3d_gx_param_count(u32 op);
+
 /*
  * Run the command stream in `data[start .. )`.
  *
@@ -531,6 +536,20 @@ typedef struct G3dTarget {
     u32  width, height;
     u8  *rgba;    /* owned */
     s32 *depth;   /* owned; larger is further away */
+    /*
+     * Per-frame state engine/g3d/hw3d.c sets from the 3D registers.  All
+     * zero after g3d_target_init, which is exactly the behaviour the
+     * rasteriser had before they existed.
+     *   alpha_ref  the alpha test (DISP3DCNT bit 2, ALPHA_TEST_REF): a
+     *              pixel whose 5-bit alpha is <= this is not drawn.
+     *   toon       32 R,G,B triples, the toon table; NULL makes polygon
+     *              mode 2 plain modulate.  Borrowed.
+     *   highlight  1: polygon mode 2 is highlight shading (DISP3DCNT
+     *              bit 1), 0: toon.
+     */
+    u32       alpha_ref;
+    const u8 *toon;
+    u32       highlight;
 } G3dTarget;
 
 int  g3d_target_init(G3dTarget *t, u32 width, u32 height);
