@@ -265,6 +265,14 @@ set(BW_MATCHED_SOURCES
     ${ALETHEIA_ROOT}/src/matched/arm9/sub_0203101C.c    # the constructor
     ${ALETHEIA_ROOT}/src/matched/arm9/sub_02030FC8.c    # build the free list
     ${ALETHEIA_ROOT}/src/matched/arm9/sub_020310C4.c    # one pass of the runner
+
+    # --- the interrupt controller's matched half -------------------------
+    #
+    # Register and table traffic the OS layer's dispatcher agrees with
+    # (sdk/os_interrupt.c); sdk/pxi.c's PXI_InitFifo calls both, so every
+    # link that reaches bw_port_reset needs them.
+    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/OS_SetIrqFunction.c   # OS_IRQTable and the callback slots
+    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/OS_EnableIrqMask.c    # IE |= mask, under IME off
 )
 
 # ---------------------------------------------------------------------------
@@ -324,6 +332,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_system.c     # console/boot type, MPU, ARM7 sync
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_argument.c   # the deliver argument
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/panic.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/port_reset.c    # bw_port_reset: dsmem, OS, PXI power-on and their joins
     ${BW_PXI_SOURCES}
 )
 
@@ -1123,8 +1132,8 @@ add_test(NAME test_dsmem_overlap COMMAND ${CMAKE_COMMAND}
 # VRAM states whose expected pixels are computed on paper, and, with game
 # data, the title screen and a rig pose loaded into VRAM, palette and OAM
 # the way the SDK would and required to come out pixel-identical to the
-# asset path.  It brings a test-only backing for sdk/dsmem.h; without game
-# data the second half reports itself skipped.
+# asset path.  The states are written into the real address space
+# (sdk/dsmem.c); without game data the second half reports itself skipped.
 add_executable(test_hwcompose ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hwcompose.c)
 target_include_directories(test_hwcompose PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_hwcompose PRIVATE eidos)
@@ -1150,17 +1159,14 @@ add_test(NAME test_overlay_refuses
 # --- PXI and the ARM7 -------------------------------------------------------
 #
 # test_pxi drives the FIFO model and every ARM7 responder from the game's own
-# matched ARM9 SDK code, so it compiles a set of aletheia's matched sources
-# itself.  It is built from its own source list rather than against the
-# eidos library: tests/pxi_doubles.c stands in for the address space and for
-# the CPU stand-in's interrupt delivery (both other lanes' files), and the
-# two must not meet the real ones in one link.
-#
-# TEST-ONLY: until tools/dsaddr.py's build hook is in, the matched sources
-# are copied into the build tree with their fixed-address casts rewritten
-# by the two regular expressions below, the textual rewrite docs/boot.md
-# describes, restricted to the shapes these files use.  Replace this block's
-# rewrite with the dsaddr hook when it lands.
+# matched ARM9 SDK code, on the port's real address space and OS layer
+# (bw_port_reset), so it compiles a set of aletheia's matched sources itself
+# and links the eidos library for everything else.  The sources go through
+# the same tools/dsaddr.py rewrite as the library's (cmake/dsaddr.cmake); a
+# source the library already compiles is left to the library, so no file
+# gets two rewrite rules.  tests/pxi_doubles.c holds only the ARM9 data
+# objects and spelling aliases those files name that the library does not
+# define yet.
 set(BW_PXI_TEST_MATCHED
     arm9/func_02088498.c                # PXI_Init
     arm9_sdk/PXI_SendWordByFifo.c
@@ -1168,12 +1174,13 @@ set(BW_PXI_TEST_MATCHED
     arm9_sdk/func_020885EC.c            # PXI_IsCallbackReady
     arm9_sdk/OS_SetIrqFunction.c
     arm9_sdk/OS_EnableIrqMask.c
-    arm9_sdk/OS_ResetRequestIrqMask.c
+    # OS_ResetRequestIrqMask and OSi_SyncWithOtherProc (func_02084AB0) are
+    # the OS layer's shims (sdk/os_interrupt.c, sdk/os_system.c), as in the
+    # boot, so their matched files are not compiled here.
     arm9_sdk/func_02087B78.c            # the OS's PXI init
     arm9_sdk/OSi_SendToPxi.c
     arm9_sdk/func_02084A38.c            # OSi_CommonCallback
     arm9_sdk/func_02084B90.c            # OS_InitLock
-    arm9_sdk/func_02084AB0.c            # OSi_SyncWithOtherProc
     arm9_sdk/PMi_SendPxiData.c
     arm9_sdk/PMi_TryToSendPxiData.c
     arm9_sdk/PM_SendUtilityCommandAsync.c
@@ -1205,74 +1212,52 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
 else()
     set(_bw_pxi_pm_matched 0)
 endif()
-set(_bw_pxi_gen ${CMAKE_CURRENT_BINARY_DIR}/test_pxi_matched)
-set(_bw_pxi_test_sources)
+set(_bw_pxi_test_originals)
 foreach(_rel ${BW_PXI_TEST_MATCHED})
     set(_src ${ALETHEIA_ROOT}/src/matched/${_rel})
-    get_filename_component(_name ${_rel} NAME)
-    set(_dst ${_bw_pxi_gen}/${_name})
-    file(READ ${_src} _text)
-    # (T *)0x0NNNNNNN  ->  ((T *)bw_ds_ptr(0x0NNNNNNNu))
-    string(REGEX REPLACE
-        "\\(([A-Za-z_][A-Za-z0-9_ ]*\\*)\\)(0x0[2-7][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])[uUlL]*"
-        "((\\1)bw_ds_ptr(\\2u))" _text "${_text}")
-    # (T *)(0x0NNNNNNN + 0xNN)  ->  ((T *)bw_ds_ptr(0x0NNNNNNNu + 0xNN))
-    string(REGEX REPLACE
-        "\\(([A-Za-z_][A-Za-z0-9_ ]*\\*)\\)\\((0x0[2-7][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])[uUlL]*( *\\+ *0x[0-9A-Fa-f]+)\\)"
-        "((\\1)bw_ds_ptr(\\2u\\3))" _text "${_text}")
-    set(_text "void *bw_ds_ptr(unsigned int);\n#line 1 \"${_src}\"\n${_text}")
-    if(EXISTS ${_dst})
-        file(READ ${_dst} _old)
-    else()
-        set(_old "")
+    if(NOT _src IN_LIST BW_MATCHED_ORIGINALS)
+        list(APPEND _bw_pxi_test_originals ${_src})
     endif()
-    if(NOT _old STREQUAL _text)
-        file(WRITE ${_dst} "${_text}")
-    endif()
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_src})
-    list(APPEND _bw_pxi_test_sources ${_dst})
 endforeach()
+eidos_dsaddr(_bw_pxi_test_sources ${_bw_pxi_test_originals})
 if(NOT MSVC)
     set_source_files_properties(${_bw_pxi_test_sources} PROPERTIES
         COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
+else()
+    set_source_files_properties(${_bw_pxi_test_sources} PROPERTIES
+        COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS}")
 endif()
 add_executable(test_pxi
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pxi.c
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/pxi_doubles.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi.c
-    ${BW_PXI_SOURCES}
     ${_bw_pxi_test_sources})
 target_include_directories(test_pxi PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_compile_definitions(test_pxi PRIVATE BW_TEST_PM_MATCHED=${_bw_pxi_pm_matched})
+target_link_libraries(test_pxi PRIVATE eidos)
 if(_bw_pxi_pm_matched)
     # One object, two names (see "Two matched files name one DS object").
-    set_source_files_properties(${_bw_pxi_gen}/func_0208B8B0.c
-                                ${_bw_pxi_gen}/func_0208B950.c
+    eidos_dsaddr_path(_a ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208B8B0.c)
+    eidos_dsaddr_path(_b ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208B950.c)
+    set_source_files_properties(${_a} ${_b}
         PROPERTIES COMPILE_DEFINITIONS "s_02153000=g_02153000")
 endif()
 add_test(NAME test_pxi COMMAND test_pxi)
 set_tests_properties(test_pxi PROPERTIES TIMEOUT 30)
 
-# The OS layer's tests.  They need the register file; until sdk/dsmem.c is
-# in the tree they link tests/os_dsmem_double.c, a minimal stand-in for it,
-# and nothing else does.  test_os_irq also compiles aletheia's matched
-# OS_SetIrqFunction.c and OS_GetIrqFunction.c as written: the table writers
-# the shim's dispatcher has to agree with.
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/sdk/dsmem.c)
-    set(BW_OS_TEST_EXTRA)
-else()
-    set(BW_OS_TEST_EXTRA ${CMAKE_CURRENT_SOURCE_DIR}/tests/os_dsmem_double.c)
-endif()
+# The OS layer's tests, on the real address space (sdk/dsmem.c) and the
+# port's power-on (bw_port_reset).  test_os_irq also compiles aletheia's
+# matched OS_GetIrqFunction.c as written, the table reader beside the
+# library's OS_SetIrqFunction.c that the shim's dispatcher has to agree
+# with.
 foreach(t test_os_thread test_os_irq test_os_alarm)
-    add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c ${BW_OS_TEST_EXTRA})
+    add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t})
     set_tests_properties(${t} PROPERTIES TIMEOUT 60)
 endforeach()
 target_sources(test_os_irq PRIVATE
-    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/OS_SetIrqFunction.c
     ${ALETHEIA_ROOT}/src/matched/arm9_sdk/OS_GetIrqFunction.c)
 
 add_executable(test_extract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract.c)

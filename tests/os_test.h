@@ -10,6 +10,7 @@
 #include "dsmem.h"
 #include "frame.h"
 #include "os.h"
+#include "port.h"
 
 /* sdk/os_irq.c */
 u32  OS_DisableInterrupts(void);
@@ -63,8 +64,7 @@ static EidosFrameLoop g_os_test_loop;
 /* What NitroMain's system initialiser does, minus everything not OS. */
 static void os_test_boot(void)
 {
-    bw_ds_reset();
-    bw_os_reset();
+    bw_port_reset();
     eidos_frame_init(&g_os_test_loop, NULL, NULL, NULL);
     eidos_frame_set_current(&g_os_test_loop);
     OS_InitThread();

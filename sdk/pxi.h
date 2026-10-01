@@ -33,7 +33,11 @@
  * (the ARM9's own "wait for the other processor"), and before interrupt
  * delivery.  A reply raises IF bit 18 through the interrupt sink below; the
  * interrupt stand-in then calls the IRQ table entry the matched PXI init
- * installed, which is PXIi_HandlerRecvFifoNotEmpty here.
+ * installed, which is PXIi_HandlerRecvFifoNotEmpty here.  bw_port_reset
+ * (sdk/port.h) makes both joins with the OS layer: its restores and enables
+ * step the ARM7 (bw_os_set_cpu_step) before they look for an interrupt, and
+ * the sink is bw_os_raise_irq.  SVC_WaitByLoop and OS_SpinWaitSysCycles
+ * have no port definition yet.
  *
  * Every word on the wire is the SDK's PXIFifoMessage: tag in bits 0-4, the
  * error flag in bit 5, 26 data bits above (pxi_fifo.o's DWARF).
@@ -117,8 +121,9 @@ enum {
 /*
  * Power-on state of the PXI: both FIFOs empty, IPCSYNC zero, the register
  * file's PXI registers at their reset values, the hooks installed, the
- * ARM7 powered off (sdk/arm7/arm7.h).  Call after bw_ds_reset(), which may
- * drop the register hooks this installs.
+ * ARM7 powered off (sdk/arm7/arm7.h).  Call after bw_ds_reset(), which
+ * drops the register hooks this installs; bw_port_reset (sdk/port.h) does
+ * that in order.  The interrupt sink is kept across a reset.
  */
 void bw_pxi_reset(void);
 
@@ -142,8 +147,8 @@ void bw_pxi_service(void);
 
 /*
  * Where an interrupt request goes.  The default ORs the bit into IF in the
- * register file, which is what the hardware does; the interrupt stand-in
- * (sdk/os_irq.c) replaces it with its own "raise" so a request is not
+ * register file, which is what the hardware does; bw_port_reset replaces it
+ * with the OS layer's bw_os_raise_irq, which owns IF, so a request is not
  * mistaken for a write-one-to-clear acknowledgement at the next
  * bw_io_sync().  The sink must only record the request: delivery happens
  * at the stand-in's own delivery points, never from inside this call.

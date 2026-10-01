@@ -43,7 +43,7 @@
  * bw_vram_remap reads VRAMCNT_A..I and rebuilds a table of 16 KiB pages for
  * the CPU window (every bank start and every size is a multiple of 16 KiB)
  * and tables of 8 KiB pieces for the spaces only the engines see
- * (sdk/dsmem_ext.h).  The mapping follows GBATEK's VRAMCNT table for every
+ * (bw_vram_slot).  The mapping follows GBATEK's VRAMCNT table for every
  * MST/OFS combination; the engine windows are then filled in with their
  * hardware mirrors (main BG every 512 KiB, main OBJ every 256 KiB, sub BG
  * and sub OBJ every 128 KiB).  When two banks are mapped over the same page
@@ -83,7 +83,6 @@
 
 #include "port.h"
 #include "dsmem.h"
-#include "dsmem_ext.h"
 #include "host_vm.h"
 
 /* ------------------------------------------------------------------ */

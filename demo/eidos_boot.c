@@ -33,14 +33,15 @@
  *                      the handler NitroMain installed (func_0200520C) and
  *                      so satisfies the wait the next step tests.
  *
- * The vblank delivery here is the hardware's half only: set DISPSTAT's
- * vblank flag, raise IF bit 0 when DISPSTAT asks for the interrupt, and, if
- * IME and IE let it through, acknowledge IF and call the IRQ table entry
- * for bit 0 (OS_IRQTable, 0x02FE0020, which the matched OS_SetIrqFunction
- * fills).  That is what OS_IrqHandler does for one source.  The thread
- * wake-ups that follow an interrupt on the DS (OSi_IrqThreadQueue) are the
- * OS lane's dispatcher; when sdk/os_irq.c provides one, deliver_vblank
- * should call it instead of the table entry.
+ * The machine is reset with bw_port_reset (sdk/port.h): the address
+ * space, the OS layer and the PXI, joined.  The vblank delivery here is the
+ * hardware's half only: set DISPSTAT's vblank flag and, when DISPSTAT asks
+ * for the interrupt, raise IF bit 0 through the OS layer
+ * (bw_os_raise_irq), which owns IF.  The OS layer takes it at the safe
+ * point that follows (bw_os_poll here, or the game's own interrupt
+ * enables): IME, the CPSR I bit and IE decide, the handler NitroMain
+ * installed in OS_IRQTable runs, and the threads waiting in OS_WaitIrq
+ * wake, as OS_IrqHandler does on the DS.
  */
 
 #include <stdio.h>
@@ -63,28 +64,21 @@
 #if EIDOS_BOOT
 
 #include "dsmem.h"
+#include "os.h"
 
 /* stubs/reimpl_02005124.c */
 void bw_nitromain_init(void);
 int  bw_nitromain_step(void);
 
-/* OS_IRQTable in DTCM, written by the matched OS_SetIrqFunction. */
-extern void (*g_02FE0020[])(void);
-
 #define REG_DISPSTAT 0x04000004u
-#define REG_IME      0x04000208u
-#define REG_IE       0x04000210u
-#define REG_IF       0x04000214u
 
 #define DISPSTAT_VBLANK_FLAG 0x0001u
 #define DISPSTAT_VBLANK_IRQ  0x0008u
-#define IRQ_V_BLANK          0x00000001u
 
 /*
  * The register file is plain memory (sdk/dsmem.h): the hardware's own
- * updates are made on its bytes directly, so no write hook runs for them
- * (IF's write hook is the CPU-side write-one-to-clear, which is not what
- * the hardware raising a bit does).
+ * updates to DISPSTAT are made on its bytes directly, so no write hook runs
+ * for them.  IF is never written here: the OS layer owns it.
  */
 static u32 io_raw_read(u32 addr, u32 width)
 {
@@ -101,7 +95,7 @@ static void io_raw_write(u32 addr, u32 width, u32 v)
 typedef struct BootState {
     u64 steps_run;     /* steps that ran a frame of NitroMain's loop       */
     u64 steps_waited;  /* steps that found the vblank wait unsatisfied     */
-    u64 vblanks;       /* vblank interrupts delivered to the IRQ table     */
+    u64 vblanks;       /* vblank interrupts raised                         */
 } BootState;
 
 static void boot_step(void *user)
@@ -121,19 +115,12 @@ static void deliver_vblank(void *user)
     u32 dispstat = io_raw_read(REG_DISPSTAT, 2);
 
     io_raw_write(REG_DISPSTAT, 2, dispstat | DISPSTAT_VBLANK_FLAG);
-    if (dispstat & DISPSTAT_VBLANK_IRQ) {
-        io_raw_write(REG_IF, 4, io_raw_read(REG_IF, 4) | IRQ_V_BLANK);
-    }
     bw_io_sync();
-
-    if ((io_raw_read(REG_IME, 2) & 1u) != 0
-        && (io_raw_read(REG_IE, 4) & io_raw_read(REG_IF, 4) & IRQ_V_BLANK) != 0) {
-        io_raw_write(REG_IF, 4, io_raw_read(REG_IF, 4) & ~IRQ_V_BLANK);
-        if (g_02FE0020[0] != NULL) {
-            g_02FE0020[0]();
-            st->vblanks++;
-        }
+    if (dispstat & DISPSTAT_VBLANK_IRQ) {
+        bw_os_raise_irq(OS_IE_V_BLANK);
+        st->vblanks++;
     }
+    bw_os_poll();
 
     /* The flag drops again at line 0 of the next frame. */
     io_raw_write(REG_DISPSTAT, 2,
@@ -154,7 +141,7 @@ static int run_boot(u32 frames)
     hooks.render = NULL;
     hooks.user = &st;
 
-    bw_ds_reset();
+    bw_port_reset();
     eidos_frame_init(&loop, &hooks, NULL, NULL);
     eidos_frame_set_current(&loop);
 

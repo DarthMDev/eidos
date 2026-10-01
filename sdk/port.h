@@ -302,6 +302,26 @@ void bw_heap_note_release(u32 heap_id);
  */
 void bw_panic(const char *what, u32 address, const char *detail);
 
+/* ------------------------------------------------------------------ */
+/* Power-on                                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Put the whole emulated machine back to power-on, in the one order that
+ * works (sdk/port_reset.c says why each step is where it is):
+ *
+ *   bw_ds_reset    the address space; drops every I/O hook and registration
+ *   bw_os_reset    threads, the interrupt latch, IF's write hook
+ *   bw_pxi_reset   the FIFOs, the IPC register hooks, the ARM7 powered off
+ *
+ * then joins the layers: the PXI's interrupt requests go to the OS layer's
+ * latch (bw_os_raise_irq) and the OS layer's interrupt restores step the
+ * ARM7 (bw_arm7_step).  Every start-up of the game, demo/eidos_boot.c and
+ * the tests that run game code, calls this rather than the three resets.
+ * Call it on the thread that will run the game, before its OS_Init.
+ */
+void bw_port_reset(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -22,10 +22,10 @@
  *     window and an alpha blend.  Without game data this half reports
  *     itself skipped.
  *
- * The renderer reads the live address space through sdk/dsmem.h.  That
- * file's implementation belongs to another part of the port; the backing
- * below is TEST-ONLY, the minimum of the header hwcompose.c calls, with a
- * VRAM mapping covering just the bank settings these tests use.
+ * The renderer reads the live address space through sdk/dsmem.h, and so
+ * does this test: every state below is written into the real sdk/dsmem.c
+ * (register file, palette RAM, OAM, the VRAM banks through VRAMCNT) after a
+ * bw_ds_reset, so the bank mapping the renderer sees is the port's own.
  */
 
 #include <stdio.h>
@@ -38,93 +38,12 @@
 #include "port_test.h"
 
 /* ================================================================== */
-/* TEST-ONLY backing for sdk/dsmem.h                                   */
+/* The address space (sdk/dsmem.c), as plain host pointers             */
 /* ================================================================== */
 
-static u8 t_io[BW_DS_IO_SIZE];
-static u8 t_pal[BW_DS_PAL_SIZE];
-static u8 t_oam[BW_DS_OAM_SIZE];
-static u8 t_bank_a[0x20000], t_bank_b[0x20000], t_bank_c[0x20000],
-          t_bank_d[0x20000], t_bank_e[0x10000], t_bank_f[0x4000],
-          t_bank_g[0x4000], t_bank_h[0x8000], t_bank_i[0x4000];
-
-static u8 *const t_banks[BW_VRAM_BANKS] = {
-    t_bank_a, t_bank_b, t_bank_c, t_bank_d, t_bank_e,
-    t_bank_f, t_bank_g, t_bank_h, t_bank_i,
-};
-static const u32 t_bank_size[BW_VRAM_BANKS] = {
-    0x20000, 0x20000, 0x20000, 0x20000, 0x10000, 0x4000, 0x4000, 0x8000, 0x4000,
-};
-
-volatile u8 *bw_io(u32 addr)
-{
-    return t_io + (addr - BW_DS_IO_BASE);
-}
-
-u8 *bw_vram_bank(int bank, u32 *size_out)
-{
-    if (bank < 0 || bank >= BW_VRAM_BANKS) {
-        return NULL;
-    }
-    if (size_out != NULL) {
-        *size_out = t_bank_size[bank];
-    }
-    return t_banks[bank];
-}
-
-/* Where bank `b` shows in the 0x06xxxxxx window, or 0 for nowhere. */
-static u32 t_bank_window(int b)
-{
-    u8 cnt = t_io[0x240u + (u32)b + (b >= BW_VRAM_H ? 1u : 0u)];
-    u32 mst = cnt & 7u, ofs = ((u32)cnt >> 3) & 3u;
-
-    if ((cnt & 0x80u) == 0) {
-        return 0;
-    }
-    switch (b) {
-    case BW_VRAM_A: case BW_VRAM_B: case BW_VRAM_C: case BW_VRAM_D:
-        if (mst == 1u) { return 0x06000000u + ofs * 0x20000u; }
-        if (mst == 2u && b <= BW_VRAM_B) { return 0x06400000u + (ofs & 1u) * 0x20000u; }
-        if (mst == 4u && b == BW_VRAM_C) { return 0x06200000u; }
-        if (mst == 4u && b == BW_VRAM_D) { return 0x06600000u; }
-        return 0;
-    case BW_VRAM_E:
-        if (mst == 1u) { return 0x06000000u; }
-        if (mst == 2u) { return 0x06400000u; }
-        return 0;
-    case BW_VRAM_H:
-        return (mst == 1u) ? 0x06200000u : 0u;
-    case BW_VRAM_I:
-        if (mst == 1u) { return 0x06208000u; }
-        if (mst == 2u) { return 0x06600000u; }
-        return 0;
-    default:
-        return 0;
-    }
-}
-
-void *bw_ds_try_ptr(u32 addr)
-{
-    int b;
-
-    if (addr >= BW_DS_IO_BASE && addr < BW_DS_IO_BASE + BW_DS_IO_SIZE) {
-        return t_io + (addr - BW_DS_IO_BASE);
-    }
-    if (addr >= BW_DS_PAL_BASE && addr < BW_DS_PAL_BASE + BW_DS_PAL_SIZE) {
-        return t_pal + (addr - BW_DS_PAL_BASE);
-    }
-    if (addr >= BW_DS_OAM_BASE && addr < BW_DS_OAM_BASE + BW_DS_OAM_SIZE) {
-        return t_oam + (addr - BW_DS_OAM_BASE);
-    }
-    for (b = 0; b < BW_VRAM_BANKS; b++) {
-        u32 start = t_bank_window(b);
-
-        if (start != 0 && addr >= start && addr < start + t_bank_size[b]) {
-            return t_banks[b] + (addr - start);
-        }
-    }
-    return NULL;
-}
+/* Set by reset(); the regions and banks stay put across bw_ds_reset. */
+static u8 *t_io, *t_pal, *t_oam;
+static u8 *t_bank_a, *t_bank_e, *t_bank_i;
 
 /* ================================================================== */
 /* State helpers                                                       */
@@ -204,14 +123,14 @@ static void oam_affine(int engine, u32 group, s16 pa, s16 pb, s16 pc, s16 pd)
 static void reset(void)
 {
     u32 i;
-    int b;
 
-    memset(t_io, 0, sizeof(t_io));
-    memset(t_pal, 0, sizeof(t_pal));
-    memset(t_oam, 0, sizeof(t_oam));
-    for (b = 0; b < BW_VRAM_BANKS; b++) {
-        memset(t_banks[b], 0, t_bank_size[b]);
-    }
+    bw_ds_reset();                    /* every region zero, KEYINPUT up */
+    t_io = (u8 *)(void *)bw_io(BW_DS_IO_BASE);
+    t_pal = (u8 *)bw_ds_ptr(BW_DS_PAL_BASE);
+    t_oam = (u8 *)bw_ds_ptr(BW_DS_OAM_BASE);
+    t_bank_a = bw_vram_bank(BW_VRAM_A, NULL);
+    t_bank_e = bw_vram_bank(BW_VRAM_E, NULL);
+    t_bank_i = bw_vram_bank(BW_VRAM_I, NULL);
     io8(0x04000240u, 0x81);           /* A: main BG, ofs 0 */
     io8(0x04000242u, 0x89);           /* C: main BG, ofs 1 */
     io8(0x04000241u, 0x82);           /* B: main OBJ        */

@@ -212,7 +212,8 @@ extern OSThreadQueue OSi_IrqThreadQueue;   /* 0x02FE00A0 */
  * pending interrupts, no alarms, an empty IRQ table, IF's write-one-to-clear
  * hook installed on the register file.  Every other game thread's host
  * thread is stopped and joined first.  Call it after bw_ds_reset() and
- * before the game's OS_Init.
+ * before the game's OS_Init; bw_port_reset (sdk/port.h) is the start-up
+ * that does both, then resets the PXI and joins it to this layer.
  */
 void bw_os_reset(void);
 
@@ -264,6 +265,15 @@ u32  bw_os_cpsr_get(void);
 void bw_os_cpsr_set(u32 cpsr_if_bits);
 void bw_os_set_proc_irq(int in_irq);
 void bw_os_set_safe_point(void (*fn)(void));
+
+/*
+ * The other processor's turn: called by OS_EnableInterrupts,
+ * OS_RestoreInterrupts and OS_RestoreInterrupts_IrqAndFiq before they look
+ * for a pending interrupt, whatever state they leave interrupts in.
+ * bw_port_reset installs bw_arm7_step (sdk/pxi.h, "Synchronisation");
+ * bw_os_reset leaves it as it is.  NULL for none.
+ */
+void bw_os_set_cpu_step(void (*fn)(void));
 
 /* The tail of the IRQ handler: wake OS_WaitIrq's queue, switch if asked.  */
 void bw_os_irq_thread_switch(void);

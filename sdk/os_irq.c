@@ -29,6 +29,18 @@
  *   builds and tests that have no interrupt controller at all, and there the
  *   pair is exactly the saved flag it always was.
  *
+ * The other processor
+ *
+ *   On the DS the ARM7 runs alongside; here it runs when the ARM9 lets it
+ *   (sdk/pxi.h, "Synchronisation").  Every PXI_SendWordByFifo ends in
+ *   OS_RestoreInterrupts, so Enable and Restore first run the CPU step the
+ *   port installs (bw_os_set_cpu_step; bw_port_reset installs the ARM7
+ *   stand-in's bw_arm7_step), whatever state they leave interrupts in: a
+ *   word stored into the send register is taken before the next store can
+ *   overwrite it, and a reply is latched before the safe point looks for
+ *   it.  Like the safe point it is installed at run time, so this file
+ *   still links without the PXI.
+ *
  * OS_GetProcMode
  *
  *   0x1F (system mode) normally, 0x12 (IRQ mode) while sdk/os_interrupt.c
@@ -60,14 +72,19 @@
 static u32 g_cpsr;                 /* I and F bits; 0 = both enabled */
 static int g_in_irq;
 static void (*g_safe_point)(void);
+static void (*g_cpu_step)(void);
 
 u32 bw_os_cpsr_get(void)                    { return g_cpsr; }
 void bw_os_cpsr_set(u32 bits)               { g_cpsr = bits & CPSR_IF; }
 void bw_os_set_proc_irq(int on)             { g_in_irq = on; }
 void bw_os_set_safe_point(void (*fn)(void)) { g_safe_point = fn; }
+void bw_os_set_cpu_step(void (*fn)(void))   { g_cpu_step = fn; }
 
-static void irq_enabled_again(void)
+static void after_restore(void)
 {
+    if (g_cpu_step != NULL) {
+        g_cpu_step();
+    }
     if (!(g_cpsr & OS_INTRMODE_IRQ_DISABLE) && g_safe_point != NULL) {
         g_safe_point();
     }
@@ -84,7 +101,7 @@ u32 OS_EnableInterrupts(void)
 {
     u32 was = g_cpsr & OS_INTRMODE_IRQ_DISABLE;
     g_cpsr &= ~OS_INTRMODE_IRQ_DISABLE;
-    irq_enabled_again();
+    after_restore();
     return was;
 }
 
@@ -92,7 +109,7 @@ u32 OS_RestoreInterrupts(u32 state)
 {
     u32 was = g_cpsr & OS_INTRMODE_IRQ_DISABLE;
     g_cpsr = (g_cpsr & ~OS_INTRMODE_IRQ_DISABLE) | (state & OS_INTRMODE_IRQ_DISABLE);
-    irq_enabled_again();
+    after_restore();
     return was;
 }
 
@@ -107,7 +124,7 @@ u32 OS_RestoreInterrupts_IrqAndFiq(u32 state)
 {
     u32 was = g_cpsr & CPSR_IF;
     g_cpsr = (g_cpsr & ~CPSR_IF) | (state & CPSR_IF);
-    irq_enabled_again();
+    after_restore();
     return was;
 }
 

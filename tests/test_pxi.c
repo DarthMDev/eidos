@@ -5,9 +5,11 @@
  * Every round trip starts in matched ARM9 code (aletheia src/matched/,
  * compiled with its fixed addresses routed through bw_ds_ptr), crosses the
  * FIFO model in sdk/pxi.c, is answered by a responder in sdk/arm7/, and
- * ends in the ARM9 callback the matched code installed, delivered by the
- * interrupt double in tests/pxi_doubles.c exactly where the os lane's
- * OS_RestoreInterrupts will deliver it.
+ * ends in the ARM9 callback the matched code installed, taken as an
+ * interrupt by the port's own OS layer.  The machine is the boot's:
+ * bw_port_reset (sdk/port.h) resets the address space, the OS layer and the
+ * PXI and joins them, so the ARM7 runs at every OS_RestoreInterrupts and
+ * its replies are latched by bw_os_raise_irq.
  *
  * The PM round trip through the matched PMi_CommonCallback runs only on a
  * 32-bit target: that file and PM_Init view pm.o's .bss through byte
@@ -20,19 +22,20 @@
 
 #include "arm7/arm7.h"
 #include "dsmem.h"
+#include "os.h"
+#include "port.h"
 #include "port_test.h"
 #include "pxi.h"
 
 /* tests/pxi_doubles.c */
-extern int test_irq_delivered;
-extern int test_wakeups;
-void  test_cpu_reset(void);
-u32   test_irq_pending(void);
 void *test_cardi_common(void);
 void *test_os_pxi_bss(void);
 void *test_pm_bss(void);
-u32   OS_DisableInterrupts(void);
-u32   OS_EnableInterrupts(void);
+
+/* sdk/os_irq.c */
+u32  OS_DisableInterrupts(void);
+u32  OS_EnableInterrupts(void);
+u32  OS_ResetRequestIrqMask(u32 intr);    /* sdk/os_interrupt.c */
 
 /* Matched ARM9 SDK code under test, declared as the matched files do.      */
 typedef void (*Arm9Cb)(int tag, unsigned long data, BOOL err);
@@ -40,7 +43,6 @@ extern int  PXI_SendWordByFifo(int fifotag, unsigned long data, BOOL err);
 extern void PXI_SetFifoRecvCallback(int fifotag, Arm9Cb callback);
 extern BOOL PXI_IsCallbackReady(int fifotag, int proc);
 extern void PXIi_HandlerRecvFifoNotEmpty(void);
-extern void (*g_02FE0020[32])(void);
 extern void func_02087B78(void);                /* OS: PXI init + tag 12   */
 extern void OSi_SendToPxi(u16 data);
 extern void func_02084B90(void);                /* OS_InitLock             */
@@ -84,15 +86,54 @@ static void recorder(int tag, unsigned long data, BOOL err)
 static u32 rd32(u32 addr) { return *(volatile u32 *)bw_ds_ptr(addr); }
 static u16 rd16(u32 addr) { return *(volatile u16 *)bw_ds_ptr(addr); }
 
+/* IRQ 18 as the matched PXI init installs it, counted.                     */
+static int g_irq18_taken;
+
+static void counted_recv_handler(void)
+{
+    g_irq18_taken++;
+    PXIi_HandlerRecvFifoNotEmpty();
+}
+
 static void boot(void)
 {
-    bw_ds_reset();
-    bw_pxi_reset();
-    test_cpu_reset();
-    bw_io_write16(0x04000208u, 1);      /* IME, as OS_InitIrqTable leaves it */
+    bw_port_reset();
+    bw_io_write16(BW_REG_IME, 1);       /* as OS_InitIrqTable leaves it     */
 }
 
 /* ------------------------------------------------------------------ */
+
+/* What bw_port_reset leaves joined (sdk/port_reset.c).                     */
+static void test_port(void)
+{
+    /* IF's hook is the OS layer's and survived the PXI reset after it.  A
+     * store is seen when it changes IF's bytes (sdk/os_interrupt.c), so two
+     * requests are showing and the store acknowledges one.                 */
+    bw_os_raise_irq(OS_IE_H_BLANK | OS_IE_V_COUNT);
+    BW_CHECK_EQ("port: requests latched", bw_os_pending_irqs(),
+                OS_IE_H_BLANK | OS_IE_V_COUNT);
+    bw_os_poll();
+    BW_CHECK_EQ("port: IF mirrors the latch", bw_io_read32(BW_REG_IF),
+                OS_IE_H_BLANK | OS_IE_V_COUNT);
+    *(volatile u32 *)bw_ds_ptr(BW_REG_IF) = OS_IE_H_BLANK;   /* acknowledge */
+    bw_io_sync();
+    BW_CHECK_EQ("port: a store to IF acknowledges", bw_os_pending_irqs(),
+                OS_IE_V_COUNT);
+    (void)OS_ResetRequestIrqMask(OS_IE_V_COUNT);
+
+    /* A PXI request goes to the latch, not into IF's bytes.                */
+    (void)OS_DisableInterrupts();
+    (void)bw_pxi_arm7_send(BW_PXI_TAG_NVRAM, 1, 0);
+    BW_CHECK_EQ("port: PXI request latched",
+                bw_os_pending_irqs() & BW_IRQ_IPC_RECV, BW_IRQ_IPC_RECV);
+    {
+        u32 w;
+        BW_CHECK_EQ("port: drain", bw_pxi_arm9_recv(&w), 0);
+    }
+    (void)OS_ResetRequestIrqMask(BW_IRQ_IPC_RECV);
+    (void)OS_EnableInterrupts();
+    BW_CHECK_EQ("port: nothing left", bw_os_pending_irqs(), 0);
+}
 
 static void test_init(void)
 {
@@ -125,11 +166,13 @@ static void test_init(void)
 static void test_os(void)
 {
     u16 *flags = (u16 *)test_os_pxi_bss();
-    int delivered = test_irq_delivered;
 
+    /* Count the receive interrupts from here on; test_init has checked the
+     * table entry is the matched install's.                                */
+    g_02FE0020[18] = counted_recv_handler;
     OSi_SendToPxi(0x10);
     BW_CHECK_EQ("os: ARM7 saw reset request", bw_arm7_os_last_command(), 0x10);
-    BW_CHECK_EQ("os: reply delivered by IRQ", test_irq_delivered > delivered, 1);
+    BW_CHECK_EQ("os: reply delivered by IRQ", g_irq18_taken, 1);
     BW_CHECK_EQ("os: OSi_IsResetOccurred", flags[0], 1);
     BW_CHECK_EQ("os: FIFO drained", bw_pxi_arm9_pending(), 0);
 
@@ -144,18 +187,23 @@ static void test_os(void)
     bw_io_sync();
     BW_CHECK_EQ("os: sync hook took the word", bw_arm7_os_last_command(), 0x10);
     BW_CHECK_EQ("os: reply waiting", bw_pxi_arm9_pending(), 1);
-    BW_CHECK_EQ("os: IF 18 requested",
-                (test_irq_pending() & BW_IRQ_IPC_RECV) != 0, 1);
+    BW_CHECK_EQ("os: IF 18 latched by the OS layer",
+                (bw_os_pending_irqs() & BW_IRQ_IPC_RECV) != 0, 1);
+    BW_CHECK_EQ("os: not taken before a safe point", flags[0], 0);
     (void)OS_EnableInterrupts();
     BW_CHECK_EQ("os: delivered at enable", flags[0], 1);
+    BW_CHECK_EQ("os: IF 18 acknowledged",
+                (bw_os_pending_irqs() & BW_IRQ_IPC_RECV) != 0, 0);
 }
 
 static void test_os_sync(void)
 {
     volatile u8 *p = (volatile u8 *)bw_ds_ptr(0x02FFFFF0u);
 
+    /* OSi_SyncWithOtherProc is the OS layer's shim (sdk/os_system.c): it
+     * leaves the window as both sides leave it once the handshake is done. */
     func_02084B90();
-    BW_CHECK_EQ("sync: ARM7 finished both directions", bw_arm7_os_synced(), 1);
+    BW_CHECK_EQ("sync: tokens equal", p[0] == p[1] && p[0] != 0, 1);
     BW_CHECK_EQ("sync: p[2]", p[2], 1);
     BW_CHECK_EQ("sync: p[3]", p[3], 1);
     BW_CHECK_EQ("sync: lock word", rd32(0x02FFFFB0u), 0xFFFFFFFFu);
@@ -277,21 +325,54 @@ static void test_ctrdg(void)
     BW_CHECK_EQ("ctrdg: ARM9 callback installed", PXI_IsCallbackReady(13, 0), 1);
 }
 
+/*
+ * CARDiCommon as src/matched/arm9_sdk/func_020763BC.c declares it, for the
+ * offset of the thread CARDi_OnFifoRecv wakes (its `u32` is unsigned long).
+ */
+typedef struct {
+    void *cmd;
+    unsigned long flag;
+    unsigned long priority;
+    unsigned long flush_threshold_ic;
+    unsigned long flush_threshold_dc;
+    long lock_owner;
+    int lock_ref;
+    OSThreadQueue lock_queue[1];
+    int lock_target;
+    u8 thread[1216];
+    void (*task_func)(void *);
+    void (*callback)(void *);
+    void *callback_arg;
+    OSThreadQueue busy_q[1];
+    unsigned long src, dst, len, dma;
+    void *DmaCall;
+    int req_type, req_retry, req_mode;
+    OSThread *current_thread_9;
+} TestCardiCommon;
+
 static void test_fs(void)
 {
-    unsigned long *flag =
-        (unsigned long *)((u8 *)test_cardi_common() + sizeof(void *));
+    TestCardiCommon *card = (TestCardiCommon *)test_cardi_common();
+    static OSThread requester;
+
+    memset(&requester, 0, sizeof requester);
+    requester.state = OS_THREAD_STATE_WAITING;
+    card->current_thread_9 = &requester;
 
     PXI_SetFifoRecvCallback(BW_PXI_TAG_FS, func_020763BC);
-    *flag |= 0x20;
+    card->flag |= 0x20;
     BW_CHECK_EQ("fs: init request", PXI_SendWordByFifo(11, 0, 1), 0);
-    BW_CHECK_EQ("fs: waits for the block address", test_wakeups, 0);
+    BW_CHECK_EQ("fs: waits for the block address", requester.state,
+                OS_THREAD_STATE_WAITING);
     BW_CHECK_EQ("fs: block address", PXI_SendWordByFifo(11, 0x0215u, 1), 0);
-    BW_CHECK_EQ("fs: CARDi_OnFifoRecv woke the requester", test_wakeups, 1);
-    BW_CHECK_EQ("fs: busy flag cleared", *flag & 0x20, 0);
-    *flag |= 0x20;
+    BW_CHECK_EQ("fs: CARDi_OnFifoRecv woke the requester", requester.state,
+                OS_THREAD_STATE_READY);
+    BW_CHECK_EQ("fs: busy flag cleared", card->flag & 0x20, 0);
+    requester.state = OS_THREAD_STATE_WAITING;
+    card->flag |= 0x20;
     BW_CHECK_EQ("fs: request 6", PXI_SendWordByFifo(11, 6, 1), 0);
-    BW_CHECK_EQ("fs: second wake", test_wakeups, 2);
+    BW_CHECK_EQ("fs: second wake", requester.state, OS_THREAD_STATE_READY);
+    card->current_thread_9 = NULL;
     BW_CHECK_EQ("fs: requests", bw_arm7_fs_requests(), 2);
     BW_CHECK_EQ("fs: last request", bw_arm7_fs_last_request(), 6);
 }
@@ -350,13 +431,16 @@ static void test_unserved_and_depth(void)
 
 int main(void)
 {
-    /* Before the port resets the PXI, the ARM7 does not run.               */
+    /* Before the port resets the PXI, the ARM7 does not run (the address
+     * space is up, so PXI_IsCallbackReady can read the system work).      */
+    bw_ds_reset();
     bw_arm7_step();
     BW_CHECK_EQ("power: not powered before reset", bw_pxi_powered(), 0);
     BW_CHECK_EQ("power: ARM7 not booted", PXI_IsCallbackReady(12, 1), 0);
 
     boot();
     test_init();
+    test_port();
     test_os();
     test_os_sync();
     test_pm();
