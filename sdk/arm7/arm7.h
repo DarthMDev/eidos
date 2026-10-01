@@ -20,6 +20,8 @@
  *   nvram.c  the firmware flash (tag 4), <save dir>/firmware.bin
  *   mic.c    the microphone (tag 9): registered, silent, no streaming
  *   snd.c    sound command lists (tag 7): the transport, sdk/arm7/snd.h
+ *   tp.c     touch panel (tag 6), sampled from sdk/input.h's stylus
+ *   pad.c    X, Y, DEBUG and the hinge in HW_BUTTON_XY_BUF (no tag)
  *   snd_driver.c  the sound driver behind it, with snd_seq.c (the
  *            sequencer) and snd_hw.c (the sound hardware) (eidos library
  *            only; the transport links without them)
@@ -100,6 +102,8 @@ void bw_arm7_fs_step(void);
  * `known` for the first rule.
  */
 void *bw_arm7_resolve(u32 value, u32 size, void *known, u32 known_size);
+void bw_arm7_tp_init(void);
+void bw_arm7_pad_init(void);
 
 /* The shared-memory handshake's progress: 1 once both directions are done. */
 int bw_arm7_os_synced(void);
@@ -186,6 +190,57 @@ u32  bw_arm7_nvram_writes(void);
 
 /* Microphone commands answered (sdk/arm7/mic.c).                          */
 u32  bw_arm7_mic_commands(void);
+/* ------------------------------------------------------------------ */
+/* Input: the keypad's ARM7 half and the touch panel                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The ARM7's frame: publish X, Y, DEBUG and the hinge (sdk/arm7/pad.c), and
+ * take the automatic touch samples the ARM9 asked for (sdk/arm7/tp.c).
+ * bw_input_frame (sdk/input.h) calls both once per frame.
+ */
+void bw_arm7_pad_frame(void);
+void bw_arm7_tp_frame(void);
+
+/* Power-off for the touch panel: automatic sampling stopped, the command
+ * being assembled dropped (bw_arm7_reset calls it).                       */
+void bw_arm7_tp_reset(void);
+
+/*
+ * The panel's calibration, in the user settings' own layout (0x02FFFC80 +
+ * 0x58, read by TP_GetUserInfo): two raw readings and the pixels they were
+ * taken at.  The stand-in writes it into the user settings at power-on and
+ * models the panel as the line through the two points (sdk/arm7/tp.c).
+ * NULL, or points that share a pixel on either axis, restores the default.
+ * Takes effect at the next bw_arm7_tp_init (ARM7 power-on) for the user
+ * settings and at once for samples.
+ */
+typedef struct BwArm7TpCalibration {
+    u16 raw_x1, raw_y1;
+    u8  dx1, dy1;
+    u16 raw_x2, raw_y2;
+    u8  dx2, dy2;
+} BwArm7TpCalibration;
+void bw_arm7_tp_set_calibration(const BwArm7TpCalibration *c);
+void bw_arm7_tp_calibration(BwArm7TpCalibration *out);
+
+/* The raw reading the panel gives at the centre of bottom-screen pixel
+ * (x, y), under the current calibration.                                  */
+void bw_arm7_tp_raw_of(int x, int y, u32 *raw_x, u32 *raw_y);
+
+typedef struct BwArm7TpState {
+    int auto_on;        /* automatic sampling running                       */
+    u32 frequence;      /* samples a frame                                  */
+    u32 vcount;         /* the first sample's line                          */
+    u32 stability;      /* TP_RequestSetStability's range                   */
+    u32 words;          /* words received on tag 6                          */
+    u32 requests;       /* commands completed                               */
+    u32 last_command;
+    u32 discarded;      /* continuation words with no command open         */
+    u32 samples;        /* samples written to HW_TOUCHPANEL_BUF             */
+    u32 dropped;        /* automatic notifications lost to a full FIFO      */
+} BwArm7TpState;
+const BwArm7TpState *bw_arm7_tp_state(void);
 
 #ifdef __cplusplus
 }

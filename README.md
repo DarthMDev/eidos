@@ -1504,6 +1504,20 @@ register. No key may be bound to two buttons: the word is rebuilt from the
 whole table on every pump, which is also why a key held across a focus change
 cannot leave a bit stuck down.
 
+**Gamepads** go through SDL's game controller API with a second table of the
+same kind (`EidosPadBinding`: a button, or an axis past half its travel). The
+default is positional, DS A/B/X/Y on the east/south/north/west face buttons
+(SDL is told to report positions on Nintendo pads too), the shoulders and
+triggers as L and R, Start and Back as START and SELECT, the d-pad and the
+left stick as the d-pad. Pads plugged in while running are picked up.
+
+**The stylus** is the left mouse button, or a finger, on the bottom screen,
+mapped through the window's current size. Every pump hands the buttons and
+the stylus to the port's input layer (`sdk/input.h`), which puts them where
+the game reads them, `KEYINPUT`, the ARM7's X/Y/hinge halfword and the touch
+panel's PXI protocol, at the next frame boundary. `docs/input.md` is the
+design, including the scripted input tests and the headless boot use.
+
 **The pacer runs at the DS's rate, not at 60 Hz.** A frame is 355 dots x 263
 lines x 6 clocks at 33513982 Hz = 560190 clocks, i.e. 59.8261 Hz and a period
 of 16715113 ns plus 3790034/33513982 of a nanosecond. The pacer keeps that
@@ -1621,13 +1635,17 @@ the title screen. The pieces in the tree:
   raw image, emulator-compatible, replaced atomically), the firmware flash
   in `firmware.bin` (`docs/firmware.md`; the save folder per platform is in
   `docs/installer.md`);
+- `sdk/input.c`, `sdk/arm7/pad.c` and `sdk/arm7/tp.c`, the buttons, the
+  hinge and the touch panel from the host or a script (`docs/input.md`),
+  and `sdk/cp.c`, the divider and square-root unit the touch calibration
+  divides on;
 - `sdk/fs.c` and `sdk/overlay.c`, the ROM file system and overlays onto the
   extract;
 - `bw_port_reset` (`sdk/port.h`), the one power-on: `bw_ds_reset`, then
-  `bw_os_reset`, then `bw_pxi_reset`, then the joins (PXI interrupt requests
-  go to the OS layer's latch, and every `OS_RestoreInterrupts` gives the
-  ARM7 its turn). The boot and every test that runs game code on the whole
-  machine call it rather than the three resets;
+  `bw_os_reset`, then `bw_pxi_reset`, then `bw_cp_reset` (the divider), then
+  the joins (PXI interrupt requests go to the OS layer's latch, and every
+  `OS_RestoreInterrupts` gives the ARM7 its turn). The boot and every test
+  that runs game code on the whole machine call it rather than the resets;
 - `stubs/reimpl_02005124.c`, NitroMain, and `demo/eidos_boot.c`, its
   headless driver.
 

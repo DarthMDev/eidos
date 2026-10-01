@@ -161,6 +161,8 @@ void bw_arm7_boot(void)
     bw_arm7_nvram_init();
     bw_arm7_mic_init();
     /* No wireless responder: arm7.h says why.                             */
+    bw_arm7_tp_init();
+    bw_arm7_pad_init();
 }
 
 void bw_arm7_reset(void)
@@ -174,6 +176,7 @@ void bw_arm7_reset(void)
     g_arm7.sync_sum = 0;
     g_arm7.sync_i = 0;
     g_arm7.os_last_command = 0;
+    bw_arm7_tp_reset();
 }
 
 void bw_arm7_step(void)
