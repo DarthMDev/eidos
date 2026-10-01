@@ -98,6 +98,17 @@ the IPC FIFO). The renderer reads the same registers and memory the game
 wrote (DISPCNT, BGxCNT, scroll, BLDCNT, WIN, VRAM, palette, OAM), so the
 picture is the game's own state, not a parallel description of it.
 
+`sdk/dsmem.c` takes no locks and initialises nothing lazily. The game runs
+one thread at a time (the run token below), so the address space is only
+ever touched by the thread holding it; and `bw_ds_reset` builds every table
+explicitly (regions, register file, VRAMCNT hooks, the bank mapping, the
+registry with `sdk/game_globals.c`'s globals) before any game thread exists.
+A translation before the first reset panics rather than initialising on
+first use. A reset clears the registry and every I/O hook: a module that
+registers its own objects or hooks its own registers does so again after
+each reset. The approximations (flat TWL main RAM, no WRAMCNT banking, the
+first bank owning a page two banks overlap) are listed in the file's header.
+
 ## Threads, interrupts and the frame
 
 NitroSDK threads are preemptive only at interrupt boundaries and the game

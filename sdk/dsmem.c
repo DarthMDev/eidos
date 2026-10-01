@@ -1,0 +1,823 @@
+/*
+ * sdk/dsmem.c -- the DS address space, backed by host memory.
+ *
+ * Why this exists: the matched code reaches hardware and fixed RAM through
+ * integer-literal casts (`*(vu16 *)0x04000208 = 1`), which tools/dsaddr.py
+ * rewrites into bw_ds_ptr(0x04000208u).  This file decides what host byte
+ * each DS address is.  docs/boot.md, "The DS address space", is the design
+ * and sdk/dsmem.h the contract; what follows is how each region is backed
+ * and where the backing is an approximation.
+ *
+ * Lookup order.  The registry of host objects is consulted first, for every
+ * address: a global the port defines and registers at its DS address
+ * (sdk/game_globals.c) is the same bytes whether the matched code names it
+ * or casts its address.  The registry is an array sorted by DS address with
+ * no two ranges overlapping (bw_ds_register panics on an overlap), so a
+ * binary search for the last range starting at or below the address
+ * decides it.  Only then does the address fall through to its region.
+ *
+ * Regions.
+ *   main RAM  16 MiB, flat, TWL layout: no 4 MiB NTR mirroring, so
+ *             0x027FFxxx and 0x02FFFxxx are different bytes.  One
+ *             contiguous host block (pointer arithmetic from a translated
+ *             address must stay inside it), reserved through sdk/host_vm.c
+ *             and committed in 64 KiB pieces as addresses are first
+ *             translated.  A translation commits its own piece and the next
+ *             one, so an object reached through a pointer may straddle one
+ *             piece boundary; a stride past that faults loudly on hosts that
+ *             commit lazily (Win32) rather than writing somewhere wrong.
+ *   WRAM      256 KiB at 0x03000000, mirrored over the whole 0x03xxxxxx
+ *             window.  WRAMCNT banking between the CPUs is not modelled:
+ *             the ARM9 always sees all of it.
+ *   I/O       a 64 KiB register file for 0x04000000-0x0400FFFF, plus 32
+ *             bytes at 0x04100000 for the IPC receive FIFO and the card
+ *             data port, which the SDK reads by literal address too.
+ *   palette   2 KiB, mirrored over 0x05xxxxxx as the hardware does.
+ *   VRAM      the nine banks, through a page table (below).
+ *   OAM       2 KiB, mirrored over 0x07xxxxxx as the hardware does.
+ *
+ * VRAM.  The banks live in one host array in LCDC order (A at 0x06800000
+ * through I ending at 0x068A3FFF), so a bank and the bank after it are
+ * adjacent host bytes, which is what makes the common two-bank layouts (A
+ * then B as main BG, F then G) contiguous for pointer arithmetic too.
+ * bw_vram_remap reads VRAMCNT_A..I and rebuilds a table of 16 KiB pages for
+ * the CPU window (every bank start and every size is a multiple of 16 KiB)
+ * and tables of 8 KiB pieces for the spaces only the engines see
+ * (sdk/dsmem_ext.h).  The mapping follows GBATEK's VRAMCNT table for every
+ * MST/OFS combination; the engine windows are then filled in with their
+ * hardware mirrors (main BG every 512 KiB, main OBJ every 256 KiB, sub BG
+ * and sub OBJ every 128 KiB).  When two banks are mapped over the same page
+ * the hardware ORs their reads and writes both; here the first bank in
+ * A..I order owns the page and the other is not visible there.  The game
+ * does not overlap banks on purpose, so this is an approximation of a
+ * configuration it should never produce.
+ *
+ * The mapping is kept current two ways: the VRAMCNT write hooks bw_ds_reset
+ * installs (bw_io_write*, bw_io_sync), and a check in every VRAM
+ * translation that the ten VRAMCNT bytes still equal the ones the table
+ * was built from.  The second is what lets a matched GX_SetBank* store to
+ * VRAMCNT through bw_ds_ptr and clear the bank on the next line, with no
+ * synchronisation point in between.
+ *
+ * I/O hooks.  One hook per register address, ranges never overlapping
+ * (bw_io_hook panics otherwise).  bw_io_write16/32 store, then run every
+ * hook whose register the store touched, with the register's value before
+ * and after the store, whether or not the value changed (a write-one-to-
+ * clear register needs the call even then).  bw_io_sync compares the file
+ * with the copy taken at the last sync and runs the hook of every register
+ * whose bytes differ; a matched store of an unchanged value is invisible to
+ * it, which is the cost of plain-memory registers (sdk/dsmem.h).  A hook
+ * that updates another hooked register should do it with bw_io_write*, so
+ * that register's hook runs too.
+ *
+ * Threads.  The game runs one thread at a time under the port's run token
+ * (docs/boot.md, "Threads, interrupts and the frame"), so nothing here
+ * locks.  There is no lazy global initialisation either: bw_ds_reset builds
+ * every table explicitly, before any game thread exists, and a translation
+ * before it panics instead of initialising on first use.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "port.h"
+#include "dsmem.h"
+#include "dsmem_ext.h"
+#include "host_vm.h"
+
+/* ------------------------------------------------------------------ */
+/* State                                                               */
+/* ------------------------------------------------------------------ */
+
+static int g_ready;
+
+/* main RAM */
+#define MAIN_PIECE_SHIFT 16u
+#define MAIN_PIECE_SIZE  (1u << MAIN_PIECE_SHIFT)
+#define MAIN_PIECES      (BW_DS_MAIN_SIZE >> MAIN_PIECE_SHIFT)
+
+static u8 *g_main;
+static u8  g_main_committed[MAIN_PIECES];
+
+/* the small fixed regions */
+static u8 g_wram[BW_DS_WRAM_SIZE];
+static u8 g_pal[BW_DS_PAL_SIZE];
+static u8 g_oam[BW_DS_OAM_SIZE];
+
+/* the register file: the 64 KiB window, then the 0x04100000 block */
+#define IO_HI_BASE 0x04100000u
+#define IO_HI_SIZE 0x20u
+#define IO_FILE_SIZE (BW_DS_IO_SIZE + IO_HI_SIZE)
+
+static u8 g_io[IO_FILE_SIZE];
+static u8 g_io_synced[IO_FILE_SIZE];
+
+#define KEYINPUT_OFF 0x130u
+
+struct IoHook {
+    u32           off;     /* index into g_io */
+    u32           width;
+    BwIoWriteHook fn;
+};
+
+#define IO_HOOK_MAX 128
+static struct IoHook g_hooks[IO_HOOK_MAX];
+static int           g_hook_count;
+
+/* the registry */
+struct RegEntry {
+    u32         addr;
+    u32         size;
+    u8         *host;
+    const char *name;
+};
+
+static struct RegEntry *g_reg;
+static size_t           g_reg_count;
+static size_t           g_reg_cap;
+
+/* ------------------------------------------------------------------ */
+/* VRAM state                                                          */
+/* ------------------------------------------------------------------ */
+
+#define VRAM_TOTAL      0xA4000u
+#define VRAM_PAGE_SHIFT 14u
+#define VRAM_PAGE_SIZE  (1u << VRAM_PAGE_SHIFT)
+#define VRAM_PAGES      (BW_DS_VRAM_SIZE >> VRAM_PAGE_SHIFT)
+#define VSLOT_SHIFT     13u
+#define VSLOT_SIZE      (1u << VSLOT_SHIFT)
+#define VSLOT_MAX       (0x80000u >> VSLOT_SHIFT)   /* the texture space */
+
+#define VRAM_LCDC_BASE    0x06800000u
+#define VRAM_MAIN_BG      0x06000000u
+#define VRAM_SUB_BG       0x06200000u
+#define VRAM_MAIN_OBJ     0x06400000u
+#define VRAM_SUB_OBJ      0x06600000u
+
+#define VRAMCNT_OFF 0x240u
+
+static u8  g_vram[VRAM_TOTAL];
+static u8 *g_vpage[VRAM_PAGES];
+static u8 *g_vslot[BW_VSLOT_KINDS][VSLOT_MAX];
+static u8  g_vramcnt_built[BW_VRAM_BANKS];
+
+/* Offset into g_vram, size, and register offset of each bank. */
+static const u32 k_bank_off[BW_VRAM_BANKS] = {
+    0x00000, 0x20000, 0x40000, 0x60000, 0x80000,
+    0x90000, 0x94000, 0x98000, 0xA0000
+};
+static const u32 k_bank_size[BW_VRAM_BANKS] = {
+    0x20000, 0x20000, 0x20000, 0x20000, 0x10000,
+    0x04000, 0x04000, 0x08000, 0x04000
+};
+/* VRAMCNT_A..G are 0x04000240..246; 0x04000247 is WRAMCNT; H and I follow. */
+static const u32 k_bank_reg[BW_VRAM_BANKS] = {
+    0x240, 0x241, 0x242, 0x243, 0x244, 0x245, 0x246, 0x248, 0x249
+};
+
+static const u32 k_slot_size[BW_VSLOT_KINDS] = {
+    0x80000, 0x18000, 0x8000, 0x2000, 0x8000, 0x2000, 0x40000
+};
+
+/* ------------------------------------------------------------------ */
+/* Registry                                                            */
+/* ------------------------------------------------------------------ */
+
+/* Index of the last entry whose range starts at or below addr, or -1. */
+static long reg_floor(u32 addr)
+{
+    size_t lo = 0;
+    size_t hi = g_reg_count;
+
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2u;
+        if (g_reg[mid].addr <= addr) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return (long)lo - 1;
+}
+
+static const struct RegEntry *reg_find(u32 addr)
+{
+    long i = reg_floor(addr);
+
+    if (i >= 0 && addr - g_reg[i].addr < g_reg[i].size) {
+        return &g_reg[i];
+    }
+    return NULL;
+}
+
+static void reg_overlap_panic(u32 addr, u32 size, const char *name,
+                              const struct RegEntry *e)
+{
+    char msg[256];
+
+    snprintf(msg, sizeof(msg),
+             "'%s' [0x%08lX, +0x%lX) overlaps '%s' [0x%08lX, +0x%lX)",
+             name != NULL ? name : "?", (unsigned long)addr,
+             (unsigned long)size, e->name != NULL ? e->name : "?",
+             (unsigned long)e->addr, (unsigned long)e->size);
+    bw_panic("bw_ds_register", addr, msg);
+}
+
+void bw_ds_register(u32 addr, void *host, u32 size, const char *name)
+{
+    long   below;
+    size_t at;
+
+    if (host == NULL || size == 0u) {
+        bw_panic("bw_ds_register", addr, name);
+    }
+    if (addr + size < addr && addr + size != 0u) {
+        bw_panic("bw_ds_register", addr, "range wraps past 0xFFFFFFFF");
+    }
+
+    below = reg_floor(addr);
+    at = (size_t)(below + 1);
+    if (below >= 0 && addr - g_reg[below].addr < g_reg[below].size) {
+        reg_overlap_panic(addr, size, name, &g_reg[below]);
+    }
+    if (at < g_reg_count && g_reg[at].addr - addr < size) {
+        reg_overlap_panic(addr, size, name, &g_reg[at]);
+    }
+
+    if (g_reg_count == g_reg_cap) {
+        size_t cap = g_reg_cap != 0u ? g_reg_cap * 2u : 64u;
+        struct RegEntry *grown = (struct RegEntry *)realloc(
+            g_reg, cap * sizeof(*grown));
+        if (grown == NULL) {
+            bw_panic("bw_ds_register", addr, "out of host memory");
+        }
+        g_reg = grown;
+        g_reg_cap = cap;
+    }
+    memmove(&g_reg[at + 1u], &g_reg[at],
+            (g_reg_count - at) * sizeof(g_reg[0]));
+    g_reg[at].addr = addr;
+    g_reg[at].size = size;
+    g_reg[at].host = (u8 *)host;
+    g_reg[at].name = name;
+    g_reg_count++;
+}
+
+/* ------------------------------------------------------------------ */
+/* Register file                                                       */
+/* ------------------------------------------------------------------ */
+
+/* Index into g_io of [addr, addr + width), or -1 if not wholly inside. */
+static long io_index(u32 addr, u32 width)
+{
+    if (addr >= BW_DS_IO_BASE && addr - BW_DS_IO_BASE <= BW_DS_IO_SIZE - width) {
+        return (long)(addr - BW_DS_IO_BASE);
+    }
+    if (addr >= IO_HI_BASE && addr - IO_HI_BASE <= IO_HI_SIZE - width) {
+        return (long)(BW_DS_IO_SIZE + (addr - IO_HI_BASE));
+    }
+    return -1;
+}
+
+static u32 io_addr_of_index(u32 idx)
+{
+    return idx < BW_DS_IO_SIZE ? BW_DS_IO_BASE + idx
+                               : IO_HI_BASE + (idx - BW_DS_IO_SIZE);
+}
+
+static u32 io_get(const u8 *file, u32 idx, u32 width)
+{
+    switch (width) {
+    case 1:  return file[idx];
+    case 2:  return bw_rd16(file + idx);
+    default: return bw_rd32(file + idx);
+    }
+}
+
+static void io_put(u8 *file, u32 idx, u32 width, u32 v)
+{
+    switch (width) {
+    case 1:  file[idx] = (u8)v; break;
+    case 2:  bw_wr16(file + idx, (u16)v); break;
+    default: bw_wr32(file + idx, v); break;
+    }
+}
+
+static long io_checked(u32 addr, u32 width, const char *who)
+{
+    long idx = io_index(addr, width);
+
+    if (idx < 0) {
+        bw_panic(who, addr, "not in the I/O register file");
+    }
+    return idx;
+}
+
+volatile u8 *bw_io(u32 addr)
+{
+    return (volatile u8 *)&g_io[io_checked(addr, 1, "bw_io")];
+}
+
+u16 bw_io_read16(u32 addr)
+{
+    return (u16)io_get(g_io, (u32)io_checked(addr, 2, "bw_io_read16"), 2);
+}
+
+u32 bw_io_read32(u32 addr)
+{
+    return io_get(g_io, (u32)io_checked(addr, 4, "bw_io_read32"), 4);
+}
+
+static void io_write(u32 addr, u32 width, u32 v, const char *who)
+{
+    u32 idx = (u32)io_checked(addr, width, who);
+    int hit[IO_HOOK_MAX];
+    u32 old[IO_HOOK_MAX];
+    int n = 0;
+    int i;
+
+    for (i = 0; i < g_hook_count; i++) {
+        const struct IoHook *h = &g_hooks[i];
+        if (h->off < idx + width && idx < h->off + h->width) {
+            hit[n] = i;
+            old[n] = io_get(g_io, h->off, h->width);
+            n++;
+        }
+    }
+    io_put(g_io, idx, width, v);
+    memcpy(&g_io_synced[idx], &g_io[idx], width);
+    for (i = 0; i < n; i++) {
+        /* Re-read the slot each time: an earlier hook may have changed the
+         * hook table (it never should, but stale copies would be worse). */
+        const struct IoHook h = g_hooks[hit[i]];
+        h.fn(io_addr_of_index(h.off), old[i], io_get(g_io, h.off, h.width));
+        memcpy(&g_io_synced[h.off], &g_io[h.off], h.width);
+    }
+}
+
+void bw_io_write16(u32 addr, u16 v)
+{
+    io_write(addr, 2, v, "bw_io_write16");
+}
+
+void bw_io_write32(u32 addr, u32 v)
+{
+    io_write(addr, 4, v, "bw_io_write32");
+}
+
+void bw_io_hook(u32 addr, u32 width, BwIoWriteHook hook)
+{
+    u32 idx;
+    int i;
+
+    if (width != 1u && width != 2u && width != 4u) {
+        bw_panic("bw_io_hook", addr, "width must be 1, 2 or 4");
+    }
+    if ((addr & (width - 1u)) != 0u) {
+        bw_panic("bw_io_hook", addr, "register is not aligned to its width");
+    }
+    idx = (u32)io_checked(addr, width, "bw_io_hook");
+
+    for (i = 0; i < g_hook_count; i++) {
+        struct IoHook *h = &g_hooks[i];
+        if (h->off == idx) {
+            if (hook == NULL) {
+                *h = g_hooks[--g_hook_count];
+            } else {
+                h->width = width;
+                h->fn = hook;
+                memcpy(&g_io_synced[idx], &g_io[idx], width);
+            }
+            return;
+        }
+        if (h->off < idx + width && idx < h->off + h->width) {
+            bw_panic("bw_io_hook", addr, "overlaps another register's hook");
+        }
+    }
+    if (hook == NULL) {
+        return;
+    }
+    if (g_hook_count == IO_HOOK_MAX) {
+        bw_panic("bw_io_hook", addr, "hook table full");
+    }
+    g_hooks[g_hook_count].off = idx;
+    g_hooks[g_hook_count].width = width;
+    g_hooks[g_hook_count].fn = hook;
+    g_hook_count++;
+    /* A hook sees changes from the moment it is installed, not before. */
+    memcpy(&g_io_synced[idx], &g_io[idx], width);
+}
+
+void bw_io_sync(void)
+{
+    int i;
+
+    for (i = 0; i < g_hook_count; i++) {
+        const struct IoHook h = g_hooks[i];
+        u32 before;
+
+        if (memcmp(&g_io[h.off], &g_io_synced[h.off], h.width) == 0) {
+            continue;
+        }
+        before = io_get(g_io_synced, h.off, h.width);
+        memcpy(&g_io_synced[h.off], &g_io[h.off], h.width);
+        h.fn(io_addr_of_index(h.off), before, io_get(g_io, h.off, h.width));
+        memcpy(&g_io_synced[h.off], &g_io[h.off], h.width);
+    }
+    memcpy(g_io_synced, g_io, sizeof(g_io));
+}
+
+/* ------------------------------------------------------------------ */
+/* VRAM                                                                */
+/* ------------------------------------------------------------------ */
+
+u8 *bw_vram_bank(int bank, u32 *size_out)
+{
+    if (bank < 0 || bank >= BW_VRAM_BANKS) {
+        if (size_out != NULL) {
+            *size_out = 0;
+        }
+        return NULL;
+    }
+    if (size_out != NULL) {
+        *size_out = k_bank_size[bank];
+    }
+    return &g_vram[k_bank_off[bank]];
+}
+
+/* Map `size` bytes of bank memory at CPU address `ds`; first bank wins. */
+static void map_cpu(u32 ds, u8 *mem, u32 size)
+{
+    u32 off;
+
+    for (off = 0; off < size; off += VRAM_PAGE_SIZE) {
+        u32 page = (ds - BW_DS_VRAM_BASE + off) >> VRAM_PAGE_SHIFT;
+        if (page < VRAM_PAGES && g_vpage[page] == NULL) {
+            g_vpage[page] = mem + off;
+        }
+    }
+}
+
+static void map_slot(int kind, u32 at, u8 *mem, u32 size)
+{
+    u32 off;
+
+    for (off = 0; off < size; off += VSLOT_SIZE) {
+        u32 piece = (at + off) >> VSLOT_SHIFT;
+        if (at + off < k_slot_size[kind] && g_vslot[kind][piece] == NULL) {
+            g_vslot[kind][piece] = mem + off;
+        }
+    }
+}
+
+/* Repeat the first `period` bytes of a 2 MiB engine window over all of it. */
+static void mirror_window(u32 base, u32 period)
+{
+    u32 first = (base - BW_DS_VRAM_BASE) >> VRAM_PAGE_SHIFT;
+    u32 per = period >> VRAM_PAGE_SHIFT;
+    u32 pages = 0x200000u >> VRAM_PAGE_SHIFT;
+    u32 p;
+
+    for (p = per; p < pages; p++) {
+        u8 *src = g_vpage[first + (p % per)];
+        if (g_vpage[first + p] == NULL && src != NULL) {
+            g_vpage[first + p] = src;
+        }
+    }
+}
+
+static void map_bank(int bank, u8 cnt)
+{
+    u8 *mem = &g_vram[k_bank_off[bank]];
+    u32 size = k_bank_size[bank];
+    u32 ofs = (cnt >> 3) & 3u;
+    u32 mst = cnt & 7u;
+    u32 fg_ofs = 0x4000u * (ofs & 1u) + 0x10000u * (ofs >> 1);
+
+    if ((cnt & 0x80u) == 0u) {
+        return;
+    }
+    if (bank <= BW_VRAM_B) {
+        mst &= 3u;   /* A and B have a two-bit MST */
+    }
+    if (mst == 0u) {
+        map_cpu(VRAM_LCDC_BASE + k_bank_off[bank], mem, size);
+        return;
+    }
+
+    switch (bank) {
+    case BW_VRAM_A:
+    case BW_VRAM_B:
+        if (mst == 1u) {
+            map_cpu(VRAM_MAIN_BG + 0x20000u * ofs, mem, size);
+        } else if (mst == 2u) {
+            map_cpu(VRAM_MAIN_OBJ + 0x20000u * (ofs & 1u), mem, size);
+        } else {
+            map_slot(BW_VSLOT_TEX, 0x20000u * ofs, mem, size);
+        }
+        break;
+    case BW_VRAM_C:
+    case BW_VRAM_D:
+        if (mst == 1u) {
+            map_cpu(VRAM_MAIN_BG + 0x20000u * ofs, mem, size);
+        } else if (mst == 2u) {
+            map_slot(BW_VSLOT_ARM7, 0x20000u * (ofs & 1u), mem, size);
+        } else if (mst == 3u) {
+            map_slot(BW_VSLOT_TEX, 0x20000u * ofs, mem, size);
+        } else if (mst == 4u) {
+            map_cpu(bank == BW_VRAM_C ? VRAM_SUB_BG : VRAM_SUB_OBJ, mem, size);
+        }
+        break;
+    case BW_VRAM_E:
+        if (mst == 1u) {
+            map_cpu(VRAM_MAIN_BG, mem, size);
+        } else if (mst == 2u) {
+            map_cpu(VRAM_MAIN_OBJ, mem, size);
+        } else if (mst == 3u) {
+            map_slot(BW_VSLOT_TEXPAL, 0, mem, size);
+        } else if (mst == 4u) {
+            map_slot(BW_VSLOT_BGEXT_MAIN, 0, mem, 0x8000u);
+        }
+        break;
+    case BW_VRAM_F:
+    case BW_VRAM_G:
+        if (mst == 1u) {
+            map_cpu(VRAM_MAIN_BG + fg_ofs, mem, size);
+        } else if (mst == 2u) {
+            map_cpu(VRAM_MAIN_OBJ + fg_ofs, mem, size);
+        } else if (mst == 3u) {
+            map_slot(BW_VSLOT_TEXPAL, 0x4000u * ((ofs & 1u) + (ofs >> 1) * 4u),
+                     mem, size);
+        } else if (mst == 4u) {
+            map_slot(BW_VSLOT_BGEXT_MAIN, 0x4000u * (ofs & 1u), mem, size);
+        } else if (mst == 5u) {
+            map_slot(BW_VSLOT_OBJEXT_MAIN, 0, mem, 0x2000u);
+        }
+        break;
+    case BW_VRAM_H:
+        if (mst == 1u) {
+            map_cpu(VRAM_SUB_BG, mem, size);
+        } else if (mst == 2u) {
+            map_slot(BW_VSLOT_BGEXT_SUB, 0, mem, size);
+        }
+        break;
+    case BW_VRAM_I:
+        if (mst == 1u) {
+            map_cpu(VRAM_SUB_BG + 0x8000u, mem, size);
+        } else if (mst == 2u) {
+            map_cpu(VRAM_SUB_OBJ, mem, size);
+        } else if (mst == 3u) {
+            map_slot(BW_VSLOT_OBJEXT_SUB, 0, mem, 0x2000u);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void bw_vram_remap(void)
+{
+    int b;
+
+    memset(g_vpage, 0, sizeof(g_vpage));
+    memset(g_vslot, 0, sizeof(g_vslot));
+    for (b = 0; b < BW_VRAM_BANKS; b++) {
+        g_vramcnt_built[b] = g_io[k_bank_reg[b]];
+        map_bank(b, g_vramcnt_built[b]);
+    }
+    mirror_window(VRAM_MAIN_BG, 0x80000u);
+    mirror_window(VRAM_SUB_BG, 0x20000u);
+    mirror_window(VRAM_MAIN_OBJ, 0x40000u);
+    mirror_window(VRAM_SUB_OBJ, 0x20000u);
+}
+
+/* Rebuild the tables if a VRAMCNT byte moved since they were built. */
+static void vram_current(void)
+{
+    int b;
+
+    for (b = 0; b < BW_VRAM_BANKS; b++) {
+        if (g_io[k_bank_reg[b]] != g_vramcnt_built[b]) {
+            bw_vram_remap();
+            return;
+        }
+    }
+}
+
+u8 *bw_vram_slot(int kind, u32 offset, u32 *contig_out)
+{
+    u8 *piece;
+
+    if (contig_out != NULL) {
+        *contig_out = 0;
+    }
+    if (kind < 0 || kind >= BW_VSLOT_KINDS || offset >= k_slot_size[kind]) {
+        return NULL;
+    }
+    vram_current();
+    piece = g_vslot[kind][offset >> VSLOT_SHIFT];
+    if (piece == NULL) {
+        return NULL;
+    }
+    if (contig_out != NULL) {
+        /* Pieces of one bank are adjacent host bytes; count how far on. */
+        u32 n = VSLOT_SIZE - (offset & (VSLOT_SIZE - 1u));
+        u32 p = (offset >> VSLOT_SHIFT) + 1u;
+        while (p < (k_slot_size[kind] >> VSLOT_SHIFT)
+               && g_vslot[kind][p] == piece + (p - (offset >> VSLOT_SHIFT)) * VSLOT_SIZE) {
+            n += VSLOT_SIZE;
+            p++;
+        }
+        *contig_out = n;
+    }
+    return piece + (offset & (VSLOT_SIZE - 1u));
+}
+
+static void vramcnt_hook(u32 addr, u32 old_value, u32 new_value)
+{
+    (void)addr;
+    (void)old_value;
+    (void)new_value;
+    bw_vram_remap();
+}
+
+/* ------------------------------------------------------------------ */
+/* Translation                                                         */
+/* ------------------------------------------------------------------ */
+
+static u8 *main_ptr(u32 addr)
+{
+    u32 off = addr - BW_DS_MAIN_BASE;
+    u32 piece = off >> MAIN_PIECE_SHIFT;
+    u32 last = piece + 1u < MAIN_PIECES ? piece + 1u : piece;
+    u32 p;
+
+    for (p = piece; p <= last; p++) {
+        if (!g_main_committed[p]) {
+            if (bw_vm_commit(g_main + (size_t)p * MAIN_PIECE_SIZE,
+                             MAIN_PIECE_SIZE) != 0) {
+                return NULL;
+            }
+            g_main_committed[p] = 1;
+        }
+    }
+    return g_main + off;
+}
+
+void *bw_ds_try_ptr(u32 addr)
+{
+    const struct RegEntry *e;
+    long idx;
+
+    if (!g_ready) {
+        return NULL;
+    }
+    e = reg_find(addr);
+    if (e != NULL) {
+        return e->host + (addr - e->addr);
+    }
+
+    switch (addr >> 24) {
+    case BW_DS_MAIN_BASE >> 24:
+        return main_ptr(addr);
+    case BW_DS_WRAM_BASE >> 24:
+        return &g_wram[addr & (BW_DS_WRAM_SIZE - 1u)];
+    case BW_DS_IO_BASE >> 24:
+        idx = io_index(addr, 1);
+        return idx >= 0 ? (void *)&g_io[idx] : NULL;
+    case BW_DS_PAL_BASE >> 24:
+        return &g_pal[addr & (BW_DS_PAL_SIZE - 1u)];
+    case BW_DS_VRAM_BASE >> 24: {
+        u8 *page;
+        vram_current();
+        page = g_vpage[(addr - BW_DS_VRAM_BASE) >> VRAM_PAGE_SHIFT];
+        return page != NULL ? page + (addr & (VRAM_PAGE_SIZE - 1u)) : NULL;
+    }
+    case BW_DS_OAM_BASE >> 24:
+        return &g_oam[addr & (BW_DS_OAM_SIZE - 1u)];
+    default:
+        return NULL;
+    }
+}
+
+void *bw_ds_ptr(u32 addr)
+{
+    void *p;
+
+    if (!g_ready) {
+        bw_panic("bw_ds_ptr", addr, "bw_ds_reset has not been called");
+    }
+    p = bw_ds_try_ptr(addr);
+    if (p == NULL) {
+        const char *why = "address outside every backed DS region";
+        if (addr >> 24 == BW_DS_VRAM_BASE >> 24) {
+            why = "no VRAM bank is mapped there by VRAMCNT";
+        } else if (addr >> 24 == BW_DS_MAIN_BASE >> 24) {
+            why = "the host refused to commit main RAM";
+        } else if (addr >> 24 == BW_DS_IO_BASE >> 24) {
+            why = "I/O address outside the port's register file";
+        }
+        bw_panic("bw_ds_ptr", addr, why);
+    }
+    return p;
+}
+
+/* Offset of h in [base, base + size), or -1.  Through uintptr_t, because
+ * relational comparison of pointers into different objects is undefined. */
+static long host_offset(uintptr_t h, const void *base, size_t size)
+{
+    uintptr_t b = (uintptr_t)base;
+
+    if (base != NULL && h >= b && h - b < size) {
+        return (long)(h - b);
+    }
+    return -1;
+}
+
+u32 bw_ds_addr_of(const void *host)
+{
+    uintptr_t h = (uintptr_t)host;
+    long off;
+    size_t i;
+
+    if (host == NULL || !g_ready) {
+        return 0;
+    }
+    /* Linear: the reverse direction is for the rare place the game keeps an
+     * address as a number, not for every access. */
+    for (i = 0; i < g_reg_count; i++) {
+        off = host_offset(h, g_reg[i].host, g_reg[i].size);
+        if (off >= 0) {
+            return g_reg[i].addr + (u32)off;
+        }
+    }
+    if ((off = host_offset(h, g_main, BW_DS_MAIN_SIZE)) >= 0) {
+        return BW_DS_MAIN_BASE + (u32)off;
+    }
+    if ((off = host_offset(h, g_wram, sizeof(g_wram))) >= 0) {
+        return BW_DS_WRAM_BASE + (u32)off;
+    }
+    if ((off = host_offset(h, g_io, sizeof(g_io))) >= 0) {
+        return io_addr_of_index((u32)off);
+    }
+    if ((off = host_offset(h, g_pal, sizeof(g_pal))) >= 0) {
+        return BW_DS_PAL_BASE + (u32)off;
+    }
+    if ((off = host_offset(h, g_oam, sizeof(g_oam))) >= 0) {
+        return BW_DS_OAM_BASE + (u32)off;
+    }
+    if (host_offset(h, g_vram, sizeof(g_vram)) >= 0) {
+        /* The first CPU address the bank byte is visible at: the engine
+         * windows come before their mirrors and before LCDC. */
+        u32 p;
+        vram_current();
+        for (p = 0; p < VRAM_PAGES; p++) {
+            off = host_offset(h, g_vpage[p], VRAM_PAGE_SIZE);
+            if (off >= 0) {
+                return BW_DS_VRAM_BASE + (p << VRAM_PAGE_SHIFT) + (u32)off;
+            }
+        }
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Reset                                                               */
+/* ------------------------------------------------------------------ */
+
+void bw_ds_reset(void)
+{
+    int b;
+
+    if (g_main == NULL) {
+        g_main = (u8 *)bw_vm_reserve(BW_DS_MAIN_SIZE);
+        if (g_main == NULL) {
+            bw_panic("bw_ds_reset", BW_DS_MAIN_BASE,
+                     "cannot reserve 16 MiB for main RAM");
+        }
+    } else {
+        bw_vm_discard(g_main, BW_DS_MAIN_SIZE);
+    }
+    memset(g_main_committed, 0, sizeof(g_main_committed));
+
+    memset(g_wram, 0, sizeof(g_wram));
+    memset(g_pal, 0, sizeof(g_pal));
+    memset(g_oam, 0, sizeof(g_oam));
+    memset(g_vram, 0, sizeof(g_vram));
+    memset(g_io, 0, sizeof(g_io));
+    /* KEYINPUT is active low: every button released. */
+    bw_wr16(&g_io[KEYINPUT_OFF], 0x03FFu);
+    memcpy(g_io_synced, g_io, sizeof(g_io));
+
+    g_hook_count = 0;
+    g_reg_count = 0;
+    g_ready = 1;
+
+    for (b = 0; b < BW_VRAM_BANKS; b++) {
+        bw_io_hook(BW_DS_IO_BASE + k_bank_reg[b], 1, vramcnt_hook);
+    }
+    bw_vram_remap();
+
+    bw_game_globals_register();
+}
