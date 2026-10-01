@@ -6,11 +6,14 @@
 #   ctest --test-dir build --output-on-failure
 #
 # Nothing here compiles the DS build.  The matched sources under
-# ${ALETHEIA_ROOT}/src/matched/ are compiled *in place*, unchanged, for the
-# host; the aletheia repository's own DS build still compiles the same files
-# with mwccarm through its tools/csrc.py.  A matched file that has to change
-# to build here has to be re-verified against the ROM in the same commit, in
-# the aletheia repository (README.md, "Portability rules").
+# ${ALETHEIA_ROOT}/src/matched/ are compiled unchanged for the host, through
+# a build-tree copy in which tools/dsaddr.py has turned each cast of a fixed
+# DS address into a call of bw_ds_ptr (cmake/dsaddr.cmake; a file with no
+# such cast is copied byte for byte); the aletheia repository's own DS
+# build still compiles the same files with mwccarm through its
+# tools/csrc.py.  A matched file that has to change to build here has to be
+# re-verified against the ROM in the same commit, in the aletheia
+# repository (README.md, "Portability rules").
 #
 
 cmake_minimum_required(VERSION 3.16)
@@ -386,6 +389,15 @@ else()
     list(APPEND BW_STUB_SOURCES ${BW_TCBL_REIMPL})
 endif()
 
+# --- fixed DS addresses ----------------------------------------------------
+# Every matched source is compiled from a build-tree copy that
+# tools/dsaddr.py has rewritten (docs/boot.md, "Fixed addresses").  From
+# here on BW_MATCHED_SOURCES names the copies, and a per-source property on
+# a matched file is set on eidos_dsaddr_path() of it.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/dsaddr.cmake)
+set(BW_MATCHED_ORIGINALS ${BW_MATCHED_SOURCES})
+eidos_dsaddr(BW_MATCHED_SOURCES ${BW_MATCHED_SOURCES})
+
 # ---------------------------------------------------------------------------
 # The engine
 # ---------------------------------------------------------------------------
@@ -664,9 +676,11 @@ endif()
 #   0x02146B64  sRootList (func_020606D0.c)   g_02146B64 (func_020606A8.c)
 #   0x02146954  g_EnvModule (everywhere)      g_02146954 (func_0202FED8.c)
 if(EIDOS_HEAP_MATCHED)
-    set_source_files_properties(${ALETHEIA_ROOT}/src/matched/arm9/func_020606A8.c
+    eidos_dsaddr_path(_src ${ALETHEIA_ROOT}/src/matched/arm9/func_020606A8.c)
+    set_source_files_properties(${_src}
         PROPERTIES COMPILE_DEFINITIONS "g_02146B64=sRootList")
-    set_source_files_properties(${ALETHEIA_ROOT}/src/matched/arm9/func_0202FED8.c
+    eidos_dsaddr_path(_src ${ALETHEIA_ROOT}/src/matched/arm9/func_0202FED8.c)
+    set_source_files_properties(${_src}
         PROPERTIES COMPILE_DEFINITIONS "g_02146954=g_EnvModule")
 endif()
 
@@ -1027,6 +1041,25 @@ target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test
 target_link_libraries(test_extract PRIVATE eidos_install)
 add_dependencies(test_extract bw_synth)
 add_test(NAME test_extract COMMAND test_extract ${BW_SYNTH_DIR})
+
+# tools/dsaddr.py: every cast form, the prelude against sdk/dsmem.h on this
+# compiler, every matched source in this build parsed after its rewrite,
+# and a dry run over the whole of aletheia's src/matched (idempotent, no
+# line moves).  The source list is the one this configuration compiles.
+string(REPLACE ";" "\n" _dsaddr_list "${BW_MATCHED_ORIGINALS}")
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/dsaddr_sources.txt "${_dsaddr_list}\n")
+if(MSVC)
+    set(_dsaddr_cc_id MSVC)
+else()
+    set(_dsaddr_cc_id GNU)
+endif()
+add_test(NAME test_dsaddr
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dsaddr.py
+            --aletheia-root=${ALETHEIA_ROOT}
+            --sources=${CMAKE_CURRENT_BINARY_DIR}/dsaddr_sources.txt
+            --cc=${CMAKE_C_COMPILER}
+            --cc-id=${_dsaddr_cc_id}
+            "--cflags=${CMAKE_C_FLAGS}")
 
 # ---------------------------------------------------------------------------
 # eidos_view -- the demo, and the first visible output
