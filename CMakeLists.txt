@@ -545,6 +545,7 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/nsbmd.c      # NSBMD/NSBTX, dictionaries, shapes
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/gx.c         # the display-list interpreter
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/raster.c     # the software rasteriser
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/light.c      # the lighting equation, for hw3d.c
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/hw3d.c       # the 3D hardware: FIFO, ports, registers, swap
 
     # engine/audio/ -- the SDAT sequencer and mixer, the host's stand-in for

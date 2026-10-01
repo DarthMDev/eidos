@@ -128,6 +128,63 @@ void g2d_blend_alpha(const u8 first[3], const u8 second[3],
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* The 6-bit stage after the layer mix                                 */
+/* ------------------------------------------------------------------ */
+
+u32 g2d_c5to6(u32 c5)
+{
+    if (c5 > 31u) {
+        c5 = 31u;
+    }
+    return c5 != 0 ? c5 * 2u + 1u : 0u;
+}
+
+u32 g2d_c8to6(u8 c8)
+{
+    return ((u32)c8 * 63u + 127u) / 255u;
+}
+
+u8 g2d_c6to8(u32 c6)
+{
+    if (c6 > 63u) {
+        c6 = 63u;
+    }
+    return (u8)(c6 * 255u / 63u);
+}
+
+void g2d_blend_3d(const u8 top[3], const u8 below[3], u32 alpha5, u8 out6[3])
+{
+    u32 i;
+
+    if (alpha5 > 31u) {
+        alpha5 = 31u;
+    }
+    for (i = 0; i < 3u; i++) {
+        u32 a = g2d_c8to6(top[i]);
+        u32 b = g2d_c5to6(to5(below[i]));
+
+        out6[i] = (u8)((a * (alpha5 + 1u) + b * (31u - alpha5)) >> 5);
+    }
+}
+
+void g2d_master_bright6(u8 c6[3], u32 factor, int up)
+{
+    u32 i;
+
+    factor = clamp16(factor);
+    for (i = 0; i < 3u; i++) {
+        u32 c = c6[i] > 63u ? 63u : c6[i];
+
+        if (up) {
+            c += ((63u - c) * factor) >> 4;
+        } else {
+            c -= (c * factor) >> 4;
+        }
+        c6[i] = (u8)c;
+    }
+}
+
 void g2d_blend_brightness(const u8 first[3], u32 evy, int up, u8 out[3])
 {
     u32 i;

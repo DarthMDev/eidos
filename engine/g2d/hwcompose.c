@@ -61,17 +61,40 @@
  * **Colour.**  Palette RAM and extended palettes are BGR555; a colour is
  * expanded as `c * 255 / 31`, the same expansion NCLR parsing uses, so
  * the 5-bit fold in window.c is exact on every colour drawn here.  The
- * master brightness (MASTER_BRIGHT, 0x0400006C / 0x0400106C) is applied
- * last with the same arithmetic as BLDY.  On hardware it acts on the
- * 6-bit-per-channel output stage; this does it in 5 bits, which can differ
- * by one 6-bit step on a partially faded pixel and is exact at factor 0
- * and 16.
+ * compositor also hands back every pixel's value in the 6-bit stage that
+ * follows the layer mix (G2dFrameDesc.out6), and the master brightness
+ * (MASTER_BRIGHT, 0x0400006C / 0x0400106C) is applied there, in the
+ * hardware's 6 bits per channel (g2d_master_bright6); a pixel it changes
+ * is expanded from 6 bits for the host, an unfaded screen is the
+ * compositor's output untouched.
  *
- * Not drawn, and reported through the G2D_HW_UNSUP_* flags: BG mode 6's
- * large-screen bitmap, BG mode 7, display mode 3 (main memory display),
- * bitmap OBJs, and mosaic (ignored: the layer is drawn without it).  The
- * display capture is out of scope.  BG0HOFS does not scroll the 3D layer
- * here.
+ * **The 3D layer** is the 3D engine's frame (engine/g3d/hw3d.c), alpha
+ * included: alpha 0 is transparent and the 2D layers beneath show, any
+ * other alpha blends with a second target beneath by the 3D layer's own
+ * rule (g2d.h, G2dLayer3d), and BG0HOFS scrolls it.
+ *
+ * **Mosaic** (MOSAIC, 0x0400004C / 0x0400104C).  A BG whose BGxCNT bit 6
+ * is set shows, at screen (x, y), what it would show at (x - x mod H,
+ * y - y mod V), H and V the register's BG sizes plus one: the layer is
+ * resolved as usual and then sampled through that grid into a
+ * G2dLayerRaster, which covers text, affine, extended and bitmap BGs
+ * alike.  An OBJ with attr0 bit 12 does the same with the OBJ sizes,
+ * through the same screen grid, inside its own box: [AP] where the grid
+ * cell starts left of or above the OBJ the OBJ's first column or row is
+ * repeated, which is this file's choice for a case public documentation
+ * does not settle.  The mosaic bit on BG0 in 3D mode is ignored and
+ * flagged.
+ *
+ * **The display capture** (DISPCAPCNT) runs in g2d_hw_render; g2d.h says
+ * what it does.  The main engine's graphics screen is composed for it
+ * even when the display mode shows something else.
+ *
+ * Not drawn, and reported through the G2D_HW_UNSUP_* flags, deliberately:
+ * BG mode 6's large-screen bitmap, BG mode 7, display mode 3 (main memory
+ * display) and capture source B from main memory (no DMA feeds the display
+ * FIFO in the port), bitmap OBJs.  The game's matched code sets none of
+ * them as a constant (no GX_SetOBJVRamModeBmp, no BG mode 6 or display
+ * mode 3 in any GX_SetGraphicsMode call, no write to DISP_MMEM_FIFO).
  *
  * The register layouts are public NDS hardware documentation.  Nothing
  * here is derived from any other decompilation, port or emulator.
@@ -102,6 +125,7 @@
 #define REG_BLDCNT    0x50u
 #define REG_BLDALPHA  0x52u
 #define REG_BLDY      0x54u
+#define REG_MOSAIC    0x4Cu
 #define REG_MASTER_BRIGHT 0x6Cu
 #define REG_SUB_BASE  0x1000u
 #define REG_POWCNT1   0x304u
@@ -220,6 +244,7 @@ typedef struct Engine {
     u8        *raster_px[4];
     u32        n_rasters;
     G2dLayer3d layer3d;
+    u32        mosaic_bgs;  /* BGxCNT bit 6, one bit per BG             */
 
     /* The OBJ line buffer. */
     u8  *obj_index;        /* palette index, 0 = no OBJ pixel           */
@@ -538,11 +563,11 @@ static int build_bgs(Engine *e, const u8 *rgba3d)
         if ((e->dispcnt & (0x100u << n)) == 0 || kind == KIND_NONE) {
             continue;
         }
-        if (cnt & 0x40u) {
-            e->unsup |= G2D_HW_UNSUP_MOSAIC;
-        }
         if (n == 0 && e->main && (e->dispcnt & 0x8u)) {
             /* BG0 is the 3D layer. */
+            if (cnt & 0x40u) {
+                e->unsup |= G2D_HW_UNSUP_MOSAIC;
+            }
             if (rgba3d == NULL) {
                 e->unsup |= G2D_HW_UNSUP_NO_3D;
                 continue;
@@ -553,7 +578,11 @@ static int build_bgs(Engine *e, const u8 *rgba3d)
             e->layer3d.priority = cnt & 3u;
             e->layer3d.bg_index = 0;
             e->layer3d.enabled = 1;
+            e->layer3d.hofs = (s32)(reg16(e, REG_BG0HOFS) & 0x1FFu);
             continue;
+        }
+        if (cnt & 0x40u) {
+            e->mosaic_bgs |= 1u << n;
         }
         switch (kind) {
         case KIND_TEXT:
@@ -606,6 +635,126 @@ static int build_bgs(Engine *e, const u8 *rgba3d)
 }
 
 /* ------------------------------------------------------------------ */
+/* BG mosaic                                                           */
+/* ------------------------------------------------------------------ */
+
+/* The slot of the enabled raster standing for BG n, or -1. */
+static int raster_slot(const Engine *e, u32 n)
+{
+    u32 i;
+
+    for (i = 0; i < e->n_rasters; i++) {
+        if (e->rasters[i].enabled && e->rasters[i].bg_index == n) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+/* BG n's own pixel at (x, y) from its text or affine description, into an
+ * R,G,B,A pixel, A 0 where the layer is transparent. */
+static void layer_pixel(const Engine *e, u32 n, s32 x, s32 y, u8 *out)
+{
+    const G2dPalette *pal = NULL;
+    u8 index = 0;
+    u32 ci = 0, i;
+
+    out[3] = 0;
+    if (e->bgs[n].enabled) {
+        if (g2d_bg_sample(&e->bgs[n], x, y, &index, &ci) && index != 0) {
+            pal = e->bgs[n].pal;
+        }
+    } else {
+        for (i = 0; i < e->n_abgs; i++) {
+            const G2dBgAffineLayer *a = &e->abgs[i];
+
+            if (a->enabled && a->bg_index == n) {
+                if (g2d_bg_affine_sample(a, x, y, &index, &ci) && index != 0) {
+                    pal = a->pal;
+                }
+                break;
+            }
+        }
+    }
+    if (pal != NULL && ci < pal->count) {
+        put_rgb(out, pal->colors[ci]);
+    }
+}
+
+/*
+ * Every BG with its mosaic bit set, resampled through the MOSAIC grid into
+ * a raster that takes the BG's slot (the text or affine description it
+ * came from is disabled; an existing raster is resampled in place).
+ */
+static int apply_mosaic(Engine *e)
+{
+    u8 m = e->io[REG_MOSAIC];
+    u32 mh = (m & 0xFu) + 1u, mv = ((u32)m >> 4) + 1u;
+    u32 n;
+
+    if (e->mosaic_bgs == 0 || (mh == 1u && mv == 1u)) {
+        return 0;
+    }
+    for (n = 0; n < 4u; n++) {
+        G2dLayerRaster *r;
+        u8 *src, *dst;
+        u32 x, y, i;
+        int slot;
+
+        if ((e->mosaic_bgs & (1u << n)) == 0) {
+            continue;
+        }
+        src = (u8 *)malloc((size_t)SCREEN_PX * 4u);
+        if (src == NULL) {
+            return -1;
+        }
+        slot = raster_slot(e, n);
+        if (slot >= 0) {
+            dst = e->raster_px[slot];
+            memcpy(src, dst, (size_t)SCREEN_PX * 4u);
+        } else {
+            slot = (int)e->n_rasters;
+            for (y = 0; y < SCREEN_H; y++) {
+                for (x = 0; x < SCREEN_W; x++) {
+                    layer_pixel(e, n, (s32)x, (s32)y,
+                                src + ((size_t)y * SCREEN_W + x) * 4u);
+                }
+            }
+            dst = (u8 *)calloc(SCREEN_PX, 4u);
+            if (dst == NULL) {
+                free(src);
+                return -1;
+            }
+            e->raster_px[slot] = dst;
+            r = &e->rasters[slot];
+            memset(r, 0, sizeof(*r));
+            r->rgba = dst;
+            r->width = SCREEN_W;
+            r->height = SCREEN_H;
+            r->priority = reg16(e, REG_BG0CNT + n * 2u) & 3u;
+            r->bg_index = n;
+            r->enabled = 1;
+            e->n_rasters++;
+            e->bgs[n].enabled = 0;
+            for (i = 0; i < e->n_abgs; i++) {
+                if (e->abgs[i].bg_index == n) {
+                    e->abgs[i].enabled = 0;
+                }
+            }
+        }
+        for (y = 0; y < SCREEN_H; y++) {
+            for (x = 0; x < SCREEN_W; x++) {
+                memcpy(dst + ((size_t)y * SCREEN_W + x) * 4u,
+                       src + ((size_t)(y - y % mv) * SCREEN_W + (x - x % mh)) * 4u,
+                       4u);
+            }
+        }
+        free(src);
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* OBJs                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -631,22 +780,25 @@ static u8 obj_texel(const Engine *e, u32 tile, u32 w, int bpp8, u32 tx, u32 ty)
     return (u8)((tx & 1u) ? (b >> 4) : (b & 0x0Fu));
 }
 
+/* `mh`, `mv`: the OBJ mosaic grid, 1 and 1 for an OBJ without mosaic. */
 static void paint_obj(Engine *e, const u8 *canvas, u32 cw, u32 ch,
                       u32 x0, u32 y0, u32 prio, u32 mode, int bpp8,
-                      u32 palrow)
+                      u32 palrow, u32 mh, u32 mv)
 {
     int ext = bpp8 && (e->dispcnt & 0x80000000u) != 0;
     u32 cy, cx;
 
     for (cy = 0; cy < ch; cy++) {
         u32 sy = (y0 + cy) & 0xFFu;
+        u32 my = cy < sy % mv ? 0u : cy - sy % mv;
 
         if (sy >= SCREEN_H) {
             continue;
         }
         for (cx = 0; cx < cw; cx++) {
             u32 sx = (x0 + cx) & 0x1FFu;
-            u8 v = canvas[(size_t)cy * cw + cx];
+            u32 mx = cx < sx % mh ? 0u : cx - sx % mh;
+            u8 v = canvas[(size_t)my * cw + mx];
             size_t at;
 
             if (sx >= SCREEN_W || v == 0) {
@@ -697,9 +849,6 @@ static int build_objs(Engine *e)
             e->unsup |= G2D_HW_UNSUP_BITMAP_OBJ;
             continue;
         }
-        if (a0 & 0x1000u) {
-            e->unsup |= G2D_HW_UNSUP_MOSAIC;
-        }
         w = g2d_obj_width(shape, (u32)a1 >> 14);
         h = g2d_obj_height(shape, (u32)a1 >> 14);
         for (ty = 0; ty < h; ty++) {
@@ -734,7 +883,9 @@ static int build_objs(Engine *e)
             }
         }
         paint_obj(e, canvas, cw, ch, a1 & 0x1FFu, a0 & 0xFFu,
-                  ((u32)a2 >> 10) & 3u, mode, bpp8, ((u32)a2 >> 12) & 0xFu);
+                  ((u32)a2 >> 10) & 3u, mode, bpp8, ((u32)a2 >> 12) & 0xFu,
+                  (a0 & 0x1000u) ? (e->io[REG_MOSAIC + 1u] & 0xFu) + 1u : 1u,
+                  (a0 & 0x1000u) ? ((u32)e->io[REG_MOSAIC + 1u] >> 4) + 1u : 1u);
     }
     return 0;
 }
@@ -812,7 +963,9 @@ static int emit_obj_poses(Engine *e)
 /* One engine                                                          */
 /* ------------------------------------------------------------------ */
 
-static void master_bright(const Engine *e, u8 *rgba)
+/* MASTER_BRIGHT on the 6-bit stage `out6`, the result expanded into
+ * `rgba`; a screen it does not change is left as composed. */
+static void master_bright(const Engine *e, u8 *rgba, const u8 *out6)
 {
     u16 mb = reg16(e, REG_MASTER_BRIGHT);
     u32 mode = ((u32)mb >> 14) & 3u;
@@ -823,12 +976,15 @@ static void master_bright(const Engine *e, u8 *rgba)
         return;
     }
     for (i = 0; i < SCREEN_PX; i++) {
-        u8 in[3];
+        u8 c6[3];
 
-        in[0] = rgba[i * 4u];
-        in[1] = rgba[i * 4u + 1u];
-        in[2] = rgba[i * 4u + 2u];
-        g2d_blend_brightness(in, factor, mode == 1u, rgba + i * 4u);
+        c6[0] = out6[i * 3u];
+        c6[1] = out6[i * 3u + 1u];
+        c6[2] = out6[i * 3u + 2u];
+        g2d_master_bright6(c6, factor, mode == 1u);
+        rgba[i * 4u] = g2d_c6to8(c6[0]);
+        rgba[i * 4u + 1u] = g2d_c6to8(c6[1]);
+        rgba[i * 4u + 2u] = g2d_c6to8(c6[2]);
     }
 }
 
@@ -927,63 +1083,44 @@ static void build_blend(const Engine *e, G2dBlend *b)
 }
 
 /* Display mode 2: one of banks A..D shown directly as 256x192 BGR555. */
-static void lcdc_display(const Engine *e, u8 *rgba)
+static void lcdc_display(const Engine *e, u8 *rgba, u8 *out6)
 {
     const u8 *bank = e->hw->lcdc_bank[(e->dispcnt >> 18) & 3u];
     u32 i;
 
     for (i = 0; i < SCREEN_PX; i++) {
-        put_rgb(rgba + i * 4u, bgr555(bank != NULL ? bw_rd16(bank + i * 2u) : 0));
+        u16 c = bank != NULL ? bw_rd16(bank + i * 2u) : 0;
+
+        put_rgb(rgba + i * 4u, bgr555(c));
+        out6[i * 3u] = (u8)g2d_c5to6(c & 0x1Fu);
+        out6[i * 3u + 1u] = (u8)g2d_c5to6(((u32)c >> 5) & 0x1Fu);
+        out6[i * 3u + 2u] = (u8)g2d_c5to6(((u32)c >> 10) & 0x1Fu);
     }
 }
 
-int g2d_hw_render_engine(const G2dHwState *hw, int engine, const u8 *rgba3d,
-                         u8 *rgba, u32 *unsupported)
+/*
+ * The graphics screen: BGs, OBJs and the 3D layer through the windows and
+ * the colour effects, into `rgba`, and its 6-bit stage into `out6`.  A
+ * forced blank is white.
+ */
+static int compose_graphics(Engine *e, const u8 *rgba3d, u8 *rgba, u8 *out6)
 {
-    Engine *e;
     G2dFrameDesc desc;
     G2dWindows windows;
     G2dBlend blend;
-    u32 dmode;
-    int rc = 0;
 
-    e = (Engine *)calloc(1, sizeof(Engine));
-    if (e == NULL) {
-        return -1;
-    }
-    e->hw = hw;
-    e->main = (engine == G2D_HW_MAIN);
-    e->io = hw->io + (e->main ? 0u : REG_SUB_BASE);
-    e->dispcnt = reg32(e, REG_DISPCNT);
-    dmode = (e->dispcnt >> 16) & 3u;
-
-    if (dmode == 0u) {
-        fill(rgba, 255);          /* display off: the screen is white */
-        goto done;
-    }
-    if (dmode == 3u || (dmode == 2u && !e->main)) {
-        e->unsup |= G2D_HW_UNSUP_DISPLAY_MODE;
-        fill(rgba, 255);
-        goto done;
-    }
-    if (dmode == 2u) {
-        lcdc_display(e, rgba);
-        master_bright(e, rgba);
-        goto done;
-    }
     if (e->dispcnt & 0x80u) {
-        fill(rgba, 255);          /* forced blank */
-        goto done;
+        fill(rgba, 255);
+        memset(out6, 63, (size_t)SCREEN_PX * 3u);
+        return 0;
     }
-
-    if (alloc_engine(e) != 0 || build_bgs(e, e->main ? rgba3d : NULL) != 0) {
-        rc = -1;
-        goto done;
+    if (alloc_engine(e) != 0 || build_bgs(e, e->main ? rgba3d : NULL) != 0
+        || apply_mosaic(e) != 0) {
+        return -1;
     }
     if (e->dispcnt & 0x1000u) {
         if (build_objs(e) != 0 || emit_obj_poses(e) != 0) {
-            rc = -1;
-            goto done;
+            return -1;
         }
     }
     build_windows(e, &windows);
@@ -1002,33 +1139,197 @@ int g2d_hw_render_engine(const G2dHwState *hw, int engine, const u8 *rgba3d,
     desc.blend = &blend;
     desc.rasters = e->rasters;
     desc.n_rasters = e->n_rasters;
+    desc.out6 = out6;
     g2d_frame_compose_desc(&desc, SCREEN_W, SCREEN_H, rgba);
-    master_bright(e, rgba);
+    return 0;
+}
+
+/*
+ * One engine's screen.  `graphics6`, when not NULL, also receives the
+ * graphics screen's 6-bit stage whatever the display mode shows (the
+ * capture's source A).
+ */
+static int render_engine(const G2dHwState *hw, int engine, const u8 *rgba3d,
+                         u8 *rgba, u32 *unsupported, u8 *graphics6)
+{
+    Engine *e;
+    u8 *out6 = NULL;
+    u32 dmode;
+    int rc = 0;
+
+    e = (Engine *)calloc(1, sizeof(Engine));
+    if (e == NULL) {
+        return -1;
+    }
+    e->hw = hw;
+    e->main = (engine == G2D_HW_MAIN);
+    e->io = hw->io + (e->main ? 0u : REG_SUB_BASE);
+    e->dispcnt = reg32(e, REG_DISPCNT);
+    dmode = (e->dispcnt >> 16) & 3u;
+    out6 = (u8 *)malloc((size_t)SCREEN_PX * 3u);
+    if (out6 == NULL) {
+        rc = -1;
+        goto done;
+    }
+
+    if (dmode == 1u) {
+        if (compose_graphics(e, rgba3d, rgba, out6) != 0) {
+            rc = -1;
+            goto done;
+        }
+        if (graphics6 != NULL) {
+            memcpy(graphics6, out6, (size_t)SCREEN_PX * 3u);
+        }
+        master_bright(e, rgba, out6);
+        goto done;
+    }
+    if (graphics6 != NULL) {
+        /* The capture still sees the graphics screen. */
+        if (compose_graphics(e, rgba3d, rgba, graphics6) != 0) {
+            rc = -1;
+            goto done;
+        }
+    }
+    if (dmode == 0u) {
+        fill(rgba, 255);          /* display off: the screen is white */
+    } else if (dmode == 3u || !e->main) {
+        e->unsup |= G2D_HW_UNSUP_DISPLAY_MODE;
+        fill(rgba, 255);
+    } else {
+        lcdc_display(e, rgba, out6);
+        master_bright(e, rgba, out6);
+    }
 
 done:
     if (unsupported != NULL) {
         *unsupported = e->unsup;
     }
+    free(out6);
     engine_free(e);
     free(e);
     return rc;
+}
+
+int g2d_hw_render_engine(const G2dHwState *hw, int engine, const u8 *rgba3d,
+                         u8 *rgba, u32 *unsupported)
+{
+    return render_engine(hw, engine, rgba3d, rgba, unsupported, NULL);
+}
+
+/* ------------------------------------------------------------------ */
+/* The display capture                                                 */
+/* ------------------------------------------------------------------ */
+
+static u32 clamp16(u32 v)
+{
+    return v > 16u ? 16u : v;
+}
+
+/* Pack a 6-bit stage pixel into the capture's BGR555 (each channel halved). */
+static u32 pack6(u32 r6, u32 g6, u32 b6)
+{
+    return (r6 >> 1) | ((g6 >> 1) << 5) | ((b6 >> 1) << 10);
+}
+
+/* DISPCAPCNT `cap` over this frame: g2d.h says what each field does. */
+static void capture(const G2dHwState *hw, u32 cap, const u8 *rgba3d,
+                    const u8 *graphics6, u32 *unsup)
+{
+    static const u32 k_w[4] = { 128u, 256u, 256u, 256u };
+    static const u32 k_h[4] = { 128u, 64u, 128u, 192u };
+    u32 size = (cap >> 20) & 3u, w = k_w[size], h = k_h[size];
+    u32 mode = (cap >> 29) & 3u;
+    u32 eva = clamp16(cap & 0x1Fu), evb = clamp16((cap >> 8) & 0x1Fu);
+    u32 dofs = ((cap >> 18) & 3u) * 0x8000u;
+    u32 bofs = ((cap >> 26) & 3u) * 0x8000u;
+    u8 *dst = hw->capture_bank[(cap >> 16) & 3u];
+    const u8 *srcb = NULL;
+    u32 x, y;
+
+    if (mode != 0u) {
+        if (cap & 0x02000000u) {
+            *unsup |= G2D_HW_UNSUP_CAPTURE_FIFO;
+        } else {
+            srcb = hw->capture_bank[(bw_rd32(hw->io + REG_DISPCNT) >> 18) & 3u];
+        }
+    }
+    if (dst == NULL) {
+        return;
+    }
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            u32 i = y * w + x, sp = y * SCREEN_W + x;
+            u32 a = 0, aa = 0, b = 0, ba, out, k;
+
+            if (mode != 1u) {
+                if (cap & 0x01000000u) {
+                    const u8 *p = rgba3d != NULL ? rgba3d + (size_t)sp * 4u : NULL;
+
+                    if (p != NULL && p[3] != 0) {
+                        aa = 1;
+                        a = pack6(g2d_c8to6(p[0]), g2d_c8to6(p[1]),
+                                  g2d_c8to6(p[2]));
+                    }
+                } else if (graphics6 != NULL) {
+                    const u8 *g = graphics6 + (size_t)sp * 3u;
+
+                    aa = 1;
+                    a = pack6(g[0], g[1], g[2]);
+                }
+            }
+            if (srcb != NULL) {
+                b = bw_rd16(srcb + ((bofs + i * 2u) & 0x1FFFFu));
+            }
+            ba = (b >> 15) & 1u;
+            if (mode == 0u) {
+                out = a | (aa << 15);
+            } else if (mode == 1u) {
+                out = b;
+            } else {
+                out = 0;
+                for (k = 0; k < 15u; k += 5u) {
+                    u32 c = (((a >> k) & 0x1Fu) * aa * eva
+                             + ((b >> k) & 0x1Fu) * ba * evb) >> 4;
+
+                    out |= (c > 31u ? 31u : c) << k;
+                }
+                if ((aa && eva > 0) || (ba && evb > 0)) {
+                    out |= 0x8000u;
+                }
+            }
+            bw_wr16(dst + ((dofs + i * 2u) & 0x1FFFFu), (u16)out);
+        }
+    }
 }
 
 int g2d_hw_render(const G2dHwState *hw, const u8 *rgba3d,
                   u8 *top, u8 *bottom, u32 unsupported[2])
 {
     int main_on_top = (bw_rd16(hw->io + REG_POWCNT1) & 0x8000u) != 0;
+    u32 cap = bw_rd32(hw->io + (G2D_HW_DISPCAPCNT - BW_DS_IO_BASE));
     u32 flags[2] = { 0, 0 };
+    u8 *graphics6 = NULL;
     int rc = 0;
 
-    if (g2d_hw_render_engine(hw, G2D_HW_MAIN, rgba3d,
-                             main_on_top ? top : bottom, &flags[0]) != 0) {
+    if ((cap & 0x80000000u) && ((cap >> 29) & 3u) != 1u
+        && (cap & 0x01000000u) == 0) {
+        graphics6 = (u8 *)malloc((size_t)SCREEN_PX * 3u);
+        if (graphics6 == NULL) {
+            return -1;
+        }
+    }
+    if (render_engine(hw, G2D_HW_MAIN, rgba3d, main_on_top ? top : bottom,
+                      &flags[0], graphics6) != 0) {
         rc = -1;
     }
-    if (g2d_hw_render_engine(hw, G2D_HW_SUB, NULL,
-                             main_on_top ? bottom : top, &flags[1]) != 0) {
+    if (render_engine(hw, G2D_HW_SUB, NULL, main_on_top ? bottom : top,
+                      &flags[1], NULL) != 0) {
         rc = -1;
     }
+    if ((cap & 0x80000000u) && rc == 0) {
+        capture(hw, cap, rgba3d, graphics6, &flags[0]);
+    }
+    free(graphics6);
     if (unsupported != NULL) {
         unsupported[0] = flags[0];
         unsupported[1] = flags[1];
@@ -1081,7 +1382,8 @@ void g2d_hw_state_from_dsmem(G2dHwState *hw)
         hw->obj_extpal[e] = bw_vram_slot(obj_kind, 0, NULL);
     }
     for (i = 0; i < 4u; i++) {
-        hw->lcdc_bank[i] = (const u8 *)bw_ds_try_ptr(0x06800000u + i * 0x20000u);
+        hw->capture_bank[i] = (u8 *)bw_ds_try_ptr(0x06800000u + i * 0x20000u);
+        hw->lcdc_bank[i] = hw->capture_bank[i];
     }
 }
 
@@ -1089,10 +1391,19 @@ int g2d_hw_render_dsmem(const u8 *rgba3d, u8 *top, u8 *bottom,
                         u32 unsupported[2])
 {
     G2dHwState hw;
+    u32 cap;
+    int rc;
 
     g2d_hw_state_from_dsmem(&hw);
     if (hw.io == NULL || hw.pal == NULL || hw.oam == NULL) {
         return -1;
     }
-    return g2d_hw_render(&hw, rgba3d, top, bottom, unsupported);
+    rc = g2d_hw_render(&hw, rgba3d, top, bottom, unsupported);
+    /* The capture has run through this frame: the hardware clears the
+     * enable bit when it completes. */
+    cap = bw_io_read32(G2D_HW_DISPCAPCNT);
+    if (cap & 0x80000000u) {
+        bw_io_write32(G2D_HW_DISPCAPCNT, cap & 0x7FFFFFFFu);
+    }
+    return rc;
 }

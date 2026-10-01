@@ -526,10 +526,32 @@ boundary, flips, affine and double-size through `g2d_obj_affine_render`,
 4bpp, 8bpp and extended palettes, the OBJ window from mode 2) and hands it
 over as non-overlapping full-screen poses. POWCNT1 bit 15 decides which
 engine is on which screen. Display mode 0 and forced blank are white,
-display mode 2 shows bank A..D directly. BG mode 6's large bitmap, mode
-7, main memory display, bitmap OBJs and mosaic are reported through
-`G2D_HW_UNSUP_*` flags rather than drawn wrong; the display capture is
-out of scope.
+display mode 2 shows bank A..D directly.
+
+The 3D layer is composed with the 3D frame's alpha: alpha 0 is
+transparent, so the 2D layers beneath show through, and any other alpha
+blends with a second target directly beneath by the 3D layer's own rule,
+`(3D * (A + 1) + 2D * (31 - A)) / 32`, EVA and EVB unused, whatever
+BLDCNT's effect says; BG0HOFS scrolls it. Everything after the layer mix
+runs in the hardware's 6 bits per channel: the compositor reports each
+pixel's 6-bit value (`G2dFrameDesc.out6`) and MASTER_BRIGHT is applied
+there (a 2D channel `c` enters as `2c + 1`, 0 as 0; that low bit is a
+documented choice). BG mosaic (text, affine, extended and bitmap BGs
+alike, resampled through the MOSAIC grid) and OBJ mosaic are drawn. The
+display capture (DISPCAPCNT) runs with the frame: source A the graphics
+screen (before the master brightness, composed even under a VRAM display)
+or the 3D frame, source B a VRAM bank, the A+B blend, the four sizes and
+the write and read offsets, into a bank in LCDC mode, and
+`g2d_hw_render_dsmem` clears the enable bit when the frame completes, as
+the hardware does. The game uses it: `0x80330010`/`0x80320010`
+(`func_0204EAD4`, `func_0204EB68`: the main screen captured into bank D or
+C and shown on the sub engine as a direct-colour bitmap BG, the two-screen
+3D arrangement) and `0x81330010` (`func_021C2784`: the 3D frame alone);
+ov203 sets every field from data. Still reported through
+`G2D_HW_UNSUP_*` flags rather than drawn wrong, deliberately, because the
+matched code sets none of them as a constant: BG mode 6's large bitmap,
+mode 7, main memory display and capture from main memory (no DMA feeds the
+display FIFO), and bitmap OBJs.
 
 **The tests**, `tests/test_hwcompose.c`, reset the port's own address
 space (`sdk/dsmem.c`) and write registers, palette, OAM and VRAM byte by
@@ -542,8 +564,10 @@ boundary, affine OBJs at identity and 2x in double size, WIN0 over WIN1,
 the OBJ window, alpha and brightness and the effect bit, the
 semi-transparent OBJ, affine BGs with and without wrap, the extended
 affine BG, both bitmap BGs, BG and OBJ extended palettes through banks E
-and I, the 3D layer, master brightness on each engine, the screen swap
-and display modes. With game data, the title screen (`titledemo.narc`
+and I, the 3D layer with its alpha, its own blend and BG0HOFS, master
+brightness on each engine in 6 bits, BG and OBJ mosaic, the display
+capture with the game's own DISPCAPCNT words, the screen swap and display
+modes. With game data, the title screen (`titledemo.narc`
 0/1/2) and the species 25 pose are put into VRAM, palette RAM and OAM the
 way the SDK would, and must come out **pixel-identical** to the asset
 path drawing the same content from the files: the title scrolled on the
@@ -564,7 +588,8 @@ its rasteriser. Pure C99, no SDL, no third-party code, and not even
 | `engine/g3d/nsbmd.c` | NSBMD/NSBTX containers, Nitro resource dictionaries, TEX0 records, the MDL0 shape dictionary and node dictionary, the render-command bytecode, the a/0/1/4 texture index |
 | `engine/g3d/texture.c` | all seven GX texture pixel formats |
 | `engine/g3d/gx.c` | the display-list interpreter: the packed command word, the whole opcode table, every vertex encoding, strip assembly |
-| `engine/g3d/raster.c` | the 256x192 software rasteriser, and the meeting point with the 2D compositor |
+| `engine/g3d/raster.c` | the 256x192 software rasteriser, the rear passes (edge marking, fog, anti-aliasing), and the meeting point with the 2D compositor |
+| `engine/g3d/light.c` | the DS lighting equation (four lights, diffuse, ambient, specular with the shininess table, emission), driven by `hw3d.c` |
 | `engine/g3d/hw3d.c` | the 3D hardware interface: the geometry FIFO and command ports, the 3D registers, the texture slots, `SWAP_BUFFERS` |
 
 **Where the rules come from.** In order of authority, and each file
@@ -837,18 +862,36 @@ and vector matrices read back through `MI_Copy64B`/`MI_Copy36B` from raw
 result addresses), every `GXSTAT` field the SDK polls including the
 `G3X_InitMtxStack` sequence and the `GXSTAT |= 0x8000` acknowledgement,
 `POS_TEST`, `VEC_TEST`, `BOX_TEST`, the viewport, toon and highlight, the
-alpha test, blending off, an unterminated vertex list, and the frame
-composed by `hwcompose` as BG0. **79 checks, 0 failures**, both pointer
-widths. Two interpreter fixes came out of it: opcode `0x2B` (`PLTT_BASE`)
+alpha test, blending off, an unterminated vertex list, the frame
+composed by `hwcompose` as BG0, the lighting equation (diffuse, ambient,
+emission, specular with and without the shininess table, the normal
+through the vector matrix, `DIF_AMB` bit 15), edge marking, fog (the
+table interpolation, the clear plane's fog bit, alpha-only), the
+w-buffer against the z-buffer, the rear-plane bitmap with its offset and
+depth, and anti-aliasing over a transparent and an opaque clear plane.
+**111 checks, 0 failures**, both pointer widths. Two interpreter fixes came out of it: opcode `0x2B` (`PLTT_BASE`)
 was missing from the parameter-count table, so a list using it stopped
 there, and `MTX_SCALE` in position+vector mode now scales the position
 matrix only, as the hardware does; `test_g3d`'s oracle numbers are
 unchanged by both.
 
-Not honoured, and reported per frame by `g3d_hw_unsupported()`: fog, edge
-marking, anti-aliasing, the rear-plane bitmap, the w-buffer, shadow
-polygons, and lighting (as in the interpreter, a vertex keeps its last
-`COLOR`). The hardware's polygon and vertex RAM limits are not imposed.
+The frame also honours what the game turns on (each found in the
+matched corpus): lighting (`engine/g3d/light.c`, the public lighting
+equation with up to four lights, the light vectors and normals through
+the vector matrix, the half vector and the shininess table), the
+w-buffer (`SWAP_BUFFERS` bit 1: `func_02046440`, ov021, ov057), edge
+marking with `EDGE_COLOR` (ov021, ov091, ov217), anti-aliasing (ov021,
+ov091, ov217, ov223, and G3X_Init's default), fog with its table, colour,
+offset, shift and alpha-only mode (enabled in ov119), the rear-plane
+bitmap (the SDK's `GX_SetBankForClearImage` path), and the polygon IDs
+and fog flags those passes need, including the clear plane's. The frame's
+alpha is the hardware's (a translucent pixel over the clear plane's alpha
+0 keeps its own alpha), which is what lets hwcompose see through and
+blend the 3D layer. The fixed point of the lighting and the coverage
+rule of the anti-aliasing are marked as approximations in their files.
+Still not drawn, and reported by `g3d_hw_unsupported()`: shadow polygons
+(no `POLYGON_ATTR` constant in the corpus selects mode 3). The hardware's
+polygon and vertex RAM limits are not imposed.
 
 ### What is not decoded, and is the next step
 
@@ -867,11 +910,11 @@ polygons, and lighting (as in the interpreter, a vertex keeps its last
   rotation. The packed completion is the one transform piece not on byte
   evidence; the paired BCA0 animation or the ARM9 matrix builder would
   settle it.
-- **Lighting.** The four light slots, the diffuse/ambient and
-  specular/emission material registers and the shininess table are
-  consumed with the right parameter counts so the stream stays aligned,
-  and are not interpreted. Nothing has shown that a map model enables
-  them, and inventing lighting would be a guess.
+- **Lighting on the asset path.** The display-list interpreter still
+  consumes the lighting commands without interpreting them, so an asset
+  render of a map model does not depend on lights nobody set. The
+  hardware path interprets them (`engine/g3d/light.c` through
+  `engine/g3d/hw3d.c`), so what the game's own code lights is lit.
 - **The texture matrix.** `TEXIMAGE_PARAM` bits 30-31 select a
   coordinate transform source; no map model in the corpus was found to
   need one and `map_shapes.py` records the same finding, so a texture
@@ -2725,8 +2768,10 @@ opens the real Windows dialog and answers it from a helper thread when
         parent/child tree and the per-shape node binding are decoded and
         applied, so a multi-node model's parts sit at the positions and
         orientations its joint matrices put them at
-        (`docs/g3d-nodes.md`); what is still missing is lighting, which
-        is parsed and not interpreted, and a pixel oracle
+        (`docs/g3d-nodes.md`); lighting, fog, edge marking,
+        anti-aliasing and the w-buffer are done on the hardware path
+        (`engine/g3d/light.c`, `engine/g3d/raster.c`); what is still
+        missing is a pixel oracle
 - [ ] **Milestone 5**: Audio
   - [x] SDAT sequencer and mixer (replacing ARM7 audio core): the SDAT
         container, SBNK instrument tables, SWAR/SWAV waves, the SSEQ

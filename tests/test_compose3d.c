@@ -4,10 +4,9 @@
  *
  * No SDL, no game data, no oracle: a 4x4 3D buffer of one flat colour and a
  * one-tile affine BG stand in for the two layers, and every expected pixel
- * is computed on paper (or, for the blend, by calling the same blend helper
- * the compositor calls).  The point is the *stack*, not the picture: the 3D
+ * is computed on paper.  The point is the *stack*, not the picture: the 3D
  * output is an ordinary layer, so a 2D BG can sit in front of or behind it,
- * a window can hide it, and a colour effect can blend with a 3D pixel.
+ * a window can hide it, and a 3D pixel can blend with what is beneath.
  *
  * What is checked:
  *
@@ -19,9 +18,13 @@
  *     layer, and the 3D layer draws in front of a BG at a higher number;
  *   - a window that does not include the 3D layer's bit hides it, revealing
  *     the backdrop;
- *   - alpha blending where the topmost pixel is the 3D layer and the one
- *     beneath is the backdrop produces exactly g2d_blend_alpha's result; a
- *     first target the 3D layer is not part of does not blend.
+ *   - the 3D layer's own blend: an opaque 3D pixel over a second target is
+ *     unchanged (EVA/EVB are not used), a translucent one is mixed by its
+ *     alpha whatever the effect and first-target bits say, by hand in the
+ *     6-bit stage; with no second target beneath it takes the ordinary
+ *     rules as BG0;
+ *   - alpha 0 in the 3D buffer is transparent, to the backdrop and to a BG;
+ *   - BG0HOFS scrolls the layer with a 512-pixel period.
  */
 
 #include <stdio.h>
@@ -49,7 +52,6 @@ int main(void)
     G2dWindows win;
     G2dBlend   blend;
     G2dFrameDesc desc;
-    u8         expect[3];
     u32        i;
 
     /* One flat 3D frame, one flat affine BG, one backdrop colour. */
@@ -137,25 +139,79 @@ int main(void)
     BW_CHECK_EQ("and it is the backdrop's green", out[1], 2);
     desc.windows = NULL;
 
-    printf("alpha blending with a 3D pixel\n");
-    expect[0] = 10; expect[1] = 20; expect[2] = 30;
+    /*
+     * The 3D layer blends by its own per-pixel alpha, never by EVA/EVB:
+     * an opaque 3D pixel (alpha 31) over a second target is
+     * (3D * 32 + 2D * 0) / 32, the 3D pixel itself.
+     */
+    printf("an opaque 3D pixel over a second target\n");
     blend.effect = G2D_BLEND_ALPHA;
     blend.first = G2D_LAYER_BG0;
     blend.second = G2D_LAYER_BD;
     blend.eva = 8; blend.evb = 8; blend.evy = 0;
     desc.blend = &blend;
     g2d_frame_compose_desc(&desc, W, H, out);
-    g2d_blend_alpha(expect, (const u8[3]){ 1, 2, 3 }, 8, 8, expect);
-    BW_CHECK_EQ("blend red", out[0], expect[0]);
-    BW_CHECK_EQ("blend green", out[1], expect[1]);
-    BW_CHECK_EQ("blend blue", out[2], expect[2]);
+    BW_CHECK_EQ("opaque 3D red", out[0], 10);
+    BW_CHECK_EQ("opaque 3D green", out[1], 20);
+    BW_CHECK_EQ("opaque 3D blue", out[2], 30);
 
-    printf("a first target the 3D layer is not part of\n");
-    blend.first = G2D_LAYER_BG1;   /* the 3D layer is BG0 */
+    /*
+     * A translucent 3D pixel, alpha 15 (8-bit 123 folds to 15), over the
+     * backdrop as second target, by hand in the 6-bit stage:
+     *   3D:  252, 0, 0  -> 6-bit 62, 0, 0
+     *   2D:  backdrop set to the 5-bit colour (0, 0, 31) -> 0, 0, 63
+     *   (62 * 16 + 0 * 16) / 32 = 31,  (0 * 16 + 63 * 16) / 32 = 31
+     *   31 * 255 / 63 = 125 on red and blue, green 0.
+     * The effect field is brightness, and the first target is BG1: the
+     * 3D blend ignores both.
+     */
+    printf("a translucent 3D pixel blends by its own alpha\n");
+    rgb3d[0] = 252; rgb3d[1] = 0; rgb3d[2] = 0; rgb3d[3] = 123;
+    bdc[0].r = 0; bdc[0].g = 0; bdc[0].b = 255;
+    blend.effect = G2D_BLEND_BRIGHT_UP;
+    blend.first = G2D_LAYER_BG1;
+    blend.evy = 16;
     g2d_frame_compose_desc(&desc, W, H, out);
-    BW_CHECK_EQ("no blend red", out[0], 10);
-    BW_CHECK_EQ("no blend green", out[1], 20);
+    BW_CHECK_EQ("3D blend red", out[0], 125);
+    BW_CHECK_EQ("3D blend green", out[1], 0);
+    BW_CHECK_EQ("3D blend blue", out[2], 125);
+
+    printf("no second target beneath: ordinary rules for BG0\n");
+    blend.second = G2D_LAYER_BG1;
+    blend.first = G2D_LAYER_BG0;
+    g2d_frame_compose_desc(&desc, W, H, out);
+    BW_CHECK_EQ("brightness up to white", out[0], 255);
+    BW_CHECK_EQ("brightness up to white, green", out[1], 255);
+    blend.first = G2D_LAYER_BG1;
+    g2d_frame_compose_desc(&desc, W, H, out);
+    BW_CHECK_EQ("translucent 3D shown as is", out[0], 252);
+    BW_CHECK_EQ("translucent 3D shown as is, blue", out[2], 0);
     desc.blend = NULL;
+
+    printf("alpha 0 in the 3D frame is transparent\n");
+    rgb3d[3] = 0;
+    g2d_frame_compose_desc(&desc, W, H, out);
+    BW_CHECK_EQ("the backdrop shows", out[2], 255);
+    BW_CHECK_EQ("the backdrop shows, red", out[0], 0);
+    desc.abgs = &abg; desc.n_abgs = 1;
+    abg.priority = 1; l3.priority = 0;
+    g2d_frame_compose_desc(&desc, W, H, out);
+    BW_CHECK_EQ("a BG behind the 3D layer shows", out[0], 70);
+    desc.abgs = NULL; desc.n_abgs = 0;
+    rgb3d[0] = 10; rgb3d[1] = 20; rgb3d[2] = 30; rgb3d[3] = 255;
+
+    printf("BG0HOFS scrolls the 3D layer\n");
+    rgb3d[2u * 4u + 0u] = 99;
+    l3.hofs = 2;
+    g2d_frame_compose_desc(&desc, W, H, out);
+    BW_CHECK_EQ("column 2 shows at x 0", out[0], 99);
+    BW_CHECK_EQ("x 2 shows column 4: past the buffer, backdrop",
+                out[2u * 4u + 2u], 255);
+    l3.hofs = 511;
+    g2d_frame_compose_desc(&desc, W, H, out);
+    BW_CHECK_EQ("hofs 511: x 0 is column 511, transparent", out[2], 255);
+    BW_CHECK_EQ("hofs 511: x 3 is column 2", out[3u * 4u], 99);
+    l3.hofs = 0;
 
     BW_REPORT("test_compose3d");
 }
