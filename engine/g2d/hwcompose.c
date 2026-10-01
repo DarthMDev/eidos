@@ -571,7 +571,7 @@ static int build_bgs(Engine *e, const u8 *rgba3d)
                 }
                 ext = bg_extpal(e, slot);
                 if ((e->dispcnt & 0x40000000u) != 0) {
-                    static const u8 k_zero_pal[G2D_HW_EXTPAL_SLOT_SIZE];
+                    static const u8 k_zero_pal[G2D_HW_EXTPAL_SLOT_SIZE] = {0};
 
                     if (build_raster(e, RAS_TEXT_EXT, n, cnt,
                                      ext != NULL ? ext : k_zero_pal) != 0) {

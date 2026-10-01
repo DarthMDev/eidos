@@ -81,12 +81,14 @@ is only partly done, it says which part.
   approximations (affine per-span texture interpolation, a conventional
   top-left fill rule) stay unverified. A frame captured from an emulator
   would close it.
-- **Milestone 1, portability sweep**: the under-declared-globals sweep, and
-  a first MSVC build: `cmake/msvc.cmake` and the `msvc-x64`, `msvc-x86` and
-  `clangcl-x64` configurations of `tools/check.py` exist, but the
-  development machine's Visual Studio lacks the C++ build tools and a
-  Windows SDK, so MSVC has never compiled the tree (GCC and Clang are
-  warning-free at both pointer widths, with and without SDL2).
+- **Milestone 1, portability sweep**: the under-declared-globals sweep.
+  MSVC is done: `msvc-x64`, `msvc-x86` and `clangcl-x64` build warning-free
+  at `/W4` and pass every test with game data, MinGW at both widths too;
+  CRT dialogs are off in every MSVC executable (`sdk/plat_nodialog.c`).
+  Still open: GCC and Clang on a real Linux machine (and macOS), which
+  `tools/check.py` covers but nobody has run there yet; the MSVC build is
+  `-DEIDOS_SDL=OFF` until SDL2 for MSVC is wired up (vcpkg or the VC
+  devel zip, README "Building with MSVC").
 - **Milestone 5, oracle breadth**: more sequences in the audio oracle is
   mechanical coverage, not accuracy.
 - **Milestone 8+**: high-resolution/widescreen rendering, the mod API,

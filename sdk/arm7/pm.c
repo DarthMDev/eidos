@@ -63,11 +63,11 @@ static u32 utility(u32 number, u32 param)
         g_pm.led = (u16)number;
         return 0;
     case 4: g_pm.backlight |= 4; return 0;          /* bottom on           */
-    case 5: g_pm.backlight &= (u16)~4u; return 0;   /* bottom off          */
+    case 5: g_pm.backlight = (u16)(g_pm.backlight & ~4u); return 0; /* bottom off */
     case 6: g_pm.backlight |= 8; return 0;          /* top on              */
-    case 7: g_pm.backlight &= (u16)~8u; return 0;   /* top off             */
+    case 7: g_pm.backlight = (u16)(g_pm.backlight & ~8u); return 0; /* top off */
     case 8: g_pm.backlight |= 12; return 0;         /* both on             */
-    case 9: g_pm.backlight &= (u16)~12u; return 0;  /* both off            */
+    case 9: g_pm.backlight = (u16)(g_pm.backlight & ~12u); return 0; /* both off */
     case 0x0E:
         g_pm.powered_off = 1;
         return 0;

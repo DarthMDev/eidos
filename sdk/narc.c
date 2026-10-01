@@ -38,6 +38,12 @@
 
 #include "port.h"
 
+/* The SDK file calls this file uses (sdk/fs.c), declared at file scope:
+ * MSVC flags a block-scope extern function declaration (C4210). */
+extern s32 FS_SeekFile(void *file, s32 offset, u32 origin);
+extern s32 FS_ReadFile(void *file, void *dst, s32 len);
+extern s32 FS_CloseFile(void *file);
+
 #define FOURCC(a, b, c, d) \
     ((u32)(a) | ((u32)(b) << 8) | ((u32)(c) << 16) | ((u32)(d) << 24))
 
@@ -145,9 +151,6 @@ const void *bw_arm9_rodata(u32 address, u32 size)
 
 static int read_at(void *file, u32 pos, void *dst, u32 size)
 {
-    extern s32 FS_SeekFile(void *file, s32 offset, u32 origin);
-    extern s32 FS_ReadFile(void *file, void *dst, s32 len);
-
     if (!FS_SeekFile(file, (s32)pos, 0)) {
         return -1;
     }
@@ -215,8 +218,6 @@ int bw_arc_open(BwArcFile *arc, const char *rel_path)
 
 void bw_arc_close(BwArcFile *arc)
 {
-    extern s32 FS_CloseFile(void *file);
-
     (void)FS_CloseFile(arc->file);
     arc->imageBase = 0;
     arc->fatOffset = 0;

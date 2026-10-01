@@ -1747,7 +1747,13 @@ the CRT's Annex K deprecations turned off at their source
 warnings C4244/C4242/C4267 off because GCC and Clang only report those under
 `-Wconversion`, which the port does not enable on any compiler, and the
 matched sources' three suppressions spelled `/wd4100 /wd4101 /wd4189`
-(`-Wno-...` under clang-cl). Plain `char` is signed under MSVC already, so
+(`-Wno-...` under clang-cl), plus two that only `cl.exe` raises on them:
+C4200 (`u8 data[0]`, mwccarm's flexible array member) and C4245 (`u32 x =
+-1`, which GCC and Clang report only under `-Wsign-conversion`); the few
+matched files with mwccarm's `#pragma unused` also get C4068 off, as they
+get `-Wno-unknown-pragmas` under GCC. C4324 (a struct padded to a
+`jmp_buf`'s 16-byte alignment) is off everywhere: it reports the padding
+the alignment requires, and GCC and Clang have no such warning. Plain `char` is signed under MSVC already, so
 nothing is passed for it; `/J`, which an earlier revision passed, makes it
 *unsigned*, and `sdk/types.h` now fails the build if plain `char` is not
 signed on any compiler.
@@ -1787,13 +1793,38 @@ anywhere outside the repository and configure with
 `find_package(SDL2)` step; neither puts a binary in the repository. Copy the
 matching `SDL2.dll` next to `eidos_view.exe` before running it.
 
-**Status.** Not yet built: the Visual Studio 2022 and 2026 installations on
-the development machine have `cl.exe` but not the C++ build tools component
-or a Windows SDK, so there is no `vcvarsall.bat`, no `stdio.h` and no CRT
-(`cl` stops at `C1034: stdio.h: no include path set`), and `check.py` reports
-all three configurations as skipped for that reason. Everything above is
-written against MSVC's documented behaviour and has not been through a
-compiler yet; expect a first run to surface warnings to fix.
+**No dialogs.** The Microsoft runtime reports `abort()`, a failed
+`assert()`, an invalid CRT argument and every debug-CRT error with a modal
+window that waits for a click, which stalls an unattended test run (several
+tests abort on purpose through `tests/expect_panic.cmake`).
+`sdk/plat_nodialog.c` is compiled into every executable of an MSVC or
+clang-cl build (option `EIDOS_NO_CRT_DIALOGS`, on by default) and, from a
+CRT initialiser before `main`, sends the debug CRT's reports to stderr,
+turns off `abort()`'s message box and fault report, installs an
+invalid-parameter handler that prints and exits, and sets
+`SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX)` so a crash
+is an exit code, not a Windows Error Reporting window. `tools/check.py`
+sets the same error mode on itself on Windows, which every child inherits.
+
+**Debug runtime.** The check configurations build `CMAKE_BUILD_TYPE=Debug`
+(MSVC's default, stated explicitly in `check.py`), so they link the debug
+CRT: it checks the heap's guard bytes on every `free` and fills new
+allocations with `0xCD`, the closest thing these configurations have to the
+sanitizer runs GCC and Clang get. With the dialogs off it costs nothing in
+unattended runs.
+
+**Status.** Built and tested on Visual Studio 2026 (18, MSVC 14.50, Windows
+SDK 10.0.26100, clang-cl from the same installation): `msvc-x64`,
+`msvc-x86` and `clangcl-x64` are all ok in `tools/check.py`, 0 warnings at
+`/W4`, with the real game data: 34 of 34 tests on x64 under both compilers
+and 35 of 35 on the x86 ILP32 reference (`test_snd_matched` is ILP32-only),
+`test_extract_rom` skipped for want of a ROM in each. The first run's
+warnings were all in port code or explained above: block-scope `extern`
+function declarations (C4210, moved to file scope in `sdk/narc.c`,
+`sdk/tcbl.c` and `tests/test_tcbl.c`), constant truncation in a `u16`
+mask (C4310, `sdk/arm7/pm.c`), an uninitialised `static const` table
+(C4132, `engine/g2d/hwcompose.c`) and a local the compiler could not prove
+set (C4701, `engine/g3d/nsbmd.c`).
 
 ## Pointer width, and the reference configuration
 
@@ -2366,13 +2397,13 @@ and no staging is left. Without `BW_ROM` it reports itself skipped.
   - [ ] Under-declared globals and compiler-specific extensions (two known
         and recorded under "Known type mismatches", two more found in the
         tcbl family; the sweep itself is not done)
-  - [ ] Warning-free builds on GCC, Clang, and MSVC (warning-free on the
-        pinned MinGW-w64 GCC, on Linux GCC 13 and Clang 18 at both pointer
-        widths, and under ASan/UBSan, all checked by `tools/check.py`;
-        MSVC configured in `cmake/msvc.cmake` with `msvc-x64`, `msvc-x86`
-        and `clangcl-x64` in `tools/check.py`, not yet built: the
-        development machine's Visual Studio lacks the C++ build tools and a
-        Windows SDK, see "Building with MSVC")
+  - [x] Warning-free builds on GCC, Clang, and MSVC: warning-free and
+        green on the pinned MinGW-w64 GCC at both pointer widths, and on
+        MSVC x64, MSVC x86 (the ILP32 reference) and clang-cl x64 at
+        `/W4`, all with the real game data, through `tools/check.py` (see
+        "Building with MSVC"). GCC and Clang on Linux, and the ASan/UBSan
+        configurations, are in `tools/check.py` too but have not been run
+        on a real Linux machine yet
 - [ ] **Milestone 2**: Platform layer (SDL2)
   - [x] Window creation and input handling: an integer scale of the DS
         layout, stacked or side by side, a configurable SDL scancode table

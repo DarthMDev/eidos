@@ -1244,6 +1244,9 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
     if(NOT MSVC)
         set_source_files_properties(${_bw_snd_matched} PROPERTIES
             COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
+    else()
+        set_source_files_properties(${_bw_snd_matched} PROPERTIES
+            COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS}")
     endif()
     set_source_files_properties(${_bw_snd_matched} PROPERTIES COMPILE_DEFINITIONS
         "InitPXI=func_02089E74;SNDi_InitSharedWork=func_0208A1D0;SND_AllocCommand=func_02089A78;SND_PushCommand=func_02089B00;SND_RecvCommandReply=func_02089978;SNDi_GetFinishedCommandTag=func_0208A1AC;IsCommandAvailable=func_02089F48;AllocCommand=func_02089F00;SND_CountWaitingCommand=func_02089E34;SND_CountFreeCommand=func_02089DBC;SND_CountReservedCommand=func_02089DF8;RequestCommandProc=func_02089ED8;SND_IsFinishedCommandTag=func_02089D6C;PxiFifoCallback=func_02089E50;SNDi_CallAlarmHandler=func_0208A010;PushCommand_impl=func_02089804;SNDi_SetAlarmHandler=func_02089FE0;PXI_IsCallbackReady=func_020885EC;sCommandBss=sFreeList")
@@ -1380,7 +1383,7 @@ if(NOT MSVC)
         COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
 else()
     set_source_files_properties(${_bw_pxi_test_sources} PROPERTIES
-        COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS}")
+        COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS};${EIDOS_MATCHED_PRAGMA_OPTION}")
 endif()
 add_executable(test_pxi
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pxi.c
@@ -1603,7 +1606,32 @@ if(EIDOS_BOOT)
     if(NOT MSVC)
         set_source_files_properties(${EIDOS_BOOT_MATCHED} PROPERTIES
             COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
+    else()
+        set_source_files_properties(${EIDOS_BOOT_MATCHED} PROPERTIES
+            COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS}")
     endif()
     target_link_libraries(eidos_boot PRIVATE eidos_boot_game)
     target_compile_definitions(eidos_boot PRIVATE EIDOS_BOOT=1)
+endif()
+
+# --- No modal dialogs under MSVC ---------------------------------------------
+#
+# The Microsoft runtime answers abort(), a failed assert() and a debug-CRT
+# report with a window that waits for a click, which stalls an unattended
+# test run (several tests abort on purpose: tests/expect_panic.cmake).
+# sdk/plat_nodialog.c sends every such report to stderr from a CRT
+# initialiser; it goes into each executable as an object of its own, because
+# nothing references it and a library member would never be linked.  This
+# block stays last so it sees every executable defined above.
+option(EIDOS_NO_CRT_DIALOGS
+       "MSVC: send CRT error reports to stderr instead of modal dialogs" ON)
+if(MSVC AND EIDOS_NO_CRT_DIALOGS)
+    get_property(_eidos_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_t ${_eidos_targets})
+        get_target_property(_type ${_t} TYPE)
+        if(_type STREQUAL "EXECUTABLE")
+            target_sources(${_t} PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_nodialog.c)
+        endif()
+    endforeach()
 endif()

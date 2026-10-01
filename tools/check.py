@@ -88,10 +88,17 @@ CONFIGS = {
     # target: x64_x86 is the x64-hosted compiler for 32-bit x86, whose
     # executables run on the same machine.  No toolchain file: under MSVC the
     # pointer width comes from the environment (cmake/msvc.cmake).
-    "msvc-x64":    dict(cc="cl", vcvars="x64", args=["-DEIDOS_SDL=OFF"]),
-    "msvc-x86":    dict(cc="cl", vcvars="x64_x86", args=["-DEIDOS_SDL=OFF"]),
+    # Debug, stated rather than left to CMake's MSVC default: the debug CRT
+    # checks the heap's guard bytes on every free and fills fresh allocations
+    # with 0xCD, the closest thing to a sanitizer these configurations have.
+    # Its report windows are turned off in every executable
+    # (sdk/plat_nodialog.c), so it cannot stall the run.
+    "msvc-x64":    dict(cc="cl", vcvars="x64",
+                        args=["-DEIDOS_SDL=OFF", "-DCMAKE_BUILD_TYPE=Debug"]),
+    "msvc-x86":    dict(cc="cl", vcvars="x64_x86",
+                        args=["-DEIDOS_SDL=OFF", "-DCMAKE_BUILD_TYPE=Debug"]),
     "clangcl-x64": dict(cc="clang-cl", vcvars="x64", clang=True,
-                        args=["-DEIDOS_SDL=OFF"]),
+                        args=["-DEIDOS_SDL=OFF", "-DCMAKE_BUILD_TYPE=Debug"]),
 }
 
 
@@ -266,6 +273,24 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
     return res
 
 
+def no_error_dialogs():
+    """On Windows, no "has stopped working" window for a crashing child.
+
+    The error mode is inherited by every process this one starts (CMake,
+    the compilers, CTest and the tests), so a crash is reported as an exit
+    code instead of a window that waits for a click.  The tests also set it
+    themselves (sdk/plat_nodialog.c), with the CRT's own report windows."""
+    if os.name != "nt":
+        return
+    import ctypes
+    SEM_FAILCRITICALERRORS = 0x0001
+    SEM_NOGPFAULTERRORBOX = 0x0002
+    SEM_NOOPENFILEERRORBOX = 0x8000
+    ctypes.windll.kernel32.SetErrorMode(SEM_FAILCRITICALERRORS
+                                        | SEM_NOGPFAULTERRORBOX
+                                        | SEM_NOOPENFILEERRORBOX)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--aletheia-root", default=DEFAULT_ALETHEIA)
@@ -287,6 +312,7 @@ def main(argv=None):
         print("check.py: cmake is not on PATH")
         return 2
 
+    no_error_dialogs()
     names = args.only or list(CONFIGS)
     for n in names:
         if n not in CONFIGS:

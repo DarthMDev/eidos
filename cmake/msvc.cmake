@@ -42,6 +42,12 @@ add_compile_options(/W4 /utf-8)
 # off at its source rather than hiding every C4996 with /wd.
 add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
 
+# C4324, "structure was padded due to alignment specifier": a report, not a
+# defect.  A struct that holds a jmp_buf (16-byte aligned on x64) is padded
+# to that alignment, which is what the alignment requires; GCC and Clang have
+# no warning for it at all.  clang-cl does not emit it.
+add_compile_options(/wd4324)
+
 if(NOT EIDOS_CLANG_CL)
     # Implicit narrowing on assignment (C4244, C4242) and size_t to a smaller
     # integer (C4267).  GCC and Clang only report these under -Wconversion,
@@ -64,5 +70,24 @@ else()
     #   C4100  unreferenced formal parameter       (-Wunused-parameter)
     #   C4101  unreferenced local variable         (-Wunused-variable)
     #   C4189  local initialized but not referenced (-Wunused-variable)
-    set(EIDOS_MATCHED_COMPILE_OPTIONS "/wd4100;/wd4101;/wd4189")
+    # and two that only cl.exe reports for these files, both for something
+    # mwccarm accepts and the DS build depends on:
+    #   C4200  zero-sized array in a struct (`u8 data[0]`, the pre-C99
+    #          spelling of a flexible array member; GCC and Clang accept it
+    #          silently without -pedantic)
+    #   C4245  a negative constant initialising an unsigned object (`u32 x =
+    #          -1`); GCC and Clang report it only under -Wsign-conversion,
+    #          which no configuration enables
+    set(EIDOS_MATCHED_COMPILE_OPTIONS "/wd4100;/wd4101;/wd4189;/wd4200;/wd4245")
+endif()
+
+# A few matched SDK files carry mwccarm's `#pragma unused(x)`, which no host
+# compiler knows (C4068 under cl.exe, -Wunknown-pragmas under clang-cl, the
+# same flag the GCC/Clang branch passes for those files).  The pragma only
+# silences an unused-parameter report that the options above already
+# silence, so ignoring it changes nothing.
+if(EIDOS_CLANG_CL)
+    set(EIDOS_MATCHED_PRAGMA_OPTION "-Wno-unknown-pragmas")
+else()
+    set(EIDOS_MATCHED_PRAGMA_OPTION "/wd4068")
 endif()
