@@ -281,6 +281,8 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/game_globals.c  # the ARM9 globals the matched code names
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/aliases.c       # sub_/func_ spelling forwarders
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_tick.c       # OS_GetTick onto the frame loop
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/dsmem.c         # the DS address space: registry, regions, I/O, VRAM
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/host_vm.c       # reserve/commit for main RAM (the one OS-specific file)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/panic.c
 )
 
@@ -1026,12 +1028,19 @@ eidos_data_test(test_audio bw_audio_oracle)
 # expected pixel in them is computed on paper from the hardware rule under
 # test.  They are the counterweight to the oracle comparisons, which can
 # only ever show that two implementations agree.
-foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_heap test_vfs test_arcid test_compose3d)
+foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_heap test_vfs test_arcid test_compose3d test_dsmem)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# The registry's overlap check panics, and a panic aborts the process, so it
+# is exercised in a run of its own that passes only if the panic happened.
+add_test(NAME test_dsmem_overlap COMMAND ${CMAKE_COMMAND}
+    -DEXE=$<TARGET_FILE:test_dsmem> -DARG=--overlap
+    "-DPATTERN=PANIC in bw_ds_register at 0x02300010"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_panic.cmake)
 
 add_executable(test_extract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract.c)
 target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

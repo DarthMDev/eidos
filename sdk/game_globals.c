@@ -41,6 +41,8 @@
 #include <string.h>
 
 #include "port.h"
+#include "dsmem.h"
+#include "dsmem_ext.h"
 
 /* ------------------------------------------------------------------ */
 /* g_Sink -- the assertion sink src/matched/sub_02034734.c dispatches to */
@@ -526,3 +528,60 @@ const char sub_0203101C_File[] = "tcbl.c";
  * sdk/aliases.c aliases a function.
  */
 const char sub_020311B8_File[] = "tcbl.c";
+
+/* ------------------------------------------------------------------ */
+/* DS addresses of the objects above                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Every object above that has a DS address is registered at it, so that a
+ * matched literal cast to that address (rewritten by tools/dsaddr.py into
+ * bw_ds_ptr) and the matched file's `extern` name reach the same bytes
+ * (sdk/dsmem.h, bw_ds_register).  The addresses are the ones the matched
+ * files' own headers list for each name.  bw_ds_reset calls this.
+ *
+ * Sizes are the object's extent on the DS, which is what a cast can reach;
+ * each is checked against the host object, which is never smaller.  On an
+ * LP64 host the objects with pointer members are laid out differently past
+ * the first pointer, so a DS-offset access beyond it lands on the host
+ * layout's bytes; that is the pointer-width question docs/pointer-width.md
+ * describes, not something registration can repair.
+ *
+ * Names that alias one DS address are registered once.  The DS links
+ * func_02049578_File, func_0204944C_File and func_02048DDC_File all to
+ * 0x020A7EE0, and func_02049578_Msg and func_0204944C_Msg both to
+ * 0x020A7F18; sub_0203101C_File and sub_020311B8_File both to 0x020A7834.
+ * A host links by name, so each spelling is its own copy of the same text,
+ * and the address resolves to the first spelling of each group.  The port's
+ * strings are shorter than the ROM's, so each registers only its own bytes.
+ * The strings are const on the host and must only be read through their
+ * DS addresses, which is all the matched code does with them.  The
+ * heap-handle tables of the LP64 configuration are port objects with no
+ * DS address and are not registered.
+ */
+#define BW_REG(addr, obj, ds_size)                                          \
+    do {                                                                    \
+        (void)sizeof(char[(ds_size) <= sizeof(obj) ? 1 : -1]);              \
+        bw_ds_register((addr), (void *)&(obj), (ds_size), #obj);            \
+    } while (0)
+
+void bw_game_globals_register(void)
+{
+    BW_REG(0x0214699Cu, g_Sink, 0x10u);
+    BW_REG(0x020A7EE0u, func_02048DDC_File, (u32)sizeof(func_02048DDC_File));
+    BW_REG(0x020A7EECu, func_02048DDC_Msg, (u32)sizeof(func_02048DDC_Msg));
+    BW_REG(0x020A7F18u, func_02049578_Msg, (u32)sizeof(func_02049578_Msg));
+    BW_REG(0x02146A68u, g_02146A68, 0x0Cu);
+    /* 0x40, not the declared 0x14: the record write at +4 is 0x3C wide. */
+    BW_REG(0x02146270u, g_02146270, 4u + BW_PERSONAL_RECORD_SIZE);
+    BW_REG(0x0214652Cu, g_0214652C, 4u);
+    BW_REG(BW_NATURE_TABLE_ADDRESS, func_02019B04_Table,
+           BW_NATURE_COUNT * BW_NATURE_STATS);
+    BW_REG(0x02146954u, g_EnvModule, 0x10u);
+    BW_REG(BW_WATCH_ID_ADDRESS, g_020A7820, 4u);
+    BW_REG(0x020A7834u, sub_0203101C_File, (u32)sizeof(sub_0203101C_File));
+#if EIDOS_HEAP_MATCHED
+    BW_REG(0x02146B60u, sRootListInitialized, 4u);
+    BW_REG(0x02146B64u, sRootList, 0x0Cu);
+#endif
+}
