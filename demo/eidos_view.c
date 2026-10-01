@@ -31,6 +31,13 @@
  *     eidos_view [--data-root PATH] [--scale N] [--side-by-side] [--gap N]
  *                [--species N] [--map N] [--frames N] [--shot PATH]
  *                [--shot-first PATH] [--no-audio]
+ *                [--rom PATH] [--no-window] [--reset-data] [--move-data PATH]
+ *
+ * The data root is found the way the game will find it (install/setup.h):
+ * --data-root, then BW_DATA_ROOT, then the saved setting, then the
+ * platform's default place; when none of them holds playable game data the
+ * first-run setup window opens (engine/platform/wizard.h) and asks for the
+ * player's ROM.  --rom makes the data without a window.
  *
  * Escape quits; F12 writes a screenshot.  With --frames the run ends after
  * that many frames, which together with SDL_VIDEODRIVER=dummy is how
@@ -50,10 +57,7 @@
 #include "platform.h"
 #include "port.h"
 #include "tcbl.h"
-
-#ifndef EIDOS_DEFAULT_DATA_ROOT
-#define EIDOS_DEFAULT_DATA_ROOT ""
-#endif
+#include "wizard.h"
 
 #define TITLE_ARCHIVE "titledemo.narc"
 #define TITLE_NSCR    0u
@@ -631,7 +635,9 @@ static void usage(void)
            "Escape quits, F12 writes a screenshot.  --shot-first writes one\n"
            "after the first frame, so two frames can be compared.\n"
            "--music plays a sequence out of the SDAT through engine/audio;\n"
-           "with no argument it plays SEQ %d, SEQ_BGM_GYM.\n", VIEW_MUSIC_SEQ);
+           "with no argument it plays SEQ %d, SEQ_BGM_GYM.\n"
+           "\n"
+           "The game data:\n%s", VIEW_MUSIC_SEQ, bw_setup_usage());
 }
 
 int main(int argc, char **argv)
@@ -641,7 +647,9 @@ int main(int argc, char **argv)
     EidosFrameHooks hooks;
     EidosFrameLoop loop;
     View view;
-    const char *data_root = NULL;
+    BwSetupRequest setup;
+    char data_root[BW_SETUP_PATH_MAX];
+    int status = 0;
     const char *shot = NULL;
     const char *shot_first = NULL;
     long frames = 0;
@@ -662,9 +670,16 @@ int main(int argc, char **argv)
     cfg.scale = 2;
     cfg.layout = EIDOS_LAYOUT_STACKED;
 
+    memset(&setup, 0, sizeof(setup));
+    argv = bw_os_utf8_argv(&argc, argv);    /* UTF-8 paths on Windows too */
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--data-root") == 0 && i + 1 < argc) {
-            data_root = argv[++i];
+        int used = bw_setup_parse_arg(&setup, argc, argv, &i);
+        if (used < 0) {
+            fprintf(stderr, "eidos_view: %s needs a value\n", argv[i]);
+            usage();
+            return 2;
+        } else if (used > 0) {
+            continue;
         } else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) {
             cfg.scale = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--side-by-side") == 0) {
@@ -701,15 +716,8 @@ int main(int argc, char **argv)
     }
     cfg.audio = audio;
 
-    if (data_root == NULL) {
-        data_root = getenv("BW_DATA_ROOT");
-    }
-    if (data_root == NULL || data_root[0] == '\0') {
-        data_root = EIDOS_DEFAULT_DATA_ROOT;
-    }
-    if (data_root[0] == '\0') {
-        fprintf(stderr, "eidos_view: no data root; pass --data-root PATH\n");
-        return 2;
+    if (!eidos_firstrun(&setup, data_root, sizeof(data_root), &status)) {
+        return status;
     }
     bw_set_data_root(data_root);
 
@@ -752,8 +760,8 @@ int main(int argc, char **argv)
            eidos_platform_audio_open(plat) ? "open" : "silent");
 
     if (music_seq >= 0) {
-        char sdat_path[1024];
-        sprintf(sdat_path, "%s/wb_sound_data.sdat", data_root);
+        char sdat_path[BW_SETUP_PATH_MAX + 32];
+        snprintf(sdat_path, sizeof(sdat_path), "%s/wb_sound_data.sdat", data_root);
         if (bw_sdat_load(&music_sdat, sdat_path) == 0) {
             music_sdat_open = 1;
             music = bw_audio_player_create(&music_sdat, (u32)music_seq,

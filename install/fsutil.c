@@ -40,6 +40,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
@@ -296,6 +297,20 @@ int bw_file_size(FILE *fp, u64 *size)
     return 0;
 }
 
+/* The free bytes on the volume of an existing path. */
+static int free_space_one(const char *path, u64 *bytes)
+{
+    wchar_t wpath[WPATH_MAX];
+    ULARGE_INTEGER avail;
+
+    if (widen(path, wpath, WPATH_MAX) != 0
+        || !GetDiskFreeSpaceExW(wpath, &avail, NULL, NULL)) {
+        return -1;
+    }
+    *bytes = (u64)avail.QuadPart;
+    return 0;
+}
+
 #else
 
 /* ------------------------------------------------------------------ */
@@ -407,6 +422,19 @@ int bw_file_size(FILE *fp, u64 *size)
     return 0;
 }
 
+/* The free bytes on the volume of an existing path, for an unprivileged
+ * user (f_bavail, not f_bfree, which counts the blocks kept for root). */
+static int free_space_one(const char *path, u64 *bytes)
+{
+    struct statvfs sv;
+
+    if (statvfs(path, &sv) != 0) {
+        return -1;
+    }
+    *bytes = (u64)sv.f_bavail * (u64)sv.f_frsize;
+    return 0;
+}
+
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -440,6 +468,45 @@ int bw_mkdirs_utf8(const char *path)
         }
     }
     rc = mkdir_one(buf);
+    free(buf);
+    return rc;
+}
+
+int bw_free_space_utf8(const char *path, u64 *bytes)
+{
+    char *buf;
+    size_t n = strlen(path);
+    int rc = -1;
+
+    buf = (char *)malloc(n + 4);
+    if (buf == NULL) {
+        return -1;
+    }
+    memcpy(buf, path, n + 1);
+    for (;;) {
+        if (n > 0 && bw_path_kind_utf8(buf) != BW_PATH_NONE) {
+            rc = free_space_one(buf, bytes);
+            break;
+        }
+        /* Up one level: drop the last component, then its separators. */
+        while (n > 0 && buf[n - 1] != '/' && buf[n - 1] != '\\') {
+            n--;
+        }
+        if (n == 0) {
+            /* A relative name with no folder part: the current folder. */
+            rc = free_space_one(".", bytes);
+            break;
+        }
+        while (n > 1 && (buf[n - 1] == '/' || buf[n - 1] == '\\')) {
+            n--;
+        }
+        buf[n] = '\0';
+        if (n == 2 && buf[1] == ':') {
+            buf[2] = '\\';              /* "C:" is the drive's cwd; ask "C:\" */
+            buf[3] = '\0';
+            n = 3;
+        }
+    }
     free(buf);
     return rc;
 }

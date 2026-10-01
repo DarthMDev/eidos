@@ -1440,7 +1440,7 @@ is written at 1x in the configured layout, as RGB24, so SDL writes a plain
 ## eidos_view, the first visible output
 
 ```
-build/eidos_view --data-root <extract/data> [--scale N] [--side-by-side]
+build/eidos_view [--data-root <extract/data>] [--scale N] [--side-by-side]
                  [--gap N] [--species N] [--map N] [--frames N]
                  [--shot PATH] [--shot-first PATH] [--anim-speed N]
                  [--no-audio] [--music [SEQ]]
@@ -2367,6 +2367,41 @@ the ROM the `BW_ROM` environment variable names, into a folder named
 never stored in the repository. It also checks that a second run is a no-op
 and no staging is left. Without `BW_ROM` it reports itself skipped.
 
+### First run: the setup window
+
+On top of the core, `install/setup.c` decides where the data root is and
+whether it is playable, and `engine/platform/wizard.c` asks for the ROM
+when it is not. A front end calls `eidos_firstrun` before anything else;
+`demo/eidos_view` does, so it now starts the way the game will:
+
+- the data root is `--data-root`, else `BW_DATA_ROOT`, else the folder
+  saved in `config.txt`, else the platform default (`%LOCALAPPDATA%\eidos`,
+  `~/Library/Application Support/eidos`, `$XDG_DATA_HOME/eidos`, the app's
+  internal storage on Android; a `portable.txt` beside the executable
+  keeps everything beside it);
+- it is playable when its manifest names this installer version and the
+  known good dump and the first files are there (a folder named explicitly
+  needs only the NitroFS tree, so aletheia's own extract/ still runs);
+- when it is not, a window opens: one SDL screen drawn by eidos with its
+  own bitmap font, the same on every platform. It says what is needed,
+  takes the ROM from the platform's own file dialog (`install/picker.c`:
+  `IFileOpenDialog` on Windows, `NSOpenPanel` on macOS, the desktop portal
+  then zenity or kdialog on Linux) or dropped on the window, checks and
+  writes it on a worker thread with a progress bar and Cancel, and says in
+  plain words why a file was refused (an archive, another game, White, a
+  damaged or modified dump, no space);
+- `--rom <file>` does the same without a window, `--no-window` prints
+  what is missing instead of opening one, `--reset-data` deletes the data
+  eidos made, `--move-data <folder>` moves it.
+
+`test_dataroot` (every configuration, MSVC included) and `test_wizard` (the
+window under the dummy video driver, driven by scripted drops, clicks and
+keys) need no game data; with `BW_ROM` set, `test_wizard` also installs
+the real ROM through the window and `test_firstrun_rom` runs the headless
+path (install, reuse, move, reset) through `eidos_view`. `test_picker`
+opens the real Windows dialog and answers it from a helper thread when
+`EIDOS_TEST_DIALOGS=1`. `docs/installer.md` has the rest.
+
 ## Planned Milestones
 
 - [ ] **Milestone 1**: Portability pass
@@ -2525,14 +2560,29 @@ and no staging is left. Without `BW_ROM` it reports itself skipped.
   - [ ] The game's own sound calls reach it: nothing in `src/matched/` plays
         a sequence yet, so the SEQ id is still chosen by the demo
 - [ ] **Milestone 6**: Data pipeline & asset extraction
-  - [ ] First-run asset extractor from legally dumped ROM (the core is
-        in and verified on the real ROM: `install/` identifies the dump,
-        refuses a wrong game or a bad dump with a message, and extracts it
-        atomically into ndsrom.py's layout plus `arm9_dec.bin` and
-        `overlays_dec/`, 726 of 726 files identical to aletheia's own
-        extract, checked by `test_extract_rom` when `BW_ROM` is set; the
-        per-platform wizard is designed in `docs/installer.md` but not
-        built, and the readable-format conversion is not started)
+  - [x] First-run asset extractor from legally dumped ROM: `install/`
+        identifies the dump, refuses a wrong game or a bad dump with a
+        message, and extracts it atomically into ndsrom.py's layout plus
+        `arm9_dec.bin` and `overlays_dec/` (726 of 726 files identical to
+        aletheia's own extract, `test_extract_rom`); the setup window
+        (`engine/platform/wizard.c`, one SDL implementation for every
+        platform) opens when the data root is missing or not playable,
+        takes the ROM from the native file dialog or a drop, extracts it
+        with a progress bar and Cancel, and says why a file was refused;
+        `--rom`, `--no-window`, `--reset-data`, `--move-data`, and a data
+        location per platform (see "First run: the setup window").
+        Verified on Windows: the window driven by scripted events under the
+        dummy and the real Windows video driver, the real ROM installed
+        through it and through `eidos_view --rom`, the real
+        `IFileOpenDialog` opened and answered (`test_picker`), MinGW at
+        both widths, `install/setup.c` and the picker under MSVC x64, x86
+        and clang-cl. The Linux (portal, zenity, kdialog), macOS and
+        Android branches of the C files are syntax-checked with clang
+        against stand-in system headers only; `install/picker_mac.m` is not
+        compiled (no macOS SDK here); the Android and iOS pickers are
+        deferred with a plan in `docs/installer.md`
+  - [ ] Readable-format conversion of the extracted assets (not started;
+        split out of the box above, where it was listed as not started)
   - [x] File layer: VFS with mod overlay support (`sdk/vfs.c`: the data
         root and several mods in a manifest-ordered load order, whole-file
         overrides; `sdk/vfs_narc.c`: member-level NARC overrides that

@@ -55,7 +55,7 @@ static char **utf8_argv(int *argc)
 }
 #endif
 
-static void progress(void *ctx, u32 done, u32 total, const char *what)
+static int progress(void *ctx, u32 done, u32 total, const char *what)
 {
     static int last = -1;
     static const char *phase = NULL;
@@ -74,6 +74,7 @@ static void progress(void *ctx, u32 done, u32 total, const char *what)
         fflush(stderr);
         last = pct;
     }
+    return 0;
 }
 
 int main(int argc, char **argv)
@@ -145,7 +146,11 @@ int main(int argc, char **argv)
 
     memset(&opt, 0, sizeof(opt));
     opt.require_gamecode = any ? NULL : "IRBO";
-    opt.rom_sha1_hex = info.sha1_hex;
+    /* A dump trimmed of its padding records the hash of the whole dump,
+     * as the wizard does (bw_setup_identity), so either front end's
+     * extraction is recognised as the known dump's. */
+    opt.rom_sha1_hex = (info.trimmed && info.verified) ? info.padded_sha1_hex
+                                                       : info.sha1_hex;
     opt.replace = replace;
     if (bw_rom_extract(argv[a], argv[a + 1], &opt, &res, progress,
                        (void *)"extracting", err, sizeof(err)) != 0) {
