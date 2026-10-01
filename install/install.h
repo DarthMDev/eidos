@@ -134,14 +134,24 @@ typedef struct BwRomInfo {
  * or DSi cartridge (4 Gbit).  Anything bigger is not a cartridge dump. */
 #define BW_ROM_MAX_SIZE 0x40000000u
 
-typedef void (*BwProgressFn)(void *ctx, u32 done, u32 total, const char *what);
+/*
+ * Progress, and the way to stop.  Return 0 to go on; anything else stops
+ * the work at the next block or file, and the call returns BW_CANCELLED
+ * with `err` "cancelled".  A cancelled extraction leaves nothing behind:
+ * its staging folder is removed exactly as on an error.
+ */
+typedef int (*BwProgressFn)(void *ctx, u32 done, u32 total, const char *what);
+
+/* What bw_rom_identify and bw_rom_extract return when `progress` asked
+ * them to stop (every other failure is -1). */
+#define BW_CANCELLED (-2)
 
 /*
  * Read the header and hash the whole image.  0 if the file is readable and
  * looks like a DS cartridge image at all (it is not an archive, and a
  * header fits); -1 with `err` filled otherwise, in words a player can act
- * on.  Whether it is a game the port supports is bw_rom_verdict's
- * question.  `progress` (may be NULL) is told how far the hash has got,
+ * on (BW_CANCELLED if `progress` stopped it).  Whether it is a game the
+ * port supports is bw_rom_verdict's question.  `progress` (may be NULL) is told how far the hash has got,
  * with `what` "hashing".
  */
 int bw_rom_identify(const char *rom_path, BwRomInfo *info,
@@ -263,5 +273,9 @@ int   bw_rename_utf8(const char *from, const char *to);
 int   bw_remove_tree_utf8(const char *path);
 /* The size of an open file, past 2 GiB where the platform allows. */
 int   bw_file_size(FILE *fp, u64 *size);
+/* The bytes free for an unprivileged user on the volume that holds
+ * `path`, or would hold it: the nearest existing ancestor is asked when
+ * `path` does not exist yet.  0 on success, -1 if no ancestor answers. */
+int   bw_free_space_utf8(const char *path, u64 *bytes);
 
 #endif /* EIDOS_INSTALL_H */

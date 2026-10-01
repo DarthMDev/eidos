@@ -1089,6 +1089,31 @@ if(WIN32)
     target_link_libraries(eidos_extract PRIVATE shell32)
 endif()
 
+# First run without a window (install/setup.c): where the data root lives
+# on each platform, whether the one there is playable, the config file,
+# --rom/--reset-data/--move-data; and the platform's own file dialog
+# (install/picker.c, NSOpenPanel in install/picker_mac.m on macOS).  No SDL,
+# so every configuration builds and tests it, MSVC included; the SDL
+# wizard on top of it is with the platform layer below (eidos_wizard).
+add_library(eidos_setup STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/setup.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/location.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/picker.c
+)
+target_link_libraries(eidos_setup PUBLIC eidos_install)
+if(WIN32)
+    # SHGetKnownFolderPath and CommandLineToArgvW (shell32), CoTaskMemFree
+    # and the COM dialog (ole32), GetOpenFileNameW (comdlg32).
+    target_link_libraries(eidos_setup PUBLIC shell32 ole32 comdlg32)
+elseif(APPLE)
+    enable_language(OBJC)
+    target_sources(eidos_setup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/install/picker_mac.m)
+    target_link_libraries(eidos_setup PUBLIC "-framework Cocoa")
+else()
+    # dlopen of libdbus-1 for the desktop portal; no link-time D-Bus.
+    target_link_libraries(eidos_setup PUBLIC ${CMAKE_DL_LIBS})
+endif()
+
 # A synthetic cartridge and aletheia's own extraction of it, generated from a
 # fixed seed (no game data): tools/synth_rom.py.
 set(BW_SYNTH_DIR ${CMAKE_CURRENT_BINARY_DIR}/synth)
@@ -1442,6 +1467,31 @@ target_link_libraries(test_extract PRIVATE eidos_install)
 add_dependencies(test_extract bw_synth)
 add_test(NAME test_extract COMMAND test_extract ${BW_SYNTH_DIR})
 
+# The data root's location, check, config file, reset and move, and the
+# headless first run, on synthetic trees and the synthetic cartridge.  The
+# test sets its own eidos home, so it never reads or writes the real one;
+# BW_DATA_ROOT is cleared because it outranks everything the test sets up.
+# Not named test_setup: 32-bit Windows treats an executable with "setup"
+# (or "install", "update") in its name as an installer and demands
+# elevation before it will start it (UAC installer detection).
+add_executable(test_dataroot ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dataroot.c)
+target_include_directories(test_dataroot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_dataroot PRIVATE eidos_setup)
+add_dependencies(test_dataroot bw_synth)
+add_test(NAME test_dataroot
+         COMMAND test_dataroot ${BW_SYNTH_DIR} ${CMAKE_CURRENT_BINARY_DIR}/setup_work)
+set_tests_properties(test_dataroot PROPERTIES ENVIRONMENT "BW_DATA_ROOT=;EIDOS_HOME=")
+
+# The native file dialog opened for real and answered by a helper thread
+# (Windows).  It shows a window on the desktop, so it runs only with
+# EIDOS_TEST_DIALOGS=1 and is skipped otherwise.
+add_executable(test_picker ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_picker.c)
+target_include_directories(test_picker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_picker PRIVATE eidos_setup)
+add_test(NAME test_picker
+         COMMAND test_picker ${CMAKE_CURRENT_BINARY_DIR}/picker_work)
+set_tests_properties(test_picker PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+
 # The extractor on the player's real ROM, named by BW_ROM at test time,
 # checked file for file against the extract/ tree that holds BW_DATA_ROOT
 # (aletheia's own ndsrom.py + delink.py output).  Skipped, not failed,
@@ -1552,10 +1602,20 @@ add_test(NAME test_dsaddr
 # ctest checks the picture on a machine with no display and no sound card.
 #
 if(EIDOS_SDL_FOUND)
+    # The first-run setup window (engine/platform/wizard.c) and its bitmap
+    # font, over install/setup.h.  eidos_view finds its data the way the
+    # game will, through eidos_firstrun: --data-root, BW_DATA_ROOT, the
+    # saved setting, the platform default, else this window.
+    add_library(eidos_wizard STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/wizard.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/font.c
+    )
+    target_include_directories(eidos_wizard PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform)
+    target_link_libraries(eidos_wizard PUBLIC eidos_setup eidos_sdl2)
+
     add_executable(eidos_view ${CMAKE_CURRENT_SOURCE_DIR}/demo/eidos_view.c)
-    target_link_libraries(eidos_view PRIVATE eidos_platform)
-    target_compile_definitions(eidos_view PRIVATE
-        EIDOS_DEFAULT_DATA_ROOT="${BW_DATA_ROOT_ABS}")
+    target_link_libraries(eidos_view PRIVATE eidos_platform eidos_wizard)
 
     # SDL2.dll has to sit next to the executable on Windows: there is no
     # installer and nothing on PATH.
@@ -1579,6 +1639,33 @@ if(EIDOS_SDL_FOUND)
     if(NOT EIDOS_DATA_TESTS)
         set_tests_properties(test_view PROPERTIES DISABLED TRUE)
     endif()
+
+    # The setup window under the dummy video driver, driven by scripted
+    # events: an archive dropped and refused, a mouse click on "Choose
+    # another file", the synthetic cartridge refused as not the original
+    # game, then installed with the test-only override, Start; Escape and
+    # closing the window.  With BW_ROM set it also installs the real ROM
+    # through a drop, with no override.
+    add_executable(test_wizard ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_wizard.c)
+    target_include_directories(test_wizard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_wizard PRIVATE eidos_wizard)
+    add_dependencies(test_wizard bw_synth eidos_view)
+    add_test(NAME test_wizard
+             COMMAND test_wizard ${BW_SYNTH_DIR} ${CMAKE_CURRENT_BINARY_DIR}/wizard_work)
+    set_tests_properties(test_wizard PROPERTIES TIMEOUT 600
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;BW_DATA_ROOT=;EIDOS_HOME=")
+
+    # The whole first run on the player's real ROM, without a window:
+    # eidos_view --rom makes the data in a scratch eidos home and draws
+    # from it; the next start finds it through the saved setting;
+    # --move-data and --reset-data.  Skipped without BW_ROM.
+    add_test(NAME test_firstrun_rom
+             COMMAND ${CMAKE_COMMAND} -DVIEW=$<TARGET_FILE:eidos_view>
+                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}/firstrun_rom
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/firstrun_rom.cmake)
+    set_tests_properties(test_firstrun_rom PROPERTIES
+        SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 900
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;BW_DATA_ROOT=")
 endif()
 
 # ---------------------------------------------------------------------------

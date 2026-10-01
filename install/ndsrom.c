@@ -301,8 +301,10 @@ static int hash_image(Rom *r, const char *path, u32 pad_to, BwSha1 *sha,
         }
         bw_sha1_update(sha, buf, n);
         done += n;
-        if (progress != NULL) {
-            progress(ctx, done, total, "hashing");
+        if (progress != NULL && progress(ctx, done, total, "hashing") != 0) {
+            say(err, err_len, "cancelled");
+            free(buf);
+            return BW_CANCELLED;
         }
     }
     if (padded != NULL && pad_to > r->size) {
@@ -312,8 +314,10 @@ static int hash_image(Rom *r, const char *path, u32 pad_to, BwSha1 *sha,
             u32 n = pad_to - done < COPY_BLOCK ? pad_to - done : COPY_BLOCK;
             bw_sha1_update(padded, buf, n);
             done += n;
-            if (progress != NULL) {
-                progress(ctx, done, total, "hashing");
+            if (progress != NULL && progress(ctx, done, total, "hashing") != 0) {
+                say(err, err_len, "cancelled");
+                free(buf);
+                return BW_CANCELLED;
             }
         }
     }
@@ -344,11 +348,14 @@ int bw_rom_identify(const char *rom_path, BwRomInfo *info,
     info->trimmed = info->header_crc_ok && info->capacity != 0
                     && r.size < info->capacity;
 
-    if (hash_image(&r, rom_path, info->capacity, &sha,
-                   info->trimmed ? &padded : NULL, progress, ctx,
-                   err, err_len) != 0) {
-        rom_close(&r);
-        return -1;
+    {
+        int hrc = hash_image(&r, rom_path, info->capacity, &sha,
+                             info->trimmed ? &padded : NULL, progress, ctx,
+                             err, err_len);
+        if (hrc != 0) {
+            rom_close(&r);
+            return hrc;
+        }
     }
     rom_close(&r);
     bw_sha1_final(&sha, info->sha1);
@@ -977,6 +984,7 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
     char old[PATH_MAX_LEN];
     int existing = 0;           /* 0 none, 1 an extraction to replace, 2 an empty dir */
     int staged = 0;
+    int cancelled = 0;
 
     if (opt == NULL) {
         opt = &defaults;
@@ -1005,7 +1013,9 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
     } else {
         BwSha1 sha;
         u8 d[20];
-        if (hash_image(&rom, rom_path, 0, &sha, NULL, progress, ctx, err, err_len) != 0) {
+        int hrc = hash_image(&rom, rom_path, 0, &sha, NULL, progress, ctx, err, err_len);
+        if (hrc != 0) {
+            rc = hrc;
             goto done;
         }
         bw_sha1_final(&sha, d);
@@ -1364,8 +1374,11 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
         }
         done += plan.r[i].size;
         res.regions++;
-        if (progress != NULL) {
-            progress(ctx, (u32)(done >> 10), (u32)(total >> 10), plan.r[i].path);
+        if (progress != NULL
+            && progress(ctx, (u32)(done >> 10), (u32)(total >> 10), plan.r[i].path) != 0) {
+            say(err, err_len, "cancelled");
+            cancelled = 1;
+            goto done;
         }
     }
     if (arm9_dec != NULL) {
@@ -1374,8 +1387,11 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
         }
         done += res.arm9_dec_size;
         res.regions++;
-        if (progress != NULL) {
-            progress(ctx, (u32)(done >> 10), (u32)(total >> 10), "arm9_dec.bin");
+        if (progress != NULL
+            && progress(ctx, (u32)(done >> 10), (u32)(total >> 10), "arm9_dec.bin") != 0) {
+            say(err, err_len, "cancelled");
+            cancelled = 1;
+            goto done;
         }
     }
     if (!opt->no_decompress) {
@@ -1389,8 +1405,11 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
             done += ovs[i].code_size;
             res.overlays_dec++;
             res.regions++;
-            if (progress != NULL) {
-                progress(ctx, (u32)(done >> 10), (u32)(total >> 10), "overlays_dec");
+            if (progress != NULL
+                && progress(ctx, (u32)(done >> 10), (u32)(total >> 10), "overlays_dec") != 0) {
+                say(err, err_len, "cancelled");
+                cancelled = 1;
+                goto done;
             }
         }
     }
@@ -1472,6 +1491,9 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
 done:
     if (rc != 0 && staged) {
         (void)bw_remove_tree_utf8(staging);
+    }
+    if (cancelled) {
+        rc = BW_CANCELLED;
     }
     if (result != NULL) {
         *result = res;
