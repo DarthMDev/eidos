@@ -325,6 +325,59 @@ set(BW_SDK_SOURCES
     ${BW_PXI_SOURCES}
 )
 
+# sdk/asm/: portable C for the matched SDK and runtime functions whose bodies
+# are mwcc `asm` (sdk/asm/asmsdk.h).  One file per matched source; each
+# names the source it replaces.  These need nothing beyond this library, so
+# they are in it.
+set(BW_ASMSDK_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/MI_CpuCopy8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/MI_CpuFill8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/MIi_CpuClear16.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/MIi_CpuClear32.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/MIi_CpuCopy16.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/MIi_CpuCopy32.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_020834C0.c   # MI_UncompressLZ8
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/MTX_Rot22_.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/s32_div_f.c       # _s32_div_f, _u32_div_f
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02084EB8.c   # OS_GetLockID
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02084F10.c   # OS_ReleaseLockID
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/OS_GetMacAddress.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/CP_SaveContext.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/CPi_RestoreContext.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/CTRDG_IsExistedAtInit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/CTRDGi_IsTaskAvailable_02010054.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02034F74.c
+)
+list(APPEND BW_SDK_SOURCES ${BW_ASMSDK_SOURCES})
+
+# The rest call matched game code or name game globals, so they link with
+# the boot closure (EIDOS_BOOT), in place of the matched asm sources they
+# replace; tests/test_asmsdk_glue.c checks them against recording doubles.
+set(BW_ASMSDK_BOOT_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02084D98.c   # OS_UnLockCartridge
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/ArrayDeleteAt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/NHTTPi_GetConnection.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/OS_GetInitArenaLo.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/OS_GetInitArenaHi.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/SNDi_IncAlarmId.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02030BA4.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_0203129C.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02034F84.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_0203516C.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_020351D0.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02049238.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_0208C86C.c
+    # TWL-only targets: panic if a NITRO boot ever reaches them.
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_020053E4.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02005420.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02005428.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02005454.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02005B6C.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_027312B4.c   # OSi_InitArenaEx_ltdmain
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_0273131C.c   # OSi_SearchTitleIdFromList
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_027313E8.c   # PMi_PreSleepForNdma
+)
+
 # One symbol per file, on purpose: a static-library member is only pulled in
 # when nothing else defines its symbol, which is how tests/test_stats.c
 # supplies its own record accessors without displacing anything else.
@@ -1237,6 +1290,7 @@ add_executable(test_pxi
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pxi.c
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/pxi_doubles.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mi.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/MIi_CpuClear32.c   # OS_InitLock clears the lock area
     ${BW_PXI_SOURCES}
     ${_bw_pxi_test_sources})
 target_include_directories(test_pxi PRIVATE
@@ -1271,6 +1325,22 @@ endforeach()
 target_sources(test_os_irq PRIVATE
     ${ALETHEIA_ROOT}/src/matched/arm9_sdk/OS_SetIrqFunction.c
     ${ALETHEIA_ROOT}/src/matched/arm9_sdk/OS_GetIrqFunction.c)
+
+# sdk/asm/: the asm functions' C.  test_asmsdk checks the half in the
+# library on the real address space (and, with game data, MI_UncompressLZ8
+# on real archive members); test_asmsdk_glue links the boot half alone
+# against recording doubles of the game code it calls.
+add_executable(test_asmsdk ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_asmsdk.c)
+target_include_directories(test_asmsdk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_asmsdk PRIVATE eidos)
+add_test(NAME test_asmsdk COMMAND test_asmsdk ${BW_DATA_ROOT_ABS})
+add_executable(test_asmsdk_glue
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_asmsdk_glue.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/func_02034F74.c
+    ${BW_ASMSDK_BOOT_SOURCES})
+target_include_directories(test_asmsdk_glue PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_test(NAME test_asmsdk_glue COMMAND test_asmsdk_glue)
 
 add_executable(test_extract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract.c)
 target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

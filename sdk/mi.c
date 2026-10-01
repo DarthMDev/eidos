@@ -7,6 +7,10 @@
  * for the 8-bit forms, so the byte forms take anything and the 16/32-bit
  * forms assume the caller's alignment exactly as the SDK does.
  *
+ * MI_CpuCopy8, MI_CpuFill8 and MIi_CpuClear32 are not here: aletheia
+ * matches them as asm functions, and sdk/asm/ carries their exact C (the
+ * byte forms' unit order, MIi_CpuClear32 rounding the size up).
+ *
  * MIi_CpuClearFast appears in the matched tree under its address spelling
  * (func_02082AC0, see src/matched/func_02008AF0.c) with the argument order
  * (value, dest, size); the alias below preserves that order rather than
@@ -17,11 +21,6 @@
 
 #include "port.h"
 
-void MI_CpuCopy8(const void *src, void *dst, u32 size)
-{
-    memcpy(dst, src, (size_t)size);
-}
-
 void MI_CpuCopy16(const void *src, void *dst, u32 size)
 {
     memcpy(dst, src, (size_t)size & ~(u32)1);
@@ -30,11 +29,6 @@ void MI_CpuCopy16(const void *src, void *dst, u32 size)
 void MI_CpuCopy32(const void *src, void *dst, u32 size)
 {
     memcpy(dst, src, (size_t)size & ~(u32)3);
-}
-
-void MI_CpuFill8(void *dst, u8 value, u32 size)
-{
-    memset(dst, (int)value, (size_t)size);
 }
 
 void MI_CpuClear8(void *dst, u32 size)
@@ -55,22 +49,6 @@ void MI_CpuFill32(void *dst, u32 value, u32 size)
 void MI_CpuClear32(void *dst, u32 size)
 {
     MI_CpuFill32(dst, 0, size);
-}
-
-/*
- * MIi_CpuClear32 at 0x02082A7C, the internal form the game's allocation entry
- * point reaches directly: src/matched/sub_02030734.c declares it
- *
- *     extern void MIi_CpuClear32(u32 data, void *dest, u32 size);
- *
- * and calls it as MIi_CpuClear32(0, p, size) when the caller asked for a
- * cleared block.  The leading value argument is what makes this the `i`
- * (internal) form rather than MI_CpuClear32(dst, size) above: same loop, one
- * more parameter, and the argument order is the matched call site's.
- */
-void MIi_CpuClear32(u32 data, void *dest, u32 size)
-{
-    MI_CpuFill32(dest, data, size);
 }
 
 /*
