@@ -421,6 +421,53 @@ u32 g2d_frame_sample_bit(const G2dFrameSample *sample)
     return (sample->layer < 4u) ? (1u << sample->layer) : 0u;
 }
 
+/* The enabled raster layer at (prio, bgi), or NULL. */
+static const G2dLayerRaster *raster_at(const G2dFrameDesc *desc, u32 prio,
+                                       u32 bgi)
+{
+    u32 i;
+
+    for (i = 0; i < desc->n_rasters; i++) {
+        const G2dLayerRaster *r = &desc->rasters[i];
+
+        if (r->enabled && r->priority == prio && r->bg_index == bgi) {
+            return r;
+        }
+    }
+    return NULL;
+}
+
+static int raster_owns(const G2dFrameDesc *desc, u32 prio, u32 bgi)
+{
+    return raster_at(desc, prio, bgi) != NULL;
+}
+
+static int raster_sample(const G2dFrameDesc *desc, u32 prio, u32 bgi,
+                         s32 x, s32 y, G2dFrameSample *out)
+{
+    const G2dLayerRaster *r = raster_at(desc, prio, bgi);
+    const u8 *src;
+
+    if (r == NULL || r->rgba == NULL || x < 0 || y < 0
+        || (u32)x >= r->width || (u32)y >= r->height) {
+        return 0;
+    }
+    src = r->rgba + ((size_t)(u32)y * r->width + (u32)x) * 4u;
+    if (src[3] == 0) {
+        return 0;
+    }
+    out->pal = NULL;
+    out->color_index = 0;
+    out->is_obj = 0;
+    out->is_3d = 0;
+    out->is_raster = 1;
+    out->rgb[0] = src[0];
+    out->rgb[1] = src[1];
+    out->rgb[2] = src[2];
+    out->layer = bgi;
+    return 1;
+}
+
 u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
                     G2dFrameSample *out, u32 max)
 {
@@ -443,6 +490,7 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
             out[count].color_index = index;
             out[count].is_obj = 1;
             out[count].is_3d = 0;
+            out[count].is_raster = 0;
             out[count].layer = i;
             count++;
         }
@@ -473,12 +521,25 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
                     out[count].color_index = 0;
                     out[count].is_obj = 0;
                     out[count].is_3d = 1;
+                    out[count].is_raster = 0;
                     out[count].rgb[0] = src[0];
                     out[count].rgb[1] = src[1];
                     out[count].rgb[2] = src[2];
                     out[count].layer = bgi;
                     count++;
                 }
+                continue;
+            }
+            /*
+             * A pre-resolved layer takes its slot the same way, but has
+             * transparent pixels: alpha 0 lets the walk carry on to the
+             * next layer number, exactly as a text BG's index 0 does.
+             */
+            if (raster_sample(desc, prio, bgi, x, y, &out[count])) {
+                count++;
+                continue;
+            }
+            if (raster_owns(desc, prio, bgi)) {
                 continue;
             }
             if (bgi < desc->n_bgs) {
@@ -490,6 +551,7 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
                     out[count].color_index = ci;
                     out[count].is_obj = 0;
                     out[count].is_3d = 0;
+                    out[count].is_raster = 0;
                     out[count].layer = bgi;
                     count++;
                     continue;
@@ -508,6 +570,7 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
                     out[count].color_index = ci;
                     out[count].is_obj = 0;
                     out[count].is_3d = 0;
+                    out[count].is_raster = 0;
                     out[count].layer = bgi;
                     count++;
                     break;
@@ -529,7 +592,7 @@ static void stack_color(const G2dFrameDesc *desc, const G2dFrameSample *stack,
     u8 px[4];
 
     if (i < n) {
-        if (stack[i].is_3d) {
+        if (stack[i].is_3d || stack[i].is_raster) {
             rgb[0] = stack[i].rgb[0];
             rgb[1] = stack[i].rgb[1];
             rgb[2] = stack[i].rgb[2];
@@ -568,8 +631,7 @@ void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
             out[2] = top[2];
             out[3] = 255;
 
-            if (desc->blend == NULL
-                || desc->blend->effect == G2D_BLEND_NONE) {
+            if (desc->blend == NULL) {
                 continue;
             }
             /*
@@ -581,6 +643,27 @@ void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
              */
             if ((g2d_window_mask(desc->windows, (s32)x, (s32)y)
                  & G2D_LAYER_EFFECT) == 0) {
+                continue;
+            }
+            /*
+             * A semi-transparent OBJ is the one exception, and it comes
+             * first: such a pixel counts as a first target whatever
+             * BLDCNT's bit 4 says and is alpha blended whatever its
+             * effect field says, provided the pixel beneath it is a
+             * second target.  When it is not, the OBJ falls through to
+             * the ordinary rule below (so a brightness effect still
+             * applies to it if BLDCNT names the OBJ layer).
+             */
+            if (n > 0 && stack[0].is_obj && stack[0].layer < desc->n_objs
+                && desc->objs[stack[0].layer].semi) {
+                stack_color(desc, stack, n, 1, below, &below_bit);
+                if ((below_bit & desc->blend->second) != 0) {
+                    g2d_blend_alpha(top, below, desc->blend->eva,
+                                    desc->blend->evb, out);
+                    continue;
+                }
+            }
+            if (desc->blend->effect == G2D_BLEND_NONE) {
                 continue;
             }
             if ((top_bit & desc->blend->first) == 0) {

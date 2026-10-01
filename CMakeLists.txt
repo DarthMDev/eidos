@@ -406,6 +406,7 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg.c         # BG layers, the frame compositor
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg_affine.c  # rotation/scaling BG layers
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/window.c     # windows, alpha and brightness
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/hwcompose.c  # both screens from the hardware state
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/frame/frame.c    # the vblank frame loop and the OS tick
 
     # engine/g3d/ -- the geometry engine and the software rasteriser, the
@@ -1021,6 +1022,17 @@ foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_heap 
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# The hardware-state compositor is checked two ways: synthetic register and
+# VRAM states whose expected pixels are computed on paper, and, with game
+# data, the title screen and a rig pose loaded into VRAM, palette and OAM
+# the way the SDK would and required to come out pixel-identical to the
+# asset path.  It brings a test-only backing for sdk/dsmem.h; without game
+# data the second half reports itself skipped.
+add_executable(test_hwcompose ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hwcompose.c)
+target_include_directories(test_hwcompose PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_hwcompose PRIVATE eidos)
+add_test(NAME test_hwcompose COMMAND test_hwcompose ${BW_DATA_ROOT_ABS})
 
 add_executable(test_extract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract.c)
 target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
