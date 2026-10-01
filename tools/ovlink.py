@@ -455,6 +455,59 @@ class Scan:
         return name in self.called
 
 
+# Port-side macros the build decides (--define), for the `#if
+# EIDOS_HEAP_MATCHED` blocks in sdk/ that decide which names the link has;
+# the same reading tools/bootlink.py does.
+PORT_DEFINES = {}
+PP_IF = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
+
+
+def _pp_value(kind, expr):
+    """True/False for a conditional PORT_DEFINES decides, None otherwise."""
+    expr = expr.split("/*")[0].split("//")[0].strip()
+    if kind in ("ifdef", "ifndef"):
+        if expr not in PORT_DEFINES:
+            return None
+        return kind == "ifdef"
+    neg = expr.startswith("!")
+    name = expr[1:].strip() if neg else expr
+    if name in PORT_DEFINES:
+        value = PORT_DEFINES[name] not in ("0", "")
+        return not value if neg else value
+    return None
+
+
+def preprocess(text):
+    """Blank the branches of the conditionals PORT_DEFINES decides."""
+    out = []
+    stack = []                 # [this branch live, a branch taken, decided]
+    for line in text.split("\n"):
+        m = PP_IF.match(line)
+        live = all(frame[0] for frame in stack)
+        if m:
+            kind, expr = m.group(1), m.group(2)
+            if kind in ("if", "ifdef", "ifndef"):
+                v = _pp_value(kind, expr)
+                stack.append([v is not False, v is True, v is not None])
+            elif kind == "elif" and stack:
+                frame = stack[-1]
+                v = _pp_value("if", expr)
+                if frame[2] and v is not None:
+                    frame[0] = (not frame[1]) and v
+                    frame[1] = frame[1] or v
+                else:
+                    frame[0], frame[2] = True, False
+            elif kind == "else" and stack:
+                frame = stack[-1]
+                frame[0] = (not frame[1]) if frame[2] else True
+            elif kind == "endif" and stack:
+                stack.pop()
+            out.append("")
+            continue
+        out.append(line if live else "")
+    return "\n".join(out)
+
+
 def read_text(path):
     with open(path, encoding="utf-8", errors="replace") as fh:
         return fh.read()
@@ -875,7 +928,7 @@ class Link:
             seen.add(p)
             if not os.path.exists(p):
                 continue                 # generated later in the build
-            sc = Scan(p, read_text(p))
+            sc = Scan(p, preprocess(read_text(p)))
             self.link_scans.append(sc)
             for n in sc.exported():
                 self.link_defs.add(n)
@@ -1660,7 +1713,12 @@ def main(argv=None):
     ap.add_argument("--set-name", default="build")
     ap.add_argument("--arm9-stubs", action="store_true")
     ap.add_argument("--summary", action="store_true")
+    ap.add_argument("--define", action="append", default=[],
+                    help="NAME=VALUE a port source is compiled with (repeatable)")
     args = ap.parse_args(argv)
+    for d in args.define:
+        k, _, v = d.partition("=")
+        PORT_DEFINES[k] = v
     if not re.match(r"^[A-Za-z_]\w*$", args.set_name):
         raise SystemExit("ovlink.py: --set-name must be a C identifier")
 

@@ -50,7 +50,8 @@ if(MSVC)
             -Wno-int-conversion -Wno-incompatible-pointer-types
             -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast
             -Wno-unused-but-set-variable -Wno-missing-field-initializers
-            -Wno-shift-count-overflow -Wno-constant-conversion -Wno-comment)
+            -Wno-shift-count-overflow -Wno-constant-conversion -Wno-comment
+            -Wno-deprecated-non-prototype)
     else()
         #   C4431  missing type specifier, int assumed (C89 implicit int)
         #   C4013  undefined; assuming extern returning int (none left after
@@ -65,11 +66,13 @@ if(MSVC)
         #   C4028  parameter differs from declaration   C4090 const qualifiers
         #   C4029  declared parameter list differs      C4098 void returns a value
         #   C4204/C4221 non-constant initialisers       C4005 macro redefinition
+        #   C4456/C4457/C4459 a local hiding another local, a parameter, a global
         list(APPEND EIDOS_OVL_MATCHED_OPTIONS
             /wd4431 /wd4013 /wd4102 /wd4057 /wd4047 /wd4024 /wd4133 /wd4018
             /wd4389 /wd4146 /wd4706 /wd4701 /wd4703 /wd4715 /wd4127 /wd4310
             /wd4305 /wd4312 /wd4311 /wd4152 /wd4054 /wd4055 /wd4113 /wd4028
-            /wd4090 /wd4029 /wd4098 /wd4204 /wd4221 /wd4005 /wd4295 /wd4334)
+            /wd4090 /wd4029 /wd4098 /wd4204 /wd4221 /wd4005 /wd4295 /wd4334
+            /wd4456 /wd4457 /wd4459)
     endif()
 else()
     set(EIDOS_OVL_MATCHED_OPTIONS
@@ -81,9 +84,12 @@ else()
         -Wno-builtin-declaration-mismatch -Wno-char-subscripts -Wno-address
         -Wno-sequence-point -Wno-comment)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        # deprecated-non-prototype: the `int name();` ovlink declares for a
+        # call mwcc compiled with no declaration in scope.
         list(APPEND EIDOS_OVL_MATCHED_OPTIONS
             -Wno-incompatible-library-redeclaration -Wno-pointer-sign
-            -Wno-tautological-constant-out-of-range-compare)
+            -Wno-tautological-constant-out-of-range-compare
+            -Wno-deprecated-non-prototype)
     endif()
     # Casts between pointers and integers of another width: with 8-byte
     # pointers the pointer-width question docs/pointer-width.md measures,
@@ -120,6 +126,12 @@ function(eidos_overlays name)
     set(stub_arg)
     if(A_ARM9_STUBS)
         set(stub_arg --arm9-stubs)
+    endif()
+    # sdk/ decides some names with `#if EIDOS_HEAP_MATCHED`.
+    if(EIDOS_HEAP_MATCHED)
+        list(APPEND stub_arg --define EIDOS_HEAP_MATCHED=1)
+    else()
+        list(APPEND stub_arg --define EIDOS_HEAP_MATCHED=0)
     endif()
     execute_process(
         COMMAND ${Python3_EXECUTABLE} ${EIDOS_OVLINK_TOOL}
