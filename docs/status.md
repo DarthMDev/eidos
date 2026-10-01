@@ -50,15 +50,21 @@ is only partly done, it says which part.
   archives through the name table and the file layer, mod overlay first
   (`test_arcid`).
 - **First-run extractor core** (`install/`, `eidos_extract`): identical to
-  aletheia's ndsrom.py + blz.py on a synthetic cartridge (`test_extract`).
+  aletheia's ndsrom.py + blz.py on a synthetic cartridge (`test_extract`)
+  and, file for file, to aletheia's extract/ on the real ROM (726 of 726,
+  `test_extract_rom` with `BW_ROM` set); refuses wrong games and bad dumps
+  with a message, atomic output, existing-folder rules
+  (`docs/installer.md`).
 - **Builds with no game data**, and `tools/check.py` runs GCC and Clang at
   both pointer widths, ASan+UBSan and no-SDL, warning-free.
 
 ## Open, no decompilation dependency
 
 - **The installer front ends**: the per-platform wizard around `install/`
-  (ROM picker, progress, data root location per DISTRIBUTION.md), the
-  optional DSi BIOS input, and a first run against the real ROM.
+  (designed in `docs/installer.md`: ROM picker, progress, data root
+  location per platform, behaviour without data), cancellation and a
+  free-space check in the core, a descriptor entry point for Android, and
+  the optional DSi BIOS input.
 - **The Pokemon record layer** (`func_02017E1C`/`E40`, `func_02018598`) is
   matched in aletheia, but its closure is 81 files with 3 open functions
   and ARM9 rodata tables; it needs game data to test meaningfully.

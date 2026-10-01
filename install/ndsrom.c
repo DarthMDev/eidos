@@ -13,8 +13,15 @@
  * the complete list of regions to write, checking every one against the
  * image and against each other (ndsrom.py's RegionMap: nothing may run past
  * the end, nothing may overlap).  Only if the whole plan is sound does the
- * second pass write anything, so a malformed image leaves no files behind
- * except the output directory itself.
+ * second pass write anything, so a malformed image leaves no files behind.
+ * The second pass writes into a staging directory that is renamed into
+ * place only when complete (see bw_rom_extract in install.h).
+ *
+ * Beyond ndsrom.py, it writes what tools/delink.py derives from the same
+ * image: arm9_dec.bin and overlays_dec/ (the ARM9 binary and every
+ * compressed ARM9 overlay, BLZ-decompressed), which the port and its tests
+ * read.  bw_rom_identify and bw_rom_verdict decide whether an image is the
+ * dump eidos supports and say why not in words a player can act on.
  */
 
 #include <stdarg.h>
@@ -23,16 +30,6 @@
 #include <string.h>
 
 #include "install.h"
-
-#ifdef _WIN32
-#include <direct.h>
-#include <wchar.h>
-#include <windows.h>
-#else
-#include <errno.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#endif
 
 #define HEADER_SNAPSHOT     0x1000u
 #define OVERLAY_ENTRY_SIZE  32u
@@ -60,74 +57,6 @@ static void say(char *err, size_t err_len, const char *fmt, ...)
         vsnprintf(err, err_len, fmt, ap);
         va_end(ap);
     }
-}
-
-FILE *bw_fopen_utf8(const char *path, const char *mode)
-{
-#ifdef _WIN32
-    wchar_t wpath[PATH_MAX_LEN];
-    wchar_t wmode[8];
-
-    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, PATH_MAX_LEN) == 0
-        || MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, 8) == 0) {
-        return NULL;
-    }
-    return _wfopen(wpath, wmode);
-#else
-    return fopen(path, mode);
-#endif
-}
-
-static int mkdir_one(const char *path)
-{
-#ifdef _WIN32
-    wchar_t wpath[PATH_MAX_LEN];
-    DWORD attr;
-
-    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, PATH_MAX_LEN) == 0) {
-        return -1;
-    }
-    if (_wmkdir(wpath) == 0) {
-        return 0;
-    }
-    attr = GetFileAttributesW(wpath);
-    return (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY))
-        ? 0 : -1;
-#else
-    struct stat st;
-
-    if (mkdir(path, 0777) == 0) {
-        return 0;
-    }
-    return (errno == EEXIST && stat(path, &st) == 0 && S_ISDIR(st.st_mode))
-        ? 0 : -1;
-#endif
-}
-
-int bw_mkdirs_utf8(const char *path)
-{
-    char buf[PATH_MAX_LEN];
-    size_t n = strlen(path);
-    size_t i;
-
-    if (n == 0 || n >= sizeof(buf)) {
-        return -1;
-    }
-    memcpy(buf, path, n + 1);
-    for (i = 1; i < n; i++) {
-        if (buf[i] == '/' || buf[i] == '\\') {
-            char c = buf[i];
-            /* "C:\" and a leading "/" are not directories to create. */
-            if (!(i == 2 && buf[1] == ':')) {
-                buf[i] = '\0';
-                if (mkdir_one(buf) != 0) {
-                    return -1;
-                }
-            }
-            buf[i] = c;
-        }
-    }
-    return mkdir_one(buf);
 }
 
 /* ------------------------------------------------------------------ */
@@ -209,9 +138,31 @@ static int rom_read(Rom *r, u32 off, void *dst, u32 len)
     return fread(dst, 1, len, r->fp) == len ? 0 : -1;
 }
 
+/* What a player most often picks instead of the .nds itself: the archive
+ * it was shipped in.  Recognised by magic so the message can say so. */
+static const char *archive_kind(const u8 *p, u32 n)
+{
+    if (n >= 4 && p[0] == 'P' && p[1] == 'K' && p[2] == 3 && p[3] == 4) {
+        return "a ZIP archive";
+    }
+    if (n >= 6 && memcmp(p, "7z\xBC\xAF\x27\x1C", 6) == 0) {
+        return "a 7-Zip archive";
+    }
+    if (n >= 4 && memcmp(p, "Rar!", 4) == 0) {
+        return "a RAR archive";
+    }
+    if (n >= 2 && p[0] == 0x1F && p[1] == 0x8B) {
+        return "a gzip archive";
+    }
+    return NULL;
+}
+
 static int rom_open(Rom *r, const char *path, char *err, size_t err_len)
 {
-    long end;
+    u64 size;
+    u8 magic[8];
+    size_t got;
+    const char *kind;
 
     memset(r, 0, sizeof(*r));
     r->fp = bw_fopen_utf8(path, "rb");
@@ -219,27 +170,38 @@ static int rom_open(Rom *r, const char *path, char *err, size_t err_len)
         say(err, err_len, "cannot open %s", path);
         return -1;
     }
-    if (fseek(r->fp, 0, SEEK_END) != 0 || (end = ftell(r->fp)) < 0) {
+    if (bw_file_size(r->fp, &size) != 0) {
         say(err, err_len, "cannot determine the size of %s", path);
-        fclose(r->fp);
-        r->fp = NULL;
-        return -1;
+        goto fail;
     }
-    r->size = (u32)end;
+    got = fread(magic, 1, sizeof(magic), r->fp);
+    kind = archive_kind(magic, (u32)got);
+    if (kind != NULL) {
+        say(err, err_len, "%s is %s, not a cartridge image: unpack it and "
+            "choose the .nds file inside", path, kind);
+        goto fail;
+    }
+    if (size > BW_ROM_MAX_SIZE) {
+        say(err, err_len, "%s is %llu bytes, larger than any DS cartridge: "
+            "it is not a cartridge image", path, (unsigned long long)size);
+        goto fail;
+    }
+    r->size = (u32)size;
     if (r->size < HEADER_SNAPSHOT) {
         say(err, err_len, "%s is 0x%X bytes, smaller than a cartridge header",
             path, (unsigned)r->size);
-        fclose(r->fp);
-        r->fp = NULL;
-        return -1;
+        goto fail;
     }
     if (rom_read(r, 0, r->hdr, HEADER_SNAPSHOT) != 0) {
         say(err, err_len, "cannot read the header of %s", path);
-        fclose(r->fp);
-        r->fp = NULL;
-        return -1;
+        goto fail;
     }
     return 0;
+
+fail:
+    fclose(r->fp);
+    r->fp = NULL;
+    return -1;
 }
 
 static void rom_close(Rom *r)
@@ -271,14 +233,101 @@ static void copy_field(char *dst, const u8 *src, u32 n)
     }
 }
 
+/* The header checksum at 0x15E: CRC-16 (polynomial 0xA001 reflected,
+ * initial value 0xFFFF) of bytes 0x000..0x15D, which the console's boot
+ * code checks before it will run a cartridge. */
+static u16 header_crc(const u8 *h)
+{
+    u32 crc = 0xFFFFu;
+    u32 i, b;
+
+    for (i = 0; i < 0x15Eu; i++) {
+        crc ^= h[i];
+        for (b = 0; b < 8; b++) {
+            crc = (crc & 1u) ? (crc >> 1) ^ 0xA001u : crc >> 1;
+        }
+    }
+    return (u16)crc;
+}
+
+/* The SHA-1 of every dump eidos knows to be good. */
+static const struct {
+    const char *gamecode;
+    u32         size;
+    const char *sha1;
+} KNOWN_DUMPS[] = {
+    { "IRBO", BW_BLACK_SIZE, BW_BLACK_SHA1 },
+};
+
+static int is_known(const char *gamecode, const char *sha1_hex)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(KNOWN_DUMPS) / sizeof(KNOWN_DUMPS[0]); i++) {
+        if (strcmp(gamecode, KNOWN_DUMPS[i].gamecode) == 0
+            && strcmp(sha1_hex, KNOWN_DUMPS[i].sha1) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Hash the open image from the start; for a trimmed one also the padded
+ * form (`padded` NULL to skip).  0 or -1 with `err` filled. */
+static int hash_image(Rom *r, const char *path, u32 pad_to, BwSha1 *sha,
+                      BwSha1 *padded, BwProgressFn progress, void *ctx,
+                      char *err, size_t err_len)
+{
+    u8 *buf = (u8 *)malloc(COPY_BLOCK);
+    u32 total = (padded != NULL && pad_to > r->size) ? pad_to : r->size;
+    u32 done = 0;
+
+    if (buf == NULL) {
+        say(err, err_len, "out of memory");
+        return -1;
+    }
+    bw_sha1_init(sha);
+    if (fseek(r->fp, 0, SEEK_SET) != 0) {
+        say(err, err_len, "cannot rewind %s", path);
+        free(buf);
+        return -1;
+    }
+    while (done < r->size) {
+        u32 n = r->size - done < COPY_BLOCK ? r->size - done : COPY_BLOCK;
+        if (fread(buf, 1, n, r->fp) != n) {
+            say(err, err_len, "read error in %s at 0x%X", path, (unsigned)done);
+            free(buf);
+            return -1;
+        }
+        bw_sha1_update(sha, buf, n);
+        done += n;
+        if (progress != NULL) {
+            progress(ctx, done, total, "hashing");
+        }
+    }
+    if (padded != NULL && pad_to > r->size) {
+        *padded = *sha;
+        memset(buf, 0xFF, COPY_BLOCK);
+        while (done < pad_to) {
+            u32 n = pad_to - done < COPY_BLOCK ? pad_to - done : COPY_BLOCK;
+            bw_sha1_update(padded, buf, n);
+            done += n;
+            if (progress != NULL) {
+                progress(ctx, done, total, "hashing");
+            }
+        }
+    }
+    free(buf);
+    return 0;
+}
+
 int bw_rom_identify(const char *rom_path, BwRomInfo *info,
                     BwProgressFn progress, void *ctx,
                     char *err, size_t err_len)
 {
     Rom r;
-    BwSha1 sha;
-    u8 *buf;
-    u32 done = 0;
+    BwSha1 sha, padded;
+    u8 cap;
 
     memset(info, 0, sizeof(*info));
     if (rom_open(&r, rom_path, err, err_len) != 0) {
@@ -289,38 +338,26 @@ int bw_rom_identify(const char *rom_path, BwRomInfo *info,
     copy_field(info->maker, r.hdr + 0x10, 2);
     info->unit_code = r.hdr[0x12];
     info->rom_size = r.size;
+    info->header_crc_ok = header_crc(r.hdr) == rd16(r.hdr + 0x15E);
+    cap = r.hdr[0x14];
+    info->capacity = cap <= 13 ? 0x20000u << cap : 0;   /* 128 KiB .. 1 GiB */
+    info->trimmed = info->header_crc_ok && info->capacity != 0
+                    && r.size < info->capacity;
 
-    buf = (u8 *)malloc(COPY_BLOCK);
-    if (buf == NULL) {
-        say(err, err_len, "out of memory");
+    if (hash_image(&r, rom_path, info->capacity, &sha,
+                   info->trimmed ? &padded : NULL, progress, ctx,
+                   err, err_len) != 0) {
         rom_close(&r);
         return -1;
     }
-    bw_sha1_init(&sha);
-    if (fseek(r.fp, 0, SEEK_SET) != 0) {
-        say(err, err_len, "cannot rewind %s", rom_path);
-        free(buf);
-        rom_close(&r);
-        return -1;
-    }
-    while (done < r.size) {
-        u32 n = r.size - done < COPY_BLOCK ? r.size - done : COPY_BLOCK;
-        if (fread(buf, 1, n, r.fp) != n) {
-            say(err, err_len, "read error in %s at 0x%X", rom_path, (unsigned)done);
-            free(buf);
-            rom_close(&r);
-            return -1;
-        }
-        bw_sha1_update(&sha, buf, n);
-        done += n;
-        if (progress != NULL) {
-            progress(ctx, done, r.size, "hashing");
-        }
-    }
-    free(buf);
     rom_close(&r);
     bw_sha1_final(&sha, info->sha1);
     bw_sha1_hex(info->sha1, info->sha1_hex);
+    if (info->trimmed) {
+        u8 d[20];
+        bw_sha1_final(&padded, d);
+        bw_sha1_hex(d, info->padded_sha1_hex);
+    }
 
     /* The game codes: IRB? is Black, IRA? is White (the last letter is the
      * region). */
@@ -329,8 +366,79 @@ int bw_rom_identify(const char *rom_path, BwRomInfo *info,
     } else if (memcmp(info->gamecode, "IRA", 3) == 0) {
         info->game = BW_GAME_WHITE;
     }
-    info->verified = strcmp(info->sha1_hex, BW_BLACK_SHA1) == 0;
+    info->verified = is_known(info->gamecode, info->sha1_hex)
+        || (info->trimmed && is_known(info->gamecode, info->padded_sha1_hex));
     return 0;
+}
+
+static const char *region_name(char c)
+{
+    switch (c) {
+    case 'O': return "USA/Europe";
+    case 'E': return "USA";
+    case 'P': return "European";
+    case 'J': return "Japanese";
+    case 'K': return "Korean";
+    case 'D': return "German";
+    case 'F': return "French";
+    case 'I': return "Italian";
+    case 'S': return "Spanish";
+    default:  return "another region's";
+    }
+}
+
+BwRomVerdict bw_rom_verdict(const BwRomInfo *info, char *msg, size_t msg_len)
+{
+    if (info->verified) {
+        say(msg, msg_len, info->trimmed
+            ? "Pokemon Black, the known good dump (trimmed, but only of padding)"
+            : "Pokemon Black, the known good dump");
+        return BW_VERDICT_OK;
+    }
+    if (info->game == BW_GAME_UNKNOWN) {
+        if (!info->header_crc_ok) {
+            say(msg, msg_len, "This file is not a Nintendo DS cartridge image "
+                "(its header checksum does not match). Choose the .nds file "
+                "of your Pokemon Black dump.");
+            return BW_VERDICT_NOT_DS;
+        }
+        say(msg, msg_len, "This is a DS game, but not Pokemon Black: its title "
+            "is \"%s\" and its game code %s. eidos needs Pokemon Black "
+            "(game code IRBO).", info->title, info->gamecode);
+        return BW_VERDICT_OTHER_GAME;
+    }
+    if (info->game == BW_GAME_WHITE) {
+        say(msg, msg_len, "This is Pokemon White (game code %s). eidos "
+            "supports Pokemon Black only for now.", info->gamecode);
+        return BW_VERDICT_UNSUPPORTED;
+    }
+    if (strcmp(info->gamecode, "IRBO") != 0) {
+        say(msg, msg_len, "This is Pokemon Black, but the %s release (game "
+            "code %s). eidos supports the USA/Europe release (game code "
+            "IRBO) only.", region_name(info->gamecode[3]), info->gamecode);
+        return BW_VERDICT_UNSUPPORTED;
+    }
+    if (!info->header_crc_ok) {
+        say(msg, msg_len, "This looks like Pokemon Black, but its header is "
+            "damaged (the header checksum does not match). Dump the "
+            "cartridge again.");
+        return BW_VERDICT_DAMAGED;
+    }
+    if (info->trimmed) {
+        say(msg, msg_len, "This dump of Pokemon Black is shorter than the "
+            "cartridge (%u of %u bytes) and does not match the known good "
+            "dump even when padded back, so more than padding is missing. "
+            "Dump the cartridge again, without trimming.",
+            (unsigned)info->rom_size, (unsigned)info->capacity);
+        return BW_VERDICT_DAMAGED;
+    }
+    say(msg, msg_len, "This is Pokemon Black, but not the known good dump "
+        "(SHA-1 %s, expected %s%s). It is damaged, patched (a ROM hack or a "
+        "translation) or a different revision. eidos needs an unmodified "
+        "dump.", info->sha1_hex, BW_BLACK_SHA1,
+        info->rom_size > info->capacity ? "; it is also larger than the "
+        "cartridge" : "");
+    return BW_VERDICT_MODIFIED;
 }
 
 /* ------------------------------------------------------------------ */
@@ -652,15 +760,194 @@ static void json_str(FILE *fp, const char *s)
 }
 
 /* ------------------------------------------------------------------ */
+/* The output directory: what is there, staging, the final rename      */
+/* ------------------------------------------------------------------ */
+
+#define MANIFEST_NAME "eidos_manifest.json"
+#define PARTIAL_MARK  ".eidos_partial"
+
+/* `out_dir` without trailing separators, refusing a drive or file system
+ * root (there is no sibling to stage in, and no folder to rename). */
+static int output_base(const char *out_dir, char *base, size_t n)
+{
+    size_t len = strlen(out_dir);
+
+    while (len > 0 && (out_dir[len - 1] == '/' || out_dir[len - 1] == '\\')) {
+        len--;
+    }
+    if (len == 0 || len + 16 >= n
+        || (len == 2 && out_dir[1] == ':')) {
+        return -1;
+    }
+    memcpy(base, out_dir, len);
+    base[len] = '\0';
+    return 0;
+}
+
+static int child_exists(const char *dir, const char *name)
+{
+    char path[PATH_MAX_LEN];
+
+    return join(path, sizeof(path), dir, name) == 0
+        && bw_path_kind_utf8(path) == BW_PATH_FILE;
+}
+
+enum { MAN_NONE, MAN_SAME, MAN_SAME_ROM, MAN_OTHER_ROM };
+
+/*
+ * What `dir`'s eidos_manifest.json says: no manifest of ours, this ROM by
+ * this installer version, this ROM by another version, or another ROM (or
+ * one whose ROM it does not record).  `other_sha` gets the recorded hash.
+ */
+static int manifest_state(const char *dir, const char *sha_hex, char other_sha[41])
+{
+    char path[PATH_MAX_LEN];
+    char text[4096];
+    size_t n;
+    FILE *fp;
+    const char *p;
+    long version = -1;
+    int same_rom = 0;
+
+    other_sha[0] = '\0';
+    if (join(path, sizeof(path), dir, MANIFEST_NAME) != 0
+        || (fp = bw_fopen_utf8(path, "rb")) == NULL) {
+        return MAN_NONE;
+    }
+    n = fread(text, 1, sizeof(text) - 1, fp);
+    fclose(fp);
+    text[n] = '\0';
+    if (strstr(text, "\"tool\": \"eidos install\"") == NULL) {
+        return MAN_NONE;
+    }
+    if ((p = strstr(text, "\"version\": ")) != NULL) {
+        version = strtol(p + 11, NULL, 10);
+    }
+    if ((p = strstr(text, "\"rom_sha1\": \"")) != NULL && strlen(p + 13) >= 40) {
+        memcpy(other_sha, p + 13, 40);
+        other_sha[40] = '\0';
+        same_rom = strcmp(other_sha, sha_hex) == 0;
+    }
+    if (!same_rom) {
+        return MAN_OTHER_ROM;
+    }
+    return version == strtol(BW_INSTALL_VERSION, NULL, 10) ? MAN_SAME : MAN_SAME_ROM;
+}
+
+/*
+ * Clear a staging or set-aside directory left by an earlier run: removed if
+ * it is ours (it carries the marker or a manifest), refused otherwise.
+ */
+static int clear_leftover(const char *path, char *err, size_t err_len)
+{
+    int kind = bw_path_kind_utf8(path);
+
+    if (kind == BW_PATH_NONE) {
+        return 0;
+    }
+    if (kind != BW_PATH_DIR
+        || (!child_exists(path, PARTIAL_MARK) && !child_exists(path, MANIFEST_NAME))) {
+        say(err, err_len, "%s is in the way and was not made by eidos; move "
+            "it somewhere else and try again", path);
+        return -1;
+    }
+    if (bw_remove_tree_utf8(path) != 0) {
+        say(err, err_len, "cannot remove %s, left by an interrupted "
+            "extraction; delete it and try again", path);
+        return -1;
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Extract                                                             */
 /* ------------------------------------------------------------------ */
+
+/* One ARM9 overlay table entry, kept for overlays_dec/. */
+typedef struct OvRec {
+    u32 id;
+    u32 offset;             /* the file in the ROM */
+    u32 file_size;
+    u32 code_size;          /* the decompressed size the table promises */
+    u32 last;               /* compressed size (low 24 bits) and flags */
+} OvRec;
+
+#define OVL_FLAG_COMPRESSED 0x01u
+#define MAX_OVERLAY_SIZE    (8u * 1024u * 1024u)   /* delink.py's MAX_SANE_SIZE */
+
+/*
+ * overlays_dec/y9_NNNN.bin for every ARM9 overlay the table flags
+ * compressed: tools/delink.py's step 3, with its checks.  Overlays stored
+ * uncompressed are not copied again (delink.py points at overlays/ for
+ * them too).
+ */
+static int write_overlay_dec(Rom *rom, const char *dir, const OvRec *o,
+                             char *err, size_t err_len)
+{
+    u32 comp = o->last & 0x00FFFFFFu;
+    u8 *raw;
+    u8 *img;
+    u32 size;
+    char rel[64];
+    int rc = -1;
+
+    if (comp == 0) {
+        say(err, err_len, "overlay %u is flagged compressed but its compressed "
+            "size is zero", (unsigned)o->id);
+        return -1;
+    }
+    if (comp > o->file_size) {
+        say(err, err_len, "overlay %u: compressed size 0x%X exceeds the file "
+            "size 0x%X", (unsigned)o->id, (unsigned)comp, (unsigned)o->file_size);
+        return -1;
+    }
+    if (o->code_size > MAX_OVERLAY_SIZE) {
+        say(err, err_len, "overlay %u: implausible size 0x%X",
+            (unsigned)o->id, (unsigned)o->code_size);
+        return -1;
+    }
+    raw = (u8 *)malloc(comp);
+    img = (u8 *)malloc(o->code_size ? o->code_size : 1u);
+    if (raw == NULL || img == NULL) {
+        say(err, err_len, "out of memory");
+        goto out;
+    }
+    if (rom_read(rom, o->offset, raw, comp) != 0) {
+        say(err, err_len, "cannot read overlay %u", (unsigned)o->id);
+        goto out;
+    }
+    {
+        char why[256];
+        size = bw_blz_size(raw, comp, why, sizeof(why));
+        if (size == 0) {
+            say(err, err_len, "overlay %u: BLZ decode failed: %s", (unsigned)o->id, why);
+            goto out;
+        }
+        if (size != o->code_size) {
+            say(err, err_len, "overlay %u: footer says the image is 0x%X bytes "
+                "but 0x%X was expected", (unsigned)o->id, (unsigned)size,
+                (unsigned)o->code_size);
+            goto out;
+        }
+        if (bw_blz_decompress(raw, comp, img, size, why, sizeof(why)) != 0) {
+            say(err, err_len, "overlay %u: BLZ decode failed: %s", (unsigned)o->id, why);
+            goto out;
+        }
+    }
+    snprintf(rel, sizeof(rel), "overlays_dec/y9_%04u.bin", (unsigned)o->id);
+    rc = write_bytes(dir, rel, img, size, err, err_len);
+out:
+    free(raw);
+    free(img);
+    return rc;
+}
 
 int bw_rom_extract(const char *rom_path, const char *out_dir,
                    const BwExtractOptions *opt, BwExtractResult *result,
                    BwProgressFn progress, void *ctx,
                    char *err, size_t err_len)
 {
-    static const BwExtractOptions defaults = { NULL, 0 };
+    static const BwExtractOptions defaults = { NULL, 0, NULL, 0 };
     Rom rom;
     Plan plan = { NULL, 0, 0 };
     BwExtractResult res;
@@ -671,6 +958,8 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
     u8 *buf = NULL;
     u8 *arm9 = NULL;
     u8 *arm9_dec = NULL;
+    OvRec *ovs = NULL;
+    u32 ov_count = 0;
     u32 fat_count = 0;
     u32 header_size, unit_code;
     int is_twl;
@@ -682,13 +971,86 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
     u32 arm9_size = 0;
     u32 banner_version = 0;
     int have_banner = 0;
+    char sha_hex[41];
+    char base[PATH_MAX_LEN - 16];
+    char staging[PATH_MAX_LEN];
+    char old[PATH_MAX_LEN];
+    int existing = 0;           /* 0 none, 1 an extraction to replace, 2 an empty dir */
+    int staged = 0;
 
     if (opt == NULL) {
         opt = &defaults;
     }
     memset(&res, 0, sizeof(res));
-    if (rom_open(&rom, rom_path, err, err_len) != 0) {
+    if (output_base(out_dir, base, sizeof(base)) != 0) {
+        say(err, err_len, "\"%s\" cannot hold the extraction: choose a folder "
+            "(not a drive root)", out_dir);
+        if (result != NULL) {
+            *result = res;
+        }
         return -1;
+    }
+    snprintf(staging, sizeof(staging), "%s.partial", base);
+    snprintf(old, sizeof(old), "%s.old", base);
+    if (rom_open(&rom, rom_path, err, err_len) != 0) {
+        if (result != NULL) {
+            *result = res;
+        }
+        return -1;
+    }
+
+    /* --- the image's hash, which the output records ----------------- */
+    if (opt->rom_sha1_hex != NULL && strlen(opt->rom_sha1_hex) == 40) {
+        memcpy(sha_hex, opt->rom_sha1_hex, 41);
+    } else {
+        BwSha1 sha;
+        u8 d[20];
+        if (hash_image(&rom, rom_path, 0, &sha, NULL, progress, ctx, err, err_len) != 0) {
+            goto done;
+        }
+        bw_sha1_final(&sha, d);
+        bw_sha1_hex(d, sha_hex);
+    }
+
+    /* --- what is already at out_dir --------------------------------- */
+    switch (bw_path_kind_utf8(base)) {
+    case BW_PATH_NONE:
+        break;
+    case BW_PATH_FILE:
+        say(err, err_len, "%s exists and is a file; choose a folder", base);
+        goto done;
+    default:
+        if (bw_dir_is_empty_utf8(base) == 1) {
+            existing = 2;
+            break;
+        }
+        {
+            char other[41];
+            switch (manifest_state(base, sha_hex, other)) {
+            case MAN_SAME:
+                res.already = 1;
+                rc = 0;
+                goto done;
+            case MAN_SAME_ROM:
+                existing = 1;           /* an older installer's: redo it */
+                break;
+            case MAN_OTHER_ROM:
+                if (!opt->replace) {
+                    say(err, err_len, "%s already holds an extraction of a "
+                        "different ROM (SHA-1 %s); replace it explicitly or "
+                        "choose another folder", base,
+                        other[0] ? other : "not recorded");
+                    goto done;
+                }
+                existing = 1;
+                break;
+            default:
+                say(err, err_len, "%s already exists and has files in it that "
+                    "eidos did not write; choose a new or empty folder", base);
+                goto done;
+            }
+        }
+        break;
     }
 
     /* --- header sanity (ndsrom.py's order) -------------------------- */
@@ -793,6 +1155,13 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
                     goto done;
                 }
                 count = tsize / OVERLAY_ENTRY_SIZE;
+                if (t == 0) {
+                    ovs = (OvRec *)malloc((size_t)count * sizeof(OvRec));
+                    if (ovs == NULL) {
+                        say(err, err_len, "out of memory");
+                        goto done;
+                    }
+                }
                 for (i = 0; i < count; i++) {
                     const u8 *e = table + i * OVERLAY_ENTRY_SIZE;
                     u32 ov_id = rd32(e + 0x00), fid = rd32(e + 0x18);
@@ -807,6 +1176,14 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
                         goto done;
                     fid_seen[fid] = 2;
                     res.overlays++;
+                    if (t == 0) {
+                        OvRec *o = &ovs[ov_count++];
+                        o->id = ov_id;
+                        o->offset = fat[2 * fid];
+                        o->file_size = fat[2 * fid + 1] - fat[2 * fid];
+                        o->code_size = rd32(e + 0x08);
+                        o->last = rd32(e + 0x1C);
+                    }
                 }
                 free(table);
                 table = NULL;
@@ -916,7 +1293,7 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
     }
 
     /* --- arm9_dec.bin: decompress before writing anything ------------ */
-    if (!opt->no_arm9_decompress && arm9_size != 0) {
+    if (!opt->no_decompress && arm9_size != 0) {
         u32 dec_size;
 
         arm9 = (u8 *)malloc(arm9_size);
@@ -946,15 +1323,33 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
         res.arm9_dec_size = dec_size;
     }
 
-    /* --- write ------------------------------------------------------- */
+    /* --- the staging directory --------------------------------------- */
     for (i = 0; i < plan.count; i++) {
         total += plan.r[i].size;
     }
     total += res.arm9_dec_size;
-    if (bw_mkdirs_utf8(out_dir) != 0) {
-        say(err, err_len, "cannot create %s", out_dir);
+    if (!opt->no_decompress) {
+        for (i = 0; i < ov_count; i++) {
+            if (((ovs[i].last >> 24) & OVL_FLAG_COMPRESSED) && ovs[i].code_size <= MAX_OVERLAY_SIZE) {
+                total += ovs[i].code_size;
+            }
+        }
+    }
+    if (clear_leftover(staging, err, err_len) != 0
+        || clear_leftover(old, err, err_len) != 0) {
         goto done;
     }
+    if (bw_mkdirs_utf8(staging) != 0) {
+        say(err, err_len, "cannot create %s", staging);
+        goto done;
+    }
+    staged = 1;
+    if (write_bytes(staging, PARTIAL_MARK, "eidos extraction in progress\n", 29,
+                    err, err_len) != 0) {
+        goto done;
+    }
+
+    /* --- write ------------------------------------------------------- */
     buf = (u8 *)malloc(COPY_BLOCK);
     if (buf == NULL) {
         say(err, err_len, "out of memory");
@@ -964,7 +1359,7 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
         if (plan.r[i].size == 0) {
             continue;
         }
-        if (copy_region(&rom, out_dir, &plan.r[i], buf, err, err_len) != 0) {
+        if (copy_region(&rom, staging, &plan.r[i], buf, err, err_len) != 0) {
             goto done;
         }
         done += plan.r[i].size;
@@ -974,7 +1369,7 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
         }
     }
     if (arm9_dec != NULL) {
-        if (write_bytes(out_dir, "arm9_dec.bin", arm9_dec, res.arm9_dec_size, err, err_len) != 0) {
+        if (write_bytes(staging, "arm9_dec.bin", arm9_dec, res.arm9_dec_size, err, err_len) != 0) {
             goto done;
         }
         done += res.arm9_dec_size;
@@ -983,9 +1378,25 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
             progress(ctx, (u32)(done >> 10), (u32)(total >> 10), "arm9_dec.bin");
         }
     }
+    if (!opt->no_decompress) {
+        for (i = 0; i < ov_count; i++) {
+            if (!((ovs[i].last >> 24) & OVL_FLAG_COMPRESSED)) {
+                continue;
+            }
+            if (write_overlay_dec(&rom, staging, &ovs[i], err, err_len) != 0) {
+                goto done;
+            }
+            done += ovs[i].code_size;
+            res.overlays_dec++;
+            res.regions++;
+            if (progress != NULL) {
+                progress(ctx, (u32)(done >> 10), (u32)(total >> 10), "overlays_dec");
+            }
+        }
+    }
     res.bytes = done;
 
-    /* --- eidos_manifest.json ----------------------------------------- */
+    /* --- eidos_manifest.json, last: its presence means complete ------ */
     {
         char full[PATH_MAX_LEN];
         char title[13], gamecode[5];
@@ -993,12 +1404,13 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
 
         copy_field(title, rom.hdr, 12);
         copy_field(gamecode, rom.hdr + 0x0C, 4);
-        if (join(full, sizeof(full), out_dir, "eidos_manifest.json") != 0
+        if (join(full, sizeof(full), staging, MANIFEST_NAME) != 0
             || (fp = bw_fopen_utf8(full, "w")) == NULL) {
-            say(err, err_len, "cannot write eidos_manifest.json");
+            say(err, err_len, "cannot write " MANIFEST_NAME);
             goto done;
         }
         fprintf(fp, "{\n \"tool\": \"eidos install\",\n \"version\": %s,\n", BW_INSTALL_VERSION);
+        fprintf(fp, " \"rom_sha1\": \"%s\",\n", sha_hex);
         fprintf(fp, " \"title\": ");
         json_str(fp, title);
         fprintf(fp, ",\n \"gamecode\": ");
@@ -1010,17 +1422,57 @@ int bw_rom_extract(const char *rom_path, const char *out_dir,
             fprintf(fp, " \"banner_version\": %u,\n", (unsigned)banner_version);
         }
         fprintf(fp, " \"arm9_dec_size\": %u,\n", (unsigned)res.arm9_dec_size);
-        fprintf(fp, " \"counts\": {\"fs_files\": %u, \"overlays\": %u, \"orphans\": %u, \"files\": %u}\n}\n",
+        fprintf(fp, " \"counts\": {\"fs_files\": %u, \"overlays\": %u, "
+                "\"overlays_dec\": %u, \"orphans\": %u, \"files\": %u}\n}\n",
                 (unsigned)res.fs_files, (unsigned)res.overlays,
-                (unsigned)res.orphans, (unsigned)res.regions);
+                (unsigned)res.overlays_dec, (unsigned)res.orphans,
+                (unsigned)res.regions);
         if (fclose(fp) != 0) {
-            say(err, err_len, "write error on eidos_manifest.json");
+            say(err, err_len, "write error on " MANIFEST_NAME);
             goto done;
+        }
+    }
+
+    /* --- commit: the marker goes, the tree takes its name ------------ */
+    {
+        char mark[PATH_MAX_LEN];
+        int moved = 0;
+
+        if (join(mark, sizeof(mark), staging, PARTIAL_MARK) != 0
+            || bw_remove_tree_utf8(mark) != 0) {
+            say(err, err_len, "cannot remove %s", mark);
+            goto done;
+        }
+        if (existing == 2 && bw_remove_tree_utf8(base) != 0) {
+            say(err, err_len, "cannot replace the empty folder %s", base);
+            goto done;
+        }
+        if (existing == 1) {
+            if (bw_rename_utf8(base, old) != 0) {
+                say(err, err_len, "cannot move the previous extraction %s aside "
+                    "(is a file in it open?)", base);
+                goto done;
+            }
+            moved = 1;
+        }
+        if (bw_rename_utf8(staging, base) != 0) {
+            if (moved) {
+                (void)bw_rename_utf8(old, base);
+            }
+            say(err, err_len, "cannot rename %s to %s", staging, base);
+            goto done;
+        }
+        staged = 0;
+        if (moved) {
+            (void)bw_remove_tree_utf8(old);     /* else the next run does */
         }
     }
     rc = 0;
 
 done:
+    if (rc != 0 && staged) {
+        (void)bw_remove_tree_utf8(staging);
+    }
     if (result != NULL) {
         *result = res;
     }
@@ -1032,6 +1484,7 @@ done:
     free(buf);
     free(arm9);
     free(arm9_dec);
+    free(ovs);
     rom_close(&rom);
     return rc;
 }

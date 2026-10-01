@@ -2278,34 +2278,63 @@ widths.**
 The end state is an installer: the player gives it their own ROM (and,
 optionally later, a DSi BIOS) and gets a playable game on Windows, macOS,
 Linux, Android or iOS. `install/` is the part of that which is the same on
-every platform, plain C99 with no SDL and nothing of the game:
+every platform, plain C99 with no SDL and nothing of the game, plus one
+small file of OS calls (`install/fsutil.c`, Win32 and POSIX):
 
-- `bw_rom_identify`: the header (title, game code, unit code) and a
-  streamed SHA-1 of the whole image, checked against the dump aletheia is
-  built against (`install/sha1.c`, FIPS vectors in the test);
+- `bw_rom_identify`: the header (title, game code, unit code, checksum,
+  capacity) and a streamed SHA-1 of the whole image (`install/sha1.c`, FIPS
+  vectors in the test), plus the hash of a trimmed image padded back to
+  its capacity;
+- `bw_rom_verdict`: whether eidos takes the image and, if not, why, in
+  words a player can act on: not a DS image, another game, White or another
+  region, a damaged header or a dump cut short, a modified dump. A ZIP or
+  7-Zip archive is named as one. A dump trimmed of padding only is accepted;
 - `bw_rom_extract`: the tree aletheia's `tools/ndsrom.py extract` writes
   (`data/` NitroFS files, ARM9/ARM7, FNT/FAT, both overlay tables and their
-  files, orphans, the banner, the DSi regions) plus `arm9_dec.bin`, the ARM9
-  decompressed by `install/blz.c` exactly as `tools/blz.py` does, which is
-  what the port reads its ARM9 tables from. `eidos_manifest.json` records
-  what was extracted; ndsrom.py's rebuild bookkeeping is not written.
+  files, orphans, the banner, the DSi regions) plus what `tools/delink.py`
+  derives: `arm9_dec.bin` and `overlays_dec/`, BLZ-decompressed by
+  `install/blz.c` exactly as `tools/blz.py` does. `eidos_manifest.json`
+  records which image and which installer version. The output is atomic
+  (staged in `<out>.partial`, renamed into place when complete); a finished
+  extraction of the same image is reused, an interrupted one restarts, and
+  a folder holding anything eidos did not write is refused, never deleted;
 - the ROM is untrusted input: every offset is checked, the whole plan is
   validated (bounds, overlaps, a cyclic FNT) before a single file is
   written, names are sanitised exactly as ndsrom.py sanitises them, and
-  paths are UTF-8 on every platform (the wide API on Windows).
+  paths are UTF-8 on every platform (the wide API on Windows, with the
+  long-path prefix past 200 characters).
 
-`eidos_extract <rom.nds> [out_dir]` is the command-line front end.
+`eidos_extract [--any] [--replace] <rom.nds> [out_dir]` is the command-line
+front end. **On the real ROM it writes 726 files, all 726 identical (size
+and SHA-1) to aletheia's own extract/**, with nothing of that tree missing
+but four files written on purpose by aletheia's tools only (rebuild
+bookkeeping, the DSi-key-only `arm9i_dec.bin`, a disassembler view). It
+takes about 6 s with an optimised build on this machine, half of it the
+hash. `docs/installer.md` has the details, the intended differences, and the
+design of the per-platform first-run wizard (where the data goes, how the
+ROM is picked, what the engine does without data).
 
 **`tests/test_extract.c`** needs no game data. `tools/synth_rom.py` builds
 a synthetic DSi-enhanced cartridge from a fixed seed (nested directories,
-names that need sanitising, overlays in both tables, an orphan, an empty
-FAT slot, a zero-length file, an animated banner, both digest tables, a
-residue blob, an ARM9 packed by aletheia's own `blz.py`) and runs aletheia's
-`ndsrom.py extract` on it. The C extractor's output is compared with that
-**file for file by SHA-1: 27 of 27 identical**. Around it: the SHA-1 and
-BLZ vectors, 17 name cases, 16 broken images each refused with the right
-message and nothing written, and 300 randomly damaged images (43 extracted,
-257 refused, none crashing, run under ASan by `tools/check.py`). 83 checks.
+names that need sanitising, overlays in both tables, a BLZ-compressed ARM9
+overlay, an orphan, an empty FAT slot, a zero-length file, an animated
+banner, both digest tables, a residue blob, a correct header checksum, an
+ARM9 packed by aletheia's own `blz.py`) and runs aletheia's
+`ndsrom.py extract` and `blz.py` on it. The C extractor's output, written
+into a folder named outside ASCII, is compared with that **file for file by
+SHA-1: 28 of 28 identical**. Around it: the SHA-1 and BLZ vectors, 17 name
+cases, every verdict, the padded hash of a trimmed image, the existing-folder
+rules (foreign files, empty, another image, an older installer, a killed
+run's staging), 20 broken images each refused with the right message and
+nothing left behind, and 300 randomly damaged images (43 extracted, 257
+refused, none crashing, run under ASan by `tools/check.py`). 148 checks.
+
+**`test_extract_rom`** (`tests/extract_rom.cmake`) runs `eidos_extract` on
+the ROM the `BW_ROM` environment variable names, into a folder named
+`extract é€ ü`, and compares every file with the extract/ tree that holds
+`BW_DATA_ROOT`; the expected hashes are computed from that tree each run,
+never stored in the repository. It also checks that a second run is a no-op
+and no staging is left. Without `BW_ROM` it reports itself skipped.
 
 ## Planned Milestones
 
@@ -2465,11 +2494,14 @@ message and nothing written, and 300 randomly damaged images (43 extracted,
   - [ ] The game's own sound calls reach it: nothing in `src/matched/` plays
         a sequence yet, so the SEQ id is still chosen by the demo
 - [ ] **Milestone 6**: Data pipeline & asset extraction
-  - [ ] First-run asset extractor from legally dumped ROM (the core is in:
-        `install/` identifies and extracts the ROM into ndsrom.py's layout
-        plus `arm9_dec.bin`, identical to aletheia's tools on a synthetic
-        cartridge; the per-platform wizard, the readable-format conversion
-        of DISTRIBUTION.md and a run against the real ROM are not)
+  - [ ] First-run asset extractor from legally dumped ROM (the core is
+        in and verified on the real ROM: `install/` identifies the dump,
+        refuses a wrong game or a bad dump with a message, and extracts it
+        atomically into ndsrom.py's layout plus `arm9_dec.bin` and
+        `overlays_dec/`, 726 of 726 files identical to aletheia's own
+        extract, checked by `test_extract_rom` when `BW_ROM` is set; the
+        per-platform wizard is designed in `docs/installer.md` but not
+        built, and the readable-format conversion is not started)
   - [x] File layer: VFS with mod overlay support (`sdk/vfs.c`: the data
         root and several mods in a manifest-ordered load order, whole-file
         overrides; `sdk/vfs_narc.c`: member-level NARC overrides that

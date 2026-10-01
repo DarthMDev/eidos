@@ -1012,6 +1012,7 @@ add_library(eidos_install STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/install/sha1.c
     ${CMAKE_CURRENT_SOURCE_DIR}/install/blz.c
     ${CMAKE_CURRENT_SOURCE_DIR}/install/ndsrom.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/install/fsutil.c
 )
 target_include_directories(eidos_install PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/install
@@ -1277,6 +1278,19 @@ target_include_directories(test_extract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test
 target_link_libraries(test_extract PRIVATE eidos_install)
 add_dependencies(test_extract bw_synth)
 add_test(NAME test_extract COMMAND test_extract ${BW_SYNTH_DIR})
+
+# The extractor on the player's real ROM, named by BW_ROM at test time,
+# checked file for file against the extract/ tree that holds BW_DATA_ROOT
+# (aletheia's own ndsrom.py + delink.py output).  Skipped, not failed,
+# without BW_ROM or without that tree; see tests/extract_rom.cmake.
+get_filename_component(BW_EXTRACT_ROOT "${BW_DATA_ROOT_ABS}" DIRECTORY)
+add_test(NAME test_extract_rom
+         COMMAND ${CMAKE_COMMAND} -DEXTRACT=$<TARGET_FILE:eidos_extract>
+                 -DREFERENCE=${BW_EXTRACT_ROOT}
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/rom_extract
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/extract_rom.cmake)
+set_tests_properties(test_extract_rom PROPERTIES
+    SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 900)
 
 # tools/dsaddr.py: every cast form, the prelude against sdk/dsmem.h on this
 # compiler, every matched source in this build parsed after its rewrite,
