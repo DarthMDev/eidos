@@ -32,9 +32,16 @@ The MSVC configurations find Visual Studio with vswhere, load its developer
 environment (vcvarsall.bat x64 or x64_x86) into the child processes only,
 and build with Ninja.  They are skipped, with the reason, on a host that is
 not Windows, has no Visual Studio, or has Visual Studio without the C++
-build tools.  They build with -DEIDOS_SDL=OFF: the MinGW SDL2 that
-tools/fetch_sdl.py fetches does not link with MSVC (README.md, "Building
-with MSVC").
+build tools.
+
+The Windows configurations (mingw-*, msvc-*, clangcl-*) build the SDL2
+platform layer and run test_view with it: they configure with
+-DEIDOS_SDL_FETCH=ON, so tools/fetch_sdl.py fetches the official SDL2
+package for that toolchain (MinGW or VC) into its per-user cache on first
+use, and a configuration that still ends up without SDL2 fails rather than
+quietly building less.  On a Windows host the MinGW configurations are
+native builds and run their tests directly; elsewhere they cross-compile and
+need Wine to run them.
 
 Without game data the data-driven tests are registered as disabled and are
 reported in the count; pass --data-root to run them.  Standard library only.
@@ -80,10 +87,11 @@ CONFIGS = {
     # Windows, cross-compiled with MinGW-w64.  The tests run under Wine
     # when it is installed (wine64 for x64; a 32-bit Wine for x86), and the
     # configuration is a warning-free compile and link check otherwise.
-    "mingw-x64":   dict(cc="x86_64-w64-mingw32-gcc", cross="wine64",
-                        args=["-DCMAKE_SYSTEM_NAME=Windows", "-DEIDOS_SDL=OFF"]),
-    "mingw-x86":   dict(cc="i686-w64-mingw32-gcc", cross="wine",
-                        args=["-DCMAKE_SYSTEM_NAME=Windows", "-DEIDOS_SDL=OFF"]),
+    # On a Windows host they are native and need neither.
+    "mingw-x64":   dict(cc="x86_64-w64-mingw32-gcc", cross="wine64", sdl=True,
+                        args=["-DEIDOS_SDL_FETCH=ON"]),
+    "mingw-x86":   dict(cc="i686-w64-mingw32-gcc", cross="wine", sdl=True,
+                        args=["-DEIDOS_SDL_FETCH=ON"]),
     # Visual Studio.  `vcvars` is the vcvarsall.bat argument that picks the
     # target: x64_x86 is the x64-hosted compiler for 32-bit x86, whose
     # executables run on the same machine.  No toolchain file: under MSVC the
@@ -93,12 +101,13 @@ CONFIGS = {
     # with 0xCD, the closest thing to a sanitizer these configurations have.
     # Its report windows are turned off in every executable
     # (sdk/plat_nodialog.c), so it cannot stall the run.
-    "msvc-x64":    dict(cc="cl", vcvars="x64",
-                        args=["-DEIDOS_SDL=OFF", "-DCMAKE_BUILD_TYPE=Debug"]),
-    "msvc-x86":    dict(cc="cl", vcvars="x64_x86",
-                        args=["-DEIDOS_SDL=OFF", "-DCMAKE_BUILD_TYPE=Debug"]),
-    "clangcl-x64": dict(cc="clang-cl", vcvars="x64", clang=True,
-                        args=["-DEIDOS_SDL=OFF", "-DCMAKE_BUILD_TYPE=Debug"]),
+    # SDL2 is the official VC development package (tools/fetch_sdl.py).
+    "msvc-x64":    dict(cc="cl", vcvars="x64", sdl=True,
+                        args=["-DEIDOS_SDL_FETCH=ON", "-DCMAKE_BUILD_TYPE=Debug"]),
+    "msvc-x86":    dict(cc="cl", vcvars="x64_x86", sdl=True,
+                        args=["-DEIDOS_SDL_FETCH=ON", "-DCMAKE_BUILD_TYPE=Debug"]),
+    "clangcl-x64": dict(cc="clang-cl", vcvars="x64", clang=True, sdl=True,
+                        args=["-DEIDOS_SDL_FETCH=ON", "-DCMAKE_BUILD_TYPE=Debug"]),
 }
 
 
@@ -187,7 +196,10 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
     shutil.rmtree(bdir, ignore_errors=True)
     os.makedirs(bdir, exist_ok=True)
     res = {"name": name, "status": "FAIL", "warnings": 0, "tests": "",
-           "note": ""}
+           "sdl": "", "note": ""}
+    # A cross configuration is native on a host of its own OS: MinGW on
+    # Windows needs no CMAKE_SYSTEM_NAME and no Wine.
+    cross = cfg.get("cross") if os.name != "nt" else None
 
     env = None
     if cfg.get("vcvars"):
@@ -213,8 +225,10 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
         cmd.append("-DCMAKE_C_COMPILER=" + cfg["cc"])
     if data_root:
         cmd.append("-DBW_DATA_ROOT=" + os.path.abspath(data_root))
+    if cross:
+        cmd.append("-DCMAKE_SYSTEM_NAME=Windows")
     cmd += cfg["args"]
-    wine = find_wine(cfg["cross"]) if cfg.get("cross") else None
+    wine = find_wine(cross) if cross else None
     if wine:
         cmd.append("-DCMAKE_CROSSCOMPILING_EMULATOR=" + wine)
     cfg_log = os.path.join(bdir, "check-configure.log")
@@ -233,6 +247,15 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
             print(text)
         return res
 
+    with open(cfg_log, encoding="utf-8", errors="replace") as fh:
+        m = re.search(r"^-- SDL2: (.*)$", fh.read(), re.M)
+    found = bool(m) and not m.group(1).startswith(("not found", "off"))
+    res["sdl"] = "yes" if found else "no"
+    if cfg.get("sdl") and not found:
+        res["note"] = ("SDL2 required but not found (%s), see %s"
+                       % (m.group(1) if m else "no SDL2 line", cfg_log))
+        return res
+
     build_log = os.path.join(bdir, "check-build.log")
     rc = run(["cmake", "--build", bdir], build_log, env=env)
     with open(build_log, encoding="utf-8", errors="replace") as fh:
@@ -243,9 +266,9 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
         print(tail(build_log))
         return res
 
-    if cfg.get("cross") and not wine:
+    if cross and not wine:
         res["status"] = "ok" if res["warnings"] == 0 else "FAIL"
-        res["note"] = "built only: no %s to run the tests" % cfg["cross"]
+        res["note"] = "built only: no %s to run the tests" % cross
         return res
 
     test_log = os.path.join(bdir, "check-test.log")
@@ -331,10 +354,12 @@ def main(argv=None):
                                  args.data_root, generator))
 
     print()
-    print("%-12s %-6s %-9s %-20s %s" % ("config", "status", "warnings", "tests", "note"))
+    print("%-12s %-6s %-9s %-4s %-20s %s" % ("config", "status", "warnings",
+                                             "sdl", "tests", "note"))
     for r in results:
-        print("%-12s %-6s %-9d %-20s %s" % (r["name"], r["status"], r["warnings"],
-                                             r["tests"], r["note"]))
+        print("%-12s %-6s %-9d %-4s %-20s %s" % (r["name"], r["status"],
+                                                 r["warnings"], r["sdl"],
+                                                 r["tests"], r["note"]))
     bad = [r for r in results if r["status"] == "FAIL"]
     return 1 if bad else 0
 
