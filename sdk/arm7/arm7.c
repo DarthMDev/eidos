@@ -156,6 +156,8 @@ void bw_arm7_boot(void)
     bw_arm7_card_init();
     bw_arm7_fs_init();
     bw_arm7_snd_init();
+    bw_arm7_tp_init();
+    bw_arm7_pad_init();
 }
 
 void bw_arm7_reset(void)
@@ -166,6 +168,7 @@ void bw_arm7_reset(void)
     g_arm7.sync_sum = 0;
     g_arm7.sync_i = 0;
     g_arm7.os_last_command = 0;
+    bw_arm7_tp_reset();
 }
 
 void bw_arm7_step(void)

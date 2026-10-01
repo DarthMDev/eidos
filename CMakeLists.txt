@@ -300,6 +300,8 @@ set(BW_PXI_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/card.c     # Slot-1 pull-out, tag 14
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/fs.c       # Slot-1 backup requests, tag 11
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd.c      # sound command lists, tag 7
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/tp.c       # touch panel, tag 6
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/pad.c      # X, Y, DEBUG, hinge in HW_BUTTON_XY_BUF
 )
 
 set(BW_SDK_SOURCES
@@ -335,6 +337,8 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_argument.c   # the deliver argument
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/panic.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/port_reset.c    # bw_port_reset: dsmem, OS, PXI power-on and their joins
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/cp.c            # the divider and square-root unit, computed on access
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/input.c         # buttons, hinge, stylus: host + script onto the hardware
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/armdata.c       # the ARM9 image's data: copy, relocate, bind names
     ${BW_PXI_SOURCES}
 )
@@ -1405,6 +1409,103 @@ endif()
 add_test(NAME test_pxi COMMAND test_pxi)
 set_tests_properties(test_pxi PROPERTIES TIMEOUT 30)
 
+# --- Input: the keypad, the hinge and the touch panel ------------------------
+#
+# test_input drives sdk/input.c from host state and a script and reads the
+# result back with the game's own per-frame pad update (key.c's
+# func_02035F38, compiled as written), and checks the divider unit
+# (sdk/cp.c) the touch calibration runs on.
+#
+# test_tp drives the touch-panel responder (sdk/arm7/tp.c) from aletheia's
+# matched ARM9 TP library and the game's touch pass.  tp.o's files view its
+# .bss through layouts that agree only with 4-byte pointers (TP_WaitBusy and
+# TP_CheckError at fixed offsets 0x3a and 0x38), so on a 64-bit target only
+# the four calibration files join and the protocol is checked at the FIFO.
+# The PXI files are test_pxi's rewritten copies (the same build directory),
+# or the library's where it has them.
+function(eidos_matched_test_sources out_var)
+    set(_new)
+    set(_all)
+    foreach(_rel ${ARGN})
+        set(_src ${ALETHEIA_ROOT}/src/matched/${_rel})
+        if(_src IN_LIST BW_MATCHED_ORIGINALS)
+            continue()
+        endif()
+        if(_src IN_LIST _bw_pxi_test_originals)
+            eidos_dsaddr_path(_copy ${_src})
+            list(APPEND _all ${_copy})
+        else()
+            list(APPEND _new ${_src})
+        endif()
+    endforeach()
+    eidos_dsaddr(_copies ${_new})
+    if(NOT MSVC)
+        set_source_files_properties(${_copies} PROPERTIES COMPILE_OPTIONS
+            "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
+    else()
+        set_source_files_properties(${_copies} PROPERTIES COMPILE_OPTIONS
+            "${EIDOS_MATCHED_COMPILE_OPTIONS};${EIDOS_MATCHED_PRAGMA_OPTION}")
+    endif()
+    list(APPEND _all ${_copies})
+    set(${out_var} ${_all} PARENT_SCOPE)
+endfunction()
+
+eidos_matched_test_sources(_bw_input_test_sources arm9/func_02035F38.c)
+add_executable(test_input
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_input.c
+    ${_bw_input_test_sources})
+target_include_directories(test_input PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_input PRIVATE eidos)
+add_test(NAME test_input COMMAND test_input)
+set_tests_properties(test_input PROPERTIES TIMEOUT 30)
+
+set(BW_TP_TEST_MATCHED
+    arm9/func_02088498.c                # PXI_Init
+    arm9_sdk/PXI_SendWordByFifo.c
+    arm9_sdk/PXI_SetFifoRecvCallback.c
+    arm9_sdk/func_020885EC.c            # PXI_IsCallbackReady
+    arm9_sdk/func_0208A998.c            # TP_GetUserInfo
+    arm9_sdk/func_0208AA2C.c            # TP_SetCalibrateParam
+    arm9_sdk/func_0208AF18.c            # TP_CalcCalibrateParam
+    arm9_sdk/func_0208B104.c            # TP_GetCalibratedPoint
+)
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    list(APPEND BW_TP_TEST_MATCHED
+        arm9_sdk/func_0208A924.c        # TP_Init
+        arm9_sdk/func_0208AB1C.c        # TP_RequestSamplingAsync
+        arm9_sdk/func_0208ABB8.c        # TP_WaitRawResult
+        arm9_sdk/func_0208AC0C.c        # TP_RequestAutoSamplingStartAsync
+        arm9_sdk/func_0208AD14.c        # TP_RequestAutoSamplingStopAsync
+        arm9_sdk/func_0208ADB4.c        # TP_GetLatestRawPointInAuto
+        arm9_sdk/func_0208AF08.c        # TP_GetLatestIndexInAuto
+        arm9_sdk/func_0208B220.c        # TP_WaitBusy
+        arm9_sdk/func_0208B238.c        # TP_CheckError
+        arm9_sdk/TPi_TpCallback.c
+        arm9/func_020358A0.c)           # the game's touch pass
+    set(_bw_tp_matched 1)
+else()
+    set(_bw_tp_matched 0)
+endif()
+eidos_matched_test_sources(_bw_tp_test_sources ${BW_TP_TEST_MATCHED})
+add_executable(test_tp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tp.c
+    ${_bw_tp_test_sources})
+target_include_directories(test_tp PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_definitions(test_tp PRIVATE BW_TEST_TP_MATCHED=${_bw_tp_matched})
+target_link_libraries(test_tp PRIVATE eidos)
+if(_bw_tp_matched)
+    # TP_WaitBusy and TP_CheckError name tp.o's .bss `tpState`; the rest
+    # name it by address.  One object, two names.
+    eidos_dsaddr_path(_a ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208B220.c)
+    eidos_dsaddr_path(_b ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208B238.c)
+    set_source_files_properties(${_a} ${_b}
+        PROPERTIES COMPILE_DEFINITIONS "tpState=g_02152FA4")
+endif()
+add_test(NAME test_tp COMMAND test_tp)
+set_tests_properties(test_tp PROPERTIES TIMEOUT 30)
+
 # The OS layer's tests, on the real address space (sdk/dsmem.c) and the
 # port's power-on (bw_port_reset).  test_os_irq also compiles aletheia's
 # matched OS_GetIrqFunction.c as written, the table reader beside the
@@ -1579,6 +1680,23 @@ if(EIDOS_SDL_FOUND)
     if(NOT EIDOS_DATA_TESTS)
         set_tests_properties(test_view PROPERTIES DISABLED TRUE)
     endif()
+
+    # The platform layer's input tables and window-to-panel mapping, under
+    # the dummy video driver; no game data.
+    add_executable(test_platform_input
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_platform_input.c)
+    target_include_directories(test_platform_input PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_platform_input PRIVATE eidos_platform)
+    if(EIDOS_SDL_RUNTIME)
+        add_custom_command(TARGET test_platform_input POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:test_platform_input>"
+            COMMENT "Copying SDL2.dll next to test_platform_input")
+    endif()
+    add_test(NAME test_platform_input COMMAND test_platform_input)
+    set_tests_properties(test_platform_input PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
 endif()
 
 # ---------------------------------------------------------------------------
