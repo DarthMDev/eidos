@@ -1,0 +1,53 @@
+# tools/armdata_exclusions.txt -- ARM9 data objects the port defines itself.
+#
+# tools/armdata.py binds every extern data name a matched source uses to the
+# port's copy of the ARM9 image, EXCEPT the names some port source defines
+# as a real host object.  Those are listed here, explicitly, so that:
+#   - the generator knows each one's DS address and extent, and binds any
+#     other spelling of the same address (an alias) to the port object rather
+#     than to the image copy;
+#   - a relocated pointer whose target lies inside one reaches the port
+#     object;
+#   - pointer words inside one are left to the owner (no relocation is
+#     written into a port object's DS range in the image copy).
+# The generator also excludes any name a source in the build defines and
+# warns when such a name is missing from this list.
+#
+# Columns: name  DS-address  DS-size (hex, or - if unknown)  owner
+# The size is the object's extent on the DS, not on the host.
+
+# sdk/fs.c: the ROM archive object (FSArchive, 0x5C bytes).
+d_02150DA8                 0x02150DA8  0x5C   sdk/fs.c
+
+# OS lane: threads (sdk/os_thread.c) and interrupts (sdk/os_interrupt.c).
+OSi_ThreadInfo             0x02150FEC  0x10   sdk/os_thread.c
+OSi_IdleThread             0x02150FFC  0xC0   sdk/os_thread.c
+OSi_LauncherThread         0x021510BC  0xC0   sdk/os_thread.c
+g_02FE0020                 0x02FE0020  0x80   sdk/os_interrupt.c   # OS_IRQTable (DTCM)
+g_02150F38                 0x02150F38  0x90   sdk/os_interrupt.c   # OSi_IrqCallbackInfo
+OSi_IrqThreadQueue         0x02FE00A0  0x08   sdk/os_interrupt.c   # DTCM .bss
+
+# ARM7 lane: pxi_fifo.o's statics (sdk/pxi.c).
+FifoCtrlInit               0x021513A4  0x04   sdk/pxi.c
+FifoRecvCallbackTable      0x021513A8  0x80   sdk/pxi.c
+
+# sdk/game_globals.c (registered there with bw_ds_register, except where
+# noted).  The text objects are the port's own strings, not the ROM's; their
+# sizes are the ranges game_globals.c registers.
+g_Sink                     0x0214699C  0x10   sdk/game_globals.c
+func_02048DDC_File         0x020A7EE0  0x0B   sdk/game_globals.c
+func_02049578_File         0x020A7EE0  -      sdk/game_globals.c   # not registered
+func_0204944C_File         0x020A7EE0  -      sdk/game_globals.c   # not registered
+func_02048DDC_Msg          0x020A7EEC  0x1A   sdk/game_globals.c
+func_02049578_Msg          0x020A7F18  0x18   sdk/game_globals.c
+func_0204944C_Msg          0x020A7F18  -      sdk/game_globals.c   # not registered
+g_02146A68                 0x02146A68  0x0C   sdk/game_globals.c
+g_02146270                 0x02146270  0x40   sdk/game_globals.c
+g_0214652C                 0x0214652C  0x04   sdk/game_globals.c
+func_02019B04_Table        0x0209E324  0x7D   sdk/game_globals.c
+g_EnvModule                0x02146954  0x10   sdk/game_globals.c
+g_020A7820                 0x020A7820  0x04   sdk/game_globals.c
+sub_0203101C_File          0x020A7834  0x07   sdk/game_globals.c
+sub_020311B8_File          0x020A7834  -      sdk/game_globals.c   # not registered
+sRootListInitialized       0x02146B60  0x04   sdk/game_globals.c   # EIDOS_HEAP_MATCHED only
+sRootList                  0x02146B64  0x0C   sdk/game_globals.c   # EIDOS_HEAP_MATCHED only

@@ -42,6 +42,8 @@
 
 #include "port.h"
 #include "dsmem.h"
+#include "dsmem_ext.h"
+#include "armdata.h"
 
 /* ------------------------------------------------------------------ */
 /* g_Sink -- the assertion sink src/matched/sub_02034734.c dispatches to */
@@ -566,10 +568,21 @@ const char sub_020311B8_File[] = "tcbl.c";
 
 void bw_game_globals_register(void)
 {
+    /*
+     * The ARM9 image's data (sdk/armdata.c), when the program installed it:
+     * copied into flat main RAM first, while nothing is registered, and its
+     * names and pointers bound last, so that an address one of the objects
+     * below owns resolves to that object.  Both are no-ops otherwise.
+     */
+    bw_data_reset_load();
+
     BW_REG(0x0214699Cu, g_Sink, 0x10u);
     BW_REG(0x020A7EE0u, func_02048DDC_File, (u32)sizeof(func_02048DDC_File));
     BW_REG(0x020A7EECu, func_02048DDC_Msg, (u32)sizeof(func_02048DDC_Msg));
-    BW_REG(0x020A7F18u, func_02049578_Msg, (u32)sizeof(func_02049578_Msg));
+    /* The ROM's string here is 0x18 bytes and the next one starts at
+     * 0x020A7F30 (layout/data_objects.json); the port's text is two bytes
+     * longer, so it registers only the DS extent. */
+    BW_REG(0x020A7F18u, func_02049578_Msg, 0x18u);
     BW_REG(0x02146A68u, g_02146A68, 0x0Cu);
     /* 0x40, not the declared 0x14: the record write at +4 is 0x3C wide. */
     BW_REG(0x02146270u, g_02146270, 4u + BW_PERSONAL_RECORD_SIZE);
@@ -583,4 +596,6 @@ void bw_game_globals_register(void)
     BW_REG(0x02146B60u, sRootListInitialized, 4u);
     BW_REG(0x02146B64u, sRootList, 0x0Cu);
 #endif
+
+    bw_data_reset_bind();
 }

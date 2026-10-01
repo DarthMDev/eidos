@@ -84,9 +84,12 @@ harmless (a mask, a range check, a PXI word), inside an asm body, or
 needing a port answer, each with its reason. A file that reaches one of the
 last kind gets its port answer before it joins the build.
 
-Literals that name a game global's own address are not rewritten: a matched
-file reaches globals through `extern` names, which `sdk/game_globals.c` and
-the generated data definitions resolve as ordinary host objects.
+Literals that name a game global's own address are rewritten like any other
+main-RAM literal, and reach the same byte as the global's `extern` name:
+the ARM9 image's data is copied to its DS addresses in main RAM at reset and
+each extern data name is bound to its address (docs/armdata.md), while the
+objects `sdk/game_globals.c` and the other shims define are registered at
+theirs.
 
 ## The DS address space (`sdk/dsmem.h`)
 
