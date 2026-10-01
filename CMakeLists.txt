@@ -322,6 +322,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_system.c     # console/boot type, MPU, ARM7 sync
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/os_argument.c   # the deliver argument
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/panic.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/armdata.c       # the ARM9 image's data: copy, relocate, bind names
     ${BW_PXI_SOURCES}
 )
 
@@ -437,6 +438,7 @@ endif()
 # here on BW_MATCHED_SOURCES names the copies, and a per-source property on
 # a matched file is set on eidos_dsaddr_path() of it.
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/dsaddr.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/armdata.cmake)
 set(BW_MATCHED_ORIGINALS ${BW_MATCHED_SOURCES})
 eidos_dsaddr(BW_MATCHED_SOURCES ${BW_MATCHED_SOURCES})
 
@@ -1278,6 +1280,70 @@ target_link_libraries(test_extract PRIVATE eidos_install)
 add_dependencies(test_extract bw_synth)
 add_test(NAME test_extract COMMAND test_extract ${BW_SYNTH_DIR})
 
+# --- the ARM9 image's data (sdk/armdata.c, tools/armdata.py) ----------------
+#
+# test_armdata_gen: the generator against a synthetic aletheia tree written
+# by the test itself (no game data, no real metadata).
+add_test(NAME test_armdata_gen
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_armdata.py
+            --tool=${CMAKE_CURRENT_SOURCE_DIR}/tools/armdata.py)
+
+# test_armdata: the runtime against a synthetic image and hand-written
+# tables (copy, zero, bind, relocate, the mismatch and LP64 refusals).
+add_executable(test_armdata ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_armdata.c)
+target_include_directories(test_armdata PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_armdata PRIVATE eidos)
+add_test(NAME test_armdata COMMAND test_armdata)
+add_test(NAME test_armdata_trap COMMAND ${CMAKE_COMMAND}
+    -DCMD=$<TARGET_FILE:test_armdata> -DARG1=--trap
+    "-DEXPECT=PANIC in armdata at 0x02012344: called through a pointer"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_panic.cmake)
+
+# test_armdata_real: tables generated from aletheia's real metadata for a
+# handful of matched sources, four of which are compiled here with the
+# forced-include header, then loaded from the player's own arm9_dec.bin.
+# The metadata is always there, so it always builds; without the image the
+# run reports itself skipped.
+set(BW_ARMDATA_REAL_MATCHED
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_0202F9F4.c   # the three entries of
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_0202F9F8.c   # the proc table at
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_0202FAB0.c   # 0x020A0480
+    ${ALETHEIA_ROOT}/src/matched/arm9/func_02005440.c   # stores to g_020A9E80
+)
+eidos_dsaddr(BW_ARMDATA_REAL_COPIES ${BW_ARMDATA_REAL_MATCHED})
+set(BW_ARMDATA_REAL_NAMED                               # names only, not compiled
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_0200545C.c     # d_020A6C58
+    ${ALETHEIA_ROOT}/src/matched/arm9/unit_0200560C.c    # sub_02005610_Sys  } one address
+    ${ALETHEIA_ROOT}/src/matched/arm9/unit_020056A0.c    # sub_020056A0_Sys  }
+    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208459C.c   # SDK_AUTOLOAD_DTCM_START
+    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_02085264.c   # SDK_IRQ_STACKSIZE, port threads
+    ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_02030524.c   # d_02146954 = g_EnvModule
+)
+string(REPLACE ";" "
+" _armdata_real "${BW_ARMDATA_REAL_COPIES};${BW_ARMDATA_REAL_NAMED}")
+file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/test_armdata_real_sources.txt
+     CONTENT "$<JOIN:$<TARGET_PROPERTY:eidos,SOURCES>,
+>
+${_armdata_real}
+")
+eidos_armdata(test_armdata_real
+    SOURCES_LIST ${CMAKE_CURRENT_BINARY_DIR}/test_armdata_real_sources.txt
+    MATCHED ${BW_ARMDATA_REAL_COPIES})
+if(NOT MSVC)
+    set_property(SOURCE ${BW_ARMDATA_REAL_COPIES} APPEND PROPERTY COMPILE_OPTIONS
+        "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
+else()
+    set_property(SOURCE ${BW_ARMDATA_REAL_COPIES} APPEND PROPERTY COMPILE_OPTIONS
+        "${EIDOS_MATCHED_COMPILE_OPTIONS}")
+endif()
+add_executable(test_armdata_real
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_armdata_real.c
+    ${BW_ARMDATA_REAL_COPIES}
+    ${test_armdata_real_C})
+target_include_directories(test_armdata_real PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_armdata_real PRIVATE eidos)
+add_test(NAME test_armdata_real COMMAND test_armdata_real ${BW_DATA_ROOT_ABS})
+
 # tools/dsaddr.py: every cast form, the prelude against sdk/dsmem.h on this
 # compiler, every matched source in this build parsed after its rewrite,
 # and a dry run over the whole of aletheia's src/matched (idempotent, no
@@ -1434,4 +1500,20 @@ if(EIDOS_BOOT)
     endif()
     target_link_libraries(eidos_boot PRIVATE eidos_boot_game)
     target_compile_definitions(eidos_boot PRIVATE EIDOS_BOOT=1)
+
+    # The ARM9 image's data for everything this build compiles
+    # (docs/armdata.md): the names the boot's matched sources use, bound by
+    # the forced-include header, and the image's pointers relocated.  The
+    # program installs it with bw_data_install(&bw_arm9_data, 0) before its
+    # first bw_ds_reset.
+    file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/eidos_boot_sources.txt
+         CONTENT "$<JOIN:$<TARGET_PROPERTY:eidos,SOURCES>,
+>
+$<JOIN:$<TARGET_PROPERTY:eidos_boot_game,SOURCES>,
+>
+")
+    eidos_armdata(bw_arm9_data
+        SOURCES_LIST ${CMAKE_CURRENT_BINARY_DIR}/eidos_boot_sources.txt
+        MATCHED ${EIDOS_BOOT_MATCHED})
+    target_sources(eidos_boot_game PRIVATE ${bw_arm9_data_C})
 endif()

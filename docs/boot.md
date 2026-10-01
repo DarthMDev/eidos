@@ -73,9 +73,12 @@ inside a cast (`#define REG_BASE 0x04000000`, arithmetic, comparisons) are
 left alone: `tools/dsaddr.py` lists them, and each one that a built file
 reaches gets a port-side wrapper before that file joins the build.
 
-Literals that name a game global's own address are not rewritten: a matched
-file reaches globals through `extern` names, which `sdk/game_globals.c` and
-the generated data definitions resolve as ordinary host objects.
+Literals that name a game global's own address are rewritten like any other
+main-RAM literal, and reach the same byte as the global's `extern` name:
+the ARM9 image's data is copied to its DS addresses in main RAM at reset and
+each extern data name is bound to its address (docs/armdata.md), while the
+objects `sdk/game_globals.c` and the other shims define are registered at
+theirs.
 
 ## The DS address space (`sdk/dsmem.h`)
 
