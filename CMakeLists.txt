@@ -302,8 +302,10 @@ set(BW_PXI_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/rtc.c      # real-time clock, tag 5
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/ctrdg.c    # Slot-2, tag 13
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/card.c     # Slot-1 pull-out, tag 14
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/fs.c       # Slot-1 backup requests, tag 11
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/fs.c       # Slot-1 backup requests and the save chip, tag 11
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/snd.c      # sound command lists, tag 7
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/nvram.c    # firmware flash, tag 4
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/arm7/mic.c      # microphone, tag 9 (silent)
 )
 
 set(BW_SDK_SOURCES
@@ -321,6 +323,9 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs.c           # data root, mod list, path resolution
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs_narc.c      # member-level NARC overrides, the merged archive
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_dir.c      # path kind and directory listing, Win32 and POSIX
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_save.c     # save folder, mkdir, sync, replace: Win32 and POSIX
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/save.c          # the save folder and the atomic whole-file write
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/firmware.c      # user settings: firmware.ini, 0x02FFFC80, flash blocks
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/narc.c          # NARC framing, ARM9 rodata
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/game_globals.c  # the ARM9 globals the matched code names
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/aliases.c       # sub_/func_ spelling forwarders
@@ -1320,6 +1325,153 @@ if(_bw_pxi_pm_matched)
 endif()
 add_test(NAME test_pxi COMMAND test_pxi)
 set_tests_properties(test_pxi PROPERTIES TIMEOUT 30)
+
+# --- Firmware settings, the save chip, the firmware flash, MIC and WM -------
+#
+# Both tests compile a set of aletheia's matched sources as test_pxi does
+# (the dsaddr rewrite, the library's own copies left to it).  test_firmware:
+# the owner-info readers, at both widths.  test_backup: the PXI senders at
+# both widths, and on a 32-bit host the CARD, NVRAM, MIC and WM files whose
+# buffer addresses travel as u32 (docs/pointer-width.md).  Each file defines
+# its address spelling and calls its neighbours by their SDK names, so the
+# SDK names are defined to the address names on the test's command line, as
+# for test_snd_matched; the files themselves are untouched.
+set(BW_FIRMWARE_TEST_MATCHED
+    arm9_sdk/func_02087C88.c            # OS_GetOwnerInfo
+    arm9_sdk/func_02087D28.c            # OS_GetOwnerInfoEx
+    arm9_sdk/func_0208A998.c            # TP_GetUserInfo
+)
+set(BW_BACKUP_TEST_MATCHED
+    arm9/func_02088498.c                # PXI_Init
+    arm9_sdk/PXI_SendWordByFifo.c
+    arm9_sdk/PXI_SetFifoRecvCallback.c
+    arm9_sdk/func_020885EC.c            # PXI_IsCallbackReady
+    arm9_sdk/OS_SetIrqFunction.c
+    arm9_sdk/OS_EnableIrqMask.c
+)
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    list(APPEND BW_BACKUP_TEST_MATCHED
+        arm9_sdk/func_020760B4.c        # CARDi_InitCommand
+        arm9_sdk/func_020763BC.c        # CARDi_OnFifoRecv
+        arm9_sdk/func_020763F0.c        # CARDi_Request
+        arm9_sdk/func_02076540.c        # CARDi_RequestStreamCommandCore
+        arm9_sdk/func_02076A20.c        # CARDi_IdentifyBackupCore
+        arm9_sdk/func_02076A70.c        # CARDi_BeginBackupCommand
+        arm9_sdk/func_02076AC0.c        # CARDi_RequestStreamCommand
+        arm9_sdk/func_02076B2C.c        # CARD_IdentifyBackup
+        arm9_sdk/CARDi_IdentifyBackupCore2.c
+        arm9_sdk/func_02076170.c        # CARDi_ExecuteOldTypeTask
+        arm9_sdk/func_02076230.c        # CARDi_WaitForTask
+        arm9_sdk/func_020762A8.c        # CARDi_EndTask
+        arm9_sdk/func_02083644.c        # NVRAMi_Init
+        arm9_sdk/func_02083704.c        # NVRAMi_ReadAsync
+        arm9_sdk/func_02083934.c        # NVRAMi_WriteAsync
+        arm9_sdk/func_02083EB8.c        # NVRAMi_VerifyAsync
+        arm9_sdk/NVRAMi_Callback.c
+        arm9_sdk/NVRAMi_ReadCallback.c
+        arm9_sdk/NVRAMi_WriteCallback.c
+        arm9_sdk/NVRAMi_VerifyCallback.c
+        arm9_sdk/NVRAMi_ReadDataBytes.c
+        arm9_sdk/NVRAMi_PageWrite.c
+        arm9_sdk/NVRAMi_ReadStatusRegister.c
+        arm9_sdk/NVRAMi_WriteEnable.c
+        arm9_sdk/NVRAMi_WriteDisable.c
+        arm9_sdk/NVRAMi_SoftwareReset.c
+        arm9_sdk/NVRAMi_VerifyDataArray.c
+        arm9_sdk/NVRAMi_AlarmHandler.c
+        arm9_sdk/func_0208B24C.c        # MIC_Init
+        arm9_sdk/func_0208B548.c        # MicCommonCallback
+        arm9_sdk/func_0208B650.c        # MicStartAutoSampling
+        arm9_sdk/func_0208B75C.c        # MicStopAutoSampling
+        arm9_sdk/func_0208B2BC.c        # MIC_StartAutoSamplingAsync
+        arm9_sdk/func_0208B424.c        # MIC_StopAutoSamplingAsync
+        arm9_sdk/func_0208E038.c        # WmInitCore
+    )
+    set(_bw_backup_card_matched 1)
+else()
+    set(_bw_backup_card_matched 0)
+endif()
+foreach(_set FIRMWARE BACKUP)
+    set(_originals)
+    foreach(_rel ${BW_${_set}_TEST_MATCHED})
+        set(_src ${ALETHEIA_ROOT}/src/matched/${_rel})
+        if(NOT _src IN_LIST BW_MATCHED_ORIGINALS)
+            list(APPEND _originals ${_src})
+        endif()
+    endforeach()
+    eidos_dsaddr(_bw_${_set}_sources ${_originals})
+    if(NOT MSVC)
+        set_source_files_properties(${_bw_${_set}_sources} PROPERTIES
+            COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
+    else()
+        set_source_files_properties(${_bw_${_set}_sources} PROPERTIES
+            COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS};${EIDOS_MATCHED_PRAGMA_OPTION}")
+    endif()
+endforeach()
+
+add_executable(test_firmware
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_firmware.c
+    ${_bw_FIRMWARE_sources})
+target_include_directories(test_firmware PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_firmware PRIVATE eidos)
+add_test(NAME test_firmware COMMAND test_firmware)
+
+add_executable(test_backup
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_backup.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/backup_doubles.c
+    ${_bw_BACKUP_sources})
+target_include_directories(test_backup PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_definitions(test_backup PRIVATE
+    BW_TEST_CARD_MATCHED=${_bw_backup_card_matched}
+    PXI_Init=func_02088498
+    PXI_IsCallbackReady=func_020885EC
+    CARDi_OnFifoRecv=func_020763BC
+    CARDi_Request=func_020763F0
+    CARDi_RequestStreamCommandCore=func_02076540
+    CARDi_IdentifyBackupCore=func_02076A20
+    CARDi_BeginBackupCommand=func_02076A70
+    CARDi_ExecuteOldTypeTask=func_02076170
+    CARDi_WaitForTask=func_02076230
+    CARDi_EndTask=func_020762A8
+    MicCommonCallback=func_0208B548
+    MicStartAutoSampling=func_0208B650
+    MicStopAutoSampling=func_0208B75C)
+target_link_libraries(test_backup PRIVATE eidos)
+if(_bw_backup_card_matched)
+    # Per file: CARDi_IdentifyBackupCore2 is static in the vendor object
+    # and CARD_IdentifyBackup calls it from another; mic.o's .bss has two
+    # names (see "Two matched files name one DS object"); NVRAMi_WriteCallback
+    # reaches nvramTemp through the section base (tests/backup_doubles.c);
+    # cl.exe has no __attribute__, which one CARD file spells an alignment
+    # with (tests/msvc_no_attribute.h says why dropping it is right).
+    eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/CARDi_IdentifyBackupCore2.c)
+    set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_DEFINITIONS "static=")
+    foreach(_m func_0208B24C func_0208B424)
+        eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/${_m}.c)
+        set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_DEFINITIONS "mic_bss=g_02152FE0")
+    endforeach()
+    eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/NVRAMi_WriteCallback.c)
+    set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_DEFINITIONS "g_02150EA0=(*bw_test_nvram_base)")
+    # Two reports on the style of the vendor source, not on its behaviour:
+    # a switch over the lock state with no case for "off" (NVRAMi_Callback),
+    # and `sizeof(fifoBuf[0]) / sizeof(u16)` read as an element count
+    # (WmInitCore, where it is the halfword count it means).
+    if(NOT MSVC OR EIDOS_CLANG_CL)
+        eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/NVRAMi_Callback.c)
+        set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_OPTIONS "-Wno-switch")
+        eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208E038.c)
+        set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_OPTIONS "-Wno-sizeof-array-div")
+    endif()
+    if(MSVC AND NOT EIDOS_CLANG_CL)
+        eidos_dsaddr_path(_f ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_02076540.c)
+        set_property(SOURCE ${_f} APPEND PROPERTY COMPILE_OPTIONS
+                     "/FI${CMAKE_CURRENT_SOURCE_DIR}/tests/msvc_no_attribute.h")
+    endif()
+endif()
+add_test(NAME test_backup COMMAND test_backup)
+set_tests_properties(test_backup PROPERTIES TIMEOUT 60)
 
 # The OS layer's tests, on the real address space (sdk/dsmem.c) and the
 # port's power-on (bw_port_reset).  test_os_irq also compiles aletheia's
