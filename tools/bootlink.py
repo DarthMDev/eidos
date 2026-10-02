@@ -471,6 +471,37 @@ def return_type(head, name):
     return "int"
 
 
+# mwcc builtins a few matched files call with no declaration, and the port
+# function each becomes (sdk/overlay_image.c; tools/ovlink.py does the same
+# for the overlays).
+MWCC_BUILTINS = {
+    "__builtin__clear": ("bw_mwcc_clear", "void bw_mwcc_clear(void *dst, unsigned int size);"),
+    "__memcpy": ("bw_mwcc_memcpy",
+                 "void *bw_mwcc_memcpy(void *dst, const void *src, unsigned int size);"),
+}
+
+
+PARAM_LIST = re.compile(r"\(([^()]*)\)")
+STRUCT_TAG = re.compile(r"\bstruct\s+([A-Za-z_]\w*)")
+
+
+def param_struct_tags(path):
+    """Struct tags that appear inside a parenthesised list before any
+    declaration of the tag at file scope."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            code = closure.strip_source(fh.read())
+    except OSError:
+        return set()
+    out = set()
+    for m in PARAM_LIST.finditer(code):
+        for tag in STRUCT_TAG.findall(m.group(1)):
+            first = re.search(r"\bstruct\s+" + tag + r"\b", code)
+            if first is not None and first.start() >= m.start():
+                out.add(tag)
+    return out
+
+
 class Unit:
     """One translation unit of the boot and what its header must say."""
 
@@ -481,6 +512,7 @@ class Unit:
         self.renames = {}           # spelling -> defined name
         self.consts = set()
         self.protos = {}            # name -> return type
+        self.private = {}           # name -> this file's own copy's name
 
 
 def generate(args):
@@ -508,10 +540,32 @@ def generate(args):
     # Two library files defining one name is the library's own business
     # (often an #if this scan does not evaluate); only a boot file against
     # anything is a duplicate this link would hit.
+    #
+    # Two boot files defining one name: a matched file that carries, besides
+    # the function its manifest entry claims, a neighbour another file
+    # claims too (a unit kept next to the single-function files split out of
+    # it; the overlays' ARM9 callees bring such pairs in).  mwcc's link took
+    # the claimed one.  The claiming file owns the name; the other's copy is
+    # renamed to a name of its own in that file's header, and its own calls
+    # keep using it (tools/ovlink.py does the same inside an overlay).
+    unit_at = {u.path: u for u in units}
+
+    def claims(u, name):
+        entry = idx.sources.get(u.rel) if u.rel else None
+        return bool(entry) and name in (entry.get("functions") or [entry.get("name")])
+
     dups = []
     for unit in units:
         for name in sorted(unit.scan.defined - unit.scan.statics):
             if name in defined and defined[name] != unit.path:
+                other = unit_at.get(defined[name])
+                if other is not None and other.rel and unit.rel:
+                    owner, copy = ((unit, other) if claims(unit, name) and not claims(other, name)
+                                   else (other, unit))
+                    copy.private[name] = "%s__%s" % (
+                        name, re.sub(r"[^A-Za-z0-9_]", "_", os.path.basename(copy.rel)[:-2]))
+                    defined[name] = owner.path
+                    continue
                 dups.append((name, defined[name], unit.path))
                 continue
             defined[name] = unit.path
@@ -710,6 +764,21 @@ def generate(args):
                 lines.append(data_lines[name])
         for name in sorted(unit.renames):
             lines.append("#define %s %s" % (name, unit.renames[name]))
+        for name in sorted(unit.private):
+            lines.append("#define %s %s   /* another boot file owns %s */"
+                         % (name, unit.private[name], name))
+        # A struct tag a prototype names only inside its parameter list is
+        # scoped to that list (GCC warns, with no option to say otherwise);
+        # mwcc took it as the file's tag.  A forward declaration first makes
+        # it one.
+        for tag in sorted(param_struct_tags(unit.path)):
+            lines.append("struct %s;" % tag)
+        for name in sorted(MWCC_BUILTINS):
+            if name in unit.scan.called and name not in unit.scan.declared \
+                    and name not in unit.scan.defined:
+                port, decl = MWCC_BUILTINS[name]
+                lines.append(decl)
+                lines.append("#define %s %s" % (name, port))
         for name in sorted(unit.consts):
             lines.append("#define %s (*bw_lc_%s)" % (name, name))
         for name in sorted(unit.protos):

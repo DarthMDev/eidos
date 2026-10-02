@@ -101,6 +101,42 @@ else()
         -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast)
 endif()
 
+# eidos_overlays_seeds(<var> OVERLAYS <...> LINK_SOURCES <...>): the matched
+# ARM9 files (as paths under src/matched/) that define what the overlays
+# call and LINK_SOURCES lacks; the boot adds them to its closure.  A plan
+# only: writes under ${CMAKE_BINARY_DIR}/ovl/_seeds and compiles nothing.
+function(eidos_overlays_seeds var)
+    cmake_parse_arguments(A "" "ROOT" "OVERLAYS;LINK_SOURCES" ${ARGN})
+    if(NOT A_ROOT)
+        set(A_ROOT ${ALETHEIA_ROOT})
+    endif()
+    set(dir ${CMAKE_BINARY_DIR}/ovl/_seeds)
+    file(MAKE_DIRECTORY ${dir})
+    string(REPLACE ";" "\n" link_txt "${A_LINK_SOURCES}")
+    file(WRITE ${dir}/link_sources.txt "${link_txt}\n")
+    string(REPLACE ";" "," ids_arg "${A_OVERLAYS}")
+    if(EIDOS_HEAP_MATCHED)
+        set(heap 1)
+    else()
+        set(heap 0)
+    endif()
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} ${EIDOS_OVLINK_TOOL}
+                --aletheia-root ${A_ROOT} --overlays ${ids_arg}
+                --link-sources ${dir}/link_sources.txt
+                --define EIDOS_HEAP_MATCHED=${heap}
+                --set-name seeds --out-dir ${dir}
+        RESULT_VARIABLE rc
+        ERROR_VARIABLE err)
+    if(NOT rc EQUAL 0)
+        message(FATAL_ERROR "eidos_overlays_seeds: tools/ovlink.py failed (${rc}):\n${err}")
+    endif()
+    file(STRINGS ${dir}/ovl_arm9_seeds.txt seeds)
+    list(LENGTH seeds n)
+    message(STATUS "Overlays: ${n} matched ARM9 files the overlays call join the boot's closure")
+    set(${var} ${seeds} PARENT_SCOPE)
+endfunction()
+
 function(eidos_overlays name)
     cmake_parse_arguments(A "ARM9_STUBS" "TARGET;ROOT" "OVERLAYS;LINK_SOURCES" ${ARGN})
     if(NOT A_TARGET)
@@ -157,6 +193,7 @@ function(eidos_overlays name)
         ${_eidos_ovl_tools}/armdata.py
         ${_eidos_ovl_tools}/overlay_table.py
         ${_eidos_ovl_tools}/ovlink_exclusions.txt
+        ${_eidos_ovl_tools}/../sdk/asm/ov
         ${A_ROOT}/layout/layout.json)
     # The set's shard directories and listings (ovlink writes the list): a
     # matched file added to one of them reruns the plan at the next build.
@@ -170,6 +207,11 @@ function(eidos_overlays name)
         list(GET parts 1 src)
         list(GET parts 2 hdr)
         file(RELATIVE_PATH rel "${A_ROOT}" "${src}")
+        if(rel MATCHES "^\\.\\./" OR IS_ABSOLUTE "${rel}")
+            # Port C standing in for an asm body (sdk/asm/ov/).
+            get_filename_component(rel "${src}" NAME)
+            set(rel "port/${rel}")
+        endif()
         set(copy ${dir}/src/${rel})
         get_filename_component(src_dir "${src}" DIRECTORY)
         add_custom_command(

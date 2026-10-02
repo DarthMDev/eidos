@@ -714,20 +714,25 @@ class Aletheia:
         self._read_shards()
 
     def _read_sdk(self):
-        path = os.path.join(self.root, "layout", "symbols_sdk.txt")
-        if not os.path.exists(path):
-            return
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                if line.startswith("#"):
-                    continue
-                parts = line.split()
-                if len(parts) < 2 or not re.fullmatch(r"[0-9A-Fa-f]{8}", parts[0]):
-                    continue
-                addr = int(parts[0], 16)
-                region = parts[3] if len(parts) >= 4 else "arm9"
-                self.sdk_by_name.setdefault(parts[1], []).append((addr, region))
-                self.sdk_at[(region, addr)] = parts[1]
+        """The SDK's symbols (symbols_sdk.txt) and the runtime helpers
+        (runtime_arm9.txt), by name and by region and address."""
+        for fname in ("symbols_sdk.txt", "runtime_arm9.txt"):
+            path = os.path.join(self.root, "layout", fname)
+            if not os.path.exists(path):
+                continue
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("#"):
+                        continue
+                    parts = line.split()
+                    if len(parts) < 2 or not re.fullmatch(r"[0-9A-Fa-f]{8}", parts[0]):
+                        continue
+                    addr = int(parts[0], 16)
+                    region = parts[3] if len(parts) >= 4 else "arm9"
+                    if not region.startswith("ov"):
+                        region = "arm9"
+                    self.sdk_by_name.setdefault(parts[1], []).append((addr, region))
+                    self.sdk_at.setdefault((region, addr), parts[1])
 
     def _read_shards(self):
         pattern = os.path.join(self.root, "layout", "matched", "*", "*.json")
@@ -844,6 +849,7 @@ class OvState:
         self.ov = ov
         self.units = []
         self.excluded = []         # (rel, why)
+        self.replaced = []         # (rel, port file): asm bodies in C
         self.defs = {}             # exported name -> unit
         self.at = {}               # addr -> defined function name (exported)
         self.known = set()         # function addresses known in the window
@@ -875,9 +881,9 @@ class Link:
         self.arm9_needs = {}       # name -> (addr or None, defined by link?)
         self.arm9_stub = {}        # name -> addr or None
         self._read_overlays()
+        self._link_refs()
         for oid in self.ids:
             self._resolve(self.state[oid])
-        self._link_refs()
         for oid in self.ids:
             self._data(self.state[oid])
         self._finish_stubs()
@@ -970,6 +976,16 @@ class Link:
                     continue
                 sc = Scan(path, read_text(path))
                 if sc.has_asm:
+                    # Portable C for an asm-bodied file, when the port has
+                    # written it (sdk/asm/ov/<file>, as sdk/asm/ for ARM9),
+                    # compiled under the overlay's names like any other.
+                    repl = os.path.join(self.args.asm_dir, os.path.basename(rel)) \
+                        if self.args.asm_dir else None
+                    if repl and os.path.exists(repl):
+                        sc = Scan(repl, read_text(repl))
+                        st.units.append(Unit(oid, rel, repl, sc))
+                        st.replaced.append((rel, repl))
+                        continue
                     st.excluded.append((rel, "mwcc asm body"))
                     continue
                 undef = sc.static_undefined()
@@ -1132,8 +1148,18 @@ class Link:
                         st.renames[n] = tgt
                         self.arm9_needs.setdefault(n, (addr, True))
                     else:
+                        # Nothing defines it.  The overlays name it by the
+                        # spelling the ARM9's own files use (the one a boot
+                        # link stubs it under), and it is stubbed here only
+                        # when no other source of the link reaches it.
+                        canon = self.arm9_canonical(addr) if addr is not None else None
+                        canon = canon or n
+                        if canon != n:
+                            st.renames[n] = canon
                         self.arm9_needs.setdefault(n, (addr, False))
-                        self.arm9_stub.setdefault(n, addr)
+                        if addr is None or (addr & ~1) not in self.link_open_at:
+                            self.arm9_stub.setdefault(canon, addr)
+                        tgt = canon
                     if n in implicit:
                         h = self.link_heads.get(tgt or n)
                         u.protos[n] = implicit_return(h[0] if h else None, n)
@@ -1148,6 +1174,15 @@ class Link:
                 if sym is not None:
                     st.code_literals[v] = sym
                     u.literal_table = True
+
+    def arm9_canonical(self, addr):
+        """The name the ARM9's own matched files define at `addr` (an
+        asm-bodied file's, say), else the SDK's or the runtime's, else
+        None."""
+        names = self.al.arm9_at.get(addr & ~1)
+        if names:
+            return names[0]
+        return self.al.sdk_at.get(("arm9", addr & ~1))
 
     def code_symbol(self, st, value):
         """The host symbol for a literal code address, or None if the value is
@@ -1176,13 +1211,21 @@ class Link:
             st.data[n] = e
 
     def _link_refs(self):
-        """Names the rest of the link uses inside an overlay window."""
+        """Names the rest of the link uses inside an overlay window; and the
+        names its matched sources use that it does not define, which the
+        boot link stubs itself (tools/bootlink.py), so ovlink must not."""
+        self.link_open = set()
+        self.link_open_at = set()
         for sc in self.link_scans:
             refs, _imp = sc.references(self.universe)
             for n in refs:
                 if n in self.link_defs:
                     continue
                 addr = self.address(n, sc)
+                if self.rel_of(sc.path):
+                    self.link_open.add(n)
+                    if addr is not None:
+                        self.link_open_at.add(addr & ~1)
                 if addr is None or addr < CONST_LIMIT or not self.al.in_any_window(addr):
                     continue
                 if sc.is_code(n):
@@ -1653,6 +1696,8 @@ def write_arm9_stubs(link, path, enabled):
            '#include "overlay_image.h"', ""]
     if enabled:
         for n in sorted(link.arm9_stub):
+            if n in link.link_open or n in link.tramps:
+                continue          # the boot link's own stub, or a trampoline
             a = link.arm9_stub[n]
             out.append("void %s(void);" % n)
             out.append("void %s(void) { bw_ovl_arm9_stub(0x%08Xu, %s); }"
@@ -1690,6 +1735,8 @@ def write_report(link, path):
         st = link.state[oid]
         for rel, why in st.excluded:
             p("  %s excluded %s: %s" % (st.ov.tag, rel, why))
+        for rel, repl in st.replaced:
+            p("  %s asm body %s: compiled from %s" % (st.ov.tag, rel, repl))
         for n, src in sorted(st.unresolved.items()):
             p("  %s unresolved %s (%s): no address in any symbols block, name or SDK table"
               % (st.ov.tag, n, src))
@@ -1723,6 +1770,8 @@ def main(argv=None):
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--set-name", default="build")
     ap.add_argument("--arm9-stubs", action="store_true")
+    ap.add_argument("--asm-dir", default=os.path.join(EIDOS_ROOT, "sdk", "asm", "ov"),
+                    help="portable C for asm-bodied overlay files, by file name")
     ap.add_argument("--summary", action="store_true")
     ap.add_argument("--define", action="append", default=[],
                     help="NAME=VALUE a port source is compiled with (repeatable)")
@@ -1766,6 +1815,23 @@ def main(argv=None):
                            "defined" if d else "missing")
              for n, (a, d) in sorted(link.arm9_needs.items())]
     write_if_changed(os.path.join(out, "ovl_arm9_needs.txt"), "".join(x + "\n" for x in needs))
+    # The matched ARM9 sources that define what the overlays call and the
+    # link lacks: seeds for the boot's closure (cmake/boot.cmake), as
+    # paths under src/matched/.
+    by_name, by_addr = {}, {}
+    for src, rows in link.al.arm9_src.items():
+        for n, a in rows:
+            by_name.setdefault(n, src)
+            by_addr.setdefault(a, src)
+    seeds = set()
+    for n, (a, d) in link.arm9_needs.items():
+        if d:
+            continue
+        src = by_name.get(n) or (by_addr.get(a & ~1) if a is not None else None)
+        if src and src.startswith("src/matched/"):
+            seeds.add(src[len("src/matched/"):])
+    write_if_changed(os.path.join(out, "ovl_arm9_seeds.txt"),
+                     "".join(x + "\n" for x in sorted(seeds)))
     rep = write_report(link, os.path.join(out, "ovl_report.txt"))
     if args.summary:
         print("\n".join(rep[:1 + len(link.ids)]))

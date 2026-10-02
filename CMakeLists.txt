@@ -1922,10 +1922,6 @@ target_link_libraries(eidos_boot PRIVATE eidos)
 target_compile_definitions(eidos_boot PRIVATE
     EIDOS_DEFAULT_DATA_ROOT="${BW_DATA_ROOT_ABS}")
 
-if(EIDOS_BOOT)
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boot.cmake)
-endif()
-
 # --- Overlays compiled into eidos_boot (docs/overlays.md) --------------------
 #
 # EIDOS_OVERLAYS names the overlays tools/ovlink.py compiles into eidos_boot:
@@ -1934,8 +1930,15 @@ endif()
 # means TITLE when EIDOS_BOOT is ON and none otherwise.  With
 # EIDOS_OVERLAYS_ARM9_STUBS the ARM9 functions the overlays call that the
 # link lacks are panicking stubs (tools/ovlink.py --arm9-stubs); off, they
-# are link errors that name what the boot's closure has to grow by.
-# eidos_boot installs the set with bw_ovl_install(&bw_ovl_set_boot, 0).
+# are link errors.  eidos_boot installs the set with
+# bw_ovl_install(&bw_ovl_set_boot, 0).
+#
+# With the boot the two links are planned together: a first ovlink pass
+# names the matched ARM9 files that define what the overlays call
+# (EIDOS_OVERLAY_SEEDS, added to the boot's closure); the boot is planned;
+# then the overlays are linked against the boot's closure, and the boot's
+# generator is told the names the overlays define outside their windows
+# (EIDOS_OVERLAY_SHIMS: the trampolines, the remaining ARM9 stubs).
 set(EIDOS_OVERLAYS "" CACHE STRING
     "Overlays compiled into eidos_boot: ids separated by ';', ALL, TITLE, or empty")
 option(EIDOS_OVERLAYS_ARM9_STUBS
@@ -1944,12 +1947,26 @@ set(_eidos_ovls "${EIDOS_OVERLAYS}")
 if(_eidos_ovls STREQUAL "" AND EIDOS_BOOT)
     set(_eidos_ovls TITLE)
 endif()
+set(EIDOS_OVERLAY_SEEDS)
+set(EIDOS_OVERLAY_SHIMS)
+if(EIDOS_BOOT AND NOT _eidos_ovls STREQUAL "")
+    eidos_overlays_seeds(EIDOS_OVERLAY_SEEDS
+        OVERLAYS ${_eidos_ovls}
+        LINK_SOURCES ${BW_OVL_LIBRARY_SOURCES})
+    set(EIDOS_OVERLAY_SHIMS
+        ${CMAKE_BINARY_DIR}/ovl/boot/ovl_dispatch.c
+        ${CMAKE_BINARY_DIR}/ovl/boot/ovl_arm9_stubs.c)
+endif()
+
+if(EIDOS_BOOT)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boot.cmake)
+endif()
+
 if(NOT _eidos_ovls STREQUAL "")
     set(_ovl_link ${BW_OVL_LIBRARY_SOURCES})
     if(EIDOS_BOOT)
-        list(APPEND _ovl_link ${EIDOS_BOOT_MATCHED}
-            ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02005124.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02047990.c)
+        list(APPEND _ovl_link ${EIDOS_BOOT_MATCHED} ${EIDOS_BOOT_PORT_SOURCES}
+            ${EIDOS_BOOT_ASM_SUBST})
     endif()
     set(_ovl_stub_opt)
     if(EIDOS_OVERLAYS_ARM9_STUBS)
@@ -1964,17 +1981,18 @@ if(NOT _eidos_ovls STREQUAL "")
     message(STATUS "EIDOS_OVERLAYS: ${_eidos_ovls}, ${boot_OVL_UNITS} matched sources")
 
     # test_ovlink_title: every overlay of the set loaded from the extract in
-    # turn, its tables checked against the player's files.
-    add_executable(test_ovlink_title
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ovlink_title.c
-        $<TARGET_OBJECTS:boot_ovl>)
-    target_include_directories(test_ovlink_title PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    if(TARGET eidos_boot_game)
-        target_link_libraries(test_ovlink_title PRIVATE eidos_boot_game)
+    # turn, its tables checked against the player's files.  Without the
+    # boot only: with it the overlays' ARM9 callees are the boot's, and
+    # test_boot_run loads the set the way the game does.
+    if(NOT EIDOS_BOOT)
+        add_executable(test_ovlink_title
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ovlink_title.c
+            $<TARGET_OBJECTS:boot_ovl>)
+        target_include_directories(test_ovlink_title PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        target_link_libraries(test_ovlink_title PRIVATE eidos)
+        add_test(NAME test_ovlink_title COMMAND test_ovlink_title ${BW_DATA_ROOT_ABS})
+        set_tests_properties(test_ovlink_title PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
     endif()
-    target_link_libraries(test_ovlink_title PRIVATE eidos)
-    add_test(NAME test_ovlink_title COMMAND test_ovlink_title ${BW_DATA_ROOT_ABS})
-    set_tests_properties(test_ovlink_title PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 endif()
 
 # --- No modal dialogs under MSVC ---------------------------------------------

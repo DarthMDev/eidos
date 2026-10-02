@@ -99,6 +99,7 @@ C_KEYWORDS = {
 # (SDK_IRQ_STACKSIZE = 0x800, SDK_OVERLAY_NUMBER = 0xED) are symbols whose
 # *address* is the value, and the matched code only ever casts them.
 CONST_LIMIT = 0x01000000
+MAIN_RAM_BASE = 0x02000000
 
 
 def hx(v: int) -> str:
@@ -808,10 +809,15 @@ class Model:
             e["section"] = sec
             e["size"] = sizes.get(addr, 0)
             port = self.port_object_at(addr)
-            if e["object"] and sec != "const" and port is None:
+            # Below main RAM nothing backs a name: the ITCM's code (the
+            # autoload copied to 0x01FF8000), which matched files name only
+            # for its address (`&OS_IrqHandler` as a sentinel).  The name is
+            # that address as a value, as for a linker constant.
+            itcm = sec != "const" and addr < MAIN_RAM_BASE and port is None
+            if e["object"] and sec != "const" and not itcm and port is None:
                 e["bind"] = "OBJECT"
                 continue
-            if sec == "const":
+            if sec == "const" or itcm:
                 e["bind"] = "CONST"
             elif port is not None:
                 e["bind"] = "HOST"

@@ -58,6 +58,11 @@ list(APPEND EIDOS_BOOT_SEEDS
     arm9_sdk/func_02081E7C.c  # MATHi_SHA1ProcessBlock, via MATHi_SHA1ProcessMessageBlockFunc
 )
 
+# With overlays compiled in (EIDOS_OVERLAYS, cmake/overlays.cmake): the
+# matched ARM9 files that define what the overlays call, so the closure
+# carries them (tools/ovlink.py, ovl_arm9_seeds.txt).
+list(APPEND EIDOS_BOOT_SEEDS ${EIDOS_OVERLAY_SEEDS})
+
 # ---------------------------------------------------------------------------
 # The one list of matched files a port shim replaces
 # ---------------------------------------------------------------------------
@@ -215,6 +220,31 @@ set(EIDOS_BOOT_SHIM_REPLACED
     # stubs/reimpl_02045A98.c: the end-of-string code unit, already in the
     # eidos library (written before aletheia matched it)
     src/matched/arm9_sdk/func_02045A98.c
+    # Reached only through the overlays' ARM9 callees (EIDOS_OVERLAYS): the
+    # same shims as above stand in for them.
+    src/calib/func_020869E8.c              # OS_FreeToHeap, sdk/os_alloc.c
+    src/matched/arm9_sdk/MI_Copy36B.c      # sdk/mi_gx.c
+    src/matched/arm9_sdk/MIi_CpuSend32.c   # sdk/mi_gx.c
+    src/matched/arm9_sdk/func_0207DECC.c   # GXi_NopClearFifo128_, sdk/g3_fifo.c
+    src/matched/arm9_sdk/func_02080C84.c   # GX_SendFifo48B, sdk/g3_fifo.c
+    src/matched/arm9_sdk/func_02080908.c   # GX_ResetBankForOBJ, sdk/boot/gx.c
+    src/matched/arm9_sdk/func_02080964.c   # GX_ResetBankForTex, sdk/boot/gx.c
+    src/matched/arm9_sdk/func_02080978.c   # GX_ResetBankForTexPltt, sdk/boot/gx.c
+    src/matched/arm9_sdk/func_020809B4.c   # GX_ResetBankForSubOBJ, sdk/boot/gx.c
+    src/matched/arm9_sdk/func_02082390.c   # MIi_DmaFill32Async, sdk/mi_dma.c
+    src/matched/arm9_sdk/func_02082498.c   # MIi_DmaCopy32Async, sdk/mi_dma.c
+    # sdk/boot/dwc_memfunc.c: dwc_memfunc.o's three functions over the one
+    # table the split files each keep a copy of
+    src/matched/arm9_sdk/func_0205A158.c   # DWCi_SetMemFunc
+    src/matched/arm9_sdk/func_0205A17C.c   # DWC_AllocEx
+    src/matched/arm9_sdk/func_0205A1B0.c   # DWC_Free
+    # stubs/reimpl_02060C94.c, reimpl_02061118.c: the heap a tail call
+    # forwards in r0, which the matched C does not name
+    src/matched/arm9/func_02060C94.c
+    src/matched/arm9/func_02061118.c
+    # stubs/reimpl_02036FD8.c: an ARM9 table's DS address passed as an
+    # integer (docs/dsaddr-residue.md)
+    src/matched/arm9/func_02036FD8.c
 )
 
 # The pointer-width switches (CMakeLists.txt, "Pointer width") put a
@@ -268,6 +298,10 @@ list(APPEND EIDOS_BOOT_PORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/boot/card.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/boot/rtc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/boot/os.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/boot/dwc_memfunc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060C94.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02061118.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02036FD8.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0203064C.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030678.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030608.c)
@@ -290,6 +324,11 @@ set(_boot_shims ${BW_SDK_SOURCES} ${BW_STUB_SOURCES})
 list(REMOVE_ITEM _boot_shims ${BW_OVERLAY_TABLE})
 string(REPLACE ";" "\n" _boot_shim_txt "${_boot_shims}")
 file(WRITE ${EIDOS_BOOT_DIR}/shim_sources.txt "${_boot_shim_txt}\n")
+# The generator also sees what the compiled overlays define outside them
+# (the trampolines into the windows, the ARM9 stubs): those names are
+# defined, not open.
+string(REPLACE ";" "\n" _boot_ovl_txt "${EIDOS_OVERLAY_SHIMS}")
+file(WRITE ${EIDOS_BOOT_DIR}/shim_sources_gen.txt "${_boot_shim_txt}\n${_boot_ovl_txt}\n")
 string(REPLACE ";" "\n" _boot_lib_txt "${BW_MATCHED_ORIGINALS}")
 file(WRITE ${EIDOS_BOOT_DIR}/library_matched.txt "${_boot_lib_txt}\n")
 string(REPLACE ";" "\n" _boot_port_txt "${EIDOS_BOOT_PORT_SOURCES}")
@@ -456,7 +495,7 @@ add_custom_command(
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bootlink.py generate
             --aletheia-root ${ALETHEIA_ROOT}
             --plan-dir ${EIDOS_BOOT_DIR}
-            --shim-sources ${EIDOS_BOOT_DIR}/shim_sources.txt
+            --shim-sources ${EIDOS_BOOT_DIR}/shim_sources_gen.txt
             --port-sources ${EIDOS_BOOT_DIR}/port_sources.txt
             --armdata-header ${bw_arm9_data_H}
             --define EIDOS_HEAP_MATCHED=${_boot_heap_matched}
@@ -465,7 +504,7 @@ add_custom_command(
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/closure.py
             ${EIDOS_BOOT_DIR}/boot_matched.txt
             ${bw_arm9_data_H}
-            ${_boot_shims} ${EIDOS_BOOT_PORT_SOURCES}
+            ${_boot_shims} ${EIDOS_BOOT_PORT_SOURCES} ${EIDOS_OVERLAY_SHIMS}
     COMMENT "Generating the boot's link headers, constants and stubs"
     VERBATIM)
 
@@ -516,7 +555,13 @@ else()
         -Wno-unused-but-set-variable -Wno-implicit-fallthrough
         -Wno-sign-compare -Wno-parentheses -Wno-unused-function
         -Wno-unused-label -Wno-unknown-pragmas -Wno-switch -Wno-return-type
-        -Wno-type-limits -Wno-cast-function-type)
+        -Wno-type-limits -Wno-cast-function-type
+        # The overlays' ARM9 callees (EIDOS_OVERLAYS) add: a file's own
+        # memcpy/memset prototypes, a cast of a u16 or u64 to a pointer, a
+        # partly braced initialiser, a sizeof ratio of two element types.
+        -Wno-builtin-declaration-mismatch -Wno-int-to-pointer-cast
+        -Wno-pointer-to-int-cast -Wno-missing-field-initializers
+        -Wno-sizeof-array-div)
     # With 8-byte pointers, GCC flags every cast between a pointer and a
     # 32-bit integer: 532 sites in the boot's matched files, the
     # pointer-width question docs/pointer-width.md measures (signal C).  They
@@ -557,10 +602,22 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
 else()
     set(_boot_lp64 1)
 endif()
+# With the title overlays compiled in (EIDOS_OVERLAYS) the boot runs past
+# the first overlay load, through the network library's set-up in ov009 and
+# ov013 and the save-data set-up's calls into ov228, to the next known stop:
+# func_02033A88 (save.c) follows the pointer at the head of the ARM9 save
+# table g_0209D938, which points at 0x0209DA28; the word is not in the ARM9
+# relocation metadata (data_objects.json lists g_0209D938 as a pool word
+# only), so it still holds the DS address and the read faults.  A known stop
+# is a pass, as the overlay boundary was; any other ending fails.
+set(_boot_known_stop "")
+if(NOT "${_eidos_ovls}" STREQUAL "")
+    set(_boot_known_stop "read of host address 0x0209DA28")
+endif()
 add_test(NAME test_boot_run
     COMMAND ${CMAKE_COMMAND} -DBOOT=$<TARGET_FILE:eidos_boot>
             -DDATA=${BW_DATA_ROOT_ABS} -DFRAMES=120 -DWATCHDOG=60
-            -DLP64=${_boot_lp64}
+            -DLP64=${_boot_lp64} "-DKNOWN_STOP=${_boot_known_stop}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/boot_run.cmake)
 set_tests_properties(test_boot_run PROPERTIES
     SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 900)
