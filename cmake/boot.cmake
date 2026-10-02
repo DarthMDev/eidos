@@ -305,6 +305,14 @@ list(APPEND EIDOS_BOOT_PORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0203064C.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030678.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030608.c)
+if(NOT EIDOS_TCBL_MATCHED)
+    # stubs/reimpl_ for the nine tcbl files (CMakeLists.txt, "Pointer
+    # width"): the overlays' ARM9 callees reach the matched ones.
+    foreach(_tcbl ${BW_TCBL_MATCHED})
+        file(RELATIVE_PATH _tcbl_rel "${ALETHEIA_ROOT}" "${_tcbl}")
+        list(APPEND EIDOS_BOOT_SHIM_REPLACED ${_tcbl_rel})
+    endforeach()
+endif()
 if(NOT EIDOS_HEAP_MATCHED)
     # The eidos library carries these two only with the matched heap floor;
     # the boot reaches the carve and the free at both widths.

@@ -225,13 +225,51 @@ tree, because two sets may compile one file with different headers.
 
 ## Joining the boot link
 
-The boot link (`tools/bootlink.py`, `cmake/boot.cmake`) and this one meet in
-three places:
+With `EIDOS_BOOT=ON` the boot link (`tools/bootlink.py`, `cmake/boot.cmake`)
+and this one are planned together (CMakeLists.txt, "Overlays compiled into
+eidos_boot"):
 
-- the trampolines in `ovl_dispatch.c` define plain names (`func_021DFC20`)
-  that the boot's ARM9 sources call and that bootlink would otherwise stub as
-  open: bootlink has to see `ovl_dispatch.c` as a port source;
-- the ARM9 functions in `ovl_arm9_needs.txt` marked `missing` are what the
-  boot's closure has to grow by for the overlays to run without ARM9 stubs;
-- eidos_boot has to call `bw_ovl_install(&bw_ovl_set_boot, 0)` before the
-  first overlay load.
+1. A first ovlink pass against the eidos library (`eidos_overlays_seeds`)
+   lists the matched ARM9 files that define what the overlays call
+   (`ovl_arm9_seeds.txt`, about 690 for the title set); they join the boot's
+   seeds, so the closure carries the overlays' ARM9 callees (about 2600
+   matched files in all).
+2. The boot is planned, then the overlays are linked against the eidos
+   library plus the boot's closure, so only what nothing defines is stubbed.
+   An ARM9 function nothing defines is named by the ARM9's own spelling (an
+   asm-bodied file's, the SDK's), and stubbed by ovlink only when no boot
+   file reaches it (bootlink stubs those itself).
+3. bootlink's generator reads `ovl_dispatch.c` and `ovl_arm9_stubs.c` as
+   port sources (`EIDOS_OVERLAY_SHIMS`): the trampolines' plain names are
+   defined, not open.
+4. `demo/eidos_boot.c` installs the set (`bw_ovl_install(&bw_ovl_set_boot,
+   0)`) before the first reset.
+
+## How far the boot runs
+
+With the title set the boot, before frame 0, inside `func_0200523C`:
+loads ov010 and ov011; switches to the network overlays (ov009, ov013),
+calls ov009's interface entry 0 through the relocated table, which runs the
+DWC library's initialisation in ARM9 code and ov009 (allocator hooks, the
+GameSpy memory callbacks, the heap set-up and teardown); switches back; runs
+the display reset; loads ov228 and calls four of its functions through the
+trampolines (`func_021DFC20` and the rest) for the save-data set-up; unloads
+it. It then stops in `func_02033A88` (save.c): the ARM9 save table
+`g_0209D938` starts with a pointer to 0x0209DA28 that aletheia's relocation
+metadata does not list (`data_objects.json` names `g_0209D938` as a pool
+word only), so the word is still the DS address and the read faults. That
+is the ARM9 data layer's metadata limit (docs/armdata.md), the same one the
+overlays have for their data-to-data pointers, and `test_boot_run` takes it
+as the known stop with overlays compiled in.
+
+What it took on the way, besides the overlays: dwc_memfunc.o's three
+functions share one table that aletheia's per-function files each keep a
+copy of (`sdk/boot/dwc_memfunc.c`); RTCi_ConvertTimeToSecond and ov009's
+gsiMemoryCallbacksSet from their asm bodies (`sdk/asm/`, `sdk/asm/ov/`,
+which ovlink picks up by file name as bootlink does `sdk/asm/`); two heap
+destroys whose argument the matched C leaves in r0
+(`stubs/reimpl_02060C94.c`, `reimpl_02061118.c`); the OAM clear's table
+address passed as an integer (`stubs/reimpl_02036FD8.c`). The grown closure
+also needed eleven more shim-replaced files, one owner per name among boot
+files (bootlink gives a second copy a private name, as ovlink does inside an
+overlay), mwcc's builtins, and ITCM data names bound as values.

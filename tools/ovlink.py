@@ -259,6 +259,10 @@ class Scan:
         self.has_asm = bool(ASM_BODY.search(code))
         self.literals = set(int(v, 16) for v in LITERAL_CAST.findall(code))
         self._scan(code)
+        # stubs/stubs.h's BW_STUB(name, address, why) defines `name`.
+        for m in re.finditer(r"\bBW_STUB\s*\(\s*([A-Za-z_]\w*)", code):
+            self.defined.add(m.group(1))
+            self.func_defs.add(m.group(1))
         # armdata's reading of the same file: which names are used as a
         # member, a tag, a local or in a static initialiser.
         sf = armdata.SourceFile(path, text, True)
