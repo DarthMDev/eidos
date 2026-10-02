@@ -259,14 +259,16 @@ static int test_reset_path(void)
     bw_ds_reset();
     CHECK_PTR("reset: t_data bound", bw_dsref_t_data, bw_ds_ptr(0x02004010u));
     CHECK_PTR("reset: t_sink -> registered object", bw_dsref_t_sink, g_Sink);
-    BW_CHECK_EQ("reset: image copied", *(u8 *)bw_ds_ptr(0x02004033u), g_image[0x33]);
+    /* 0x0200400F: an image byte outside every relocated or scanned word (the
+     * code-pointer scan may rewrite words from 0x02004030 at ILP32).        */
+    BW_CHECK_EQ("reset: image copied", *(u8 *)bw_ds_ptr(0x0200400Fu), g_image[0x0F]);
     check_relocated("reset");
 
     /* A second reset rebuilds the same state from the image. */
-    *(u8 *)bw_ds_ptr(0x02004033u) = 0;
+    *(u8 *)bw_ds_ptr(0x0200400Fu) = 0;
     bw_ds_reset();
     BW_CHECK_EQ("second reset: image copied again",
-                *(u8 *)bw_ds_ptr(0x02004033u), g_image[0x33]);
+                *(u8 *)bw_ds_ptr(0x0200400Fu), g_image[0x0F]);
     check_relocated("second reset");
 
     BW_REQUIRE("find", bw_data_find(&k_img, "t_bss") == &k_names[5]);
