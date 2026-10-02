@@ -17,8 +17,8 @@ void func_0207B598(void *dst);
 void func_0207B598(void *dst)
 {
     u32 *m = (u32 *)dst;
-
     u32 i;
+
     for (i = 0; i < 12u; i++) {
         m[i] = (i == 0u || i == 4u || i == 8u) ? ONE : 0u;
     }

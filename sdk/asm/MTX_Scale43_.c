@@ -17,8 +17,8 @@ void MTX_Scale43_(void *dst, fx32 x, fx32 y, fx32 z);
 void MTX_Scale43_(void *dst, fx32 x, fx32 y, fx32 z)
 {
     u32 *m = (u32 *)dst;
-
     u32 i;
+
     for (i = 0; i < 12u; i++) {
         m[i] = 0;
     }

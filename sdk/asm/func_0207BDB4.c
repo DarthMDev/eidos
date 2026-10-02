@@ -17,8 +17,8 @@ void func_0207BDB4(void *dst);
 void func_0207BDB4(void *dst)
 {
     u32 *m = (u32 *)dst;
-
     u32 i;
+
     for (i = 0; i < 16u; i++) {
         m[i] = (i % 5u == 0u) ? ONE : 0u;
     }

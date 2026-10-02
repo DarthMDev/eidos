@@ -17,8 +17,8 @@ void func_0207ADC4(void *dst);
 void func_0207ADC4(void *dst)
 {
     u32 *m = (u32 *)dst;
-
     u32 i;
+
     for (i = 0; i < 9u; i++) {
         m[i] = (i % 4u == 0u) ? ONE : 0u;
     }

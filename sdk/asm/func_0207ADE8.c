@@ -18,8 +18,8 @@ void func_0207ADE8(const void *src, void *dst)
 {
     const u32 *s = (const u32 *)src;
     u32 *d = (u32 *)dst;
-
     u32 r, c;
+
     for (r = 0; r < 3u; r++) {
         for (c = 0; c < 3u; c++) {
             d[r * 4u + c] = s[r * 3u + c];
