@@ -84,7 +84,10 @@ else()
         -Wno-unused-label -Wno-unknown-pragmas -Wno-switch -Wno-return-type
         -Wno-type-limits -Wno-cast-function-type -Wno-implicit-int
         -Wno-builtin-declaration-mismatch -Wno-char-subscripts -Wno-address
-        -Wno-sequence-point -Wno-comment)
+        -Wno-sequence-point -Wno-comment
+        # a pointer stored to an int, as mwcc took it (GCC 14 makes it an
+        # error): ov010_func_02166CD0.c's `int r0 = func_02012F08(a)`
+        -Wno-int-conversion)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         # deprecated-non-prototype: the `int name();` ovlink declares for a
         # call mwcc compiled with no declaration in scope.

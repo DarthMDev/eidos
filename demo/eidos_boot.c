@@ -15,6 +15,12 @@
  *
  *     eidos_boot [--data-root PATH] [--frames N] [--window] [--watchdog S]
  *                [--screenshot N[,N...]] [--screenshot-dir DIR]
+ *                [--press BUTTONS@FRAME[:HOLD]] [--input SCRIPT]
+ *
+ * --press START@4800 presses buttons at a frame (held 4 frames unless
+ * :HOLD says), --input reads a script of such events (sdk/input.h's text
+ * format); both are the same timed input a window's keys join, so a run
+ * past the title screen repeats exactly with no window.
  *
  * --screenshot saves both screens, as the hardware state has them at the
  * end of each named frame, to DIR/eidos_boot_frame<N>.png (DIR defaults to
@@ -82,6 +88,79 @@ static u64         g_shots[BOOT_MAX_SHOTS];
 static int         g_shot_count;
 static const char *g_shot_dir = ".";
 
+/*
+ * --press NAME@FRAME[:HOLD] and --input FILE: timed input as the text
+ * script sdk/input.h reads ("<frame> press <buttons> [<hold>]"), so a run
+ * can walk past the title screen with no window and repeat exactly.
+ */
+static char g_input_script[8192];
+
+static int add_input_text(const char *line)
+{
+    size_t have = strlen(g_input_script);
+    size_t add = strlen(line);
+
+    if (have + add + 2 > sizeof(g_input_script)) {
+        return -1;
+    }
+    memcpy(g_input_script + have, line, add);
+    g_input_script[have + add] = '\n';
+    g_input_script[have + add + 1] = '\0';
+    return 0;
+}
+
+/* "START@4800" or "A+B@5000:10": press the buttons at that frame, held for
+ * HOLD frames (default 4). */
+static int parse_press(const char *arg)
+{
+    char buttons[64];
+    char line[128];
+    const char *at = strchr(arg, '@');
+    unsigned long frame, hold = 4;
+    char *end = NULL;
+
+    if (at == NULL || (size_t)(at - arg) >= sizeof(buttons) || at == arg) {
+        return -1;
+    }
+    memcpy(buttons, arg, (size_t)(at - arg));
+    buttons[at - arg] = '\0';
+    frame = strtoul(at + 1, &end, 10);
+    if (end == at + 1) {
+        return -1;
+    }
+    if (*end == ':') {
+        const char *h = end + 1;
+        hold = strtoul(h, &end, 10);
+        if (end == h) {
+            return -1;
+        }
+    }
+    if (*end != '\0') {
+        return -1;
+    }
+    snprintf(line, sizeof(line), "%lu press %s %lu", frame, buttons, hold);
+    return add_input_text(line);
+}
+
+static int read_input_file(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    char line[512];
+
+    if (fp == NULL) {
+        return -1;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (add_input_text(line) != 0) {
+            fclose(fp);
+            return -1;
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
 /* "N[,N...]": the frames --screenshot names.  0 on success. */
 static int parse_shots(const char *list)
 {
@@ -114,6 +193,7 @@ static int parse_shots(const char *list)
 #include "dsmem.h"
 #include "g2d.h"
 #include "hw3d.h"
+#include "input.h"
 #include "os.h"
 #include "overlay.h"
 
@@ -481,8 +561,11 @@ static void boot_frame(void *user)
     io_raw_write(REG_DISPSTAT, 2,
                  io_raw_read(REG_DISPSTAT, 2) & ~DISPSTAT_VBLANK_FLAG);
 
+    /* The input of this frame, before its vblank (sdk/input.h): the
+     * window's keys and the --press / --input script, KEYINPUT and the
+     * ARM7's XY halfword written, the touch panel's automatic samples. */
+    bw_input_frame();
     eidos_frame_run_one(&run->loop);
-    bw_arm7_tp_frame();
     g_frames_seen++;
     {
         u64 n = eidos_frame_count(&run->loop);
@@ -577,6 +660,14 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
     bw_ovl_install(&bw_ovl_set_boot, 0);
 #endif
     bw_port_reset();
+    bw_input_reset();
+    if (g_input_script[0] != '\0') {
+        char err[160];
+        if (bw_input_script_load(g_input_script, err, sizeof(err)) != 0) {
+            fprintf(stderr, "eidos_boot: input script: %s\n", err);
+            return 2;
+        }
+    }
     /* The 3D hardware after the reset that cleared its access hook: the
      * game's geometry FIFO and SWAP_BUFFERS land there, and its frame is
      * the 3D layer the screens are composed with (engine/g3d/hw3d.h). */
@@ -608,7 +699,8 @@ static void usage(void)
 {
     fprintf(stderr, "usage: eidos_boot [--data-root PATH] [--frames N] [--window] "
                     "[--watchdog SECONDS] [--screenshot N[,N...]] "
-                    "[--screenshot-dir DIR]\n");
+                    "[--screenshot-dir DIR] [--press BUTTONS@FRAME[:HOLD]] "
+                    "[--input SCRIPT]\n");
 }
 
 int main(int argc, char **argv)
@@ -645,6 +737,16 @@ int main(int argc, char **argv)
                 usage();
                 return 2;
             }
+        } else if (strcmp(argv[i], "--press") == 0 && i + 1 < argc) {
+            if (parse_press(argv[++i]) != 0) {
+                usage();
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--input") == 0 && i + 1 < argc) {
+            if (read_input_file(argv[++i]) != 0) {
+                fprintf(stderr, "eidos_boot: cannot read input script %s\n", argv[i]);
+                return 2;
+            }
         } else if (strcmp(argv[i], "--screenshot-dir") == 0 && i + 1 < argc) {
             g_shot_dir = argv[++i];
         } else if (strcmp(argv[i], "--window") == 0) {
@@ -679,6 +781,7 @@ int main(int argc, char **argv)
     (void)watchdog;
     (void)g_shots;
     (void)g_shot_dir;
+    (void)g_input_script;
     printf("eidos_boot: built with EIDOS_BOOT=OFF, so the game's boot is not "
            "linked into this binary (%llu frames requested, data root '%s'). "
            "Reconfigure with -DEIDOS_BOOT=ON; docs/boot.md has the plan.\n",

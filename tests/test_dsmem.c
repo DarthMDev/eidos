@@ -165,6 +165,28 @@ static int test_registry(void)
     BW_CHECK_EQ("game global value", *(s32 *)bw_ds_ptr(0x020A7820u), -1);
     BW_CHECK_EQ("game global addr_of", bw_ds_addr_of(&g_020A7820), 0x020A7820);
 
+    /* an overlay's objects come and go: withdraw one, the region answers */
+    BW_REQUIRE("registered covers", bw_ds_registered(0x02300108u, 4) != 0);
+    BW_REQUIRE("registered straddles", bw_ds_registered(0x023000F0u, 0x20) != 0);
+    BW_REQUIRE("registered misses", bw_ds_registered(0x02300110u, 0x10) == 0);
+    BW_REQUIRE("unregister", bw_ds_unregister(0x02300100u) == 1);
+    BW_REQUIRE("unregister twice", bw_ds_unregister(0x02300100u) == 0);
+    BW_REQUIRE("unregistered falls through",
+               bw_ds_ptr(0x02300100u) != (void *)obj);
+    BW_REQUIRE("unregistered gone", bw_ds_registered(0x02300100u, 16) == 0);
+    PTR_EQ("neighbour kept", bw_ds_ptr(0x023000FFu), low + 3);
+    bw_ds_register(0x02300100u, obj, sizeof(obj), "obj again");
+    PTR_EQ("registered again", bw_ds_ptr(0x02300104u), obj + 4);
+
+    /* identity mapping: where it is on, main RAM is at its own address */
+    if (bw_ds_identity()) {
+        PTR_EQ("identity main", bw_ds_ptr(0x02200000u), (void *)(uintptr_t)0x02200000u);
+        BW_CHECK_EQ("identity addr_of", bw_ds_addr_of((void *)(uintptr_t)0x02200010u),
+                    0x02200010);
+    } else {
+        BW_REQUIRE("movable main", bw_ds_ptr(0x02200000u) != NULL);
+    }
+
     /* reset forgets the test's registrations, keeps the game's */
     bw_ds_reset();
     BW_REQUIRE("reset drops obj", bw_ds_ptr(0x02300100u) != (void *)obj);

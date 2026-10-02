@@ -611,7 +611,10 @@ else()
         # The whole game module (EIDOS_BOOT_ALL_GAME) adds: a negative
         # constant shifted (frustum bounds written as -6 << 16), and the
         # MSL's one-line for loop in __kernel_rem_pio2.
-        -Wno-shift-negative-value -Wno-misleading-indentation)
+        -Wno-shift-negative-value -Wno-misleading-indentation
+        # a pointer stored to an int, as mwcc took it (GCC 14 makes it an
+        # error)
+        -Wno-int-conversion)
     # With 8-byte pointers, GCC flags every cast between a pointer and a
     # 32-bit integer: 532 sites in the boot's matched files, the
     # pointer-width question docs/pointer-width.md measures (signal C).  They
@@ -652,22 +655,40 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
 else()
     set(_boot_lp64 1)
 endif()
-# With the title overlays compiled in (EIDOS_OVERLAYS) the boot runs past
-# the first overlay load, through the network library's set-up in ov009 and
-# ov013 and the save-data set-up's calls into ov228, to the next known stop:
-# func_02033A88 (save.c) follows the pointer at the head of the ARM9 save
-# table g_0209D938, which points at 0x0209DA28; the word is not in the ARM9
-# relocation metadata (data_objects.json lists g_0209D938 as a pool word
-# only), so it still holds the DS address and the read faults.  A known stop
-# is a pass, as the overlay boundary was; any other ending fails.
+# With the title overlays compiled in (EIDOS_OVERLAYS) the boot runs the
+# frame loop: the Nintendo and copyright screens, the opening (ov179), then
+# the title (ov088).  The test asks for more frames than it gets through and
+# judges the stop: it must be the documented next one, and at or past the
+# furthest frame the boot is known to reach (tests/boot_run.cmake).  Update
+# both when the boot gets further; docs/boot.md, "How far it gets", says
+# what each stop is.
+set(_boot_frames 120)
+set(_boot_min_frames 0)
 set(_boot_known_stop "")
 if(NOT "${_eidos_ovls}" STREQUAL "")
-    set(_boot_known_stop "read of host address 0x0209DA28")
+    set(_boot_frames 8000)
+    set(_boot_min_frames 4515)
+    set(_boot_known_stop "PANIC in boot stub reached")
 endif()
 add_test(NAME test_boot_run
     COMMAND ${CMAKE_COMMAND} -DBOOT=$<TARGET_FILE:eidos_boot>
-            -DDATA=${BW_DATA_ROOT_ABS} -DFRAMES=120 -DWATCHDOG=60
+            -DDATA=${BW_DATA_ROOT_ABS} -DFRAMES=${_boot_frames} -DWATCHDOG=60
+            -DMIN_FRAMES=${_boot_min_frames}
             -DLP64=${_boot_lp64} "-DKNOWN_STOP=${_boot_known_stop}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/boot_run.cmake)
 set_tests_properties(test_boot_run PROPERTIES
     SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 900)
+# The same run with --window, through SDL's dummy video and audio drivers:
+# the window, its pump and the audio queue live on the frame thread, and a
+# run that stalls there (it froze a real window once) fails on the
+# watchdog.  300 frames is past the first screens, at the paced 60 Hz.
+if(TARGET eidos_platform AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    add_test(NAME test_boot_window
+        COMMAND ${CMAKE_COMMAND} -DBOOT=$<TARGET_FILE:eidos_boot>
+                -DDATA=${BW_DATA_ROOT_ABS} -DFRAMES=300 -DWATCHDOG=20 -DWINDOW=1
+                -DLP64=0 "-DKNOWN_STOP=${_boot_known_stop}"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/boot_run.cmake)
+    set_tests_properties(test_boot_window PROPERTIES
+        SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 300
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+endif()
