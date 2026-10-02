@@ -978,6 +978,9 @@ class Model:
     def is_code(self, tgt: int) -> bool:
         if tgt & 1:
             return True
+        self._function_name(0)                  # loads self._veneers
+        if tgt in self._veneers:
+            return True                         # a linker veneer is code
         kind = self.extern_kinds.get(tgt)
         if kind is not None:
             return kind == "func"
@@ -1065,6 +1068,12 @@ class Model:
                 continue
             val = addr | (1 if isa == "thumb" else 0)
             self.funcs.setdefault(val, n)
+        # Veneers are ARM code: a pointer to one holds its even address.
+        self._function_name(0)                  # loads self._veneers
+        for v in sorted(self._veneers):
+            n = self._function_name(v)
+            if n is not None:
+                self.funcs.setdefault(v, n)
         lo = self.data_range[0] if self.data_range else None
         for s_, e_, _img, label in self.layout.copy:
             if "ITCM" in label or "VRAM" in label:
@@ -1085,6 +1094,15 @@ class Model:
         for n in cands:
             if n in self.defined_functions:
                 return n
+        # A linker veneer (the listing's veneer_ labels) is another address
+        # of its target: a table that points at the veneer reaches the
+        # function behind it (the allocator table at 0x020A1754).
+        if not hasattr(self, "_veneers"):
+            import closure  # noqa: E402  (tools/closure.py, imported late)
+            self._veneers = closure.listing_veneers(self.root)
+        target = self._veneers.get(addr)
+        if target is not None and target != addr:
+            return self._function_name(target)
         return None
 
 
