@@ -18,11 +18,13 @@ Run Pokémon Black (and eventually White) natively on modern platforms (PC, macO
 manifest and asset tool this repository uses is read from there at configure
 or build time. The declared end state is an open-source native port of
 Pokemon Black: one executable, cross-platform, moddable, with every asset
-extracted from the player's own ROM the first time it runs. What is in this
-repository today is the skeleton that proves the loop is real, end to end,
-on a small slice: matched game C, compiled for the host, running over assets
-pulled out of the ROM by aletheia's `tools/assets/`, checked against
-expected values computed independently.
+extracted from the player's own ROM the first time it runs. Today the
+game's own code boots natively from power-on to the title menu: the logos,
+the copyright screen, the opening cinematic, the title screen and its menu,
+drawn and played from the hardware state the game itself writes, with no
+emulator (`eidos_boot --window`, see "Running the game's boot"). Going past
+the menu waits on aletheia matching the next overlays (the new-game intro and
+name entry).
 
 Nothing here is a rewrite of the game. The only game code eidos builds is
 the byte-verified C aletheia keeps under `src/matched/`, compiled unchanged.
@@ -2771,11 +2773,15 @@ opens the real Windows dialog and answers it from a helper thread when
         own: `src/matched/sub_0203101C.c` builds the list on the matched
         heap layer and `src/matched/sub_020310C4.c` is the step function
         `demo/eidos_view` installs
-  - [ ] The game's own boot runs the frame: NitroMain and its matched
-        closure link under `EIDOS_BOOT=ON` and run through the system and
-        heap initialisation to the first overlay load (ov010, resident),
-        which this build does not compile; the frame loop waits on ov010
-        and ov011. See "Running the game's boot"
+  - [x] The game's own boot runs the frame: NitroMain (aletheia's matched
+        `func_02005124.c`) runs natively from power-on with the title-path
+        overlays compiled in (ov009, ov010, ov011, ov013, ov017, ov088,
+        ov179, ov228): the Nintendo and Pokemon Company logos, the
+        copyright screen, the opening cinematic, the title screen and, with
+        START, the title menu (NEW GAME / MYSTERY GIFT / NINTENDO WFC
+        SETTINGS / MIC TEST), in a window (`eidos_boot --window`) or
+        headless; `test_boot_run` asserts the menu. See "Running the
+        game's boot" and `docs/boot-handoff.md`
 - [ ] **Milestone 3**: 2D engine shim
   - [x] BG layers from tile and palette memory: NSCR screens, all four
         text screen sizes, 16- and 256-colour modes, scroll, priority and
@@ -2798,9 +2804,11 @@ opens the real Windows dialog and answers it from a helper thread when
         by side, at an integer scale, each composed independently by
         `g2d_frame_compose_desc` and uploaded as its own texture
         (`engine/platform/`, `demo/eidos_view.c`)
-  - [ ] Opening cinematic and title screen render correctly (the title
-        screen's BG renders, checked pixel for pixel against the Python
-        renderer and shown by `eidos_view`; the cinematic is untouched)
+  - [ ] Opening cinematic and title screen render correctly (both now
+        run from the game's own code and are drawn from the hardware state
+        it writes: logos, copyright, the opening's painted scenes and 3D,
+        the title and its menu. Open: no pixel comparison against a DS
+        capture yet, and the documented compositor approximations)
 - [ ] **Milestone 4**: 3D engine shim
   - [x] DS fixed-point geometry engine emulation: the whole pipeline is
         20.12 integer arithmetic with 64-bit intermediates and no float
@@ -2896,11 +2904,12 @@ opens the real Windows dialog and answers it from a helper thread when
         replace or add members, served to every reader, matched ones
         included, as one merged archive; `test_vfs`, `test_vfs_members`,
         see "The file layer")
-  - [ ] Engine boots cleanly from extracted assets (the ARM9 boot's
-        closure is matched in aletheia and NitroMain is reimplemented here;
-        the port's side is in progress, see "Running the game's boot", and
-        what blocks the title screen past the first overlay load is listed
-        in `docs/title-closure.md`)
+  - [x] Engine boots cleanly from extracted assets: the game's own boot
+        reaches the title menu from the player's extract (main RAM is the
+        player's `arm9_dec.bin`, overlays come from `overlays_dec/`). Past
+        the menu, NEW GAME needs ov204 (new-game intro) and ov194 (name
+        entry), which aletheia has not finished matching (60 of 123 and 78
+        of 148 functions open)
 - [ ] **Milestone 7**: Gameplay integration
   - [ ] Field system: player movement, warps, script VM, encounters
   - [ ] Battle system

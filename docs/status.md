@@ -12,6 +12,11 @@ is only partly done, it says which part.
 
 ## Done, no decompilation involved
 
+- **The game's own boot, to the title menu**: NitroMain and the title-path
+  overlays (ov009, ov010, ov011, ov013, ov017, ov088, ov179, ov228) run
+  natively: logos, copyright, the opening, the title screen and the title
+  menu, in a window or headless (`eidos_boot`, `test_boot_run`,
+  `test_boot_window`; `docs/boot.md`, `docs/boot-handoff.md`).
 - **engine/g2d**: OBJ and BG compositors, affine OBJ and BG, windows and the
   colour special effects. Pixel-identical to aletheia's Python renderers on
   the oracle sets (`test_g2d`, `test_bg`, `test_bg_affine`, `test_window`).
@@ -129,3 +134,9 @@ into "open". The boot-path blockers are worth re-reading in `docs/HANDOFF.md`
 at each integration: the heap arena (`0x0202FC48`), the overlay loader, and
 the title/field managers are the ones that unblock the largest part of the
 port at once.
+
+## Blocked on the decompilation: past the title menu
+
+- **NEW GAME**: needs ov204 (new-game intro, 60 of 123 functions unmatched
+  in aletheia) and ov194 (name entry, 78 of 148). The boot reaches the
+  menu; selecting NEW GAME loads code that is not matched yet.
