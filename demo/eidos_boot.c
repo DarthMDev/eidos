@@ -45,8 +45,13 @@
  * engine/audio (sdk/arm7/snd.c).  With no audio device the driver's clock
  * is run from here, one frame's worth of output frames per frame
  * (bw_snd_render with no buffer), so sequences end and the sound alarms
- * fire on time.  With a window and an audio device, the device's callback
- * runs it instead.
+ * fire on time.  With a window and an audio device, the same frame thread
+ * renders that frame's output and queues it on the device (the driver is
+ * the game thread's, never run from SDL's audio thread).
+ *
+ * The window belongs to the thread that runs the frames (the game's idle
+ * thread, where the halt hook runs), so it is created at the first frame,
+ * not in main().
  */
 
 #include <stdio.h>
@@ -157,6 +162,8 @@ typedef struct BootRun {
     u8 *bottom;
 #if EIDOS_BOOT_SDL
     EidosPlatform *plat;
+    int want_window;   /* --window: open one at the first frame          */
+    int window_tried;
 #endif
 } BootRun;
 
@@ -393,11 +400,6 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
     (void)g2d_hw_render_dsmem(g3d_hw_frame(), top, bottom, unsupported);
 }
 
-static void boot_audio(void *user, s16 *out, u32 frames)
-{
-    (void)user;
-    bw_snd_render(out, frames);
-}
 #endif
 
 /* The output frames one DS frame is worth, the remainder carried. */
@@ -410,11 +412,67 @@ static u32 boot_audio_frames(BootRun *run)
     return n;
 }
 
+#if EIDOS_BOOT_SDL
+/*
+ * The window, opened by the thread that runs the frames.  The halt hook runs
+ * on the game's idle thread, not on main(): a window belongs to the thread
+ * that created it (a Win32 window's messages reach only that thread's
+ * queue, and SDL's renderer is not thread-safe), so it is created here, at
+ * the first frame, and pumped, drawn and closed by the same thread for the
+ * rest of the run.  Created on main(), it was never pumped while main() sat
+ * in the game's OS_WaitIrq, and Windows showed it frozen after a few
+ * seconds.
+ */
+static void boot_window_open(BootRun *run)
+{
+    EidosPlatformConfig cfg;
+
+    run->window_tried = 1;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.title = "eidos boot";
+    cfg.audio = 1;
+    cfg.audio_push = 1;
+    if (eidos_platform_init(&run->plat, &cfg) != 0) {
+        fprintf(stderr, "eidos_boot: no window; running headless\n");
+        run->plat = NULL;
+    }
+}
+
+/*
+ * One frame of sound.  The game's sound driver (sdk/arm7/snd.c) is the
+ * ARM7's, driven by the game thread through the PXI: rendering it from
+ * SDL's audio thread would race the game.  So it renders here, on the frame
+ * thread, and the samples go to the device's queue, kept a few frames ahead;
+ * when the queue is that full the frame's output is dropped (the driver's
+ * clock still advances), and when it runs dry the device plays silence.
+ */
+static void boot_audio_push(BootRun *run, u32 frames)
+{
+    static s16 buf[2u * 4096u];
+
+    if (frames > 4096u) {
+        frames = 4096u;
+    }
+    if (eidos_platform_audio_queued(run->plat) > 4u * frames) {
+        bw_snd_render(NULL, frames);
+        return;
+    }
+    bw_snd_render(buf, frames);
+    eidos_platform_queue_audio(run->plat, buf, frames);
+}
+#endif
+
 /* The halt hook: one frame of time passing. */
 static void boot_frame(void *user)
 {
     BootRun *run = (BootRun *)user;
     int audio_device = 0;
+
+#if EIDOS_BOOT_SDL
+    if (run->want_window && !run->window_tried) {
+        boot_window_open(run);
+    }
+#endif
 
     if (eidos_frame_count(&run->loop) >= run->limit) {
         boot_finish(0, "ran");
@@ -443,6 +501,9 @@ static void boot_frame(void *user)
         }
         eidos_platform_present(run->plat, run->top, run->bottom);
         audio_device = eidos_platform_audio_open(run->plat);
+        if (audio_device) {
+            boot_audio_push(run, boot_audio_frames(run));
+        }
         eidos_platform_wait_frame(run->plat);
     }
 #endif
@@ -473,21 +534,13 @@ static void commit_main_ram(void)
 static void boot_window(EidosFrameHooks *hooks, int window)
 {
 #if EIDOS_BOOT_SDL
-    EidosPlatformConfig cfg;
     size_t screen = (size_t)256 * 192 * 4;
 
     if (!window) {
         return;
     }
-    memset(&cfg, 0, sizeof cfg);
-    cfg.title = "eidos boot";
-    cfg.audio = 1;
-    if (eidos_platform_init(&g_run.plat, &cfg) != 0) {
-        fprintf(stderr, "eidos_boot: no window; running headless\n");
-        g_run.plat = NULL;
-        return;
-    }
-    eidos_platform_set_audio(g_run.plat, boot_audio, NULL);
+    /* The window itself opens at the first frame (boot_window_open). */
+    g_run.want_window = 1;
     g_run.top = (u8 *)calloc(1, screen);
     g_run.bottom = (u8 *)calloc(1, screen);
     if (g_run.top == NULL || g_run.bottom == NULL) {

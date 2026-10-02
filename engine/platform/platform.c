@@ -66,6 +66,7 @@ struct EidosPlatform {
     EidosAudioFn      audio_fn;
     void             *audio_user;
     u64               audio_frames;
+    int               audio_push;
 };
 
 /* ------------------------------------------------------------------ */
@@ -463,6 +464,25 @@ void eidos_platform_set_audio(EidosPlatform *p, EidosAudioFn fn, void *user)
     }
 }
 
+void eidos_platform_queue_audio(EidosPlatform *p, const s16 *in, u32 frames)
+{
+    if (p == NULL || p->audio_dev == 0 || !p->audio_push || frames == 0) {
+        return;
+    }
+    if (SDL_QueueAudio(p->audio_dev, in,
+                       frames * (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS)) == 0) {
+        p->audio_frames += frames;
+    }
+}
+
+u32 eidos_platform_audio_queued(const EidosPlatform *p)
+{
+    if (p == NULL || p->audio_dev == 0 || !p->audio_push) {
+        return 0;
+    }
+    return SDL_GetQueuedAudioSize(p->audio_dev) / (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS);
+}
+
 int eidos_platform_audio_open(const EidosPlatform *p)
 {
     return p != NULL && p->audio_dev != 0;
@@ -490,8 +510,8 @@ static void open_audio(EidosPlatform *p)
      * that a sound effect started this frame is not audibly late, long
      * enough that the callback is not called twice per frame. */
     want.samples = 1024;
-    want.callback = audio_callback;
-    want.userdata = p;
+    want.callback = p->audio_push ? NULL : audio_callback;
+    want.userdata = p->audio_push ? NULL : p;
 
     p->audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (p->audio_dev == 0) {
@@ -656,6 +676,7 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     }
 
     if (cfg->audio) {
+        p->audio_push = cfg->audio_push;
         open_audio(p);
     }
 
