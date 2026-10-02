@@ -1658,14 +1658,16 @@ cmake --build build --target eidos_boot
 ```
 
 With `EIDOS_BOOT` off (the default) `eidos_boot` builds without the game's
-code, says so and exits 0. With it on, CMake computes NitroMain's matched
-closure with `tools/closure.py`, `tools/bootlink.py` makes it link
-(names by address, the ARM9 image's data, the stubs it lists), and the
-boot runs: the system and heap initialisation complete and the run stops
-at the overlay layer's "overlay 10 is not in this build", the first of the
-two resident overlays the boot sequence loads before the frame loop
-(`test_boot_run` expects exactly that). `docs/boot.md`, "Running the boot",
-has what it took and what blocks the frame loop.
+code, says so and exits 0. With it on, CMake links every matched ARM9 game
+file and its closure (`tools/closure.py`, `tools/bootlink.py`: names by
+address, the ARM9 image's data, the stubs it lists) and the title-path
+overlays (`tools/ovlink.py`), and the boot runs to the title menu: the
+logos, the copyright screen, the opening, the title screen, and with START
+(`--press START@4800`, or the key in a window) the menu, which
+`test_boot_run` asserts. In a 32-bit build the DS address space sits at its
+own addresses in the process, so the pointers the game keeps in its data
+are valid as they are. `docs/boot.md`, "Running the boot", has how far it
+gets and what it took; `--screenshot N[,N...]` saves both screens as PNG.
 
 ## Growing the source list
 

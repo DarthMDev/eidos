@@ -131,17 +131,20 @@ last is what the window holds, as on the DS. A load is, in
    whichever overlay is loaded there when the pointer is followed, which is
    what the DS does.
 
-Unloading needs nothing: the bytes stay until the next overlay is copied over
-them, and the loader stops calling the overlay resident.
+Unloading leaves the bytes where they are until the next overlay is copied
+over them, and the loader stops calling the overlay resident; the
+overlay's host objects are withdrawn at the next load (below).
 
 Which pointer words are listed. aletheia's `data_objects.json` describes the
 ARM9 image and ov203 only; for overlays the listing annotations of
 `asm/overlays/ovNNN.s` are the source, and they mark code pointers (`->
 func_`, `-> veneer_`) and a few literal-pool targets (`-> pool_`), not
 pointers from overlay data to data. A data-to-data pointer word the metadata
-does not list stays a DS address in the copy; nothing guesses at it. That is
-a metadata limit to close in aletheia (a `data_objects.json` region per
-overlay), not something the runtime can repair.
+does not list stays a DS address in the copy, which is right wherever the
+address space is identity-mapped (docs/boot.md, "Identity mapping"): the DS
+address is the host address of the window's bytes. On the movable blocks
+it stays wrong; that is a metadata limit to close in aletheia (a
+`data_objects.json` region per overlay).
 
 Pointer width: as for ARM9, a relocated word holds a host pointer in the
 DS's 32-bit slot, which only fits where pointers are four bytes. On an LP64
@@ -150,17 +153,21 @@ panics unless the set was installed with `BW_DATA_ALLOW_UNRELOCATED`.
 
 A name a matched file also uses as a member, tag, local or in a static
 initialiser cannot be a macro over a pointer; it becomes a host object of
-its own (`ovNNN_<name>`), filled from the window at load. Unlike the ARM9
-case it is **not registered** at its address: the window passes to the next
-overlay and a registration cannot be withdrawn (`sdk/dsmem.h` has no
-unregister). Writes through such a name do not reach the window, and
-reads through it see the window as it was at load. ovlink's report lists
-every one: the title set has 23 (16 in ov009's network library, mostly SDK
-state such as `SOCLiConfigPtr`; 2 in ov010, one of them the ARM9 address
-`d_02148BCC`; 5 in ov013). Closing this needs either a
-`bw_ds_unregister` in `sdk/dsmem.h` (then the objects could be registered at
-load and withdrawn when the window passes on) or a narrower conflict test
-than armdata's deliberately broad one.
+its own (`ovNNN_<name>`), filled at load from the bytes at its address and
+registered there (`bw_ds_register`), as the ARM9's are, so a literal cast or
+a pointer into its range reaches it. Before an overlay loads,
+`sdk/overlay_image.c` withdraws the objects of every compiled overlay that
+is no longer resident, and of the one loading (a reload): each object's
+contents are copied back to its address and its registration dropped
+(`bw_data_withdraw`, `bw_ds_unregister`), so the window holds what the DS
+would. An object whose range a registration already covers (two names at
+one address in one overlay, ov013's `d_021B4BA0` and `g_021B4BA0`) is filled
+and left unregistered: the first owns the bytes. ovlink's report lists every
+one: the title set has 18 (14 in ov009's network library, mostly SDK state
+such as `SOCLiConfigPtr`; 4 in ov013). The conflict test no longer counts an
+`extern struct { ... } NAME;` declaration as a use of NAME other than the
+global (it kept ov010's `d_02148BCC` from being a macro, and its 0x3C-byte
+host object was written at +0x7C).
 
 Data defined by a matched overlay source (a `const` table written in C)
 is a host object under the overlay's namespace, not the window's bytes; the
@@ -180,6 +187,25 @@ static definition; a host compiler cannot): ovlink leaves it out by itself
 and names the functions in its report (two files of ov009's network
 library in the title set). So a partly matched overlay links and runs until
 it reaches one.
+
+Port C for single overlay functions lives in `stubs/ov/`, and ovlink
+compiles it as more units of the overlay (`--port-ov-dir`):
+
+- `stubs/ov/ovNNN_<name>.c`, a stand-in for a function aletheia has not
+  matched, written from the listing with the decoding in its header; once a
+  matched file of the overlay defines its name, ovlink leaves it out and
+  reports it obsolete;
+- `stubs/ov/reimpl_ovNNN_<name>.c`, a reimplementation of a matched file
+  whose header says ` * replaces: src/matched/ov/...`: the matched file is
+  left out and this one compiled in its place, for the reason the ARM9's
+  `stubs/reimpl_` files exist (an argument the matched C passes in a
+  register, docs/boot.md, "Arguments in registers").
+
+Every function of a compiled overlay is also listed by the value a code
+pointer to it holds (`BwOvlImage.entries`, Thumb bit from the listing's
+`.thumb_func`), so the ARM9 data's pointers into a window relocate to it
+(`bw_ovl_code_entry`, docs/armdata.md); a value two compiled overlays both
+define is left alone, since it would need a trampoline.
 
 The loader's presence check is therefore per function, not per overlay: for
 an overlay compiled into the executable (`bw_overlay_set_provider`, which
@@ -247,28 +273,19 @@ eidos_boot"):
 
 ## How far the boot runs
 
-With the title set the boot, before frame 0, inside `func_0200523C`:
-loads ov010 and ov011; switches to the network overlays (ov009, ov013),
-calls ov009's interface entry 0 through the relocated table, which runs the
-DWC library's initialisation in ARM9 code and ov009 (allocator hooks, the
-GameSpy memory callbacks, the heap set-up and teardown); switches back; runs
-the display reset; loads ov228 and calls four of its functions through the
-trampolines (`func_021DFC20` and the rest) for the save-data set-up; unloads
-it. It then stops in `func_02033A88` (save.c): the ARM9 save table
-`g_0209D938` starts with a pointer to 0x0209DA28 that aletheia's relocation
-metadata does not list (`data_objects.json` names `g_0209D938` as a pool
-word only), so the word is still the DS address and the read faults. That
-is the ARM9 data layer's metadata limit (docs/armdata.md), the same one the
-overlays have for their data-to-data pointers, and `test_boot_run` takes it
-as the known stop with overlays compiled in.
+With the title set the boot runs to the title menu: the boot sequence
+loads ov010 and ov011, runs ov009's and ov013's network set-up, ov228's
+save-data set-up, and the frame loop then runs the opening (ov179) and the
+title and its menu (ov088). docs/boot.md, "How far it gets", has the frames
+and what it took.
 
 What it took on the way, besides the overlays: dwc_memfunc.o's three
 functions share one table that aletheia's per-function files each keep a
 copy of (`sdk/boot/dwc_memfunc.c`); RTCi_ConvertTimeToSecond and ov009's
 gsiMemoryCallbacksSet from their asm bodies (`sdk/asm/`, `sdk/asm/ov/`,
 which ovlink picks up by file name as bootlink does `sdk/asm/`); two heap
-destroys whose argument the matched C leaves in r0
-(`stubs/reimpl_02060C94.c`, `reimpl_02061118.c`); the OAM clear's table
+destroys whose argument the matched C left in r0 (aletheia's C names it
+now); the OAM clear's table
 address passed as an integer (`stubs/reimpl_02036FD8.c`). The grown closure
 also needed eleven more shim-replaced files, one owner per name among boot
 files (bootlink gives a second copy a private name, as ovlink does inside an

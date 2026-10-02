@@ -190,6 +190,27 @@ static void load_panic(const BwOverlayDesc *d, const char *step)
     bw_panic("FS_LoadOverlay", d->ram_address, why);
 }
 
+/*
+ * Before overlay `id` loads: take back the host objects of every compiled
+ * overlay that is no longer resident (sdk/overlay.c has already dropped the
+ * ones this load overwrites, and any unloaded since) and of `id` itself (a
+ * reload), each one's contents copied back into the window first.  An
+ * unloaded overlay's objects stay registered until the next load, over
+ * bytes nothing else has claimed yet, as the window keeps them on the DS.
+ */
+static void withdraw_passed(u32 id)
+{
+    u32 i;
+
+    for (i = 0; i < g_set->count; i++) {
+        const BwOvlImage *o = g_set->images[i];
+
+        if (o != NULL && (o->id == id || !bw_overlay_is_loaded(o->id))) {
+            bw_data_withdraw(o->data);
+        }
+    }
+}
+
 static void provider_load(const BwOverlayDesc *d)
 {
     const BwOvlImage *img = bw_ovl_image(d->id);
@@ -198,6 +219,7 @@ static void provider_load(const BwOverlayDesc *d)
     if (img == NULL) {
         return;
     }
+    withdraw_passed(d->id);
     rc = bw_data_load(img->data);
     if (rc != BW_DATA_OK) {
         load_panic(d, "copying the image");
@@ -273,6 +295,40 @@ int bw_ovl_resident_at(u32 addr)
         }
     }
     return -1;
+}
+
+BwDataFn bw_ovl_code_entry(u32 value)
+{
+    BwDataFn found = NULL;
+    u32 i;
+
+    if (g_set == NULL) {
+        return NULL;
+    }
+    for (i = 0; i < g_set->count; i++) {
+        const BwOvlImage *o = g_set->images[i];
+        u32 lo = 0, hi;
+
+        if (o == NULL || o->entries == NULL) {
+            continue;
+        }
+        hi = o->entry_count;
+        while (lo < hi) {
+            u32 mid = lo + (hi - lo) / 2u;
+            if (o->entries[mid].addr < value) {
+                lo = mid + 1u;
+            } else {
+                hi = mid;
+            }
+        }
+        if (lo < o->entry_count && o->entries[lo].addr == value) {
+            if (found != NULL) {
+                return NULL;        /* two overlays: needs a trampoline */
+            }
+            found = o->entries[lo].fn;
+        }
+    }
+    return found;
 }
 
 void bw_ovl_stub(u32 id, u32 addr)

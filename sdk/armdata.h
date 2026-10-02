@@ -143,6 +143,12 @@ typedef struct BwDataImage {
     u32                 anchor_count;
     const BwDataObject *objects;
     u32                 object_count;
+    /* Ranges whose words bw_data_relocate also checks against `funcs`: a
+     * word there equal to a function's DS entry (Thumb bit included) is a
+     * code pointer the metadata did not list, relocated like a listed one
+     * (docs/armdata.md, "Code pointers the metadata does not list"). */
+    const BwDataRange  *scan;
+    u32                 scan_count;
 } BwDataImage;
 
 /* tools/armdata.py's output for the ARM9 static module. */
@@ -197,6 +203,19 @@ void bw_data_reset_bind(void);
 int bw_data_load(const BwDataImage *img);
 int bw_data_bind(const BwDataImage *img);
 int bw_data_relocate(const BwDataImage *img);
+
+/*
+ * Withdraw the host objects `img`'s last bw_data_load registered: each one's
+ * contents are copied back to its DS address and its registration dropped,
+ * so the address is the flat region's bytes again.  For an overlay whose
+ * window passes to another (sdk/overlay_image.c); objects not registered by
+ * it are left alone.
+ */
+void bw_data_withdraw(const BwDataImage *img);
+
+/* How many unlisted code pointers the last bw_data_relocate found by its
+ * scan (BwDataImage.scan) and rewrote. */
+u32 bw_data_scanned(void);
 const char *bw_data_error(void);
 
 /* 1 where a pointer fits in the DS's 32-bit word, i.e. relocation works. */

@@ -55,10 +55,14 @@ palette, VRAM, OAM and the shared work area. On a host those are wild
 pointers.
 
 Mapping real memory at the DS's addresses would make every one of them work,
-but it is not portable: macOS reserves the low 4 GiB of a 64-bit process
-(`__PAGEZERO`) and iOS cannot lift that at all, and a fixed mapping is a
-fight with ASLR everywhere else. eidos targets all of them, so the port
-does it in the build instead.
+but it is not portable as the only answer: macOS reserves the low 4 GiB of
+a 64-bit process (`__PAGEZERO`) and iOS cannot lift that at all, and a fixed
+mapping is a fight with ASLR everywhere else. eidos targets all of them, so
+the port does it in the build. Where the host allows it (32-bit pointers,
+the boot's reference), the address space is also mapped at its own
+addresses at run time ("Identity mapping" below), which makes the cases no
+rewrite can reach work too; the rewrite stays, so every other host runs the
+same code.
 
 `tools/dsaddr.py` copies each matched source into the build tree and
 rewrites every *integer-literal-to-pointer cast whose value is in a DS
@@ -124,6 +128,51 @@ first use. A reset clears the registry and every I/O hook: a module that
 registers its own objects or hooks its own registers does so again after
 each reset. The approximations (flat TWL main RAM, no WRAMCNT banking, the
 first bank owning a page two banks overlap) are listed in the file's header.
+
+## Identity mapping
+
+The rewrite reaches a DS address written as a literal. It cannot reach one
+the game stores: a pointer in the ARM9 image's data or an overlay's that
+aletheia's metadata does not list (the save block table at 0x0209D938 points
+at 0x0209DA28, which no relocation names), a pointer the game computes
+(`G2S_GetBG1CharPtr` returns `0x06200000` plus a VRAMCNT-derived offset), an
+address passed as an integer. On the movable blocks every one of those is a
+wild pointer, found one crash at a time.
+
+So in a 32-bit process the port puts each region at its own DS address.
+`bw_ds_identity_prepare` (called first thing by `eidos_boot`) reserves
+host `0x02000000`-`0x02FFFFFF` for main RAM and the 16 MiB windows at
+`0x03000000`, `0x04000000`, `0x05000000`, `0x06000000` and `0x07000000`
+(`sdk/host_vm.c`'s `bw_vm_reserve_at`), and `sdk/dsmem.c` backs each region
+there: main RAM committed whole, WRAM, the register file (both of its
+parts), palette and OAM at their bases. Then a DS address the game holds is
+the host address of its byte, and `bw_ds_ptr` is an identity outside the
+registry and VRAM. Data-to-data pointers in the ARM9 image and the overlays
+need no relocation; code pointers still do (docs/armdata.md).
+
+VRAM is banked, and a host cannot alias 16 KiB pages (a Win32 view is placed
+at 64 KiB granularity). So each bank the CPU can see lives at the first CPU
+address VRAMCNT maps it to, in the engine windows or LCDC, and when VRAMCNT
+moves it, its bytes move with it (`vram_rehome`). The renderer and the 3D
+engine read banks through the same tables as before, so they see the bank
+wherever it lives. Mirrors past an engine window's period are not backed: a
+raw access there faults at its DS address, which the crash report names.
+
+Windows needs one more step. A Win32 process has code-page and locale files,
+heaps and user32's GDI handle table in its low addresses before `main` runs,
+and with ASLR they land inside `0x02000000`-`0x08000000` often enough. When
+the reservation fails, `bw_ds_identity_prepare` starts the same program again
+suspended, reserves the windows in the new process before its loader runs,
+waits for it and returns its exit status; the child's reservation calls take
+over what the parent reserved (`BW_VM_PRERESERVED`). Linux and the BSDs do
+not map there by themselves, so a reservation at start-up is enough.
+
+The movable blocks remain the fallback, chosen at run time: an LP64 host (a
+32-bit word cannot hold a host pointer anyway), a host that refuses the
+ranges, a program that does not call `bw_ds_identity_prepare` (the unit
+tests, which keep the banks in their stores), or `BW_DS_IDENTITY=0` in the
+environment. `bw_ds_identity()` says which mode a run is in, and
+`eidos_boot` prints it.
 
 ## Threads, interrupts and the frame
 
@@ -229,76 +278,115 @@ it (docs/armdata.md, "Pointer width"), which `test_boot_run` checks.
 
 ## Running the boot
 
-`eidos_boot [--data-root PATH] [--frames N] [--window] [--watchdog S]`
-installs the image, calls `bw_port_reset`, and calls NitroMain, which never
-returns. Time passes where the DS would let it: when every game thread
-waits, the idle thread halts, and the OS layer's halt hook
-(`bw_os_set_halt_hook`) is the driver's frame: one pass of
-`engine/frame/` (the tick; vblank raised through `bw_os_raise_irq` when
-DISPSTAT asks for it; with `--window`, both screens composed from the
-hardware state), the touch panel's automatic samples, and the sound
-driver's clock (`bw_snd_render` with no buffer when there is no audio
-device). The interrupt is taken when the halt returns, the handler
-NitroMain installed runs, and the waiting thread wakes. The ARM7 stand-in
-runs at every interrupt restore and at every turn of a halt
-(`bw_os_cpu_step`), so a reply the ARM9 waits for is produced. After N
-frames the run prints a summary and exits 0; a panic ends it with the
-panic's message and the call chain (`sdk/plat_crash.h`, which also reports
-a host crash and, with `--watchdog`, a run that passes no frame for S
-seconds with every thread's chain).
+`eidos_boot [--data-root PATH] [--frames N] [--window] [--watchdog S]
+[--screenshot N[,N...]] [--screenshot-dir DIR]` maps the address space at
+its own addresses where it can (`bw_ds_identity_prepare`, "Identity
+mapping"), installs the image and the overlay set, calls `bw_port_reset`
+and `g3d_hw_reset`, and calls NitroMain, which never returns. Time passes
+where the DS would let it: when every game thread waits, the idle thread
+halts, and the OS layer's halt hook (`bw_os_set_halt_hook`) is the driver's
+frame: one pass of `engine/frame/` (the tick; vblank raised through
+`bw_os_raise_irq` when DISPSTAT asks for it; with `--window`, both screens
+composed from the hardware state, the 3D layer from `engine/g3d/hw3d.c`),
+the touch panel's automatic samples, and the sound driver's clock. The
+interrupt is taken when the halt returns, the handler NitroMain installed
+runs, and the waiting thread wakes. The ARM7 stand-in runs at every
+interrupt restore and at every turn of a halt (`bw_os_cpu_step`), so a reply
+the ARM9 waits for is produced. After N frames the run prints a summary and
+the resident overlays and exits 0; a panic ends it with the panic's message,
+the frame it reached, the resident overlays and the call chain
+(`sdk/plat_crash.h`, which also reports a host crash and, with
+`--watchdog`, a run that passes no frame for S seconds with every thread's
+chain). `--screenshot` writes both screens as a PNG at the end of each
+named frame, with or without a window.
 
-`test_boot_run` (data-gated, `tests/boot_run.cmake`) runs it headless and
-passes when it ends at the overlay layer's own stop or runs all its frames.
+The frames run on the game's idle thread, so the window belongs to it: it
+is opened at the first frame, and pumped, drawn and closed there (a Win32
+window created on `main` was never pumped while `main` sat in the game's
+`OS_WaitIrq`). The sound driver is the game thread's too, so each frame
+renders its share of output on that thread and queues it on the device
+(the platform layer's push mode), rather than SDL's audio thread running
+the driver.
 
-**How far it gets.** The system initialiser (`func_02005328`: OS, tick,
-alarms, RTC, GX, FS, the DWC utility arena, the power manager) and the
-game's heap set-up (`sub_0200545C`: the OS heap, the heap environment and
-its child heaps, the touch panel, the system record hash) complete, the
-interrupt handlers are installed, and the boot sequence (`func_0200523C`)
-loads the two resident overlays before the frame loop. The first is not in
-this build:
+`test_boot_run` (data-gated, `tests/boot_run.cmake`) runs it headless for
+more frames than it gets through and passes when it stops at the build's
+documented next stop at or past the furthest frame it is known to reach
+(both set in `cmake/boot.cmake`); `test_boot_window` runs 300 frames with
+`--window` through SDL's dummy drivers.
 
-    PANIC in FS_LoadOverlay at 0x02155160: overlay 10 (0x02155160..0x02172BA0)
-    is not in this build
+**How far it gets.** With the title overlays compiled in, to the title
+menu. The system initialiser and the heaps; the boot sequence
+(`func_0200523C`: the resident ov010 and ov011, the network library's set-up
+in ov009 and ov013, the save layout with its 69 blocks, ov228's save-data
+set-up); then the frame loop: the Nintendo and The Pokemon Company logos
+(frame 30), the copyright screen (frame 240), the opening (ov179, from about
+frame 600), and the title screen (ov088, "PRESS START", from about frame
+4600). With no input the game loops back to the opening, as the cartridge
+does; 20000 frames run without a stop. With `--press START@4800` (or the
+key in a window) the title menu opens (NEW GAME, MYSTERY GIFT, NINTENDO WFC
+SETTINGS, MIC TEST) and runs; `test_boot_run` asserts exactly that. What
+lies past the menu (a new game's first scenes, the field) is the next
+frontier.
 
-So the frame loop does not run yet. ov010 and ov011 are loaded once and
-stay; the loop and the first proc need both.
+`--press BUTTONS@FRAME[:HOLD]` and `--input SCRIPT` give the run timed
+input (sdk/input.h's script), which joins a window's keys: `bw_input_frame`
+runs at every frame, before its vblank.
 
 **What the run needed**, each written where its kind of answer lives:
 
-- The arena table at DS 0x02FFFDA0/0x02FFFDC4 (`sdk/os_arena.c`) and the
-  DMA module (`sdk/mi_dma.c`, with the channel set-up doing the transfer):
-  their matched C computes a DS address and then casts it, which the
-  rewrite cannot reach (docs/dsaddr-residue.md, "Address arithmetic",
-  "Constants with uses other than pointer casts").
-- `sdk/boot/`: SDK functions the matched files call that no matched file
-  defines with external linkage (statics: `GX_VRAMCNT_SetLCDC_`,
-  `MATHi_SHA1Fill`, `CARDi_IdentifyBackupCore2`; the GX_ResetBankFor*
-  family, which passes a gGXState field's DS address as an integer;
-  `OS_InitException`, which masks a converted pointer; the DSi-only RTC
-  extension, a panic).
-- The ARM7's touch-panel responder (`sdk/arm7/tp.c`): `TP_Init` spins
-  until the ARM7 publishes tag 6.
-- 46 more asm functions in C (`sdk/asm/`, the second batch in
-  `asmsdk.h`), among them BIOS CpuSet, the SHA-1 block function and the
-  lock-by-word tail calls.
-- Register pass-through. mwcc lets a function forward an argument it never
-  names: `sub_0203064C(void *a, u32 b)` is called with three arguments and
-  calls `sub_0202FDC4(a, b)`, which takes three, and on the DS the third
-  travels in r2 untouched. A host passes what the C says. Each such
-  function on the path is a `stubs/reimpl_` file that names the argument
-  (`sub_0203064C`, `sub_02030678`, `sub_02030608`). The closure has about
-  a hundred call sites that pass fewer arguments than the callee's
-  definition takes; most are harmless (the callee ignores the missing
-  ones), the ones on the path are found as the boot reaches them.
-- All of main RAM committed at start-up (`demo/eidos_boot.c`): the game's
-  heaps carve megabytes out of the arena by pointer arithmetic, past the
-  one-piece margin `sdk/dsmem.c` commits on translation.
+- Identity mapping ("Identity mapping" above), which made every pointer the
+  game keeps in its data and every address it computes valid at once.
+- The code pointers the metadata does not list, found by a scan of the data
+  against every function the build defines (docs/armdata.md), and pointers
+  from the ARM9 data into an overlay window relocated to the overlay's
+  function.
+- Every matched ARM9 game file in the boot (`EIDOS_BOOT_ALL_GAME`), so the
+  functions reached only through tables exist.
+- Arguments in registers (below), first stood in by `stubs/reimpl_` files
+  and then named in aletheia's C.
+- Functions aletheia had not found (the save block callbacks, the heap
+  allocator's alloc and free, a G3D joint-scale function) and three
+  unmatched overlay functions, each stood in by port C written from the
+  listing until aletheia matched it.
+- asm bodies in C (`sdk/asm/`): the matrix set-ups and copies of `fx_mtx`,
+  the MI block copies, the DWC task allocator and a few one-line SDK
+  accessors.
+- A symbols row's address over a spelling defined elsewhere (`sub_0204968C`
+  calls 0x020307B0 "ENV_SetResourceSet", the SDK's is 0x0206434C), linker
+  veneers from the listing's `veneer_` labels, and a seed list that skips a
+  file aletheia added before its manifest lists it (`tools/bootlink.py`,
+  `tools/closure.py`, `tools/ovlink.py`).
+- Earlier: the arena table and the DMA module (`sdk/os_arena.c`,
+  `sdk/mi_dma.c`), `sdk/boot/`'s SDK statics, the ARM7's touch-panel
+  responder, all of main RAM committed at start-up.
 
-**What blocks the frame loop, in order:** the resident overlays ov010 and
-ov011 (`sdk/overlay.c` panics on any overlay the build does not compile);
-then whatever the loop's first frames reach in them and in ov088, the save
-check, the first proc's overlay.
+## Arguments in registers
+
+mwcc compiles `f(); g();` with nothing between the two `bl` instructions,
+so if `g` takes an argument it receives whatever `f` left in r0; and a
+function that calls `g()` with fewer arguments than `g` takes hands on its
+own incoming r1-r3 untouched. aletheia's C reproduces the bytes either way,
+because the value is already in the register, but a host compiler passes
+what the C says, so the callee reads an indeterminate value: a heap
+allocation with a random alignment that failed in some runs and not others,
+a save block getter reading NULL, an animation advanced by a garbage count.
+
+`tools/regargs.py` lists every such site in the matched corpus (2306 at
+first): for each function that calls a callee it declares with fewer
+parameters than the callee's definition takes, where the callee uses the
+missing one, it reads the caller's code in the listing and says where the
+register comes from (the caller's own argument, the previous call's
+result, or something to read by hand). aletheia names the arguments in its
+C, byte-identical, from that list. Until it has, a site on the boot's path
+is a `stubs/reimpl_` file (`stubs/ov/reimpl_ovNNN_` for an overlay, which
+`tools/ovlink.py` compiles in the matched file's place) that names the
+argument, and is deleted once aletheia's file does.
+
+Tail-call thunks are the same problem in bulk: about 290 matched files are
+`void f(void) { g(); }`, which on the DS is `ldr ip, =g; bx ip` and passes
+every argument and the result through. `tools/bootlink.py` compiles a
+generated forwarder in place of each one in the boot, with the callee's
+normalised prototype (`<build>/boot/boot_thunks.txt` lists them).
 
 ## Lanes
 

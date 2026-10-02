@@ -91,6 +91,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import armdata          # noqa: E402  (name_address, SourceFile, exclusions)
 import overlay_table    # noqa: E402  (KNOWN_SINIT)
+import closure          # noqa: E402  (listing_veneers)
 
 EIDOS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_EXCLUSIONS = os.path.join(EIDOS_ROOT, "tools", "armdata_exclusions.txt")
@@ -154,7 +155,7 @@ BLOCK_PROTO = re.compile(
     r"\s*\)?\s*(?:\[[^\]]*\])?\s*;")
 SYMBOLS_HDR = re.compile(r"^\s*\*\s*symbols:\s*$")
 SYMBOL_ROW = re.compile(
-    r"^\s*\*\s+([A-Za-z_][A-Za-z0-9_]*)\s+(0x[0-9A-Fa-f]{8})\s+(thumb|arm|data)\b(.*)$")
+    r"^\s*\*\s+([A-Za-z_][A-Za-z0-9_]*)\s+(0x[0-9A-Fa-f]{1,8})\s+(thumb|arm|data)\b(.*)$")
 LITERAL_CAST = re.compile(
     r"\(\s*(?:const\s+|volatile\s+)*[A-Za-z_][\w\s]*?\*+\s*\)\s*\(?\s*(0x0?2[0-9A-Fa-f]{6,7})[uUlL]*")
 
@@ -817,6 +818,23 @@ class Aletheia:
                 ann[int(m.group(1), 16)] = (sym, tgt)
         return ann, funcs
 
+    def thumb_funcs(self, oid):
+        """Addresses of the overlay's Thumb functions: a `.thumb_func`
+        after a function's `.global` in asm/overlays/ovNNN.s."""
+        path = os.path.join(self.root, "asm", "overlays", "ov%03d.s" % oid)
+        out, last = set(), None
+        if not os.path.exists(path):
+            return out
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                s = line.strip()
+                if s.startswith(".global"):
+                    m = ADDR_FUNC.match(s.split()[-1])
+                    last = int(m.group(1), 16) if m else None
+                elif s.startswith(".thumb_func") and last is not None:
+                    out.add(last)
+        return out
+
     def data_object_relocs(self, oid):
         rng, objects, _ext = armdata.load_data_objects(self.root, "ov%03d" % oid)
         out = {}
@@ -854,6 +872,8 @@ class OvState:
         self.units = []
         self.excluded = []         # (rel, why)
         self.replaced = []         # (rel, port file): asm bodies in C
+        self.standins = []         # port stand-ins (stubs/ov/) compiled in
+        self.thumb = set()         # Thumb function addresses (the listing)
         self.defs = {}             # exported name -> unit
         self.at = {}               # addr -> defined function name (exported)
         self.known = set()         # function addresses known in the window
@@ -957,6 +977,12 @@ class Link:
                 a = hits[0] if hits else None
             if a is not None:
                 self.link_at.setdefault(a, n)
+        # A linker veneer is another address of its target (the listing's
+        # veneer_ labels, closure.listing_veneers): an overlay calling the
+        # veneer reaches what the link defines at the target.
+        for v, t in closure.listing_veneers(self.root).items():
+            if t in self.link_at:
+                self.link_at.setdefault(v, self.link_at[t])
 
     def _read_overlays(self):
         for oid in self.ids:
@@ -965,6 +991,7 @@ class Link:
             self.state[oid] = st
             ann, lfuncs = self.al.listing(oid)
             st.listing = ann
+            st.thumb = self.al.thumb_funcs(oid)
             st.known |= set(lfuncs)
             st.known |= set(self.al.ov_names.get(oid, {}))
             for (region, a), n in self.al.sdk_at.items():
@@ -999,11 +1026,65 @@ class Link:
                                         % ", ".join(sorted(undef))))
                     continue
                 st.units.append(Unit(oid, rel, path, sc))
+            self._port_standins(oid, st)
             self._owners(st)
             for k in range(ov.sinit_count):
                 addrs = overlay_table.KNOWN_SINIT.get(oid, [])
                 if k < len(addrs):
                     st.known.add(addrs[k])
+
+    def _port_standins(self, oid, st):
+        """Port C in stubs/ov/ for one overlay, two kinds:
+
+        - a stand-in for a function aletheia has not matched,
+          stubs/ov/ovNNN_<name>.c, written from the listing, compiled as one
+          more unit of overlay NNN so the function is that code instead of
+          a panicking stub.  One whose functions a matched file of the
+          overlay now defines is left out and reported: it is obsolete;
+        - a reimplementation of a matched file, stubs/ov/reimpl_ovNNN_<name>.c,
+          whose header names the file it takes the place of
+          (` * replaces: src/matched/ov/...`), as stubs/reimpl_ files do for
+          the ARM9: the matched file is left out and this one compiled in
+          its place (an argument the matched C forwards in a register)."""
+        d = self.args.port_ov_dir
+        if not d or not os.path.isdir(d):
+            return
+        for fname in sorted(os.listdir(d)):
+            if not (fname.startswith("reimpl_" + st.ov.tag + "_") and fname.endswith(".c")):
+                continue
+            path = os.path.join(d, fname)
+            text = read_text(path)
+            m = re.search(r"^\s*\*\s*replaces:\s*(\S+)", text[:4096], re.M)
+            if not m:
+                raise SystemExit("ovlink.py: %s names no file it replaces" % path)
+            rel = m.group(1)
+            keep = [u for u in st.units if u.rel != rel]
+            if len(keep) == len(st.units):
+                st.excluded.append((path, "replaces %s, which this overlay does not "
+                                    "compile (renamed or gone in aletheia?)" % rel))
+                self.notes.append("port reimplementation %s replaces nothing" % path)
+                continue
+            st.units = keep
+            st.units.append(Unit(oid, "port/ov/" + fname, path, Scan(path, text)))
+            st.replaced.append((rel, path))
+        defined = set()
+        for u in st.units:
+            defined |= set(u.scan.exported())
+        for fname in sorted(os.listdir(d)):
+            if not (fname.startswith(st.ov.tag + "_") and fname.endswith(".c")):
+                continue
+            path = os.path.join(d, fname)
+            sc = Scan(path, read_text(path))
+            clash = sorted(set(sc.exported()) & defined)
+            if clash:
+                st.excluded.append((path, "port stand-in made obsolete by aletheia's "
+                                    "match of %s: delete it" % ", ".join(clash)))
+                self.notes.append("obsolete port stand-in %s (%s matched)"
+                                  % (path, ", ".join(clash)))
+                continue
+            rel = "port/ov/" + fname
+            st.units.append(Unit(oid, rel, path, sc))
+            st.standins.append(path)
 
     def _owners(self, st):
         """One definition per name.  Some matched files define, besides the
@@ -1539,9 +1620,9 @@ def write_overlay_c(link, st, path):
         w("    { 0, 0, 0, 0 }")
     w("};")
     w("")
-    w("/* Host objects for names that cannot be macros: filled from the image at")
-    w(" * load, not registered (a registration cannot be withdrawn when another")
-    w(" * overlay takes the window); docs/overlays.md, \"Data\". */")
+    w("/* Host objects for names that cannot be macros: filled at load and")
+    w(" * registered at their address, withdrawn when another overlay takes the")
+    w(" * window (sdk/overlay_image.c); docs/overlays.md, \"Data\". */")
     w("static const BwDataObject k_objects[] = {")
     for n in objs:
         e = st.objects[n]
@@ -1557,7 +1638,8 @@ def write_overlay_c(link, st, path):
     w("    k_relocs, %du," % len(st.relocs))
     w("    k_funcs, %du," % len(funcs))
     w("    k_anchors, %du," % len(anchors))
-    w("    k_objects, %du" % len(objs))
+    w("    k_objects, %du," % len(objs))
+    w("    NULL, 0u")
     w("};")
     w("")
     # Static initialisers.
@@ -1583,9 +1665,33 @@ def write_overlay_c(link, st, path):
         w("    }")
         w("}")
         w("")
+    # Every function of the overlay by the value a code pointer to it holds,
+    # for the ARM9 data's pointers into the window (sdk/overlay_image.c,
+    # bw_ovl_code_entry).
+    entries = {}
+    for a, n in st.at.items():
+        entries[a | (1 if a in st.thumb else 0)] = link.own(st, n)
+    for a, n in st.stubs.items():
+        entries.setdefault(a | (1 if a in st.thumb else 0), link.own(st, n))
+    declared = set(stub_names) | set(externs)
+    fresh = sorted(set(entries.values()) - declared)
+    if fresh:
+        w("/* The overlay's functions, for bw_ovl_code_entry; only the address is")
+        w(" * taken here. */")
+        for n in fresh:
+            w("extern void %s(void);" % n)
+        w("")
+    w("static const BwDataFunc k_entries[] = {")
+    for v in sorted(entries):
+        w("    { 0x%08Xu, %s, %s }," % (v, entries[v], c_str(entries[v])))
+    if not entries:
+        w("    { 0, NULL, NULL }")
+    w("};")
+    w("")
     w("const BwOvlImage bw_ovl_%s = {" % ov.tag)
-    w("    %du, &k_image, k_sinits, %du, %du, %du" % (
+    w("    %du, &k_image, k_sinits, %du, %du, %du," % (
         ov.id, len(st.sinits), len(st.at), len(st.stubs)))
+    w("    k_entries, %du" % len(entries))
     w("};")
     w("")
     write_if_changed(path, "\n".join(out))
@@ -1741,6 +1847,9 @@ def write_report(link, path):
             p("  %s excluded %s: %s" % (st.ov.tag, rel, why))
         for rel, repl in st.replaced:
             p("  %s asm body %s: compiled from %s" % (st.ov.tag, rel, repl))
+        for standin in st.standins:
+            p("  %s port stand-in %s: an unmatched function, written from the listing"
+              % (st.ov.tag, standin))
         for n, src in sorted(st.unresolved.items()):
             p("  %s unresolved %s (%s): no address in any symbols block, name or SDK table"
               % (st.ov.tag, n, src))
@@ -1776,6 +1885,9 @@ def main(argv=None):
     ap.add_argument("--arm9-stubs", action="store_true")
     ap.add_argument("--asm-dir", default=os.path.join(EIDOS_ROOT, "sdk", "asm", "ov"),
                     help="portable C for asm-bodied overlay files, by file name")
+    ap.add_argument("--port-ov-dir", default=os.path.join(EIDOS_ROOT, "stubs", "ov"),
+                    help="port stand-ins for unmatched overlay functions, "
+                         "ovNNN_<name>.c")
     ap.add_argument("--summary", action="store_true")
     ap.add_argument("--define", action="append", default=[],
                     help="NAME=VALUE a port source is compiled with (repeatable)")

@@ -58,6 +58,23 @@ list(APPEND EIDOS_BOOT_SEEDS
     arm9_sdk/func_02081E7C.c  # MATHi_SHA1ProcessBlock, via MATHi_SHA1ProcessMessageBlockFunc
 )
 
+# Every matched file of the ARM9's game code (src/matched/arm9/), not only
+# what a call walk from NitroMain reaches.  The game reaches much of its
+# static module only through code pointers in its data (proc tables, save
+# block tables, callbacks), and aletheia's metadata lists only some of
+# those pointers: the run-time scan (docs/armdata.md, "Code pointers the
+# metadata does not list") finds the rest, but can only relocate a pointer
+# to a function the build defines.  Seeding the whole game module makes
+# every such function present, with no hand-kept seed list.  OFF keeps the
+# narrower call-walk closure (a smaller, faster build that stops earlier).
+option(EIDOS_BOOT_ALL_GAME
+       "Link every matched ARM9 game file into eidos_boot, not only NitroMain's call closure" ON)
+if(EIDOS_BOOT_ALL_GAME)
+    file(GLOB _boot_all_game RELATIVE ${ALETHEIA_ROOT}/src/matched
+         ${ALETHEIA_ROOT}/src/matched/arm9/*.c)
+    list(APPEND EIDOS_BOOT_SEEDS ${_boot_all_game})
+endif()
+
 # With overlays compiled in (EIDOS_OVERLAYS, cmake/overlays.cmake): the
 # matched ARM9 files that define what the overlays call, so the closure
 # carries them (tools/ovlink.py, ovl_arm9_seeds.txt).
@@ -231,6 +248,16 @@ set(EIDOS_BOOT_SHIM_REPLACED
     src/matched/arm9_sdk/func_02080964.c   # GX_ResetBankForTex, sdk/boot/gx.c
     src/matched/arm9_sdk/func_02080978.c   # GX_ResetBankForTexPltt, sdk/boot/gx.c
     src/matched/arm9_sdk/func_020809B4.c   # GX_ResetBankForSubOBJ, sdk/boot/gx.c
+    # Reached once every game file is seeded (EIDOS_BOOT_ALL_GAME).
+    src/matched/arm9_sdk/func_0208098C.c   # GX_ResetBankForClearImage, sdk/boot/gx.c
+    src/matched/arm9/func_02085A30.c       # a thread field getter, sdk/os_thread.c
+    src/matched/arm9_sdk/func_02080CA8.c   # GX_SendFifo64B, sdk/g3_fifo.c
+    src/matched/arm9_sdk/func_02082760.c   # MI_SendGXCommandAsync, sdk/mi_gx.c
+    src/matched/arm9_sdk/func_02082960.c   # MI_SendGXCommandAsyncFast, sdk/mi_gx.c
+    src/matched/arm9_sdk/func_02082BA0.c   # MI_Copy64B, sdk/mi_gx.c
+    src/matched/arm9_sdk/func_02087AE4.c   # OS_WaitVBlankIntr, sdk/os_interrupt.c
+    src/matched/twl/func_0272FEF4.c        # sdk/mi_gx.c
+    src/matched/twl/func_027300F0.c        # sdk/mi_gx.c
     src/matched/arm9_sdk/func_02082390.c   # MIi_DmaFill32Async, sdk/mi_dma.c
     src/matched/arm9_sdk/func_02082498.c   # MIi_DmaCopy32Async, sdk/mi_dma.c
     # sdk/boot/dwc_memfunc.c: dwc_memfunc.o's three functions over the one
@@ -238,13 +265,17 @@ set(EIDOS_BOOT_SHIM_REPLACED
     src/matched/arm9_sdk/func_0205A158.c   # DWCi_SetMemFunc
     src/matched/arm9_sdk/func_0205A17C.c   # DWC_AllocEx
     src/matched/arm9_sdk/func_0205A1B0.c   # DWC_Free
-    # stubs/reimpl_02060C94.c, reimpl_02061118.c: the heap a tail call
-    # forwards in r0, which the matched C does not name
-    src/matched/arm9/func_02060C94.c
-    src/matched/arm9/func_02061118.c
     # stubs/reimpl_02036FD8.c: an ARM9 table's DS address passed as an
     # integer (docs/dsaddr-residue.md)
     src/matched/arm9/func_02036FD8.c
+    # stubs/reimpl_0206434C.c: the sequence its callers pass and it forwards in r1
+    src/matched/arm9_sdk/env_setresourceset.c
+    # stubs/reimpl_0204D340.c: the sequence index its caller passes and it forwards in r1
+    src/matched/arm9/sub_0204D340.c
+    # stubs/reimpl_0204D360.c: the sequence index its caller passes and it forwards in r1
+    src/matched/arm9/sub_0204D360.c
+    # stubs/reimpl_0204D380.c: the sequence index its caller passes and it forwards in r1
+    src/matched/arm9/sub_0204D380.c
 )
 
 # The pointer-width switches (CMakeLists.txt, "Pointer width") put a
@@ -299,12 +330,15 @@ list(APPEND EIDOS_BOOT_PORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/boot/rtc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/boot/os.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/boot/dwc_memfunc.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060C94.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02061118.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02036FD8.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0203064C.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030678.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030608.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030608.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0206434C.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D340.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D360.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D380.c
+)
 if(NOT EIDOS_TCBL_MATCHED)
     # stubs/reimpl_ for the nine tcbl files (CMakeLists.txt, "Pointer
     # width"): the overlays' ARM9 callees reach the matched ones.
@@ -350,10 +384,14 @@ else()
     set(_boot_heap_matched 0)
 endif()
 
-set(_seed_args)
+# The seeds go through a file: with EIDOS_BOOT_ALL_GAME there are thousands,
+# past a Windows command line's length.
+set(_seed_lines)
 foreach(s ${EIDOS_BOOT_SEEDS})
-    list(APPEND _seed_args --seed src/matched/${s})
+    string(APPEND _seed_lines "src/matched/${s}\n")
 endforeach()
+file(WRITE ${EIDOS_BOOT_DIR}/boot_seeds.txt "${_seed_lines}")
+set(_seed_args --seed-file ${EIDOS_BOOT_DIR}/boot_seeds.txt)
 message(STATUS "EIDOS_BOOT: planning the boot (tools/bootlink.py plan)")
 execute_process(
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bootlink.py plan
@@ -430,7 +468,7 @@ file(GENERATE OUTPUT ${EIDOS_BOOT_DIR}/armdata_sources.txt
 ${_boot_armdata_txt}
 ")
 set(_boot_port_units ${EIDOS_BOOT_PORT_SOURCES} ${EIDOS_BOOT_ASM_SUBST})
-eidos_armdata(bw_arm9_data
+eidos_armdata(bw_arm9_data CODE_SCAN
     SOURCES_LIST ${EIDOS_BOOT_DIR}/armdata_sources.txt
     BIND ${_boot_port_units})
 
@@ -569,7 +607,14 @@ else()
         # partly braced initialiser, a sizeof ratio of two element types.
         -Wno-builtin-declaration-mismatch -Wno-int-to-pointer-cast
         -Wno-pointer-to-int-cast -Wno-missing-field-initializers
-        -Wno-sizeof-array-div)
+        -Wno-sizeof-array-div
+        # The whole game module (EIDOS_BOOT_ALL_GAME) adds: a negative
+        # constant shifted (frustum bounds written as -6 << 16), and the
+        # MSL's one-line for loop in __kernel_rem_pio2.
+        -Wno-shift-negative-value -Wno-misleading-indentation
+        # a pointer stored to an int, as mwcc took it (GCC 14 makes it an
+        # error)
+        -Wno-int-conversion)
     # With 8-byte pointers, GCC flags every cast between a pointer and a
     # 32-bit integer: 532 sites in the boot's matched files, the
     # pointer-width question docs/pointer-width.md measures (signal C).  They
@@ -610,22 +655,46 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
 else()
     set(_boot_lp64 1)
 endif()
-# With the title overlays compiled in (EIDOS_OVERLAYS) the boot runs past
-# the first overlay load, through the network library's set-up in ov009 and
-# ov013 and the save-data set-up's calls into ov228, to the next known stop:
-# func_02033A88 (save.c) follows the pointer at the head of the ARM9 save
-# table g_0209D938, which points at 0x0209DA28; the word is not in the ARM9
-# relocation metadata (data_objects.json lists g_0209D938 as a pool word
-# only), so it still holds the DS address and the read faults.  A known stop
-# is a pass, as the overlay boundary was; any other ending fails.
+# With the title overlays compiled in (EIDOS_OVERLAYS) the boot runs the
+# frame loop: the Nintendo and copyright screens, the opening (ov179), the
+# title (ov088, from about frame 4600), and with START pressed at frame 4800
+# the title menu, where it stays (ov010, ov011 and ov088 resident).  The test
+# asks for that: all the frames, the menu's overlays at the end.  A stop on
+# the way passes only if it is the documented next one and at or past the
+# furthest frame the boot is known to reach (tests/boot_run.cmake); update
+# these when the boot gets further.  docs/boot.md, "How far it gets".
+set(_boot_frames 120)
+set(_boot_min_frames 0)
 set(_boot_known_stop "")
+set(_boot_press "")
+set(_boot_resident "")
 if(NOT "${_eidos_ovls}" STREQUAL "")
-    set(_boot_known_stop "read of host address 0x0209DA28")
+    set(_boot_frames 6000)
+    set(_boot_min_frames 6000)
+    set(_boot_known_stop "PANIC in boot stub reached")
+    set(_boot_press "START@4800")
+    set(_boot_resident "10 11 88")
 endif()
 add_test(NAME test_boot_run
     COMMAND ${CMAKE_COMMAND} -DBOOT=$<TARGET_FILE:eidos_boot>
-            -DDATA=${BW_DATA_ROOT_ABS} -DFRAMES=120 -DWATCHDOG=60
+            -DDATA=${BW_DATA_ROOT_ABS} -DFRAMES=${_boot_frames} -DWATCHDOG=60
+            -DMIN_FRAMES=${_boot_min_frames} "-DPRESS=${_boot_press}"
+            "-DRESIDENT=${_boot_resident}"
             -DLP64=${_boot_lp64} "-DKNOWN_STOP=${_boot_known_stop}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/boot_run.cmake)
 set_tests_properties(test_boot_run PROPERTIES
     SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 900)
+# The same run with --window, through SDL's dummy video and audio drivers:
+# the window, its pump and the audio queue live on the frame thread, and a
+# run that stalls there (it froze a real window once) fails on the
+# watchdog.  300 frames is past the first screens, at the paced 60 Hz.
+if(TARGET eidos_platform AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    add_test(NAME test_boot_window
+        COMMAND ${CMAKE_COMMAND} -DBOOT=$<TARGET_FILE:eidos_boot>
+                -DDATA=${BW_DATA_ROOT_ABS} -DFRAMES=300 -DWATCHDOG=20 -DWINDOW=1
+                -DLP64=0 "-DKNOWN_STOP=${_boot_known_stop}"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/boot_run.cmake)
+    set_tests_properties(test_boot_window PROPERTIES
+        SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 300
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+endif()

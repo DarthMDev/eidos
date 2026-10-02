@@ -100,6 +100,12 @@ static const BwDataReloc k_relocs[] = {
     { 0x02004044u, 0x02004080u, BW_DATA_RELOC_DATA, 0 },   /* inside t_obj */
 };
 
+/* Where bw_data_relocate also looks for code pointers the tables do not
+ * list (docs/armdata.md, "Code pointers the metadata does not list"). */
+static const BwDataRange k_scan[] = {
+    { 0x02004030u, 0xD0u, 0, 0 },
+};
+
 static const BwDataImage k_img = {
     "arm9", -1,
     k_ranges, 4,
@@ -107,7 +113,8 @@ static const BwDataImage k_img = {
     k_relocs, 5,
     k_funcs, 1,
     k_anchors, 1,
-    k_objects, 1
+    k_objects, 1,
+    k_scan, 1
 };
 
 static void make_image(void)
@@ -123,6 +130,8 @@ static void make_image(void)
     bw_wr32(&g_image[0x28], 0x02300004u);
     bw_wr32(&g_image[0x104], 0x02004000u);   /* autoload +4 */
     bw_wr32(&g_image[0x44], 0x02004080u);    /* in t_obj */
+    bw_wr32(&g_image[0x30], 0x02012345u);    /* unlisted: the scan finds it */
+    bw_wr32(&g_image[0x34], 0x02012344u);    /* not an entry: left alone */
     bw_arm9_set_image(g_image, IMG_SIZE);
 }
 
@@ -147,6 +156,10 @@ static void check_relocated(const char *when)
         snprintf(label, sizeof(label), "%s: pointer inside a host object", when);
         BW_CHECK_EQ(label, bw_rd32((const u8 *)t_obj + 4),
                     (u32)(uintptr_t)bw_ds_ptr(0x02004080u));
+        snprintf(label, sizeof(label), "%s: unlisted code pointer", when);
+        BW_CHECK_EQ(label, word_at(0x02004030u), (u32)(uintptr_t)test_fn);
+        snprintf(label, sizeof(label), "%s: a number next to it", when);
+        BW_CHECK_EQ(label, word_at(0x02004034u), 0x02012344u);
         snprintf(label, sizeof(label), "%s: autoload pointer", when);
         BW_CHECK_EQ(label, word_at(0x02FE0004u),
                     (u32)(uintptr_t)bw_ds_ptr(0x02004000u));

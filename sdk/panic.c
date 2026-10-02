@@ -28,6 +28,7 @@ void bw_panic(const char *what, u32 address, const char *detail)
         fprintf(stderr, ": %s", detail);
     }
     fputc('\n', stderr);
+    bw_plat_crash_context_run();
     if (bw_plat_crash_installed()) {
         bw_plat_backtrace();
     }

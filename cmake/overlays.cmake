@@ -84,7 +84,10 @@ else()
         -Wno-unused-label -Wno-unknown-pragmas -Wno-switch -Wno-return-type
         -Wno-type-limits -Wno-cast-function-type -Wno-implicit-int
         -Wno-builtin-declaration-mismatch -Wno-char-subscripts -Wno-address
-        -Wno-sequence-point -Wno-comment)
+        -Wno-sequence-point -Wno-comment
+        # a pointer stored to an int, as mwcc took it (GCC 14 makes it an
+        # error): ov010_func_02166CD0.c's `int r0 = func_02012F08(a)`
+        -Wno-int-conversion)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         # deprecated-non-prototype: the `int name();` ovlink declares for a
         # call mwcc compiled with no declaration in scope.
@@ -195,6 +198,12 @@ function(eidos_overlays name)
         ${_eidos_ovl_tools}/ovlink_exclusions.txt
         ${_eidos_ovl_tools}/../sdk/asm/ov
         ${A_ROOT}/layout/layout.json)
+    # Port C for single overlay functions (tools/ovlink.py, --port-ov-dir):
+    # the directory exists only while there is some.
+    if(EXISTS ${_eidos_ovl_tools}/../stubs/ov)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            ${_eidos_ovl_tools}/../stubs/ov)
+    endif()
     # The set's shard directories and listings (ovlink writes the list): a
     # matched file added to one of them reruns the plan at the next build.
     file(STRINGS ${dir}/ovl_depends.txt deps)
@@ -208,7 +217,8 @@ function(eidos_overlays name)
         list(GET parts 2 hdr)
         file(RELATIVE_PATH rel "${A_ROOT}" "${src}")
         if(rel MATCHES "^\\.\\./" OR IS_ABSOLUTE "${rel}")
-            # Port C standing in for an asm body (sdk/asm/ov/).
+            # Port C standing in for an asm body (sdk/asm/ov/) or for an
+            # unmatched function (stubs/ov/).
             get_filename_component(rel "${src}" NAME)
             set(rel "port/${rel}")
         endif()

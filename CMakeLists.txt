@@ -588,6 +588,17 @@ add_library(eidos STATIC
     ${BW_STUB_SOURCES}
     ${BW_ENGINE_SOURCES}
 )
+# The engine runs per pixel and per sample: the screen composer, the 3D
+# rasteriser, the mixer and the sound driver.  Unoptimised (the default
+# here, no CMAKE_BUILD_TYPE), composing both screens costs about 150 ms, so
+# a windowed boot shows 6 frames a second and looks frozen.  With no build
+# type, GCC and Clang compile the engine with -O2 and keep frame pointers
+# (sdk/plat_crash.c walks them); the matched game code stays as it is.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES
+   AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+    set_property(SOURCE ${BW_ENGINE_SOURCES} APPEND PROPERTY
+        COMPILE_OPTIONS -O2 -fno-omit-frame-pointer)
+endif()
 # The source list the overlay table reads: every source of the library, as
 # the generator expression sees it once all target_sources calls are in.
 file(GENERATE OUTPUT ${BW_BUILD_SOURCE_LIST}

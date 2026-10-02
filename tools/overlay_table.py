@@ -41,7 +41,7 @@ SYMBOL_ROW = re.compile(
     r"^\s*\*\s+([A-Za-z_][A-Za-z0-9_]*)\s+(0x[0-9A-Fa-f]{8})\s+(thumb|arm)\b"
     r"(?:\s+(ov\d{3}|arm9\S*))?")
 EXTERN_FUNC = re.compile(r"\bextern\b[^;]*?\b((?:func|sub)_([0-9A-Fa-f]{8}))\s*\(")
-ANY_ROW = re.compile(r"^\s*\*\s+\S+\s+0x[0-9A-Fa-f]{8}")
+ANY_ROW = re.compile(r"^\s*\*\s+\S+\s+0x[0-9A-Fa-f]{8}\b")
 SYMBOLS_HDR = re.compile(r"^\s*\*\s*symbols:\s*$")
 REGION = re.compile(r"^ov(\d{3})$")
 

@@ -20,6 +20,20 @@
 
 #include "plat_crash.h"
 
+static void (*bw_crash_context_fn)(void);
+
+void bw_plat_crash_context(void (*fn)(void))
+{
+    bw_crash_context_fn = fn;
+}
+
+void bw_plat_crash_context_run(void)
+{
+    if (bw_crash_context_fn != 0) {
+        bw_crash_context_fn();
+    }
+}
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,6 +73,12 @@ static void bw_crash_print_addr(const char *what, uintptr_t addr)
         fprintf(stderr, "  %-6s 0x%08llX  (exe+0x%llX)\n", what,
                 (unsigned long long)((uintptr_t)nt->OptionalHeader.ImageBase + (addr - base)),
                 (unsigned long long)(addr - base));
+    } else if (addr >= 0x02000000u && addr < 0x08000000u) {
+        /* The DS's own address range (identity-mapped in an ILP32 boot):
+         * as a pc, a DS code address the data held that nothing relocated
+         * to a host function. */
+        fprintf(stderr, "  %-6s 0x%08llX  (a DS address)\n", what,
+                (unsigned long long)addr);
     } else {
         fprintf(stderr, "  %-6s 0x%08llX  (outside the executable)\n", what,
                 (unsigned long long)addr);
@@ -116,6 +136,7 @@ static LONG WINAPI bw_crash_filter(EXCEPTION_POINTERS *ep)
                 (unsigned long long)er->ExceptionInformation[1]);
     }
     fprintf(stderr, "\n");
+    bw_plat_crash_context_run();
     bw_crash_print_addr("pc", pc);
     bw_crash_walk(fp);
     fflush(stderr);
@@ -207,6 +228,7 @@ static DWORD WINAPI bw_watchdog_main(LPVOID arg)
     }
     fprintf(stderr, "WATCHDOG: no progress for %u s (at %llu)\n",
             g_watchdog.seconds, last);
+    bw_plat_crash_context_run();
     bw_crash_dump_threads();
     TerminateProcess(GetCurrentProcess(), 3);
     return 0;
@@ -252,6 +274,7 @@ static void bw_crash_handler(int sig, siginfo_t *si, void *uc)
     fprintf(stderr, "CRASH: signal %d (%s) at address %p\n", sig,
             sig == SIGSEGV ? "SIGSEGV" : sig == SIGBUS ? "SIGBUS" :
             sig == SIGILL ? "SIGILL" : "SIGFPE", si ? si->si_addr : NULL);
+    bw_plat_crash_context_run();
     fflush(stderr);
     _exit(3);
 }
@@ -298,6 +321,7 @@ static void *bw_watchdog_main(void *arg)
     }
     fprintf(stderr, "WATCHDOG: no progress for %u s (at %llu)\n",
             g_watchdog.seconds, last);
+    bw_plat_crash_context_run();
     fflush(stderr);
     _exit(3);
     return NULL;

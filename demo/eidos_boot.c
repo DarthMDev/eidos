@@ -14,6 +14,17 @@
  * wakes, as on the console.
  *
  *     eidos_boot [--data-root PATH] [--frames N] [--window] [--watchdog S]
+ *                [--screenshot N[,N...]] [--screenshot-dir DIR]
+ *                [--press BUTTONS@FRAME[:HOLD]] [--input SCRIPT]
+ *
+ * --press START@4800 presses buttons at a frame (held 4 frames unless
+ * :HOLD says), --input reads a script of such events (sdk/input.h's text
+ * format); both are the same timed input a window's keys join, so a run
+ * past the title screen repeats exactly with no window.
+ *
+ * --screenshot saves both screens, as the hardware state has them at the
+ * end of each named frame, to DIR/eidos_boot_frame<N>.png (DIR defaults to
+ * the current directory), with or without a window.
  *
  * After N frames (default 600) it prints a summary and exits 0.  A panic on
  * the way (a stub reached, an overlay not in this build) ends the run with
@@ -40,8 +51,13 @@
  * engine/audio (sdk/arm7/snd.c).  With no audio device the driver's clock
  * is run from here, one frame's worth of output frames per frame
  * (bw_snd_render with no buffer), so sequences end and the sound alarms
- * fire on time.  With a window and an audio device, the device's callback
- * runs it instead.
+ * fire on time.  With a window and an audio device, the same frame thread
+ * renders that frame's output and queues it on the device (the driver is
+ * the game thread's, never run from SDL's audio thread).
+ *
+ * The window belongs to the thread that runs the frames (the game's idle
+ * thread, where the halt hook runs), so it is created at the first frame,
+ * not in main().
  */
 
 #include <stdio.h>
@@ -66,6 +82,108 @@
 
 #define BOOT_DEFAULT_FRAMES 600u
 
+/* --screenshot: the frames to save both screens at, and where. */
+#define BOOT_MAX_SHOTS 32
+static u64         g_shots[BOOT_MAX_SHOTS];
+static int         g_shot_count;
+static const char *g_shot_dir = ".";
+
+/*
+ * --press NAME@FRAME[:HOLD] and --input FILE: timed input as the text
+ * script sdk/input.h reads ("<frame> press <buttons> [<hold>]"), so a run
+ * can walk past the title screen with no window and repeat exactly.
+ */
+static char g_input_script[8192];
+
+static int add_input_text(const char *line)
+{
+    size_t have = strlen(g_input_script);
+    size_t add = strlen(line);
+
+    if (have + add + 2 > sizeof(g_input_script)) {
+        return -1;
+    }
+    memcpy(g_input_script + have, line, add);
+    g_input_script[have + add] = '\n';
+    g_input_script[have + add + 1] = '\0';
+    return 0;
+}
+
+/* "START@4800" or "A+B@5000:10": press the buttons at that frame, held for
+ * HOLD frames (default 4). */
+static int parse_press(const char *arg)
+{
+    char buttons[64];
+    char line[128];
+    const char *at = strchr(arg, '@');
+    unsigned long frame, hold = 4;
+    char *end = NULL;
+
+    if (at == NULL || (size_t)(at - arg) >= sizeof(buttons) || at == arg) {
+        return -1;
+    }
+    memcpy(buttons, arg, (size_t)(at - arg));
+    buttons[at - arg] = '\0';
+    frame = strtoul(at + 1, &end, 10);
+    if (end == at + 1) {
+        return -1;
+    }
+    if (*end == ':') {
+        const char *h = end + 1;
+        hold = strtoul(h, &end, 10);
+        if (end == h) {
+            return -1;
+        }
+    }
+    if (*end != '\0') {
+        return -1;
+    }
+    snprintf(line, sizeof(line), "%lu press %s %lu", frame, buttons, hold);
+    return add_input_text(line);
+}
+
+static int read_input_file(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+    char line[512];
+
+    if (fp == NULL) {
+        return -1;
+    }
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (add_input_text(line) != 0) {
+            fclose(fp);
+            return -1;
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+/* "N[,N...]": the frames --screenshot names.  0 on success. */
+static int parse_shots(const char *list)
+{
+    const char *p = list;
+
+    while (*p != '\0') {
+        char *end = NULL;
+        unsigned long long n = strtoull(p, &end, 10);
+
+        if (end == p || g_shot_count >= BOOT_MAX_SHOTS) {
+            return -1;
+        }
+        g_shots[g_shot_count++] = (u64)n;
+        p = end;
+        if (*p == ',') {
+            p++;
+        } else if (*p != '\0') {
+            return -1;
+        }
+    }
+    return g_shot_count > 0 ? 0 : -1;
+}
+
 #if EIDOS_BOOT
 
 #include "armdata.h"
@@ -74,7 +192,10 @@
 #include "audio.h"
 #include "dsmem.h"
 #include "g2d.h"
+#include "hw3d.h"
+#include "input.h"
 #include "os.h"
+#include "overlay.h"
 
 #if EIDOS_BOOT_SDL
 #include "platform.h"
@@ -121,10 +242,150 @@ typedef struct BootRun {
     u8 *bottom;
 #if EIDOS_BOOT_SDL
     EidosPlatform *plat;
+    int want_window;   /* --window: open one at the first frame          */
+    int window_tried;
 #endif
 } BootRun;
 
 static BootRun g_run;
+
+/*
+ * A PNG of both screens, top above bottom (256 x 384, RGB), written with
+ * stored (uncompressed) deflate blocks: no compression library, and any
+ * viewer opens it.  One zlib block per scanline keeps each under 64 KiB.
+ */
+static u32 png_crc_table[256];
+
+static u32 png_crc(u32 crc, const u8 *p, size_t n)
+{
+    size_t i;
+
+    if (png_crc_table[1] == 0u) {
+        u32 c, k;
+        for (i = 0; i < 256u; i++) {
+            c = (u32)i;
+            for (k = 0; k < 8u; k++) {
+                c = (c & 1u) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+            }
+            png_crc_table[i] = c;
+        }
+    }
+    crc = ~crc;
+    for (i = 0; i < n; i++) {
+        crc = png_crc_table[(crc ^ p[i]) & 0xFFu] ^ (crc >> 8);
+    }
+    return ~crc;
+}
+
+static void png_be32(u8 *p, u32 v)
+{
+    p[0] = (u8)(v >> 24);
+    p[1] = (u8)(v >> 16);
+    p[2] = (u8)(v >> 8);
+    p[3] = (u8)v;
+}
+
+static int png_chunk(FILE *fp, const char *type, const u8 *data, u32 n)
+{
+    u8 head[8];
+    u8 tail[4];
+    u32 crc;
+
+    png_be32(head, n);
+    memcpy(head + 4, type, 4);
+    crc = png_crc(0, head + 4, 4);
+    crc = png_crc(crc, data, n);
+    png_be32(tail, crc);
+    return fwrite(head, 1, 8, fp) == 8 && (n == 0 || fwrite(data, 1, n, fp) == n)
+        && fwrite(tail, 1, 4, fp) == 4;
+}
+
+static int write_screens_png(const char *path, const u8 *top, const u8 *bottom)
+{
+    enum { W = 256, H = 384, ROW = 1 + W * 3 };
+    static const u8 sig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+    u8 ihdr[13];
+    u8 *z;
+    size_t zlen = 2 + (size_t)H * (5 + ROW) + 4;
+    size_t at = 0;
+    u32 a = 1, b = 0;
+    int y, x, ok;
+    FILE *fp;
+
+    z = (u8 *)malloc(zlen);
+    if (z == NULL) {
+        return -1;
+    }
+    z[at++] = 0x78;
+    z[at++] = 0x01;
+    for (y = 0; y < H; y++) {
+        const u8 *src = (y < 192 ? top : bottom) + (size_t)(y % 192) * W * 4;
+        u8 *row;
+        int i;
+
+        z[at++] = (u8)(y == H - 1 ? 1 : 0);
+        z[at++] = (u8)(ROW & 0xFF);
+        z[at++] = (u8)(ROW >> 8);
+        z[at++] = (u8)(~ROW & 0xFF);
+        z[at++] = (u8)((~ROW >> 8) & 0xFF);
+        row = z + at;
+        row[0] = 0;                 /* filter: none */
+        for (x = 0; x < W; x++) {
+            row[1 + x * 3 + 0] = src[x * 4 + 0];
+            row[1 + x * 3 + 1] = src[x * 4 + 1];
+            row[1 + x * 3 + 2] = src[x * 4 + 2];
+        }
+        for (i = 0; i < ROW; i++) {
+            a = (a + row[i]) % 65521u;
+            b = (b + a) % 65521u;
+        }
+        at += ROW;
+    }
+    png_be32(z + at, (b << 16) | a);
+    at += 4;
+
+    png_be32(ihdr, W);
+    png_be32(ihdr + 4, H);
+    ihdr[8] = 8;                    /* bit depth */
+    ihdr[9] = 2;                    /* RGB */
+    ihdr[10] = ihdr[11] = ihdr[12] = 0;
+
+    fp = fopen(path, "wb");
+    if (fp == NULL) {
+        free(z);
+        return -1;
+    }
+    ok = fwrite(sig, 1, 8, fp) == 8 && png_chunk(fp, "IHDR", ihdr, 13)
+      && png_chunk(fp, "IDAT", z, (u32)at) && png_chunk(fp, "IEND", NULL, 0);
+    ok = (fclose(fp) == 0) && ok;
+    free(z);
+    return ok ? 0 : -1;
+}
+
+/* Both screens as the hardware state has them now, saved for frame `n`. */
+static void boot_screenshot(BootRun *run, u64 n)
+{
+    size_t screen = (size_t)256 * 192 * 4;
+    u32 unsupported[2];
+    char path[1024];
+
+    if (run->top == NULL) {
+        run->top = (u8 *)calloc(1, screen);
+        run->bottom = (u8 *)calloc(1, screen);
+        if (run->top == NULL || run->bottom == NULL) {
+            bw_panic("eidos_boot", 0, "out of memory for the screens");
+        }
+    }
+    (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom, unsupported);
+    snprintf(path, sizeof(path), "%s/eidos_boot_frame%llu.png", g_shot_dir,
+             (unsigned long long)n);
+    if (write_screens_png(path, run->top, run->bottom) == 0) {
+        printf("eidos_boot: frame %llu saved to %s\n", (unsigned long long)n, path);
+    } else {
+        fprintf(stderr, "eidos_boot: cannot write %s\n", path);
+    }
+    fflush(stdout);
+}
 
 /* Frames passed, for the watchdog's thread (a 32-bit word: no tearing). */
 static volatile u32 g_frames_seen;
@@ -151,11 +412,38 @@ static void io_raw_write(u32 addr, u32 width, u32 v)
     memcpy((void *)bw_io(addr), &v, width);
 }
 
+/* Which overlays are resident: where the run stands, in the game's terms. */
+static void boot_print_resident(void)
+{
+    const BwOverlayTable *t = bw_overlay_table();
+    u32 i;
+
+    printf("eidos_boot: resident overlays:");
+    for (i = 0; i < t->overlay_count; i++) {
+        if (bw_overlay_is_loaded(t->overlays[i].id)) {
+            printf(" %lu", (unsigned long)t->overlays[i].id);
+        }
+    }
+    printf("\n");
+}
+
+/* A crash, panic or watchdog report's context (sdk/plat_crash.h): how far
+ * the run got, in the form tests/boot_run.cmake reads. */
+static void boot_report_context(void)
+{
+    fflush(stdout);
+    fprintf(stderr, "eidos_boot: stopped at frame %llu\n",
+            (unsigned long long)eidos_frame_count(&g_run.loop));
+    boot_print_resident();
+    fflush(stdout);
+}
+
 static void boot_finish(int status, const char *why)
 {
     printf("eidos_boot: %s after %llu frames, %llu vblank interrupts\n", why,
            (unsigned long long)eidos_frame_count(&g_run.loop),
            (unsigned long long)g_run.vblanks);
+    boot_print_resident();
     fflush(stdout);
 #if EIDOS_BOOT_SDL
     if (g_run.plat != NULL) {
@@ -189,14 +477,9 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
     u32 unsupported[2];
 
     (void)user;
-    (void)g2d_hw_render_dsmem(NULL, top, bottom, unsupported);
+    (void)g2d_hw_render_dsmem(g3d_hw_frame(), top, bottom, unsupported);
 }
 
-static void boot_audio(void *user, s16 *out, u32 frames)
-{
-    (void)user;
-    bw_snd_render(out, frames);
-}
 #endif
 
 /* The output frames one DS frame is worth, the remainder carried. */
@@ -209,11 +492,67 @@ static u32 boot_audio_frames(BootRun *run)
     return n;
 }
 
+#if EIDOS_BOOT_SDL
+/*
+ * The window, opened by the thread that runs the frames.  The halt hook runs
+ * on the game's idle thread, not on main(): a window belongs to the thread
+ * that created it (a Win32 window's messages reach only that thread's
+ * queue, and SDL's renderer is not thread-safe), so it is created here, at
+ * the first frame, and pumped, drawn and closed by the same thread for the
+ * rest of the run.  Created on main(), it was never pumped while main() sat
+ * in the game's OS_WaitIrq, and Windows showed it frozen after a few
+ * seconds.
+ */
+static void boot_window_open(BootRun *run)
+{
+    EidosPlatformConfig cfg;
+
+    run->window_tried = 1;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.title = "eidos boot";
+    cfg.audio = 1;
+    cfg.audio_push = 1;
+    if (eidos_platform_init(&run->plat, &cfg) != 0) {
+        fprintf(stderr, "eidos_boot: no window; running headless\n");
+        run->plat = NULL;
+    }
+}
+
+/*
+ * One frame of sound.  The game's sound driver (sdk/arm7/snd.c) is the
+ * ARM7's, driven by the game thread through the PXI: rendering it from
+ * SDL's audio thread would race the game.  So it renders here, on the frame
+ * thread, and the samples go to the device's queue, kept a few frames ahead;
+ * when the queue is that full the frame's output is dropped (the driver's
+ * clock still advances), and when it runs dry the device plays silence.
+ */
+static void boot_audio_push(BootRun *run, u32 frames)
+{
+    static s16 buf[2u * 4096u];
+
+    if (frames > 4096u) {
+        frames = 4096u;
+    }
+    if (eidos_platform_audio_queued(run->plat) > 4u * frames) {
+        bw_snd_render(NULL, frames);
+        return;
+    }
+    bw_snd_render(buf, frames);
+    eidos_platform_queue_audio(run->plat, buf, frames);
+}
+#endif
+
 /* The halt hook: one frame of time passing. */
 static void boot_frame(void *user)
 {
     BootRun *run = (BootRun *)user;
     int audio_device = 0;
+
+#if EIDOS_BOOT_SDL
+    if (run->want_window && !run->window_tried) {
+        boot_window_open(run);
+    }
+#endif
 
     if (eidos_frame_count(&run->loop) >= run->limit) {
         boot_finish(0, "ran");
@@ -222,9 +561,21 @@ static void boot_frame(void *user)
     io_raw_write(REG_DISPSTAT, 2,
                  io_raw_read(REG_DISPSTAT, 2) & ~DISPSTAT_VBLANK_FLAG);
 
+    /* The input of this frame, before its vblank (sdk/input.h): the
+     * window's keys and the --press / --input script, KEYINPUT and the
+     * ARM7's XY halfword written, the touch panel's automatic samples. */
+    bw_input_frame();
     eidos_frame_run_one(&run->loop);
-    bw_arm7_tp_frame();
     g_frames_seen++;
+    {
+        u64 n = eidos_frame_count(&run->loop);
+        int i;
+        for (i = 0; i < g_shot_count; i++) {
+            if (g_shots[i] == n) {
+                boot_screenshot(run, n);
+            }
+        }
+    }
 
 #if EIDOS_BOOT_SDL
     if (run->plat != NULL) {
@@ -233,6 +584,9 @@ static void boot_frame(void *user)
         }
         eidos_platform_present(run->plat, run->top, run->bottom);
         audio_device = eidos_platform_audio_open(run->plat);
+        if (audio_device) {
+            boot_audio_push(run, boot_audio_frames(run));
+        }
         eidos_platform_wait_frame(run->plat);
     }
 #endif
@@ -263,21 +617,13 @@ static void commit_main_ram(void)
 static void boot_window(EidosFrameHooks *hooks, int window)
 {
 #if EIDOS_BOOT_SDL
-    EidosPlatformConfig cfg;
     size_t screen = (size_t)256 * 192 * 4;
 
     if (!window) {
         return;
     }
-    memset(&cfg, 0, sizeof cfg);
-    cfg.title = "eidos boot";
-    cfg.audio = 1;
-    if (eidos_platform_init(&g_run.plat, &cfg) != 0) {
-        fprintf(stderr, "eidos_boot: no window; running headless\n");
-        g_run.plat = NULL;
-        return;
-    }
-    eidos_platform_set_audio(g_run.plat, boot_audio, NULL);
+    /* The window itself opens at the first frame (boot_window_open). */
+    g_run.want_window = 1;
     g_run.top = (u8 *)calloc(1, screen);
     g_run.bottom = (u8 *)calloc(1, screen);
     if (g_run.top == NULL || g_run.bottom == NULL) {
@@ -314,12 +660,30 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
     bw_ovl_install(&bw_ovl_set_boot, 0);
 #endif
     bw_port_reset();
+    bw_input_reset();
+    if (g_input_script[0] != '\0') {
+        char err[160];
+        if (bw_input_script_load(g_input_script, err, sizeof(err)) != 0) {
+            fprintf(stderr, "eidos_boot: input script: %s\n", err);
+            return 2;
+        }
+    }
+    /* The 3D hardware after the reset that cleared its access hook: the
+     * game's geometry FIFO and SWAP_BUFFERS land there, and its frame is
+     * the 3D layer the screens are composed with (engine/g3d/hw3d.h). */
+    g3d_hw_reset();
+    printf("eidos_boot: DS address space %s; %lu code pointers the metadata "
+           "does not list relocated by the scan\n",
+           bw_ds_identity() ? "identity-mapped" : "on movable host blocks",
+           (unsigned long)bw_data_scanned());
+    fflush(stdout);
     bw_boot_link_init();
     commit_main_ram();
 
     eidos_frame_init(&g_run.loop, &hooks, g_run.top, g_run.bottom);
     eidos_frame_set_current(&g_run.loop);
     bw_os_set_halt_hook(boot_frame, &g_run);
+    bw_plat_crash_context(boot_report_context);
     if (watchdog != 0) {
         bw_plat_watchdog(watchdog, boot_progress);
     }
@@ -334,7 +698,9 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
 static void usage(void)
 {
     fprintf(stderr, "usage: eidos_boot [--data-root PATH] [--frames N] [--window] "
-                    "[--watchdog SECONDS]\n");
+                    "[--watchdog SECONDS] [--screenshot N[,N...]] "
+                    "[--screenshot-dir DIR] [--press BUTTONS@FRAME[:HOLD]] "
+                    "[--input SCRIPT]\n");
 }
 
 int main(int argc, char **argv)
@@ -345,6 +711,16 @@ int main(int argc, char **argv)
     unsigned long watchdog = 0;
     int i;
 
+#if EIDOS_BOOT
+    {
+        /* The DS address space at its own addresses (docs/boot.md,
+         * "Identity mapping"), before anything else maps memory. */
+        int status = 0;
+        if (bw_ds_identity_prepare(&status)) {
+            return status;
+        }
+    }
+#endif
     bw_plat_crash_install();
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--data-root") == 0 && i + 1 < argc) {
@@ -356,6 +732,23 @@ int main(int argc, char **argv)
                 usage();
                 return 2;
             }
+        } else if (strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
+            if (parse_shots(argv[++i]) != 0) {
+                usage();
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--press") == 0 && i + 1 < argc) {
+            if (parse_press(argv[++i]) != 0) {
+                usage();
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--input") == 0 && i + 1 < argc) {
+            if (read_input_file(argv[++i]) != 0) {
+                fprintf(stderr, "eidos_boot: cannot read input script %s\n", argv[i]);
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--screenshot-dir") == 0 && i + 1 < argc) {
+            g_shot_dir = argv[++i];
         } else if (strcmp(argv[i], "--window") == 0) {
             window = 1;
         } else if (strcmp(argv[i], "--watchdog") == 0 && i + 1 < argc) {
@@ -386,6 +779,9 @@ int main(int argc, char **argv)
 #else
     (void)window;
     (void)watchdog;
+    (void)g_shots;
+    (void)g_shot_dir;
+    (void)g_input_script;
     printf("eidos_boot: built with EIDOS_BOOT=OFF, so the game's boot is not "
            "linked into this binary (%llu frames requested, data root '%s'). "
            "Reconfigure with -DEIDOS_BOOT=ON; docs/boot.md has the plan.\n",

@@ -396,6 +396,14 @@ typedef struct TexCache {
     G3dTexture tex;
 } TexCache;
 
+/* A 16-character resource name into a zeroed 17-byte field. */
+static void copy_name(char *dst, const char *src)
+{
+    size_t n = strlen(src);
+
+    memcpy(dst, src, n < 16u ? n : 16u);
+}
+
 struct G3dTexArchive {
     BwArcFile arc;
     int       open;
@@ -422,7 +430,7 @@ static int texarchive_add(G3dTexArchive *ar, const char *name, u32 subfile)
         ar->cap_names = cap;
     }
     memset(&ar->names[ar->n_names], 0, sizeof(TexName));
-    strncpy(ar->names[ar->n_names].name, name, 16);
+    copy_name(ar->names[ar->n_names].name, name);
     ar->names[ar->n_names].subfile = subfile;
     ar->n_names++;
     return 0;
@@ -590,7 +598,7 @@ const G3dTexture *g3d_texarchive_get(G3dTexArchive *ar, const char *name)
             ar->cap_cache = cap;
         }
         memset(&ar->cache[ar->n_cache], 0, sizeof(TexCache));
-        strncpy(ar->cache[ar->n_cache].name, tname, 16);
+        copy_name(ar->cache[ar->n_cache].name, tname);
         ar->cache[ar->n_cache].tex = tex;
         ar->n_cache++;
     }

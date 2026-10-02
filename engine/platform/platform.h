@@ -142,6 +142,9 @@ typedef struct EidosPlatformConfig {
     int   layout;            /* EIDOS_LAYOUT_*                           */
     int   gap;               /* DS pixels between the two screens        */
     int   audio;             /* non-zero: open the audio device          */
+    int   audio_push;        /* non-zero: the program pushes its samples
+                                from its own thread (eidos_platform_queue_
+                                audio) instead of a callback on SDL's     */
     const EidosKeyBinding *keymap;  /* NULL: eidos_default_keymap()      */
     u32   keymap_count;
     const EidosPadBinding *padmap;  /* NULL: eidos_default_padmap()      */
@@ -285,6 +288,18 @@ int  eidos_platform_audio_open(const EidosPlatform *p);
 /* How many frames of audio the silent callback has produced, which is the
  * only observable the device gives us until there is a mixer. */
 u64  eidos_platform_audio_frames(const EidosPlatform *p);
+
+/*
+ * The push mode (EidosPlatformConfig.audio_push): no callback runs on SDL's
+ * audio thread, so a producer that is not thread-safe (the game's own sound
+ * driver, which the game thread drives through the ARM7 stand-in) renders
+ * on its own thread and hands the frames over here.  `queue` copies
+ * `frames` stereo frames to the device's queue; `queued` is how many are
+ * waiting, which the producer keeps a few frames' worth ahead.  Both do
+ * nothing (0) without a push-mode device.
+ */
+void eidos_platform_queue_audio(EidosPlatform *p, const s16 *in, u32 frames);
+u32  eidos_platform_audio_queued(const EidosPlatform *p);
 
 #ifdef __cplusplus
 }

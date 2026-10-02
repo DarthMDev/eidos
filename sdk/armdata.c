@@ -29,7 +29,9 @@
  *
  * An overlay's image (img->overlay >= 0, docs/overlays.md) goes through the
  * same three steps when sdk/overlay_image.c loads it, with its bytes out of
- * the overlay's own file; its host objects are filled but not registered.
+ * the overlay's own file.  Its host objects are registered at load like the
+ * ARM9's, and bw_data_withdraw takes them back (their contents copied into
+ * the window first) when the window passes to another overlay.
  *
  * Every pointer word is checked against the image before it is rewritten:
  * the metadata says which address the word holds, and a different value
@@ -55,6 +57,7 @@ static char               g_error[256];
 /* The flat host address of each loaded range's first byte, or NULL. */
 static u8                *g_flat[MAX_RANGES];
 static const BwDataImage *g_flat_img;
+static u32                g_scanned;
 
 static int fail(int code, u32 addr, const char *what)
 {
@@ -162,29 +165,141 @@ int bw_data_load(const BwDataImage *img)
         }
         g_flat[i] = dst;
     }
-    /* The host objects: their bytes from the copy, then registered. */
+    /* The host objects: their bytes from what is at their address now (the
+     * copy just made, or, for an address outside this image's ranges, the
+     * bytes some other image put there), then registered.  An object whose
+     * range a registration already covers (an alias at the same address
+     * in this image, an ARM9 object an overlay names too) is filled but
+     * left unregistered: the first registration owns the bytes. */
     for (i = 0; i < img->object_count; i++) {
         const BwDataObject *o = &img->objects[i];
-        u32 k;
+        const u8 *cur;
 
         memset(o->host, 0, BW_DATA_CELLS(o->size) * sizeof(BwDataCell));
-        for (k = 0; k < img->range_count; k++) {
-            const BwDataRange *r = &img->ranges[k];
-            if (g_flat[k] != NULL && o->addr - r->addr < r->size) {
-                u32 off = o->addr - r->addr;
-                u32 n = r->size - off < o->size ? r->size - off : o->size;
-                memcpy(o->host, g_flat[k] + off, n);
+        if (bw_ds_registered(o->addr, o->size)) {
+            cur = (const u8 *)bw_ds_try_ptr(o->addr);
+            if (cur != NULL) {
+                memcpy(o->host, cur, o->size);
             }
+            continue;
         }
-        /* An overlay's objects are not registered: the window passes to
-         * the next overlay and a registration cannot be withdrawn
-         * (docs/overlays.md, "Data"). */
-        if (img->overlay < 0) {
-            bw_ds_register(o->addr, o->host, o->size, o->name);
+        cur = flat_block(o->addr, o->size);
+        if (cur != NULL) {
+            memcpy(o->host, cur, o->size);
         }
+        bw_ds_register(o->addr, o->host, o->size, o->name);
     }
     g_flat_img = img;
     return BW_DATA_OK;
+}
+
+/* Index of the function whose stored entry is `value`, or -1 (funcs is
+ * sorted by entry, as both generators write it). */
+static long func_at(const BwDataImage *img, u32 value)
+{
+    u32 lo = 0, hi = img->func_count;
+
+    while (lo < hi) {
+        u32 mid = lo + (hi - lo) / 2u;
+        if (img->funcs[mid].addr < value) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo < img->func_count && img->funcs[lo].addr == value ? (long)lo : -1;
+}
+
+/* 1 if `where` is a listed relocation's word (relocs sorted by location). */
+static int listed(const BwDataImage *img, u32 where)
+{
+    u32 lo = 0, hi = img->reloc_count;
+
+    while (lo < hi) {
+        u32 mid = lo + (hi - lo) / 2u;
+        if (img->relocs[mid].where < where) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo < img->reloc_count && img->relocs[lo].where == where;
+}
+
+/*
+ * Code pointers the metadata does not list (docs/armdata.md): every word of
+ * the scan ranges that equals a function's DS entry, Thumb bit included,
+ * becomes that function's host address.  Listed words are already done and
+ * skipped.  Returns how many words it rewrote.
+ */
+static u32 scan_code_pointers(const BwDataImage *img)
+{
+    u32 n = 0;
+    u32 s, k;
+
+    if (img->scan == NULL || img->func_count == 0) {
+        return 0;
+    }
+    for (s = 0; s < img->scan_count; s++) {
+        const BwDataRange *sr = &img->scan[s];
+        for (k = 0; k < img->range_count; k++) {
+            const BwDataRange *r = &img->ranges[k];
+            u32 lo, hi, a;
+
+            if (g_flat[k] == NULL) {
+                continue;
+            }
+            lo = sr->addr > r->addr ? sr->addr : r->addr;
+            hi = sr->addr + sr->size < r->addr + r->size ? sr->addr + sr->size
+                                                         : r->addr + r->size;
+            for (a = (lo + 3u) & ~3u; a + 4u <= hi; a += 4u) {
+                u8 *w = g_flat[k] + (a - r->addr);
+                u32 value = bw_rd32(w);
+                long f = func_at(img, value);
+                BwDataFn fn = NULL;
+                u32 word;
+
+                if (listed(img, a)) {
+                    continue;
+                }
+                if (f >= 0) {
+                    fn = img->funcs[f].fn;
+                } else if (img->overlay < 0) {
+                    /* Into an overlay window: the ARM9 data's save block
+                     * table points at ov010's functions. */
+                    fn = bw_ovl_code_entry(value);
+                }
+                if (fn == NULL) {
+                    continue;
+                }
+                word = (u32)(uintptr_t)fn;
+                memcpy(w, &word, 4);
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
+void bw_data_withdraw(const BwDataImage *img)
+{
+    u32 i;
+
+    for (i = 0; i < img->object_count; i++) {
+        const BwDataObject *o = &img->objects[i];
+        u8 *flat;
+
+        /* Registered by this image's last load: the registry answers with
+         * the object itself. */
+        if (bw_ds_try_ptr(o->addr) != o->host) {
+            continue;
+        }
+        (void)bw_ds_unregister(o->addr);
+        flat = flat_block(o->addr, o->size);
+        if (flat != NULL) {
+            memcpy(flat, o->host, o->size);
+        }
+    }
 }
 
 /* The host address of the word at `where`: inside a host object, or in the
@@ -332,7 +447,13 @@ int bw_data_relocate(const BwDataImage *img)
         word = (u32)v;
         memcpy(w, &word, 4);
     }
+    g_scanned = scan_code_pointers(img);
     return BW_DATA_OK;
+}
+
+u32 bw_data_scanned(void)
+{
+    return g_scanned;
 }
 
 void bw_data_trap(u32 addr)
