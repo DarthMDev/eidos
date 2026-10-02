@@ -55,10 +55,14 @@ palette, VRAM, OAM and the shared work area. On a host those are wild
 pointers.
 
 Mapping real memory at the DS's addresses would make every one of them work,
-but it is not portable: macOS reserves the low 4 GiB of a 64-bit process
-(`__PAGEZERO`) and iOS cannot lift that at all, and a fixed mapping is a
-fight with ASLR everywhere else. eidos targets all of them, so the port
-does it in the build instead.
+but it is not portable as the only answer: macOS reserves the low 4 GiB of
+a 64-bit process (`__PAGEZERO`) and iOS cannot lift that at all, and a fixed
+mapping is a fight with ASLR everywhere else. eidos targets all of them, so
+the port does it in the build. Where the host allows it (32-bit pointers,
+the boot's reference), the address space is also mapped at its own
+addresses at run time ("Identity mapping" below), which makes the cases no
+rewrite can reach work too; the rewrite stays, so every other host runs the
+same code.
 
 `tools/dsaddr.py` copies each matched source into the build tree and
 rewrites every *integer-literal-to-pointer cast whose value is in a DS
@@ -124,6 +128,51 @@ first use. A reset clears the registry and every I/O hook: a module that
 registers its own objects or hooks its own registers does so again after
 each reset. The approximations (flat TWL main RAM, no WRAMCNT banking, the
 first bank owning a page two banks overlap) are listed in the file's header.
+
+## Identity mapping
+
+The rewrite reaches a DS address written as a literal. It cannot reach one
+the game stores: a pointer in the ARM9 image's data or an overlay's that
+aletheia's metadata does not list (the save block table at 0x0209D938 points
+at 0x0209DA28, which no relocation names), a pointer the game computes
+(`G2S_GetBG1CharPtr` returns `0x06200000` plus a VRAMCNT-derived offset), an
+address passed as an integer. On the movable blocks every one of those is a
+wild pointer, found one crash at a time.
+
+So in a 32-bit process the port puts each region at its own DS address.
+`bw_ds_identity_prepare` (called first thing by `eidos_boot`) reserves
+host `0x02000000`-`0x02FFFFFF` for main RAM and the 16 MiB windows at
+`0x03000000`, `0x04000000`, `0x05000000`, `0x06000000` and `0x07000000`
+(`sdk/host_vm.c`'s `bw_vm_reserve_at`), and `sdk/dsmem.c` backs each region
+there: main RAM committed whole, WRAM, the register file (both of its
+parts), palette and OAM at their bases. Then a DS address the game holds is
+the host address of its byte, and `bw_ds_ptr` is an identity outside the
+registry and VRAM. Data-to-data pointers in the ARM9 image and the overlays
+need no relocation; code pointers still do (docs/armdata.md).
+
+VRAM is banked, and a host cannot alias 16 KiB pages (a Win32 view is placed
+at 64 KiB granularity). So each bank the CPU can see lives at the first CPU
+address VRAMCNT maps it to, in the engine windows or LCDC, and when VRAMCNT
+moves it, its bytes move with it (`vram_rehome`). The renderer and the 3D
+engine read banks through the same tables as before, so they see the bank
+wherever it lives. Mirrors past an engine window's period are not backed: a
+raw access there faults at its DS address, which the crash report names.
+
+Windows needs one more step. A Win32 process has code-page and locale files,
+heaps and user32's GDI handle table in its low addresses before `main` runs,
+and with ASLR they land inside `0x02000000`-`0x08000000` often enough. When
+the reservation fails, `bw_ds_identity_prepare` starts the same program again
+suspended, reserves the windows in the new process before its loader runs,
+waits for it and returns its exit status; the child's reservation calls take
+over what the parent reserved (`BW_VM_PRERESERVED`). Linux and the BSDs do
+not map there by themselves, so a reservation at start-up is enough.
+
+The movable blocks remain the fallback, chosen at run time: an LP64 host (a
+32-bit word cannot hold a host pointer anyway), a host that refuses the
+ranges, a program that does not call `bw_ds_identity_prepare` (the unit
+tests, which keep the banks in their stores), or `BW_DS_IDENTITY=0` in the
+environment. `bw_ds_identity()` says which mode a run is in, and
+`eidos_boot` prints it.
 
 ## Threads, interrupts and the frame
 

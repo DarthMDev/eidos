@@ -108,7 +108,9 @@ static int parse_shots(const char *list)
 #include "audio.h"
 #include "dsmem.h"
 #include "g2d.h"
+#include "hw3d.h"
 #include "os.h"
+#include "overlay.h"
 
 #if EIDOS_BOOT_SDL
 #include "platform.h"
@@ -287,7 +289,7 @@ static void boot_screenshot(BootRun *run, u64 n)
             bw_panic("eidos_boot", 0, "out of memory for the screens");
         }
     }
-    (void)g2d_hw_render_dsmem(NULL, run->top, run->bottom, unsupported);
+    (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom, unsupported);
     snprintf(path, sizeof(path), "%s/eidos_boot_frame%llu.png", g_shot_dir,
              (unsigned long long)n);
     if (write_screens_png(path, run->top, run->bottom) == 0) {
@@ -323,11 +325,27 @@ static void io_raw_write(u32 addr, u32 width, u32 v)
     memcpy((void *)bw_io(addr), &v, width);
 }
 
+/* Which overlays are resident: where the run stands, in the game's terms. */
+static void boot_print_resident(void)
+{
+    const BwOverlayTable *t = bw_overlay_table();
+    u32 i;
+
+    printf("eidos_boot: resident overlays:");
+    for (i = 0; i < t->overlay_count; i++) {
+        if (bw_overlay_is_loaded(t->overlays[i].id)) {
+            printf(" %lu", (unsigned long)t->overlays[i].id);
+        }
+    }
+    printf("\n");
+}
+
 static void boot_finish(int status, const char *why)
 {
     printf("eidos_boot: %s after %llu frames, %llu vblank interrupts\n", why,
            (unsigned long long)eidos_frame_count(&g_run.loop),
            (unsigned long long)g_run.vblanks);
+    boot_print_resident();
     fflush(stdout);
 #if EIDOS_BOOT_SDL
     if (g_run.plat != NULL) {
@@ -361,7 +379,7 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
     u32 unsupported[2];
 
     (void)user;
-    (void)g2d_hw_render_dsmem(NULL, top, bottom, unsupported);
+    (void)g2d_hw_render_dsmem(g3d_hw_frame(), top, bottom, unsupported);
 }
 
 static void boot_audio(void *user, s16 *out, u32 frames)
@@ -495,6 +513,10 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
     bw_ovl_install(&bw_ovl_set_boot, 0);
 #endif
     bw_port_reset();
+    /* The 3D hardware after the reset that cleared its access hook: the
+     * game's geometry FIFO and SWAP_BUFFERS land there, and its frame is
+     * the 3D layer the screens are composed with (engine/g3d/hw3d.h). */
+    g3d_hw_reset();
     printf("eidos_boot: DS address space %s; %lu code pointers the metadata "
            "does not list relocated by the scan\n",
            bw_ds_identity() ? "identity-mapped" : "on movable host blocks",
