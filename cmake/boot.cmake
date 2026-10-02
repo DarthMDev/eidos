@@ -268,6 +268,14 @@ set(EIDOS_BOOT_SHIM_REPLACED
     # stubs/reimpl_02036FD8.c: an ARM9 table's DS address passed as an
     # integer (docs/dsaddr-residue.md)
     src/matched/arm9/func_02036FD8.c
+    # stubs/reimpl_0206434C.c: the sequence its callers pass and it forwards in r1
+    src/matched/arm9_sdk/env_setresourceset.c
+    # stubs/reimpl_0204D340.c: the sequence index its caller passes and it forwards in r1
+    src/matched/arm9/sub_0204D340.c
+    # stubs/reimpl_0204D360.c: the sequence index its caller passes and it forwards in r1
+    src/matched/arm9/sub_0204D360.c
+    # stubs/reimpl_0204D380.c: the sequence index its caller passes and it forwards in r1
+    src/matched/arm9/sub_0204D380.c
 )
 
 # The pointer-width switches (CMakeLists.txt, "Pointer width") put a
@@ -326,12 +334,11 @@ list(APPEND EIDOS_BOOT_PORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0203064C.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030678.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030608.c
-    # Save-block callbacks aletheia has not found yet, reached only through
-    # the save block table (the file says how each was read).
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/hidden_save_blocks.c
-    # The heap allocator objects' alloc and free, reached only through the
-    # allocator tables in the data.
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/hidden_allocator.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0206434C.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D340.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D360.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D380.c
+)
 if(NOT EIDOS_TCBL_MATCHED)
     # stubs/reimpl_ for the nine tcbl files (CMakeLists.txt, "Pointer
     # width"): the overlays' ARM9 callees reach the matched ones.

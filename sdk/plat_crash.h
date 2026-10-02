@@ -42,6 +42,15 @@ void bw_plat_backtrace(void);
  */
 void bw_plat_watchdog(unsigned seconds, unsigned long long (*progress)(void));
 
+/*
+ * A program's own lines for every report (a crash, a panic, the
+ * watchdog): `fn` runs after the report's first line and prints where the
+ * program stood (eidos_boot: the frame count and the resident overlays).
+ * NULL removes it.  bw_plat_crash_context_run is what the reporters call.
+ */
+void bw_plat_crash_context(void (*fn)(void));
+void bw_plat_crash_context_run(void);
+
 #ifdef __cplusplus
 }
 #endif

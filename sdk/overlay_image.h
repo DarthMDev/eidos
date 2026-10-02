@@ -43,6 +43,10 @@ typedef struct BwOvlImage {
     u32                sinit_count;
     u32                defined_count;   /* functions compiled from matched C   */
     u32                stub_count;      /* functions the build stands a stub in */
+    const BwDataFunc  *entries;         /* every function (and stub) by the value
+                                           a code pointer to it holds, Thumb bit
+                                           set; sorted                          */
+    u32                entry_count;
 } BwOvlImage;
 
 /* The overlays one executable carries (ovl_dispatch.c, bw_ovl_set_<name>). */
@@ -71,6 +75,16 @@ const BwOvlImage *bw_ovl_image(u32 id);
  * it, or -1.  What every trampoline asks.
  */
 int bw_ovl_resident_at(u32 addr);
+
+/*
+ * The host function for a code pointer into an overlay window, `value` as
+ * the DS stores it (Thumb bit set for a Thumb function), when exactly one
+ * compiled overlay has a function there; NULL otherwise (none, or two
+ * overlays sharing the window that both do: that pointer needs a
+ * trampoline).  sdk/armdata.c's scan relocates the ARM9 data's pointers
+ * into windows with it (the save block table points into ov010).
+ */
+BwDataFn bw_ovl_code_entry(u32 value);
 
 /*
  * The overlay file's bytes [offset, offset + size), or NULL when the file

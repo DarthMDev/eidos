@@ -417,8 +417,40 @@ VENEERS = {
 }
 
 
+def listing_veneers(root):
+    """{veneer address: target} for every `veneer_XXXXXXXX:` label of the
+    ARM9 reassembly listing whose pool word is annotated `-> func_`/`sub_`.
+    Only the annotation is read (the target address comes from the name),
+    as tools/armdata.py reads the listing; the hand-kept VENEERS above stay
+    for a listing without annotations."""
+    path = os.path.join(root, "asm", "arm9", "main.s")
+    out = {}
+    if not os.path.exists(path):
+        return out
+    pending = None
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            m = re.match(r"^veneer_([0-9A-Fa-f]{8}):", line)
+            if m:
+                pending = (int(m.group(1), 16), 0)
+                continue
+            if pending is None:
+                continue
+            a = re.search(r"->\s+(?:func|sub)_([0-9A-Fa-f]{8})", line)
+            if a:
+                out[pending[0]] = int(a.group(1), 16)
+                pending = None
+                continue
+            pending = (pending[0], pending[1] + 1)
+            if pending[1] > 8:
+                pending = None
+    return out
+
+
 class Index:
     def __init__(self):
+        for v, t in listing_veneers(ROOT).items():
+            VENEERS.setdefault(v, t)
         self.entries = []          # one dict per shard entry
         self.by_addr = {}          # ARM9/TWL/ITCM address -> entry
         self.member_addr = {}      # (source, member name) -> address

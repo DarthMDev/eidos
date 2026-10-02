@@ -150,17 +150,21 @@ panics unless the set was installed with `BW_DATA_ALLOW_UNRELOCATED`.
 
 A name a matched file also uses as a member, tag, local or in a static
 initialiser cannot be a macro over a pointer; it becomes a host object of
-its own (`ovNNN_<name>`), filled from the window at load. Unlike the ARM9
-case it is **not registered** at its address: the window passes to the next
-overlay and a registration cannot be withdrawn (`sdk/dsmem.h` has no
-unregister). Writes through such a name do not reach the window, and
-reads through it see the window as it was at load. ovlink's report lists
-every one: the title set has 23 (16 in ov009's network library, mostly SDK
-state such as `SOCLiConfigPtr`; 2 in ov010, one of them the ARM9 address
-`d_02148BCC`; 5 in ov013). Closing this needs either a
-`bw_ds_unregister` in `sdk/dsmem.h` (then the objects could be registered at
-load and withdrawn when the window passes on) or a narrower conflict test
-than armdata's deliberately broad one.
+its own (`ovNNN_<name>`), filled at load from the bytes at its address and
+registered there (`bw_ds_register`), as the ARM9's are, so a literal cast or
+a pointer into its range reaches it. Before an overlay loads,
+`sdk/overlay_image.c` withdraws the objects of every compiled overlay that
+is no longer resident, and of the one loading (a reload): each object's
+contents are copied back to its address and its registration dropped
+(`bw_data_withdraw`, `bw_ds_unregister`), so the window holds what the DS
+would. An object whose range a registration already covers (two names at
+one address in one overlay, ov013's `d_021B4BA0` and `g_021B4BA0`) is filled
+and left unregistered: the first owns the bytes. ovlink's report lists every
+one: the title set has 18 (14 in ov009's network library, mostly SDK state
+such as `SOCLiConfigPtr`; 4 in ov013). The conflict test no longer counts an
+`extern struct { ... } NAME;` declaration as a use of NAME other than the
+global (it kept ov010's `d_02148BCC` from being a macro, and its 0x3C-byte
+host object was written at +0x7C).
 
 Data defined by a matched overlay source (a `const` table written in C)
 is a host object under the overlay's namespace, not the window's bytes; the
@@ -180,6 +184,25 @@ static definition; a host compiler cannot): ovlink leaves it out by itself
 and names the functions in its report (two files of ov009's network
 library in the title set). So a partly matched overlay links and runs until
 it reaches one.
+
+Port C for single overlay functions lives in `stubs/ov/`, and ovlink
+compiles it as more units of the overlay (`--port-ov-dir`):
+
+- `stubs/ov/ovNNN_<name>.c`, a stand-in for a function aletheia has not
+  matched, written from the listing with the decoding in its header; once a
+  matched file of the overlay defines its name, ovlink leaves it out and
+  reports it obsolete;
+- `stubs/ov/reimpl_ovNNN_<name>.c`, a reimplementation of a matched file
+  whose header says ` * replaces: src/matched/ov/...`: the matched file is
+  left out and this one compiled in its place, for the reason the ARM9's
+  `stubs/reimpl_` files exist (an argument the matched C passes in a
+  register, docs/boot.md, "Arguments in registers").
+
+Every function of a compiled overlay is also listed by the value a code
+pointer to it holds (`BwOvlImage.entries`, Thumb bit from the listing's
+`.thumb_func`), so the ARM9 data's pointers into a window relocate to it
+(`bw_ovl_code_entry`, docs/armdata.md); a value two compiled overlays both
+define is left alone, since it would need a trampoline.
 
 The loader's presence check is therefore per function, not per overlay: for
 an overlay compiled into the executable (`bw_overlay_set_provider`, which

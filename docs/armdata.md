@@ -94,6 +94,38 @@ static module's code (literal pools below the first data object) and in
 the ITCM and VRAM autoloads (code) are not relocated: the host never reads
 them as data.
 
+**Code pointers the metadata does not list.** The listing annotates a word
+only when it points at a label the disassembler knew, and
+`data_objects.json` describes some tables only in part: the save block
+table at 0x0209DA28 holds 69 {id, size, init} entries, and most of its
+function words carry no annotation. A data pointer the metadata misses is
+harmless where the address space is identity-mapped (docs/boot.md,
+"Identity mapping"): the DS address is the host address. A code pointer is
+not: calling 0x0200745D jumps into the copied ARM bytes. So the generator
+also lists every function the build defines, by the value a pointer to it
+holds (its DS entry, bit 0 set for Thumb: the instruction set comes from the
+defining file's `isa:` header or a `symbols:` row naming it), and the
+ranges that hold data (the static module from its first data object on, and
+the data autoloads). After the listed relocations, `bw_data_relocate`
+checks every other word of those ranges against that list and rewrites a
+match to the host function, exactly like a listed one; a word equal to the
+entry of a function in an overlay window resolves through
+`bw_ovl_code_entry` to the one compiled overlay that has a function there.
+`bw_data_scanned()` counts what the scan rewrote and `eidos_boot` prints
+it. The rule is exact equality with a function entry, instruction-set bit
+included, which a number in a table is very unlikely to meet; a false match
+in a code range would be harmless (the host never reads ARM code as data),
+which is why the static module's code and the ITCM and VRAM autoloads are
+not scanned at all. `--no-code-scan` turns it off.
+
+A pointer is only as good as the function behind it. aletheia's
+disassembler took some functions reached only through tables for data
+(hidden functions: the save block callbacks at 0x02009ED4, the heap
+allocator functions at 0x0206127C-0x020612C4); until aletheia matches one, a
+port file can stand in for it with a `function:` header that names it (the
+scan then knows its address), and the boot's configure step reports the
+clash when the matched file arrives, which is the signal to delete it.
+
 **Pointer width.** A relocated word holds a host pointer in the DS's 32-bit
 slot, which is only possible where pointers are 32 bits. On an LP64 host
 the copy and the name binding still work (numeric tables, strings and

@@ -297,6 +297,40 @@ int bw_ovl_resident_at(u32 addr)
     return -1;
 }
 
+BwDataFn bw_ovl_code_entry(u32 value)
+{
+    BwDataFn found = NULL;
+    u32 i;
+
+    if (g_set == NULL) {
+        return NULL;
+    }
+    for (i = 0; i < g_set->count; i++) {
+        const BwOvlImage *o = g_set->images[i];
+        u32 lo = 0, hi;
+
+        if (o == NULL || o->entries == NULL) {
+            continue;
+        }
+        hi = o->entry_count;
+        while (lo < hi) {
+            u32 mid = lo + (hi - lo) / 2u;
+            if (o->entries[mid].addr < value) {
+                lo = mid + 1u;
+            } else {
+                hi = mid;
+            }
+        }
+        if (lo < o->entry_count && o->entries[lo].addr == value) {
+            if (found != NULL) {
+                return NULL;        /* two overlays: needs a trampoline */
+            }
+            found = o->entries[lo].fn;
+        }
+    }
+    return found;
+}
+
 void bw_ovl_stub(u32 id, u32 addr)
 {
     char why[200];

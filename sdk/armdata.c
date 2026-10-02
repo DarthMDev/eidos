@@ -254,13 +254,25 @@ static u32 scan_code_pointers(const BwDataImage *img)
                                                          : r->addr + r->size;
             for (a = (lo + 3u) & ~3u; a + 4u <= hi; a += 4u) {
                 u8 *w = g_flat[k] + (a - r->addr);
-                long f = func_at(img, bw_rd32(w));
+                u32 value = bw_rd32(w);
+                long f = func_at(img, value);
+                BwDataFn fn = NULL;
                 u32 word;
 
-                if (f < 0 || listed(img, a)) {
+                if (listed(img, a)) {
                     continue;
                 }
-                word = (u32)(uintptr_t)img->funcs[f].fn;
+                if (f >= 0) {
+                    fn = img->funcs[f].fn;
+                } else if (img->overlay < 0) {
+                    /* Into an overlay window: the ARM9 data's save block
+                     * table points at ov010's functions. */
+                    fn = bw_ovl_code_entry(value);
+                }
+                if (fn == NULL) {
+                    continue;
+                }
+                word = (u32)(uintptr_t)fn;
                 memcpy(w, &word, 4);
                 n++;
             }

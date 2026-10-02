@@ -340,6 +340,17 @@ static void boot_print_resident(void)
     printf("\n");
 }
 
+/* A crash, panic or watchdog report's context (sdk/plat_crash.h): how far
+ * the run got, in the form tests/boot_run.cmake reads. */
+static void boot_report_context(void)
+{
+    fflush(stdout);
+    fprintf(stderr, "eidos_boot: stopped at frame %llu\n",
+            (unsigned long long)eidos_frame_count(&g_run.loop));
+    boot_print_resident();
+    fflush(stdout);
+}
+
 static void boot_finish(int status, const char *why)
 {
     printf("eidos_boot: %s after %llu frames, %llu vblank interrupts\n", why,
@@ -528,6 +539,7 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
     eidos_frame_init(&g_run.loop, &hooks, g_run.top, g_run.bottom);
     eidos_frame_set_current(&g_run.loop);
     bw_os_set_halt_hook(boot_frame, &g_run);
+    bw_plat_crash_context(boot_report_context);
     if (watchdog != 0) {
         bw_plat_watchdog(watchdog, boot_progress);
     }

@@ -91,6 +91,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import armdata          # noqa: E402  (name_address, SourceFile, exclusions)
 import overlay_table    # noqa: E402  (KNOWN_SINIT)
+import closure          # noqa: E402  (listing_veneers)
 
 EIDOS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_EXCLUSIONS = os.path.join(EIDOS_ROOT, "tools", "armdata_exclusions.txt")
@@ -817,6 +818,23 @@ class Aletheia:
                 ann[int(m.group(1), 16)] = (sym, tgt)
         return ann, funcs
 
+    def thumb_funcs(self, oid):
+        """Addresses of the overlay's Thumb functions: a `.thumb_func`
+        after a function's `.global` in asm/overlays/ovNNN.s."""
+        path = os.path.join(self.root, "asm", "overlays", "ov%03d.s" % oid)
+        out, last = set(), None
+        if not os.path.exists(path):
+            return out
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                s = line.strip()
+                if s.startswith(".global"):
+                    m = ADDR_FUNC.match(s.split()[-1])
+                    last = int(m.group(1), 16) if m else None
+                elif s.startswith(".thumb_func") and last is not None:
+                    out.add(last)
+        return out
+
     def data_object_relocs(self, oid):
         rng, objects, _ext = armdata.load_data_objects(self.root, "ov%03d" % oid)
         out = {}
@@ -855,6 +873,7 @@ class OvState:
         self.excluded = []         # (rel, why)
         self.replaced = []         # (rel, port file): asm bodies in C
         self.standins = []         # port stand-ins (stubs/ov/) compiled in
+        self.thumb = set()         # Thumb function addresses (the listing)
         self.defs = {}             # exported name -> unit
         self.at = {}               # addr -> defined function name (exported)
         self.known = set()         # function addresses known in the window
@@ -958,6 +977,12 @@ class Link:
                 a = hits[0] if hits else None
             if a is not None:
                 self.link_at.setdefault(a, n)
+        # A linker veneer is another address of its target (the listing's
+        # veneer_ labels, closure.listing_veneers): an overlay calling the
+        # veneer reaches what the link defines at the target.
+        for v, t in closure.listing_veneers(self.root).items():
+            if t in self.link_at:
+                self.link_at.setdefault(v, self.link_at[t])
 
     def _read_overlays(self):
         for oid in self.ids:
@@ -966,6 +991,7 @@ class Link:
             self.state[oid] = st
             ann, lfuncs = self.al.listing(oid)
             st.listing = ann
+            st.thumb = self.al.thumb_funcs(oid)
             st.known |= set(lfuncs)
             st.known |= set(self.al.ov_names.get(oid, {}))
             for (region, a), n in self.al.sdk_at.items():
@@ -1639,9 +1665,33 @@ def write_overlay_c(link, st, path):
         w("    }")
         w("}")
         w("")
+    # Every function of the overlay by the value a code pointer to it holds,
+    # for the ARM9 data's pointers into the window (sdk/overlay_image.c,
+    # bw_ovl_code_entry).
+    entries = {}
+    for a, n in st.at.items():
+        entries[a | (1 if a in st.thumb else 0)] = link.own(st, n)
+    for a, n in st.stubs.items():
+        entries.setdefault(a | (1 if a in st.thumb else 0), link.own(st, n))
+    declared = set(stub_names) | set(externs)
+    fresh = sorted(set(entries.values()) - declared)
+    if fresh:
+        w("/* The overlay's functions, for bw_ovl_code_entry; only the address is")
+        w(" * taken here. */")
+        for n in fresh:
+            w("extern void %s(void);" % n)
+        w("")
+    w("static const BwDataFunc k_entries[] = {")
+    for v in sorted(entries):
+        w("    { 0x%08Xu, %s, %s }," % (v, entries[v], c_str(entries[v])))
+    if not entries:
+        w("    { 0, NULL, NULL }")
+    w("};")
+    w("")
     w("const BwOvlImage bw_ovl_%s = {" % ov.tag)
-    w("    %du, &k_image, k_sinits, %du, %du, %du" % (
+    w("    %du, &k_image, k_sinits, %du, %du, %du," % (
         ov.id, len(st.sinits), len(st.at), len(st.stubs)))
+    w("    k_entries, %du" % len(entries))
     w("};")
     w("")
     write_if_changed(path, "\n".join(out))

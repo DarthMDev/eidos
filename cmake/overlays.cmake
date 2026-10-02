@@ -194,8 +194,13 @@ function(eidos_overlays name)
         ${_eidos_ovl_tools}/overlay_table.py
         ${_eidos_ovl_tools}/ovlink_exclusions.txt
         ${_eidos_ovl_tools}/../sdk/asm/ov
-        ${_eidos_ovl_tools}/../stubs/ov
         ${A_ROOT}/layout/layout.json)
+    # Port C for single overlay functions (tools/ovlink.py, --port-ov-dir):
+    # the directory exists only while there is some.
+    if(EXISTS ${_eidos_ovl_tools}/../stubs/ov)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            ${_eidos_ovl_tools}/../stubs/ov)
+    endif()
     # The set's shard directories and listings (ovlink writes the list): a
     # matched file added to one of them reruns the plan at the next build.
     file(STRINGS ${dir}/ovl_depends.txt deps)
