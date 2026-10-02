@@ -14,6 +14,11 @@
  * wakes, as on the console.
  *
  *     eidos_boot [--data-root PATH] [--frames N] [--window] [--watchdog S]
+ *                [--screenshot N[,N...]] [--screenshot-dir DIR]
+ *
+ * --screenshot saves both screens, as the hardware state has them at the
+ * end of each named frame, to DIR/eidos_boot_frame<N>.png (DIR defaults to
+ * the current directory), with or without a window.
  *
  * After N frames (default 600) it prints a summary and exits 0.  A panic on
  * the way (a stub reached, an overlay not in this build) ends the run with
@@ -65,6 +70,35 @@
 #endif
 
 #define BOOT_DEFAULT_FRAMES 600u
+
+/* --screenshot: the frames to save both screens at, and where. */
+#define BOOT_MAX_SHOTS 32
+static u64         g_shots[BOOT_MAX_SHOTS];
+static int         g_shot_count;
+static const char *g_shot_dir = ".";
+
+/* "N[,N...]": the frames --screenshot names.  0 on success. */
+static int parse_shots(const char *list)
+{
+    const char *p = list;
+
+    while (*p != '\0') {
+        char *end = NULL;
+        unsigned long long n = strtoull(p, &end, 10);
+
+        if (end == p || g_shot_count >= BOOT_MAX_SHOTS) {
+            return -1;
+        }
+        g_shots[g_shot_count++] = (u64)n;
+        p = end;
+        if (*p == ',') {
+            p++;
+        } else if (*p != '\0') {
+            return -1;
+        }
+    }
+    return g_shot_count > 0 ? 0 : -1;
+}
 
 #if EIDOS_BOOT
 
@@ -125,6 +159,144 @@ typedef struct BootRun {
 } BootRun;
 
 static BootRun g_run;
+
+/*
+ * A PNG of both screens, top above bottom (256 x 384, RGB), written with
+ * stored (uncompressed) deflate blocks: no compression library, and any
+ * viewer opens it.  One zlib block per scanline keeps each under 64 KiB.
+ */
+static u32 png_crc_table[256];
+
+static u32 png_crc(u32 crc, const u8 *p, size_t n)
+{
+    size_t i;
+
+    if (png_crc_table[1] == 0u) {
+        u32 c, k;
+        for (i = 0; i < 256u; i++) {
+            c = (u32)i;
+            for (k = 0; k < 8u; k++) {
+                c = (c & 1u) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+            }
+            png_crc_table[i] = c;
+        }
+    }
+    crc = ~crc;
+    for (i = 0; i < n; i++) {
+        crc = png_crc_table[(crc ^ p[i]) & 0xFFu] ^ (crc >> 8);
+    }
+    return ~crc;
+}
+
+static void png_be32(u8 *p, u32 v)
+{
+    p[0] = (u8)(v >> 24);
+    p[1] = (u8)(v >> 16);
+    p[2] = (u8)(v >> 8);
+    p[3] = (u8)v;
+}
+
+static int png_chunk(FILE *fp, const char *type, const u8 *data, u32 n)
+{
+    u8 head[8];
+    u8 tail[4];
+    u32 crc;
+
+    png_be32(head, n);
+    memcpy(head + 4, type, 4);
+    crc = png_crc(0, head + 4, 4);
+    crc = png_crc(crc, data, n);
+    png_be32(tail, crc);
+    return fwrite(head, 1, 8, fp) == 8 && (n == 0 || fwrite(data, 1, n, fp) == n)
+        && fwrite(tail, 1, 4, fp) == 4;
+}
+
+static int write_screens_png(const char *path, const u8 *top, const u8 *bottom)
+{
+    enum { W = 256, H = 384, ROW = 1 + W * 3 };
+    static const u8 sig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+    u8 ihdr[13];
+    u8 *z;
+    size_t zlen = 2 + (size_t)H * (5 + ROW) + 4;
+    size_t at = 0;
+    u32 a = 1, b = 0;
+    int y, x, ok;
+    FILE *fp;
+
+    z = (u8 *)malloc(zlen);
+    if (z == NULL) {
+        return -1;
+    }
+    z[at++] = 0x78;
+    z[at++] = 0x01;
+    for (y = 0; y < H; y++) {
+        const u8 *src = (y < 192 ? top : bottom) + (size_t)(y % 192) * W * 4;
+        u8 *row;
+        int i;
+
+        z[at++] = (u8)(y == H - 1 ? 1 : 0);
+        z[at++] = (u8)(ROW & 0xFF);
+        z[at++] = (u8)(ROW >> 8);
+        z[at++] = (u8)(~ROW & 0xFF);
+        z[at++] = (u8)((~ROW >> 8) & 0xFF);
+        row = z + at;
+        row[0] = 0;                 /* filter: none */
+        for (x = 0; x < W; x++) {
+            row[1 + x * 3 + 0] = src[x * 4 + 0];
+            row[1 + x * 3 + 1] = src[x * 4 + 1];
+            row[1 + x * 3 + 2] = src[x * 4 + 2];
+        }
+        for (i = 0; i < ROW; i++) {
+            a = (a + row[i]) % 65521u;
+            b = (b + a) % 65521u;
+        }
+        at += ROW;
+    }
+    png_be32(z + at, (b << 16) | a);
+    at += 4;
+
+    png_be32(ihdr, W);
+    png_be32(ihdr + 4, H);
+    ihdr[8] = 8;                    /* bit depth */
+    ihdr[9] = 2;                    /* RGB */
+    ihdr[10] = ihdr[11] = ihdr[12] = 0;
+
+    fp = fopen(path, "wb");
+    if (fp == NULL) {
+        free(z);
+        return -1;
+    }
+    ok = fwrite(sig, 1, 8, fp) == 8 && png_chunk(fp, "IHDR", ihdr, 13)
+      && png_chunk(fp, "IDAT", z, (u32)at) && png_chunk(fp, "IEND", NULL, 0);
+    ok = (fclose(fp) == 0) && ok;
+    free(z);
+    return ok ? 0 : -1;
+}
+
+/* Both screens as the hardware state has them now, saved for frame `n`. */
+static void boot_screenshot(BootRun *run, u64 n)
+{
+    size_t screen = (size_t)256 * 192 * 4;
+    u32 unsupported[2];
+    char path[1024];
+
+    if (run->top == NULL) {
+        run->top = (u8 *)calloc(1, screen);
+        run->bottom = (u8 *)calloc(1, screen);
+        if (run->top == NULL || run->bottom == NULL) {
+            bw_panic("eidos_boot", 0, "out of memory for the screens");
+        }
+    }
+    (void)g2d_hw_render_dsmem(NULL, run->top, run->bottom, unsupported);
+    snprintf(path, sizeof(path), "%s/eidos_boot_frame%llu.png", g_shot_dir,
+             (unsigned long long)n);
+    if (write_screens_png(path, run->top, run->bottom) == 0) {
+        printf("eidos_boot: frame %llu saved to %s\n", (unsigned long long)n, path);
+    } else {
+        fprintf(stderr, "eidos_boot: cannot write %s\n", path);
+    }
+    fflush(stdout);
+}
 
 /* Frames passed, for the watchdog's thread (a 32-bit word: no tearing). */
 static volatile u32 g_frames_seen;
@@ -225,6 +397,15 @@ static void boot_frame(void *user)
     eidos_frame_run_one(&run->loop);
     bw_arm7_tp_frame();
     g_frames_seen++;
+    {
+        u64 n = eidos_frame_count(&run->loop);
+        int i;
+        for (i = 0; i < g_shot_count; i++) {
+            if (g_shots[i] == n) {
+                boot_screenshot(run, n);
+            }
+        }
+    }
 
 #if EIDOS_BOOT_SDL
     if (run->plat != NULL) {
@@ -314,6 +495,11 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
     bw_ovl_install(&bw_ovl_set_boot, 0);
 #endif
     bw_port_reset();
+    printf("eidos_boot: DS address space %s; %lu code pointers the metadata "
+           "does not list relocated by the scan\n",
+           bw_ds_identity() ? "identity-mapped" : "on movable host blocks",
+           (unsigned long)bw_data_scanned());
+    fflush(stdout);
     bw_boot_link_init();
     commit_main_ram();
 
@@ -334,7 +520,8 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
 static void usage(void)
 {
     fprintf(stderr, "usage: eidos_boot [--data-root PATH] [--frames N] [--window] "
-                    "[--watchdog SECONDS]\n");
+                    "[--watchdog SECONDS] [--screenshot N[,N...]] "
+                    "[--screenshot-dir DIR]\n");
 }
 
 int main(int argc, char **argv)
@@ -345,6 +532,16 @@ int main(int argc, char **argv)
     unsigned long watchdog = 0;
     int i;
 
+#if EIDOS_BOOT
+    {
+        /* The DS address space at its own addresses (docs/boot.md,
+         * "Identity mapping"), before anything else maps memory. */
+        int status = 0;
+        if (bw_ds_identity_prepare(&status)) {
+            return status;
+        }
+    }
+#endif
     bw_plat_crash_install();
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--data-root") == 0 && i + 1 < argc) {
@@ -356,6 +553,13 @@ int main(int argc, char **argv)
                 usage();
                 return 2;
             }
+        } else if (strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
+            if (parse_shots(argv[++i]) != 0) {
+                usage();
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--screenshot-dir") == 0 && i + 1 < argc) {
+            g_shot_dir = argv[++i];
         } else if (strcmp(argv[i], "--window") == 0) {
             window = 1;
         } else if (strcmp(argv[i], "--watchdog") == 0 && i + 1 < argc) {
@@ -386,6 +590,8 @@ int main(int argc, char **argv)
 #else
     (void)window;
     (void)watchdog;
+    (void)g_shots;
+    (void)g_shot_dir;
     printf("eidos_boot: built with EIDOS_BOOT=OFF, so the game's boot is not "
            "linked into this binary (%llu frames requested, data root '%s'). "
            "Reconfigure with -DEIDOS_BOOT=ON; docs/boot.md has the plan.\n",

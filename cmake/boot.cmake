@@ -58,6 +58,23 @@ list(APPEND EIDOS_BOOT_SEEDS
     arm9_sdk/func_02081E7C.c  # MATHi_SHA1ProcessBlock, via MATHi_SHA1ProcessMessageBlockFunc
 )
 
+# Every matched file of the ARM9's game code (src/matched/arm9/), not only
+# what a call walk from NitroMain reaches.  The game reaches much of its
+# static module only through code pointers in its data (proc tables, save
+# block tables, callbacks), and aletheia's metadata lists only some of
+# those pointers: the run-time scan (docs/armdata.md, "Code pointers the
+# metadata does not list") finds the rest, but can only relocate a pointer
+# to a function the build defines.  Seeding the whole game module makes
+# every such function present, with no hand-kept seed list.  OFF keeps the
+# narrower call-walk closure (a smaller, faster build that stops earlier).
+option(EIDOS_BOOT_ALL_GAME
+       "Link every matched ARM9 game file into eidos_boot, not only NitroMain's call closure" ON)
+if(EIDOS_BOOT_ALL_GAME)
+    file(GLOB _boot_all_game RELATIVE ${ALETHEIA_ROOT}/src/matched
+         ${ALETHEIA_ROOT}/src/matched/arm9/*.c)
+    list(APPEND EIDOS_BOOT_SEEDS ${_boot_all_game})
+endif()
+
 # With overlays compiled in (EIDOS_OVERLAYS, cmake/overlays.cmake): the
 # matched ARM9 files that define what the overlays call, so the closure
 # carries them (tools/ovlink.py, ovl_arm9_seeds.txt).
@@ -231,6 +248,16 @@ set(EIDOS_BOOT_SHIM_REPLACED
     src/matched/arm9_sdk/func_02080964.c   # GX_ResetBankForTex, sdk/boot/gx.c
     src/matched/arm9_sdk/func_02080978.c   # GX_ResetBankForTexPltt, sdk/boot/gx.c
     src/matched/arm9_sdk/func_020809B4.c   # GX_ResetBankForSubOBJ, sdk/boot/gx.c
+    # Reached once every game file is seeded (EIDOS_BOOT_ALL_GAME).
+    src/matched/arm9_sdk/func_0208098C.c   # GX_ResetBankForClearImage, sdk/boot/gx.c
+    src/matched/arm9/func_02085A30.c       # a thread field getter, sdk/os_thread.c
+    src/matched/arm9_sdk/func_02080CA8.c   # GX_SendFifo64B, sdk/g3_fifo.c
+    src/matched/arm9_sdk/func_02082760.c   # MI_SendGXCommandAsync, sdk/mi_gx.c
+    src/matched/arm9_sdk/func_02082960.c   # MI_SendGXCommandAsyncFast, sdk/mi_gx.c
+    src/matched/arm9_sdk/func_02082BA0.c   # MI_Copy64B, sdk/mi_gx.c
+    src/matched/arm9_sdk/func_02087AE4.c   # OS_WaitVBlankIntr, sdk/os_interrupt.c
+    src/matched/twl/func_0272FEF4.c        # sdk/mi_gx.c
+    src/matched/twl/func_027300F0.c        # sdk/mi_gx.c
     src/matched/arm9_sdk/func_02082390.c   # MIi_DmaFill32Async, sdk/mi_dma.c
     src/matched/arm9_sdk/func_02082498.c   # MIi_DmaCopy32Async, sdk/mi_dma.c
     # sdk/boot/dwc_memfunc.c: dwc_memfunc.o's three functions over the one
@@ -245,6 +272,24 @@ set(EIDOS_BOOT_SHIM_REPLACED
     # stubs/reimpl_02036FD8.c: an ARM9 table's DS address passed as an
     # integer (docs/dsaddr-residue.md)
     src/matched/arm9/func_02036FD8.c
+    # stubs/reimpl_02023EF4.c: one callee declared under two prototypes
+    # (EIDOS_BOOT_ALL_GAME reaches it)
+    src/matched/arm9/func_02023EF4.c
+    # stubs/reimpl_0203174C.c: the save block constructor hands the object
+    # in r0 to a getter the matched C calls with no argument
+    src/matched/arm9/func_0203174C.c
+    # stubs/reimpl_0200523C.c: the boot sequence hands three return values
+    # to the next call in r0
+    src/matched/arm9/func_0200523C.c
+    # stubs/reimpl_020173D0.c: the heap id its caller leaves in r0
+    src/matched/arm9/func_020173D0.c
+    # stubs/reimpl_02061124.c: the frame heap's alignment in r2 and the
+    # block it returns in r0
+    src/matched/arm9/func_02061124.c
+    # stubs/reimpl_020319A4.c: the block id its caller leaves in r1
+    src/matched/arm9/func_020319A4.c
+    # stubs/reimpl_02035A60.c: the system context one call returns to the next in r0
+    src/matched/arm9/func_02035A60.c
 )
 
 # The pointer-width switches (CMakeLists.txt, "Pointer width") put a
@@ -304,7 +349,17 @@ list(APPEND EIDOS_BOOT_PORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02036FD8.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0203064C.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030678.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030608.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02030608.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02023EF4.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0203174C.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0200523C.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_020173D0.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02061124.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_020319A4.c
+    # Save-block callbacks aletheia has not found yet, reached only through
+    # the save block table (the file says how each was read).
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02035A60.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/hidden_save_blocks.c)
 if(NOT EIDOS_TCBL_MATCHED)
     # stubs/reimpl_ for the nine tcbl files (CMakeLists.txt, "Pointer
     # width"): the overlays' ARM9 callees reach the matched ones.
@@ -350,10 +405,14 @@ else()
     set(_boot_heap_matched 0)
 endif()
 
-set(_seed_args)
+# The seeds go through a file: with EIDOS_BOOT_ALL_GAME there are thousands,
+# past a Windows command line's length.
+set(_seed_lines)
 foreach(s ${EIDOS_BOOT_SEEDS})
-    list(APPEND _seed_args --seed src/matched/${s})
+    string(APPEND _seed_lines "src/matched/${s}\n")
 endforeach()
+file(WRITE ${EIDOS_BOOT_DIR}/boot_seeds.txt "${_seed_lines}")
+set(_seed_args --seed-file ${EIDOS_BOOT_DIR}/boot_seeds.txt)
 message(STATUS "EIDOS_BOOT: planning the boot (tools/bootlink.py plan)")
 execute_process(
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bootlink.py plan
@@ -569,7 +628,11 @@ else()
         # partly braced initialiser, a sizeof ratio of two element types.
         -Wno-builtin-declaration-mismatch -Wno-int-to-pointer-cast
         -Wno-pointer-to-int-cast -Wno-missing-field-initializers
-        -Wno-sizeof-array-div)
+        -Wno-sizeof-array-div
+        # The whole game module (EIDOS_BOOT_ALL_GAME) adds: a negative
+        # constant shifted (frustum bounds written as -6 << 16), and the
+        # MSL's one-line for loop in __kernel_rem_pio2.
+        -Wno-shift-negative-value -Wno-misleading-indentation)
     # With 8-byte pointers, GCC flags every cast between a pointer and a
     # 32-bit integer: 532 sites in the boot's matched files, the
     # pointer-width question docs/pointer-width.md measures (signal C).  They

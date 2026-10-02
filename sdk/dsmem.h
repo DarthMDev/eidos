@@ -69,6 +69,43 @@ u32 bw_ds_addr_of(const void *host);
  */
 void bw_ds_register(u32 addr, void *host, u32 size, const char *name);
 
+/*
+ * Withdraw the registration that starts at `addr`; 1 if there was one.
+ * For objects whose DS range belongs to them only for a while: an
+ * overlay's host objects are registered when it loads and withdrawn when
+ * its window passes to another overlay (sdk/overlay_image.c).  The bytes at
+ * the address are the flat region's again afterwards; copying the object's
+ * contents back first is the caller's choice.
+ */
+int bw_ds_unregister(u32 addr);
+
+/* 1 if a registered object covers any byte of [addr, addr + size). */
+int bw_ds_registered(u32 addr, u32 size);
+
+/*
+ * 1 when the address space is identity-mapped: main RAM (and, where the
+ * host allowed, WRAM, the register file, palette and OAM) lives at its own
+ * DS address in the host process, so a DS address stored in the game's
+ * data is the host address of its bytes and bw_ds_ptr(a) == (void *)a
+ * outside registered objects and VRAM.  Decided once, at the first
+ * bw_ds_reset; 0 means movable blocks (LP64 hosts, a host that refused the
+ * range, or BW_DS_IDENTITY=0 in the environment).  docs/boot.md, "Identity
+ * mapping".
+ */
+int bw_ds_identity(void);
+
+/*
+ * Called first thing by a program that wants the identity mapping (before
+ * it creates a window, a thread or anything else that maps memory): decide
+ * the mapping now, and where the host process has already put something in
+ * the ranges (a Win32 loader does; sdk/host_vm.c says why), run the
+ * program again as a child with them reserved from its start.  Returns 1
+ * when it did, with the child's exit status in *status, which the caller
+ * returns from main; 0 when this process should go on (identity-mapped, or
+ * on the fallback).
+ */
+int bw_ds_identity_prepare(int *status);
+
 /* ------------------------------------------------------------------ */
 /* I/O register file                                                   */
 /* ------------------------------------------------------------------ */

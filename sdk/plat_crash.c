@@ -59,6 +59,12 @@ static void bw_crash_print_addr(const char *what, uintptr_t addr)
         fprintf(stderr, "  %-6s 0x%08llX  (exe+0x%llX)\n", what,
                 (unsigned long long)((uintptr_t)nt->OptionalHeader.ImageBase + (addr - base)),
                 (unsigned long long)(addr - base));
+    } else if (addr >= 0x02000000u && addr < 0x08000000u) {
+        /* The DS's own address range (identity-mapped in an ILP32 boot):
+         * as a pc, a DS code address the data held that nothing relocated
+         * to a host function. */
+        fprintf(stderr, "  %-6s 0x%08llX  (a DS address)\n", what,
+                (unsigned long long)addr);
     } else {
         fprintf(stderr, "  %-6s 0x%08llX  (outside the executable)\n", what,
                 (unsigned long long)addr);

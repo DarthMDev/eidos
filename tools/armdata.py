@@ -79,7 +79,7 @@ DEFAULT_EXCLUSIONS = os.path.join(EIDOS_ROOT, "tools", "armdata_exclusions.txt")
 
 SYMBOLS_HDR = re.compile(r"^\s*\*\s*symbols:\s*$")
 SYMBOL_ROW = re.compile(
-    r"^\s*\*\s+([A-Za-z_]\w*)\s+(0x[0-9A-Fa-f]{8})\s+(thumb|arm|data)\b(.*)$")
+    r"^\s*\*\s+([A-Za-z_]\w*)\s+(0x[0-9A-Fa-f]{1,8})\s+(thumb|arm|data)\b(.*)$")
 ALIGN_COL = re.compile(r"^a(\d+)$")
 # An address spelled into a name: g_020A6C58, d_0214EA54_hdr, g0209DEA0,
 # tbl_0209DEB0, str_0203C238, func_02005440, ov009_func_0215580C.
@@ -171,6 +171,32 @@ def strip_c(text: str) -> str:
     return "".join(out)
 
 
+def strip_externs(code: str) -> str:
+    """`code` with every `extern` declaration blanked, up to its `;` at
+    brace depth zero (a struct or union body inside it included)."""
+    out = []
+    pos = 0
+    for m in re.finditer(r"\bextern\b", code):
+        if m.start() < pos:
+            continue
+        out.append(code[pos:m.start()])
+        depth = 0
+        i = m.end()
+        while i < len(code):
+            c = code[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+            elif c == ";" and depth <= 0:
+                break
+            i += 1
+        out.append(" ")
+        pos = i + 1
+    out.append(code[pos:])
+    return "".join(out)
+
+
 def split_top(text: str, sep: str):
     """Split on `sep` outside (), [] and {}."""
     parts, depth, cur = [], 0, []
@@ -240,6 +266,7 @@ class SourceFile:
         self.shadowed = set()             # declared or used other than as the global
         self.identifiers = set()
         self.header_functions = []        # (name, address) from the header
+        self.header_isa = None            # "arm" / "thumb" from the header
         self._header(text)
         self._symbols(text)
         self._scan(strip_c(text))
@@ -247,10 +274,25 @@ class SourceFile:
     def _header(self, text: str):
         head = text[:4096]
         am = re.search(r"^\s*\*\s*address:\s*(0x[0-9A-Fa-f]{8})", head, re.M)
+        im = re.search(r"^\s*\*\s*isa:\s*(arm|thumb)\b", head, re.M)
+        if im:
+            self.header_isa = im.group(1)
         fm = re.search(r"^\s*\*\s*function:\s*(.+)$", head, re.M)
         if not fm:
             return
-        names = [n.strip() for n in fm.group(1).split(",") if n.strip()]
+        listed = fm.group(1).strip()
+        # A unit's list runs on over indented lines while each ends in a
+        # comma (" *           sub_020074D8, sub_0200752C").
+        rest = head[fm.end():].splitlines()[1:]
+        k = 0
+        while listed.endswith(",") and k < len(rest):
+            cm = re.match(r"^\s*\*\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*,?)\s*$",
+                          rest[k])
+            if not cm:
+                break
+            listed += " " + cm.group(1)
+            k += 1
+        names = [n.strip() for n in listed.split(",") if n.strip()]
         for i, n in enumerate(names):
             a = name_address(n)
             if a is None and i == 0 and am:
@@ -330,8 +372,12 @@ class SourceFile:
         sh = set(re.findall(r"\b(?:struct|union|enum)\s+([A-Za-z_]\w*)", code))
         sh |= set(re.findall(r"\bgoto\s+([A-Za-z_]\w*)", code))
         sh |= set(re.findall(r"(?:^|[;{}])\s*([A-Za-z_]\w*)\s*:(?!:)", code, re.M))
-        sh |= set(re.findall(r"\}\s*\**\s*([A-Za-z_]\w*)\s*[;,\[]", code))
-        nonext = re.sub(r"\bextern\b[^;]*;", " ", code)
+        # An extern declaration, struct body included, declares the global
+        # itself: `extern struct { ... } d_02148BCC;` uses the name as the
+        # object, which a `#define NAME (*p)` keeps valid.  Only what is
+        # left once they are removed can shadow.
+        nonext = strip_externs(code)
+        sh |= set(re.findall(r"\}\s*\**\s*([A-Za-z_]\w*)\s*[;,\[]", nonext))
         for m in re.finditer(r"\b([A-Za-z_]\w*)\s*\**\s*\b([A-Za-z_]\w*)\s*(?=[;=\[,)])", nonext):
             if m.group(1) not in self.NOT_TYPES:
                 sh.add(m.group(2))
@@ -618,6 +664,7 @@ class Model:
         self.root = os.path.abspath(args.aletheia_root)
         self.region = args.region
         self.warnings = []
+        self.scan_code = not getattr(args, "no_code_scan", False)
         self.layout = Layout(self.root, self.region)
         self.data_range, self.objects, self.extern_kinds = load_data_objects(self.root, self.region)
         self.exclusions = load_exclusions(args.exclusions)
@@ -650,6 +697,7 @@ class Model:
         self._collect_names()
         self._collect_relocations(args)
         self._resolve_functions(args.all_functions)
+        self._code_entries()
 
     # -- which sources are matched ----------------------------------------
 
@@ -975,6 +1023,59 @@ class Model:
             if e["bind"] == "HOST":
                 self.anchors[e["host"][0]] = (e["host"][1], e["host"][2])
 
+    # -- the code-pointer scan (docs/armdata.md, "Code pointers the metadata
+    #    does not list") ----------------------------------------------------
+
+    def _isa_of(self, name: str, addr: int):
+        """'arm' or 'thumb' for the function the build defines as `name` at
+        `addr`: the defining file's header when it lists the function, else
+        any symbols-block row in the build for a spelling of that address."""
+        sf = self.by_path.get(self.defined_functions.get(name))
+        if sf is not None and sf.header_isa:
+            if any(a == addr for _n, a in sf.header_functions):
+                return sf.header_isa
+        cands = list(self.func_names.get(addr, [])) + [
+            name, "func_%08X" % addr, "sub_%08X" % addr]
+        for n in cands:
+            row = self.rows.get(n)
+            if row is not None and row[0] == addr and row[1] in ("arm", "thumb"):
+                return row[1]
+        return None
+
+    def _code_entries(self):
+        """Every function the build defines in this region, by the value a
+        code pointer to it holds (Thumb entries with bit 0 set), and the
+        ranges whose words the runtime checks against them: the data the
+        metadata covers (the static module from its first data object on,
+        and the data autoloads).  A word there that equals an entry exactly,
+        with the entry's own instruction-set bit, is a code pointer the
+        metadata did not list; the runtime relocates it like a listed one."""
+        self.scan_ranges = []
+        self.isa_unknown = 0
+        if self.region != "arm9" or not self.scan_code:
+            return
+        self.by_path = {sf.path: sf for sf in self.sources}
+        for addr in sorted(self.func_names):
+            n = self._function_name(addr)
+            if n is None:
+                continue
+            isa = self._isa_of(n, addr)
+            if isa is None:
+                self.isa_unknown += 1
+                continue
+            val = addr | (1 if isa == "thumb" else 0)
+            self.funcs.setdefault(val, n)
+        lo = self.data_range[0] if self.data_range else None
+        for s_, e_, _img, label in self.layout.copy:
+            if "ITCM" in label or "VRAM" in label:
+                continue
+            if label == "static":
+                if lo is None:
+                    continue
+                s_ = max(s_, lo)
+            if e_ > s_:
+                self.scan_ranges.append((s_, e_))
+
     def _function_name(self, addr: int):
         cands = list(self.func_names.get(addr, []))
         a = "func_%08X" % addr
@@ -1157,6 +1258,14 @@ def write_c(m: Model, path: str):
         w("    { 0, 0, 0, 0 }")
     w("};")
     w("")
+    w("/* Where the runtime looks for code pointers the metadata does not list. */")
+    w("static const BwDataRange k_scan[] = {")
+    for s_, e_ in m.scan_ranges:
+        w("    { 0x%08Xu, 0x%Xu, 0, 0 }," % (s_, e_ - s_))
+    if not m.scan_ranges:
+        w("    { 0, 0, 0, 0 }")
+    w("};")
+    w("")
     w("static const BwDataObject k_objects[] = {")
     for n in objs:
         e = m.names[n]
@@ -1173,7 +1282,8 @@ def write_c(m: Model, path: str):
     w("    k_relocs, %u," % len(m.relocs))
     w("    k_funcs, %u," % len(m.funcs))
     w("    k_anchors, %u," % len(anchors))
-    w("    k_objects, %u" % sum(1 for n in objs if m.names[n]["registered"]))
+    w("    k_objects, %u," % sum(1 for n in objs if m.names[n]["registered"]))
+    w("    k_scan, %u" % len(m.scan_ranges))
     w("};")
     w("")
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -1203,6 +1313,8 @@ def summary(m: Model, out):
     p("  code targets     %d (%d defined by the build, %d trap)" % (
         len(m.funcs), len(m.funcs) - traps, traps))
     p("  skipped in port objects %d" % len(m.reloc_skipped_port))
+    p("  code-pointer scan %d range(s); %d defined functions with no known "
+      "instruction set left out" % (len(m.scan_ranges), m.isa_unknown))
     for n, why in sorted(m.unresolved.items()):
         p("  unresolved %-28s %s" % (n, why))
     for n, (addr, definer) in sorted(m.excluded_used.items()):
@@ -1230,6 +1342,9 @@ def main(argv=None) -> int:
     ap.add_argument("--all-functions", action="store_true",
                     help="list every function the build defines, not only "
                          "the ones initialised data points at")
+    ap.add_argument("--no-code-scan", action="store_true",
+                    help="do not list the build's functions for the run-time "
+                         "scan for code pointers the metadata misses")
     ap.add_argument("--no-listing", action="store_true",
                     help="ignore asm/ listings (data_objects.json only)")
     ap.add_argument("--strict", action="store_true",

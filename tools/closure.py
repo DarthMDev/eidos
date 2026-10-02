@@ -71,7 +71,7 @@ ROOT = os.path.normpath(os.path.join(EIDOS_ROOT, "..", "aletheia"))
 
 ADDR_NAME = re.compile(r"^(?:sub|func|unit)_0([0-9A-Fa-f]{7})$")
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-SYMBOL_ROW = re.compile(r"^\s*\*\s+([A-Za-z_][A-Za-z0-9_]*)\s+(0x[0-9A-Fa-f]{8})\s+(thumb|arm|data)\s*$")
+SYMBOL_ROW = re.compile(r"^\s*\*\s+([A-Za-z_][A-Za-z0-9_]*)\s+(0x[0-9A-Fa-f]{1,8})\s+(thumb|arm|data)\b(?:\s+\S+)*\s*$")
 SYMBOLS_HDR = re.compile(r"^\s*\*\s*symbols:\s*$")
 CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 MEMBER = re.compile(r"(?:\.|->)\s*[A-Za-z_]\w*")

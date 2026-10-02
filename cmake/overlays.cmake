@@ -194,6 +194,7 @@ function(eidos_overlays name)
         ${_eidos_ovl_tools}/overlay_table.py
         ${_eidos_ovl_tools}/ovlink_exclusions.txt
         ${_eidos_ovl_tools}/../sdk/asm/ov
+        ${_eidos_ovl_tools}/../stubs/ov
         ${A_ROOT}/layout/layout.json)
     # The set's shard directories and listings (ovlink writes the list): a
     # matched file added to one of them reruns the plan at the next build.
@@ -208,7 +209,8 @@ function(eidos_overlays name)
         list(GET parts 2 hdr)
         file(RELATIVE_PATH rel "${A_ROOT}" "${src}")
         if(rel MATCHES "^\\.\\./" OR IS_ABSOLUTE "${rel}")
-            # Port C standing in for an asm body (sdk/asm/ov/).
+            # Port C standing in for an asm body (sdk/asm/ov/) or for an
+            # unmatched function (stubs/ov/).
             get_filename_component(rel "${src}" NAME)
             set(rel "port/${rel}")
         endif()

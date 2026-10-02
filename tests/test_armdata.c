@@ -107,7 +107,8 @@ static const BwDataImage k_img = {
     k_relocs, 5,
     k_funcs, 1,
     k_anchors, 1,
-    k_objects, 1
+    k_objects, 1,
+    NULL, 0
 };
 
 static void make_image(void)

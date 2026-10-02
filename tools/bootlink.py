@@ -316,7 +316,11 @@ def defined_names(idx, source):
 
 def plan(args):
     idx = closure.Index()
-    seeds = [idx.resolve_seed(s) for s in args.seed]
+    seed_names = list(args.seed)
+    for path in args.seed_file:
+        with open(path, encoding="utf-8") as fh:
+            seed_names.extend(line.strip() for line in fh if line.strip())
+    seeds = [idx.resolve_seed(s) for s in seed_names]
     excluded = read_list(args.exclude_file)
     unknown = [s for s in excluded if s not in idx.sources]
     if unknown:
@@ -651,6 +655,16 @@ def generate(args):
                 unit.consts.add(name)
                 continue
             if name in defined:
+                # A spelling another file defines at another address: the
+                # SDK's name reused for a different function (sub_0204968C.c
+                # calls 0x020307B0 "ENV_SetResourceSet"; the SDK's is at
+                # 0x0206434C).  The file's own symbols row says which one it
+                # calls, and mwcc's link went by that address.
+                if kind in ("arm", "thumb") and addr is not None and addr in func_at \
+                        and func_at[addr] != name:
+                    daddr = defined_addr(idx, rel_to_root(defined[name]), name)
+                    if daddr is not None and daddr != addr:
+                        unit.renames[name] = func_at[addr]
                 continue
             is_data = kind == "data" or klass == "data"
             if not is_data and addr is not None and addr in func_at:
@@ -934,6 +948,8 @@ def main(argv=None):
     p = sub.add_parser("plan")
     p.add_argument("--aletheia-root", required=True)
     p.add_argument("--seed", action="append", default=[])
+    p.add_argument("--seed-file", action="append", default=[],
+                   help="file listing seeds, one per line (repeatable)")
     p.add_argument("--exclude-file", required=True)
     p.add_argument("--shim-sources", action="append", required=True,
                    help="file listing port sources (repeatable)")
