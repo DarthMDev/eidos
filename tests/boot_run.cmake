@@ -4,7 +4,8 @@
 #
 #   cmake -DBOOT=<eidos_boot> -DDATA=<BW_DATA_ROOT> [-DFRAMES=<n>]
 #         [-DMIN_FRAMES=<n>] [-DKNOWN_STOP=<regex>] [-DRESIDENT=<ids>]
-#         [-DWINDOW=1] [-DWATCHDOG=<seconds>] [-DLP64=1] -P boot_run.cmake
+#         [-DPRESS=<buttons@frame>] [-DWINDOW=1] [-DWATCHDOG=<seconds>]
+#         [-DLP64=1] -P boot_run.cmake
 #
 # The boot needs the player's game data: the file tree under DATA and the
 # ARM9 image beside it (DATA/../arm9_dec.bin, docs/armdata.md).  Without
@@ -27,6 +28,8 @@
 # With 8-byte pointers (-DLP64=1) the boot cannot run (docs/armdata.md,
 # "Pointer width"); the test then checks that it refuses with the data
 # layer's own message rather than crashing.
+# PRESS passes eidos_boot's --press (START@4800: past the title screen into
+# its menu).
 # WINDOW=1 runs it with --window (the caller sets SDL_VIDEODRIVER and
 # SDL_AUDIODRIVER to dummy): the window and the audio queue live on the
 # frame thread, and a run that stalls there fails on the watchdog.
@@ -48,6 +51,9 @@ endif()
 set(window_arg)
 if(WINDOW)
     set(window_arg --window)
+endif()
+if(DEFINED PRESS AND NOT "${PRESS}" STREQUAL "")
+    list(APPEND window_arg --press ${PRESS})
 endif()
 execute_process(COMMAND "${BOOT}" --data-root "${DATA}" --frames ${FRAMES}
                         --watchdog ${WATCHDOG} ${window_arg}

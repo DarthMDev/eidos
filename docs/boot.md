@@ -314,15 +314,23 @@ documented next stop at or past the furthest frame it is known to reach
 (both set in `cmake/boot.cmake`); `test_boot_window` runs 300 frames with
 `--window` through SDL's dummy drivers.
 
-**How far it gets.** With the title overlays compiled in, the whole start:
-the system initialiser and the heaps, the boot sequence (`func_0200523C`:
-the resident ov010 and ov011, the network library's set-up in ov009 and
-ov013, the save layout with its 69 blocks, ov228's save-data set-up), then
-the frame loop: the Nintendo and The Pokemon Company logos (frame 30), the
-copyright screen (frame 240), the opening (ov179, from about frame 600),
-and the title (ov088, from about frame 4000), where it stops at frame 4515
-(the CARD and cartridge asm bodies are the current edge). The 3D layer is
-composed, so the opening's and the title's models show.
+**How far it gets.** With the title overlays compiled in, to the title
+menu. The system initialiser and the heaps; the boot sequence
+(`func_0200523C`: the resident ov010 and ov011, the network library's set-up
+in ov009 and ov013, the save layout with its 69 blocks, ov228's save-data
+set-up); then the frame loop: the Nintendo and The Pokemon Company logos
+(frame 30), the copyright screen (frame 240), the opening (ov179, from about
+frame 600), and the title screen (ov088, "PRESS START", from about frame
+4600). With no input the game loops back to the opening, as the cartridge
+does; 20000 frames run without a stop. With `--press START@4800` (or the
+key in a window) the title menu opens (NEW GAME, MYSTERY GIFT, NINTENDO WFC
+SETTINGS, MIC TEST) and runs; `test_boot_run` asserts exactly that. What
+lies past the menu (a new game's first scenes, the field) is the next
+frontier.
+
+`--press BUTTONS@FRAME[:HOLD]` and `--input SCRIPT` give the run timed
+input (sdk/input.h's script), which joins a window's keys: `bw_input_frame`
+runs at every frame, before its vblank.
 
 **What the run needed**, each written where its kind of answer lives:
 

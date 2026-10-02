@@ -468,7 +468,7 @@ file(GENERATE OUTPUT ${EIDOS_BOOT_DIR}/armdata_sources.txt
 ${_boot_armdata_txt}
 ")
 set(_boot_port_units ${EIDOS_BOOT_PORT_SOURCES} ${EIDOS_BOOT_ASM_SUBST})
-eidos_armdata(bw_arm9_data
+eidos_armdata(bw_arm9_data CODE_SCAN
     SOURCES_LIST ${EIDOS_BOOT_DIR}/armdata_sources.txt
     BIND ${_boot_port_units})
 
@@ -656,24 +656,30 @@ else()
     set(_boot_lp64 1)
 endif()
 # With the title overlays compiled in (EIDOS_OVERLAYS) the boot runs the
-# frame loop: the Nintendo and copyright screens, the opening (ov179), then
-# the title (ov088).  The test asks for more frames than it gets through and
-# judges the stop: it must be the documented next one, and at or past the
-# furthest frame the boot is known to reach (tests/boot_run.cmake).  Update
-# both when the boot gets further; docs/boot.md, "How far it gets", says
-# what each stop is.
+# frame loop: the Nintendo and copyright screens, the opening (ov179), the
+# title (ov088, from about frame 4600), and with START pressed at frame 4800
+# the title menu, where it stays (ov010, ov011 and ov088 resident).  The test
+# asks for that: all the frames, the menu's overlays at the end.  A stop on
+# the way passes only if it is the documented next one and at or past the
+# furthest frame the boot is known to reach (tests/boot_run.cmake); update
+# these when the boot gets further.  docs/boot.md, "How far it gets".
 set(_boot_frames 120)
 set(_boot_min_frames 0)
 set(_boot_known_stop "")
+set(_boot_press "")
+set(_boot_resident "")
 if(NOT "${_eidos_ovls}" STREQUAL "")
-    set(_boot_frames 8000)
-    set(_boot_min_frames 4515)
+    set(_boot_frames 6000)
+    set(_boot_min_frames 6000)
     set(_boot_known_stop "PANIC in boot stub reached")
+    set(_boot_press "START@4800")
+    set(_boot_resident "10 11 88")
 endif()
 add_test(NAME test_boot_run
     COMMAND ${CMAKE_COMMAND} -DBOOT=$<TARGET_FILE:eidos_boot>
             -DDATA=${BW_DATA_ROOT_ABS} -DFRAMES=${_boot_frames} -DWATCHDOG=60
-            -DMIN_FRAMES=${_boot_min_frames}
+            -DMIN_FRAMES=${_boot_min_frames} "-DPRESS=${_boot_press}"
+            "-DRESIDENT=${_boot_resident}"
             -DLP64=${_boot_lp64} "-DKNOWN_STOP=${_boot_known_stop}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/boot_run.cmake)
 set_tests_properties(test_boot_run PROPERTIES

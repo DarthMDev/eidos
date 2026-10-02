@@ -7,9 +7,13 @@
 #       [REGION arm9]             or ovNNN (compiled overlays use cmake/overlays.cmake)
 #       [MATCHED <src>...]        the matched sources to compile with the
 #                                 header force-included
-#       [BIND <src>...])          port sources whose data names are bound
+#       [BIND <src>...]           port sources whose data names are bound
 #                                 like a matched file's; the caller includes
 #                                 the header in them itself
+#       [CODE_SCAN])              list every function the sources define for
+#                                 the run-time scan for code pointers the
+#                                 metadata misses (docs/armdata.md); only for
+#                                 a program that links them all (the boot)
 #
 # Writes <build>/armdata/<prefix>.c and <prefix>.h and sets <prefix>_C and
 # <prefix>_H in the caller's scope.  The .c goes into the target that links
@@ -32,7 +36,7 @@ set(EIDOS_ARMDATA_EXCLUSIONS ${CMAKE_CURRENT_LIST_DIR}/../tools/armdata_exclusio
 get_filename_component(EIDOS_ARMDATA_EXCLUSIONS "${EIDOS_ARMDATA_EXCLUSIONS}" ABSOLUTE)
 
 function(eidos_armdata prefix)
-    cmake_parse_arguments(A "" "SOURCES_LIST;REGION" "MATCHED;BIND" ${ARGN})
+    cmake_parse_arguments(A "CODE_SCAN" "SOURCES_LIST;REGION" "MATCHED;BIND" ${ARGN})
     if(NOT A_SOURCES_LIST)
         message(FATAL_ERROR "eidos_armdata(${prefix}): SOURCES_LIST is required")
     endif()
@@ -53,6 +57,9 @@ function(eidos_armdata prefix)
     endif()
 
     set(bind_args)
+    if(A_CODE_SCAN)
+        list(APPEND bind_args --code-scan)
+    endif()
     foreach(src ${A_BIND})
         list(APPEND bind_args --bind-source ${src})
     endforeach()

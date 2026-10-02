@@ -664,7 +664,7 @@ class Model:
         self.root = os.path.abspath(args.aletheia_root)
         self.region = args.region
         self.warnings = []
-        self.scan_code = not getattr(args, "no_code_scan", False)
+        self.scan_code = getattr(args, "code_scan", False)
         self.layout = Layout(self.root, self.region)
         self.data_range, self.objects, self.extern_kinds = load_data_objects(self.root, self.region)
         self.exclusions = load_exclusions(args.exclusions)
@@ -1360,9 +1360,11 @@ def main(argv=None) -> int:
     ap.add_argument("--all-functions", action="store_true",
                     help="list every function the build defines, not only "
                          "the ones initialised data points at")
-    ap.add_argument("--no-code-scan", action="store_true",
-                    help="do not list the build's functions for the run-time "
-                         "scan for code pointers the metadata misses")
+    ap.add_argument("--code-scan", action="store_true",
+                    help="list every function the build defines, and the data "
+                         "ranges, for the run-time scan for code pointers the "
+                         "metadata misses (a program that links everything it "
+                         "names: the boot)")
     ap.add_argument("--no-listing", action="store_true",
                     help="ignore asm/ listings (data_objects.json only)")
     ap.add_argument("--strict", action="store_true",

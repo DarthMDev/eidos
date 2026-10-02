@@ -116,7 +116,9 @@ it. The rule is exact equality with a function entry, instruction-set bit
 included, which a number in a table is very unlikely to meet; a false match
 in a code range would be harmless (the host never reads ARM code as data),
 which is why the static module's code and the ITCM and VRAM autoloads are
-not scanned at all. `--no-code-scan` turns it off.
+not scanned at all. The generator writes the list only with `--code-scan`
+(`eidos_armdata(... CODE_SCAN)`), which the boot passes: a program that
+links every function its sources define.
 
 A pointer is only as good as the function behind it. aletheia's
 disassembler took some functions reached only through tables for data
