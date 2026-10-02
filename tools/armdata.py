@@ -35,8 +35,8 @@ This script reads only metadata, never game bytes:
                              and to which address
   layout/matched/**/*.json   which function is at which address
   layout/symbols_sdk.txt     SDK functions by address
-  asm/<region>/*.s           only the `-> symbol` annotations of the
-                             reassembly listings (which word points at which
+  asm/arm9/*.s               only the `-> symbol` annotations of the
+  asm/overlays/ovNNN.s       reassembly listings (which word points at which
                              symbol); the words themselves are not read
   the build's sources        `symbols:` blocks, extern declarations and the
                              definitions each file makes
@@ -54,8 +54,9 @@ time out of the player's own file.
         --out-c bw_arm9_data.c --out-h bw_arm9_data.h [--summary]
 
 `--region ovNNN` selects an overlay instead of the ARM9 static module (the
-copy ranges and relocations then describe that overlay's image); the
-runtime side of overlays is not wired yet (docs/armdata.md).
+copy ranges and relocations then describe that overlay's image).  Compiled
+overlays get their tables from tools/ovlink.py, which reuses this module
+(docs/overlays.md).
 
 Standard library only.
 """
@@ -98,6 +99,7 @@ C_KEYWORDS = {
 # (SDK_IRQ_STACKSIZE = 0x800, SDK_OVERLAY_NUMBER = 0xED) are symbols whose
 # *address* is the value, and the matched code only ever casts them.
 CONST_LIMIT = 0x01000000
+MAIN_RAM_BASE = 0x02000000
 
 
 def hx(v: int) -> str:
@@ -509,7 +511,8 @@ def listing_annotations(root: str, region: str, layout: Layout):
     if region == "arm9":
         files = sorted(glob.glob(os.path.join(root, "asm", "arm9", "*.s")))
     else:
-        files = sorted(glob.glob(os.path.join(root, "asm", region, "*.s")))
+        # aletheia keeps one listing per overlay, asm/overlays/ovNNN.s.
+        files = sorted(glob.glob(os.path.join(root, "asm", "overlays", region + ".s")))
     bases = {"arm9_main": layout.load_address}
     lay_path = os.path.join(root, "layout", "layout.json")
     with open(lay_path, encoding="utf-8") as fh:
@@ -806,10 +809,15 @@ class Model:
             e["section"] = sec
             e["size"] = sizes.get(addr, 0)
             port = self.port_object_at(addr)
-            if e["object"] and sec != "const" and port is None:
+            # Below main RAM nothing backs a name: the ITCM's code (the
+            # autoload copied to 0x01FF8000), which matched files name only
+            # for its address (`&OS_IrqHandler` as a sentinel).  The name is
+            # that address as a value, as for a linker constant.
+            itcm = sec != "const" and addr < MAIN_RAM_BASE and port is None
+            if e["object"] and sec != "const" and not itcm and port is None:
                 e["bind"] = "OBJECT"
                 continue
-            if sec == "const":
+            if sec == "const" or itcm:
                 e["bind"] = "CONST"
             elif port is not None:
                 e["bind"] = "HOST"

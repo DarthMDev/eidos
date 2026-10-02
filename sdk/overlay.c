@@ -15,7 +15,9 @@
  *                        ROM extent from the FAT when the port has one;
  *   FS_LoadOverlayImage  the presence check, then the data reset hook, then
  *                        the overlay is resident and any overlay sharing its
- *                        RAM is not;
+ *                        RAM is not;  an overlay compiled into the executable
+ *                        (sdk/overlay_image.c, the provider) skips the
+ *                        presence check and loads through the provider;
  *   FS_StartOverlay      the static initialisers, in table order;
  *   FS_EndOverlay /      not resident any more (the game has no global
  *   FS_UnloadOverlay...  destructors, aletheia's docs/MATCHING.md, so the
@@ -49,7 +51,14 @@
 
 static const BwOverlayTable *g_table;
 static BwOverlayImageHook    g_image_hook;
+static const BwOverlayProvider *g_provider;   /* sdk/overlay_image.c */
 static u8                    g_loaded[BW_OVL_MAX];
+
+/* 1 if overlay `id` is compiled into this executable (the provider says). */
+static int compiled(u32 id)
+{
+    return g_provider != NULL && g_provider->compiled(id);
+}
 
 /* ------------------------------------------------------------------ */
 /* The registry                                                         */
@@ -131,6 +140,14 @@ void bw_overlay_describe(u32 id, char *out, u32 out_size)
                  (unsigned long)(d->ram_address + d->ram_size));
         return;
     }
+    if (compiled(id)) {
+        snprintf(out, out_size,
+                 "overlay %lu (0x%08lX..0x%08lX): compiled into this build; a "
+                 "function it lacks is a stub that panics when reached",
+                 (unsigned long)id, (unsigned long)d->ram_address,
+                 (unsigned long)(d->ram_address + d->ram_size));
+        return;
+    }
     if (r == BW_OVL_PRESENT) {
         snprintf(out, out_size,
                  "overlay %lu (0x%08lX..0x%08lX): present, %lu of %lu known functions",
@@ -160,6 +177,11 @@ void bw_overlay_describe(u32 id, char *out, u32 out_size)
 void bw_overlay_set_image_hook(BwOverlayImageHook hook)
 {
     g_image_hook = hook;
+}
+
+void bw_overlay_set_provider(const BwOverlayProvider *provider)
+{
+    g_provider = provider;
 }
 
 int bw_overlay_is_loaded(u32 id)
@@ -245,6 +267,7 @@ BOOL FS_LoadOverlayImage(BwOverlayInfo *info)
     const BwOverlayTable *t = bw_overlay_table();
     const BwOverlayDesc *d = desc_of(info);
     char why[512];
+    int is_compiled;
     u32 lo;
     u32 hi;
     u32 i;
@@ -252,11 +275,12 @@ BOOL FS_LoadOverlayImage(BwOverlayInfo *info)
     if (d == NULL) {
         return FALSE;
     }
-    if (bw_overlay_check(d->id, NULL) != BW_OVL_PRESENT) {
+    is_compiled = compiled(d->id);
+    if (!is_compiled && bw_overlay_check(d->id, NULL) != BW_OVL_PRESENT) {
         bw_overlay_describe(d->id, why, sizeof(why));
         bw_panic("FS_LoadOverlay", d->ram_address, why);
     }
-    if (g_image_hook == NULL) {
+    if (!is_compiled && g_image_hook == NULL) {
         snprintf(why, sizeof(why),
                  "overlay %lu is present but no image hook is installed to reset "
                  "its data (0x%lX bytes at 0x%08lX, .bss 0x%lX); see "
@@ -278,7 +302,11 @@ BOOL FS_LoadOverlayImage(BwOverlayInfo *info)
             g_loaded[i] = 0;
         }
     }
-    g_image_hook(d);
+    if (is_compiled) {
+        g_provider->load(d);
+    } else {
+        g_image_hook(d);
+    }
     g_loaded[d->id] = 1;
     return TRUE;
 }
@@ -295,6 +323,10 @@ void FS_StartOverlay(BwOverlayInfo *info)
     u32 i;
 
     if (d == NULL) {
+        return;
+    }
+    if (compiled(d->id)) {
+        g_provider->start(d);
         return;
     }
     for (i = 0; i < d->sinit_count; i++) {

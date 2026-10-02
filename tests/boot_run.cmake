@@ -15,7 +15,9 @@
 #     (...) is not in this build": the boot got as far as the first overlay
 #     the build does not compile (sdk/overlay.c), which is the boundary of
 #     the port's code, not a port bug;
-#   - all FRAMES frames ran ("eidos_boot: ran after N frames").
+#   - all FRAMES frames ran ("eidos_boot: ran after N frames");
+#   - the stop the build documents as today's (-DKNOWN_STOP=<regex>, set by
+#     cmake/boot.cmake when overlays are compiled in).
 # With 8-byte pointers (-DLP64=1) the boot cannot run (docs/armdata.md,
 # "Pointer width"); the test then checks that it refuses with the data
 # layer's own message rather than crashing.
@@ -51,6 +53,12 @@ endif()
 if(all MATCHES "PANIC in FS_LoadOverlay at 0x[0-9A-F]+: overlay [0-9]+ \\([^)]*\\) is not in this build")
     string(REGEX MATCH "overlay [0-9]+ \\([^)]*\\) is not in this build" stop "${all}")
     message(STATUS "the boot stopped at the overlay boundary: ${stop}")
+    return()
+endif()
+# The stop the build expects today (cmake/boot.cmake, KNOWN_STOP): where
+# the run ends once the overlays it loads are compiled in, documented there.
+if(NOT "${KNOWN_STOP}" STREQUAL "" AND all MATCHES "${KNOWN_STOP}")
+    message(STATUS "the boot stopped at the known stop: ${KNOWN_STOP}")
     return()
 endif()
 if(rc EQUAL 0 AND all MATCHES "eidos_boot: ran after ${FRAMES} frames")

@@ -1,0 +1,51 @@
+{
+ "tool": "synthetic",
+ "region": "ov000",
+ "functions": [
+  {
+   "name": "func_02200000",
+   "address": "0x02200000",
+   "kind": "game",
+   "region": "ov000",
+   "source": "src/matched/ov/ov000_func_02200000.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  },
+  {
+   "name": "func_02200010",
+   "address": "0x02200010",
+   "kind": "game",
+   "region": "ov000",
+   "source": "src/matched/ov/ov000_func_02200010.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  },
+  {
+   "name": "func_02200020",
+   "address": "0x02200020",
+   "kind": "game",
+   "region": "ov000",
+   "source": "src/matched/ov/ov000_func_02200020.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  },
+  {
+   "name": "func_02200040",
+   "address": "0x02200040",
+   "kind": "game",
+   "region": "ov000",
+   "source": "src/matched/ov/ov000_func_02200040.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  },
+  {
+   "name": "func_02200050",
+   "address": "0x02200050",
+   "kind": "game",
+   "region": "ov000",
+   "source": "src/matched/ov/ov000_func_02200050.c",
+   "isa": "thumb",
+   "status": "EXACT"
+  }
+ ]
+}

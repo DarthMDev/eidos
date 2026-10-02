@@ -3,7 +3,8 @@
  * matched code's names.  docs/armdata.md is the design.
  *
  * tools/armdata.py writes, into the build tree, one BwDataImage per region
- * (the ARM9 static module now; overlays later) and a forced-include header
+ * (the ARM9 static module; tools/ovlink.py writes one per compiled overlay,
+ * docs/overlays.md) and a forced-include header
  * for the matched sources.  Everything in a BwDataImage is an address, a
  * size or a name: the bytes are copied at run time out of the player's own
  * extract/arm9_dec.bin (bw_arm9_rodata).
@@ -78,7 +79,8 @@ typedef struct BwDataRange {
     u32 addr;                  /* DS address                                */
     u32 size;
     u32 image_addr;            /* where its bytes are in arm9_dec.bin, as an
-                                  address bw_arm9_rodata takes              */
+                                  address bw_arm9_rodata takes; for an
+                                  overlay, the offset into its own file     */
     u32 copy;                  /* 1: copied from the image; 0: zeroed       */
 } BwDataRange;
 
@@ -158,7 +160,7 @@ enum {
     BW_DATA_E_LP64      = -3,   /* pointer words cannot hold host pointers    */
     BW_DATA_E_UNBACKED  = -4,   /* an address no DS region or object backs    */
     BW_DATA_E_LAYOUT    = -5,   /* the copy found the registry not empty      */
-    BW_DATA_E_UNSUPPORTED = -6  /* an overlay image (not wired yet)           */
+    BW_DATA_E_UNSUPPORTED = -6  /* no longer returned: overlay images load    */
 };
 
 /* Installer flags. */

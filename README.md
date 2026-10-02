@@ -2564,8 +2564,8 @@ matched ones, so a function nothing matched names is invisible here, and an
 overlay could be reported present while one is missing. And 1046 function
 names repeat across overlays that share RAM (`func_02155244` is in ov9 and
 ov10), so compiling two such overlays into one executable needs per-overlay
-symbol names; the registry keys every function by overlay and address, so
-it is ready for that, but the build is not yet. Only ov230 has static
+symbol names: `tools/ovlink.py` gives each compiled overlay its own
+(`ov010_func_02155244`), as the next section describes. Only ov230 has static
 initialisers (five; aletheia's `docs/MATCHING.md`), and the generator refuses
 any other non-empty list rather than guess.
 
@@ -2575,6 +2575,38 @@ all 237 `FS_LoadOverlayInfo` headers word for word with `y9.bin`, the file
 extents with the FAT, and ov230's initialisers with its decompressed image.
 `test_overlay_refuses` checks the panic message. **70 checks in both pointer
 widths.**
+
+#### Overlays compiled in
+
+`docs/overlays.md` is the design. `tools/ovlink.py` compiles a set of
+overlays into one executable (`eidos_overlays()` in `cmake/overlays.cmake`;
+`EIDOS_OVERLAYS` puts one into `eidos_boot`, the title path by default when
+`EIDOS_BOOT` is on):
+
+- each overlay's names are renamed `ovNNN_<name>` by a forced-include header,
+  so overlays sharing a window link side by side; a call into a window from
+  outside it goes through a generated trampoline that asks which overlay is
+  resident and calls its function, or panics naming what is there;
+- loading one copies its file from the player's `extract/overlays_dec/` into
+  its window in the port's main RAM, zeroes the `.bss`, binds the overlay's
+  own data names and relocates the pointer words the metadata lists, the
+  ARM9 image's model (`docs/armdata.md`) applied at load time
+  (`sdk/overlay_image.c`);
+- a function the build lacks (unmatched, an mwcc `asm` body) is a stub that
+  panics naming the overlay and the address, so the loader's presence check
+  is per function: a compiled overlay with stubs loads and runs until it
+  reaches one.
+
+The title set (ov009, ov010, ov011, ov013, ov017, ov228, ov088, ov179) is
+about 3200 matched sources (aletheia's count on 2026-10-01; it grows with
+every wave), 30 `asm` files and 2 files that call another file's `static`
+functions left to stubs, 340 trampolines; it compiles warning-free and
+links at both pointer widths, and `test_ovlink_title` loads all eight from
+the extract, every listed pointer word checked against the player's files.
+`tests/test_ovlink.c` checks two synthetic overlays sharing one window, both
+loaded alternately and reached from ARM9 code and from a third overlay;
+`tests/test_ovlink_real.c` loads ov088 and ov179 from the extract and runs a
+matched function of each.
 
 ## The first-run extractor (install/)
 
