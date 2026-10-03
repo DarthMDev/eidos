@@ -655,6 +655,7 @@ void g3d_target_antialias(G3dTarget *t);
 #define G3D_ATTR_ID(a)          (((a) >> 24) & 0x3Fu)
 #define G3D_ATTR_LIGHTS(a)      ((a) & 0xFu)
 #define G3D_ATTR_XLU_DEPTH(a)   (((a) >> 11) & 1u)
+#define G3D_ATTR_DEPTH_EQ(a)    (((a) >> 14) & 1u)
 #define G3D_ATTR_FOG(a)         (((a) >> 15) & 1u)
 #define G3D_POLY_MODE_MODULATE  0u
 #define G3D_POLY_MODE_DECAL     1u

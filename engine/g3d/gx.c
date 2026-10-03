@@ -181,6 +181,17 @@ static void emit_vertex(G3dGx *gx)
                   &v->x, &v->y, &v->z, &v->w);
     v->s = gx->cs;
     v->t = gx->ct;
+    if ((gx->teximage >> 30) == 1u) {
+        /* [HW] TEXIMAGE_PARAM bits 30-31, mode 1: the texture matrix
+         * transforms the texcoord.  The vector is (S, T, 1/16, 1/16) in
+         * the 1.11.4 format and the matrix is 1.19.12, so a raw sixteenth
+         * of a texel is S' = (S*M0 + T*M4 + M8 + M12) >> 12 (GBATEK). */
+        const fx32 *m = gx->mtx.tex.m;
+        s64 s = gx->cs, t = gx->ct;
+
+        v->s = (s32)((s * m[0] + t * m[4] + m[8] + m[12]) >> 12);
+        v->t = (s32)((s * m[1] + t * m[5] + m[9] + m[13]) >> 12);
+    }
     v->r = gx->cr;
     v->g = gx->cg;
     v->b = gx->cb;

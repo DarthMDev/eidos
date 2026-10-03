@@ -22,14 +22,12 @@
  *         when no toon table is loaded (G3dTarget.toon).
  *   [PO]  a decision that belongs to the port rather than to either.
  *
- * The three approximations worth knowing about:
+ * The approximations worth knowing about:
  *
- *   [AP] **Texture coordinates are interpolated affinely along a span**,
- *        not divided per pixel.  The brief this was built to asks for
- *        that, and for the near-axis-aligned geometry a map chunk is
- *        made of it is not visible; it is still an approximation, and
- *        the place a future comparison against a real DS frame would
- *        first show a difference is a steeply oblique floor polygon.
+ *   [HW] Texture coordinates and colour are perspective correct: they
+ *        are divided by w at the vertices, interpolated with 1/w, and
+ *        divided back per pixel.  Polygons are clipped to the near, left,
+ *        right, top and bottom planes before the divide.
  *   [AP] **The fill rule is a top-left rule at pixel centres**, in 20.4
  *        fixed point.  The DS's own edge inclusion is not documented
  *        precisely enough anywhere public to transcribe, so this is a
@@ -165,15 +163,32 @@ static void clip_lerp(ClipV *o, const ClipV *a, const ClipV *b, s64 num,
  */
 #define WMIN 16   /* 1/256 in fx32: small, but never a divide by zero */
 
-static u32 clip_plane(ClipV *out, const ClipV *in, u32 n, int near_plane)
+/* The distance of a vertex inside plane `plane` (>= 0 is inside).  0 is
+ * the w floor, 1 the near plane, 2 and 3 the left and right, 4 and 5 the
+ * bottom and top.  [HW] the hardware clips a polygon to the view volume,
+ * so a vertex far outside never reaches the divide; [AP] the far plane is
+ * left to the depth clamp. */
+static s64 plane_dist(const ClipV *a, int plane)
+{
+    switch (plane) {
+    case 0:  return (s64)a->w - WMIN;
+    case 1:  return (s64)a->z + a->w;
+    case 2:  return (s64)a->x + a->w;
+    case 3:  return (s64)a->w - a->x;
+    case 4:  return (s64)a->y + a->w;
+    default: return (s64)a->w - a->y;
+    }
+}
+
+static u32 clip_plane(ClipV *out, const ClipV *in, u32 n, int plane)
 {
     u32 i, m = 0;
 
     for (i = 0; i < n; i++) {
         const ClipV *a = &in[i];
         const ClipV *b = &in[(i + 1u) % n];
-        s64 da = near_plane ? (s64)a->z + a->w : (s64)a->w - WMIN;
-        s64 db = near_plane ? (s64)b->z + b->w : (s64)b->w - WMIN;
+        s64 da = plane_dist(a, plane);
+        s64 db = plane_dist(b, plane);
         int ia = da >= 0, ib = db >= 0;
 
         if (ia && m < CLIP_MAX) {
@@ -283,7 +298,20 @@ static void put_pixel(G3dTarget *t, u32 x, u32 y, s32 depth,
     if (alpha5 == 0 || alpha5 <= t->alpha_ref) {
         return;
     }
-    if (depth > t->depth[o]) {
+    /* [HW] the depth test: strictly nearer by default (a second,
+     * coincident polygon does not overwrite the first), and with
+     * POLYGON_ATTR bit 14 equal within a tolerance, which is what lets a
+     * decal drawn on a surface show.  [AP] the tolerance is the
+     * hardware's 0x200 of 24 bits, halved onto this 23-bit range for the
+     * z buffer and left as is for the w buffer. */
+    if (G3D_ATTR_DEPTH_EQ(attr)) {
+        s32 tol = t->wbuffer ? 0x200 : 0x100;
+        s32 d = depth - t->depth[o];
+
+        if (d < -tol || d > tol) {
+            return;
+        }
+    } else if (depth >= t->depth[o]) {
         return;
     }
     if (alpha5 >= 31u) {
@@ -343,13 +371,24 @@ static void put_pixel(G3dTarget *t, u32 x, u32 y, s32 depth,
 /* ------------------------------------------------------------------ */
 
 /* A vertex after the divide: screen position in 20.4, depth, and the
- * attributes interpolated across the face. */
+ * attributes premultiplied by q = 2^32 / w so they interpolate linearly
+ * across the face and one division per pixel recovers the
+ * perspective-correct value ([HW]: the hardware's texture and colour are
+ * perspective correct). */
 typedef struct ScreenV {
     s32 x, y;      /* 20.4 */
     s32 depth;
-    s32 s, t;      /* sixteenths of a texel */
-    s32 r, g, b;
+    s64 q;
+    s64 s, t;      /* sixteenths of a texel, times q */
+    s64 r, g, b;   /* 0..255, times q */
 } ScreenV;
+
+#define Q_ONE ((s64)1 << 32)
+
+static s64 lerp64(s64 a, s64 b, s64 num, s64 den)
+{
+    return a + ((b - a) * num) / den;
+}
 
 static void interp(ScreenV *o, const ScreenV *a, const ScreenV *b,
                    s32 num, s32 den)
@@ -358,14 +397,15 @@ static void interp(ScreenV *o, const ScreenV *a, const ScreenV *b,
         *o = *a;
         return;
     }
-    o->x     = (s32)(a->x     + ((s64)(b->x     - a->x)     * num) / den);
-    o->y     = (s32)(a->y     + ((s64)(b->y     - a->y)     * num) / den);
-    o->depth = (s32)(a->depth + ((s64)(b->depth - a->depth) * num) / den);
-    o->s     = (s32)(a->s     + ((s64)(b->s     - a->s)     * num) / den);
-    o->t     = (s32)(a->t     + ((s64)(b->t     - a->t)     * num) / den);
-    o->r     = (s32)(a->r     + ((s64)(b->r     - a->r)     * num) / den);
-    o->g     = (s32)(a->g     + ((s64)(b->g     - a->g)     * num) / den);
-    o->b     = (s32)(a->b     + ((s64)(b->b     - a->b)     * num) / den);
+    o->x     = (s32)lerp64(a->x, b->x, num, den);
+    o->y     = (s32)lerp64(a->y, b->y, num, den);
+    o->depth = (s32)lerp64(a->depth, b->depth, num, den);
+    o->q     = lerp64(a->q, b->q, num, den);
+    o->s     = lerp64(a->s, b->s, num, den);
+    o->t     = lerp64(a->t, b->t, num, den);
+    o->r     = lerp64(a->r, b->r, num, den);
+    o->g     = lerp64(a->g, b->g, num, den);
+    o->b     = lerp64(a->b, b->b, num, den);
 }
 
 G3dRasterStats g3d_raster_stats;
@@ -414,15 +454,16 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
         in[i].s = v[i].s; in[i].t = v[i].t;
         in[i].r = v[i].r; in[i].g = v[i].g; in[i].b = v[i].b;
     }
-    m = clip_plane(tmp, in, n, 0);
-    if (m < 3u) {
-        RSTAT(rej_clip);
-        return;
-    }
-    m = clip_plane(in, tmp, m, 1);
-    if (m < 3u) {
-        RSTAT(rej_clip);
-        return;
+    m = n;
+    for (i = 0; i < 6u; i++) {
+        ClipV *src = (i & 1u) ? tmp : in;
+        ClipV *dst = (i & 1u) ? in : tmp;
+
+        m = clip_plane(dst, src, m, (int)i);
+        if (m < 3u) {
+            RSTAT(rej_clip);
+            return;
+        }
     }
 
     /* [HW] the perspective divide and the viewport transform. */
@@ -453,17 +494,23 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
             dz = DEPTH_MAX;
         }
         sv[i].depth = (s32)dz;
-        sv[i].s = in[i].s;
-        sv[i].t = in[i].t;
-        sv[i].r = in[i].r;
-        sv[i].g = in[i].g;
-        sv[i].b = in[i].b;
+        sv[i].q = Q_ONE / w;
+        sv[i].s = (s64)in[i].s * sv[i].q;
+        sv[i].t = (s64)in[i].t * sv[i].q;
+        sv[i].r = (s64)in[i].r * sv[i].q;
+        sv[i].g = (s64)in[i].g * sv[i].q;
+        sv[i].b = (s64)in[i].b * sv[i].q;
     }
 
     /* [HW] culling, on the projected winding.  Screen y runs downwards,
      * so a negative signed area is the front face. */
-    area = (s64)(sv[1].x - sv[0].x) * (sv[2].y - sv[0].y) -
-           (s64)(sv[2].x - sv[0].x) * (sv[1].y - sv[0].y);
+    area = 0;
+    for (i = 0; i < m; i++) {
+        const ScreenV *a = &sv[i];
+        const ScreenV *b = &sv[(i + 1u) % m];
+
+        area -= (s64)(b->x - a->x) * (b->y + a->y);
+    }
     if (area == 0) {
         RSTAT(rej_degenerate);
         return;
@@ -516,7 +563,14 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                 if (!hit) {
                     continue;
                 }
-                interp(&cross[ncross++], a, b, yc - a->y, b->y - a->y);
+                /* Always from the upper end down, so the two faces that
+                 * share an edge round its crossing identically and no
+                 * pixel falls between them. */
+                if (a->y <= b->y) {
+                    interp(&cross[ncross++], a, b, yc - a->y, b->y - a->y);
+                } else {
+                    interp(&cross[ncross++], b, a, yc - b->y, a->y - b->y);
+                }
             }
             if (ncross < 2u) {
                 continue;
@@ -538,18 +592,35 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
             for (x = x0; x <= x1; x++) {
                 s32 xc = (x << SUBPIX) + SUB_HALF;
                 ScreenV p;
+                struct { s32 r, g, b, s, t, depth; } c;
                 u8 col[3];
                 u8 hl[3] = { 0, 0, 0 };
                 u32 a5 = alpha5;
                 u32 cov;
 
-                /* [AP] affine interpolation across the span: no
-                 * per-pixel perspective divide.  See this file's header. */
+                /* [HW] perspective-correct interpolation: the
+                 * attributes were divided by w at the vertices, so the
+                 * span carries attribute/w and 1/w, and one division
+                 * per pixel puts the attribute back. */
                 interp(&p, L, R, xc - L->x, span);
+                if (p.q <= 0) {
+                    p.q = 1;
+                }
+                c.r = (s32)(p.r / p.q);
+                c.g = (s32)(p.g / p.q);
+                c.b = (s32)(p.b / p.q);
+                c.s = (s32)(p.s / p.q);
+                c.t = (s32)(p.t / p.q);
+                c.depth = p.depth;
+                if (t->wbuffer) {
+                    s64 wv = Q_ONE / p.q;
+                    c.depth = (s32)(wv > (s64)G3D_DEPTH_FAR - 1 ?
+                                    (s64)G3D_DEPTH_FAR - 1 : wv);
+                }
 
-                if (p.r < 0) { p.r = 0; } if (p.r > 255) { p.r = 255; }
-                if (p.g < 0) { p.g = 0; } if (p.g > 255) { p.g = 255; }
-                if (p.b < 0) { p.b = 0; } if (p.b > 255) { p.b = 255; }
+                if (c.r < 0) { c.r = 0; } if (c.r > 255) { c.r = 255; }
+                if (c.g < 0) { c.g = 0; } if (c.g > 255) { c.g = 255; }
+                if (c.b < 0) { c.b = 0; } if (c.b > 255) { c.b = 255; }
 
                 /* [HW] toon and highlight shading, when the caller has
                  * loaded the toon table (engine/g3d/hw3d.c does, from
@@ -561,29 +632,29 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                  * the 8-bit expansion rather than in 6 bits.  Without a
                  * table the mode falls back to modulate, as before. */
                 if (mode == G3D_POLY_MODE_TOON && t->toon != NULL) {
-                    const u8 *e = t->toon + ((u32)p.r >> 3) * 3u;
+                    const u8 *e = t->toon + ((u32)c.r >> 3) * 3u;
                     if (t->highlight) {
                         hl[0] = e[0]; hl[1] = e[1]; hl[2] = e[2];
-                        p.g = p.r;
-                        p.b = p.r;
+                        c.g = c.r;
+                        c.b = c.r;
                     } else {
-                        p.r = e[0];
-                        p.g = e[1];
-                        p.b = e[2];
+                        c.r = e[0];
+                        c.g = e[1];
+                        c.b = e[2];
                     }
                 }
 
                 if (tex != NULL && tex->rgba != NULL) {
                     u8 tc[4];
-                    sample_texture(tex, teximage, p.s, p.t, tc);
+                    sample_texture(tex, teximage, c.s, c.t, tc);
                     switch (mode) {
                     case G3D_POLY_MODE_DECAL: {
                         /* [HW] decal: the texture's own alpha selects
                          * between the texture and the vertex colour. */
                         u32 ta = (u32)tc[3] >> 3;
-                        col[0] = (u8)((tc[0] * ta + p.r * (31u - ta)) / 31u);
-                        col[1] = (u8)((tc[1] * ta + p.g * (31u - ta)) / 31u);
-                        col[2] = (u8)((tc[2] * ta + p.b * (31u - ta)) / 31u);
+                        col[0] = (u8)((tc[0] * ta + c.r * (31u - ta)) / 31u);
+                        col[1] = (u8)((tc[1] * ta + c.g * (31u - ta)) / 31u);
+                        col[2] = (u8)((tc[2] * ta + c.b * (31u - ta)) / 31u);
                         break;
                     }
                     default:
@@ -592,16 +663,16 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                          * above.  [AP] with no toon table loaded the
                          * toon/highlight mode is plain modulate, because
                          * inventing a ramp would be a guess. */
-                        col[0] = modulate6(tc[0], (u8)p.r);
-                        col[1] = modulate6(tc[1], (u8)p.g);
-                        col[2] = modulate6(tc[2], (u8)p.b);
+                        col[0] = modulate6(tc[0], (u8)c.r);
+                        col[1] = modulate6(tc[1], (u8)c.g);
+                        col[2] = modulate6(tc[2], (u8)c.b);
                         a5 = modulate5((u32)tc[3] >> 3, alpha5);
                         break;
                     }
                 } else {
-                    col[0] = (u8)p.r;
-                    col[1] = (u8)p.g;
-                    col[2] = (u8)p.b;
+                    col[0] = (u8)c.r;
+                    col[1] = (u8)c.g;
+                    col[2] = (u8)c.b;
                 }
                 if (hl[0] | hl[1] | hl[2]) {
                     u32 k;
@@ -626,7 +697,7 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                         cov = cov > 0 ? cov - 1u : 0u;
                     }
                 }
-                put_pixel(t, (u32)x, (u32)y, p.depth, col, a5, attr, cov);
+                put_pixel(t, (u32)x, (u32)y, c.depth, col, a5, attr, cov);
             }
         }
     }

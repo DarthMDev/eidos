@@ -1156,6 +1156,153 @@ static void test_rear(void)
                 (g3d_hw_unsupported() & G3D_HW_UNSUP_SHADOW) != 0, 1);
 }
 
+/* ------------------------------------------------------------------ */
+/* 6. Rasteriser: perspective, cracks, the texture matrix             */
+/* ------------------------------------------------------------------ */
+
+#define ATTR_BOTH_SIDES (((u32)1 << 6) | ((u32)1 << 7) | ((u32)31 << 16))
+
+static G3dVertex rv(s32 x, s32 y, s32 w, s32 s, s32 t)
+{
+    G3dVertex v;
+
+    memset(&v, 0, sizeof v);
+    v.x = x; v.y = y; v.z = 0; v.w = w;
+    v.s = s; v.t = t;
+    v.r = v.g = v.b = 255;
+    return v;
+}
+
+/* A strip whose left edge is at w = 1.0 and right edge at w = 4.0, both
+ * spanning the whole screen after the divide.  The texture ramps red by 4
+ * per texel over 64 texels.  Halfway across the screen the
+ * perspective-correct s is 12.8 texels, where an affine interpolation
+ * gives 32. */
+static void test_perspective(void)
+{
+    static u8 texels[64 * 8 * 4];
+    G3dTexture tex;
+    G3dTarget t;
+    G3dVertex v[4];
+    const u8 *p;
+    u32 x, y;
+
+    for (y = 0; y < 8u; y++) {
+        for (x = 0; x < 64u; x++) {
+            u8 *q = &texels[(y * 64u + x) * 4u];
+            q[0] = (u8)(x * 4u); q[1] = 0; q[2] = 0; q[3] = 255;
+        }
+    }
+    tex.width = 64; tex.height = 8; tex.format = G3D_TEXFMT_DIRECT;
+    tex.rgba = texels;
+    if (g3d_target_init(&t, 256, 192) != 0) {
+        BW_CHECK_EQ("perspective: target", 0, 1);
+        return;
+    }
+    g3d_target_clear(&t, 0, 0, 0, 255);
+    v[0] = rv(-4096, 4096, 4096, 0, 0);
+    v[1] = rv(16384, 16384, 16384, 64 * 16, 0);
+    v[2] = rv(16384, -16384, 16384, 64 * 16, 8 * 16);
+    v[3] = rv(-4096, -4096, 4096, 0, 8 * 16);
+    g3d_raster_polygon(&t, v, 4u, ATTR_BOTH_SIDES, (7u << 26) | (3u << 16),
+                       &tex);
+    p = t.rgba + (96u * 256u + 128u) * 4u;
+    BW_CHECK_EQ("perspective: mid-screen texel is the perspective one",
+                p[0] >= 44u && p[0] <= 60u, 1);
+    p = t.rgba + (96u * 256u + 8u) * 4u;
+    BW_CHECK_EQ("perspective: the near edge is still texel 0..3",
+                p[0] <= 12u, 1);
+    g3d_target_free(&t);
+}
+
+/* A fan of triangles around one off-grid point, with off-grid rim
+ * vertices: every pixel well inside the hexagon must be drawn once, so no
+ * crack opens along a shared edge. */
+static void test_no_cracks(void)
+{
+    G3dTarget t;
+    const double cx = 100.3, cy = 80.7;
+    s32 rx[6], ry[6];
+    u32 k, x, y, holes = 0;
+
+    if (g3d_target_init(&t, 256, 192) != 0) {
+        BW_CHECK_EQ("cracks: target", 0, 1);
+        return;
+    }
+    g3d_target_clear(&t, 0, 0, 0, 255);
+    for (k = 0; k < 6u; k++) {
+        double a = (13.0 + 60.0 * (double)k) * 3.14159265358979 / 180.0;
+        double px = cx + 50.0 * __builtin_cos(a);
+        double py = cy + 50.0 * __builtin_sin(a);
+
+        rx[k] = (s32)((px - 128.0) / 128.0 * 4096.0);
+        ry[k] = (s32)((96.0 - py) / 96.0 * 4096.0);
+    }
+    for (k = 0; k < 6u; k++) {
+        G3dVertex v[3];
+
+        v[0] = rv((s32)((cx - 128.0) / 128.0 * 4096.0),
+                  (s32)((96.0 - cy) / 96.0 * 4096.0), 4096, 0, 0);
+        v[1] = rv(rx[k], ry[k], 4096, 0, 0);
+        v[2] = rv(rx[(k + 1u) % 6u], ry[(k + 1u) % 6u], 4096, 0, 0);
+        g3d_raster_polygon(&t, v, 3u, ATTR_BOTH_SIDES, 0, NULL);
+    }
+    for (y = 0; y < 192u; y++) {
+        for (x = 0; x < 256u; x++) {
+            double dx = (double)x + 0.5 - cx, dy = (double)y + 0.5 - cy;
+
+            if (dx * dx + dy * dy < 40.0 * 40.0 &&
+                t.rgba[(y * 256u + x) * 4u] == 0) {
+                holes++;
+            }
+        }
+    }
+    BW_CHECK_EQ("cracks: no hole inside the fan", holes, 0u);
+    g3d_target_free(&t);
+}
+
+/* TEXIMAGE_PARAM bits 30-31 = 1: the texture matrix transforms the
+ * texcoord: S' = (S*M0 + T*M4 + M8 + M12) >> 12. */
+static void test_texgen_mode1(void)
+{
+    static u8 buf[512];
+    G3dGx gx;
+    G3dGeom geom;
+    u32 len;
+
+    memset(&geom, 0, sizeof geom);
+    g3d_gx_init(&gx, &geom);
+    g_ncmd = 0;
+    cmd(0x10, 1, 3u);                                    /* MTX_MODE texture */
+    cmd(0x1B, 3, (u32)(2 * FX32_ONE), (u32)(3 * FX32_ONE), (u32)FX32_ONE);
+    cmd(0x2A, 1, 1u << 30);                              /* texgen mode 1    */
+    cmd(0x22, 1, 32u | (16u << 16));
+    cmd(0x40, 1, 0u);
+    cmd(0x23, 2, v16(0, 0), 0u);
+    cmd(0x23, 2, v16(16, 0), 0u);
+    cmd(0x23, 2, v16(0, 16), 0u);
+    cmd(0x41, 0);
+    len = pack(buf, g_cmds, g_ncmd);
+    (void)g3d_gx_run(&gx, buf, len, 0, len, len);
+    BW_CHECK_EQ("texgen 1: three vertices", geom.n_verts, 3u);
+    BW_CHECK_EQ("texgen 1: S scaled by the texture matrix", geom.verts[0].s,
+                64);
+    BW_CHECK_EQ("texgen 1: T scaled by the texture matrix", geom.verts[0].t,
+                48);
+
+    g3d_gx_init(&gx, &geom);
+    geom.n_verts = geom.n_idx = geom.n_polys = 0;
+    g_ncmd = 0;
+    cmd(0x10, 1, 3u);
+    cmd(0x1B, 3, (u32)(2 * FX32_ONE), (u32)(3 * FX32_ONE), (u32)FX32_ONE);
+    cmd(0x22, 1, 32u | (16u << 16));
+    cmd(0x40, 1, 0u);
+    cmd(0x23, 2, v16(0, 0), 0u);
+    len = pack(buf, g_cmds, g_ncmd);
+    (void)g3d_gx_run(&gx, buf, len, 0, len, len);
+    BW_CHECK_EQ("texgen 0: the texcoord is left alone", geom.verts[0].s, 32);
+}
+
 int main(void)
 {
     test_identity();
@@ -1164,6 +1311,9 @@ int main(void)
     test_swap();
     test_lighting();
     test_rear();
+    test_perspective();
+    test_no_cracks();
+    test_texgen_mode1();
     g3d_target_free(&g_ref);
     BW_REPORT("test_g3dhw");
 }
