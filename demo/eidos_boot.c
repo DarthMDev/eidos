@@ -26,7 +26,7 @@
  * end of each named frame, to DIR/eidos_boot_frame<N>.png (DIR defaults to
  * the current directory), with or without a window.
  *
- * After N frames (default 600) it prints a summary and exits 0.  A panic on
+ * After N frames (default 600 headless; a window runs until closed) it prints a summary and exits 0.  A panic on
  * the way (a stub reached, an overlay not in this build) ends the run with
  * the panic's message and a failure status, which is how the boot's test
  * reads how far it got (tests/boot_run.cmake).  With --watchdog S, a run
@@ -744,6 +744,7 @@ int main(int argc, char **argv)
 {
     const char *data_root = NULL;
     unsigned long long frames = BOOT_DEFAULT_FRAMES;
+    int frames_given = 0;
     int window = 0;
     unsigned long watchdog = 0;
     int i;
@@ -765,6 +766,7 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             char *end = NULL;
             frames = strtoull(argv[++i], &end, 10);
+            frames_given = 1;
             if (end == argv[i] || *end != '\0') {
                 usage();
                 return 2;
@@ -809,6 +811,9 @@ int main(int argc, char **argv)
         }
     }
 
+    if (window && !frames_given) {
+        frames = ~0ull; /* a window runs until it is closed */
+    }
     if (data_root == NULL) {
         data_root = getenv("BW_DATA_ROOT");
     }
@@ -823,6 +828,7 @@ int main(int argc, char **argv)
     return run_boot((u64)frames, window, (unsigned)watchdog);
 #else
     (void)window;
+    (void)frames_given;
     (void)watchdog;
     (void)g_shots;
     (void)g_shot_dir;
