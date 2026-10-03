@@ -260,6 +260,9 @@ u64  eidos_platform_now_ns(const EidosPlatform *p);
  * longer than the period; a non-zero count means the host is too slow or
  * something blocked. */
 u32  eidos_platform_late_frames(const EidosPlatform *p);
+/* Whole frames the schedule lagged when the last frame wait began (0 when on
+ * time): a caller that is badly behind may skip presenting, never a step. */
+u32  eidos_platform_lag_frames(const EidosPlatform *p);
 
 /* ------------------------------------------------------------------ */
 /* Audio                                                               */

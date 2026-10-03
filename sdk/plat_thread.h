@@ -41,6 +41,9 @@ BwThread *bw_thread_start(void (*fn)(void *arg), void *arg);
 /* Wait for the thread to return, then release the handle.                 */
 void      bw_thread_join(BwThread *t);
 
+/* A monotonic clock in nanoseconds (the frame profiler's). */
+unsigned long long bw_clock_ns(void);
+
 #ifdef __cplusplus
 }
 #endif

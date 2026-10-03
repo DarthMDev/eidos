@@ -105,6 +105,7 @@
 
 #include "dsmem.h"
 #include "g2d.h"
+#include "prof.h"
 
 #define SCREEN_W   G2D_SCREEN_WIDTH
 #define SCREEN_H   G2D_SCREEN_HEIGHT
@@ -1309,6 +1310,7 @@ int g2d_hw_render(const G2dHwState *hw, const u8 *rgba3d,
     u32 cap = bw_rd32(hw->io + (G2D_HW_DISPCAPCNT - BW_DS_IO_BASE));
     u32 flags[2] = { 0, 0 };
     u8 *graphics6 = NULL;
+    u64 t0;
     int rc = 0;
 
     if ((cap & 0x80000000u) && ((cap >> 29) & 3u) != 1u
@@ -1318,14 +1320,18 @@ int g2d_hw_render(const G2dHwState *hw, const u8 *rgba3d,
             return -1;
         }
     }
+    t0 = eidos_prof_begin();
     if (render_engine(hw, G2D_HW_MAIN, rgba3d, main_on_top ? top : bottom,
                       &flags[0], graphics6) != 0) {
         rc = -1;
     }
+    eidos_prof_end(EIDOS_PROF_MAIN, t0);
+    t0 = eidos_prof_begin();
     if (render_engine(hw, G2D_HW_SUB, NULL, main_on_top ? bottom : top,
                       &flags[1], NULL) != 0) {
         rc = -1;
     }
+    eidos_prof_end(EIDOS_PROF_SUB, t0);
     if ((cap & 0x80000000u) && rc == 0) {
         capture(hw, cap, rgba3d, graphics6, &flags[0]);
     }

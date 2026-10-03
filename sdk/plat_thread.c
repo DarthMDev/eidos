@@ -102,9 +102,21 @@ void bw_thread_join(BwThread *t)
     }
 }
 
+unsigned long long bw_clock_ns(void)
+{
+    LARGE_INTEGER f, c;
+
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    return (unsigned long long)(c.QuadPart / f.QuadPart) * 1000000000ull
+           + (unsigned long long)(c.QuadPart % f.QuadPart) * 1000000000ull
+                 / (unsigned long long)f.QuadPart;
+}
+
 #else /* POSIX */
 
 #include <pthread.h>
+#include <time.h>
 
 struct BwMutex  { pthread_mutex_t mx; };
 struct BwCond   { pthread_cond_t cv; };
@@ -184,6 +196,15 @@ void bw_thread_join(BwThread *t)
         pthread_join(t->th, NULL);
         free(t);
     }
+}
+
+unsigned long long bw_clock_ns(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000000000ull
+           + (unsigned long long)ts.tv_nsec;
 }
 
 #endif

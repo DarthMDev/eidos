@@ -60,6 +60,7 @@ struct EidosPlatform {
     u64 period_rem;     /* accumulated 1/EIDOS_DS_SYSTEM_CLOCK-ths of a ns */
     int paced;          /* has the first boundary been set                 */
     u32 late_frames;
+    u32 lag_frames;      /* whole frames the schedule lagged at the last wait */
 
     /* audio */
     SDL_AudioDeviceID audio_dev;
@@ -67,6 +68,11 @@ struct EidosPlatform {
     void             *audio_user;
     u64               audio_frames;
     int               audio_push;
+    /* push mode: the device's own rate, and the resampler's state (the
+     * last four input frames and the fractional input position). */
+    int               dev_rate;
+    double            rs_pos;
+    s16               rs_hist[4][2];
 };
 
 /* ------------------------------------------------------------------ */
@@ -372,6 +378,11 @@ u64 eidos_platform_now_ns(const EidosPlatform *p)
     return p == NULL ? 0 : now_ns(p);
 }
 
+u32 eidos_platform_lag_frames(const EidosPlatform *p)
+{
+    return p == NULL ? 0 : p->lag_frames;
+}
+
 u32 eidos_platform_late_frames(const EidosPlatform *p)
 {
     return p == NULL ? 0 : p->late_frames;
@@ -404,6 +415,7 @@ void eidos_platform_wait_frame(EidosPlatform *p)
         p->next_ns += 1;
     }
 
+    p->lag_frames = now > p->next_ns ? (u32)((now - p->next_ns) / step) : 0;
     if (now > p->next_ns + 4 * step) {
         /* More than four frames behind: a breakpoint, a suspended machine or
          * a host that cannot keep up.  Running the backlog would show a
@@ -421,12 +433,12 @@ void eidos_platform_wait_frame(EidosPlatform *p)
             return;
         }
         left = p->next_ns - now;
-        if (left > 2000000ull) {
-            /* Sleep the bulk, but leave 1 ms for the spin: SDL_Delay's
-             * resolution is the host scheduler's, which is coarser than the
-             * 16.7 ms period can absorb. */
-            SDL_Delay((Uint32)((left - 1000000ull) / 1000000ull));
+        if (left > 2500000ull) {
+            /* Sleep the bulk, but leave about 2 ms: SDL_Delay may overshoot
+             * by the host scheduler's resolution (1 ms at best). */
+            SDL_Delay((Uint32)((left - 2000000ull) / 1000000ull));
         } else {
+            /* The last stretch: yield the core instead of burning it. */
             SDL_Delay(0);
         }
     }
@@ -464,23 +476,88 @@ void eidos_platform_set_audio(EidosPlatform *p, EidosAudioFn fn, void *user)
     }
 }
 
+/* Catmull-Rom through four input frames, t in [0,1) between y1 and y2. */
+static s16 cubic16(s16 y0, s16 y1, s16 y2, s16 y3, double t)
+{
+    double a = -0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3;
+    double b = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+    double c = -0.5 * y0 + 0.5 * y2;
+    double v = ((a * t + b) * t + c) * t + y1;
+
+    return (s16)(v > 32767.0 ? 32767 : v < -32768.0 ? -32768 : (int)v);
+}
+
+/*
+ * The game's 32768 Hz stream to the device's rate, converted once, here,
+ * with state kept across calls (the position and the last input frames), so
+ * chunk boundaries are seamless.  A device that took 32768 Hz needs none.
+ */
 void eidos_platform_queue_audio(EidosPlatform *p, const s16 *in, u32 frames)
 {
+    static s16 out[2u * 4096u];
+
     if (p == NULL || p->audio_dev == 0 || !p->audio_push || frames == 0) {
         return;
     }
-    if (SDL_QueueAudio(p->audio_dev, in,
-                       frames * (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS)) == 0) {
-        p->audio_frames += frames;
+    p->audio_frames += frames;
+    if (p->dev_rate == EIDOS_AUDIO_RATE) {
+        SDL_QueueAudio(p->audio_dev, in,
+                       frames * (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS));
+        return;
+    }
+    {
+        const double step = (double)EIDOS_AUDIO_RATE / (double)p->dev_rate;
+        u32 n = 0;
+        u32 i = 0;      /* input frames consumed into the history */
+        double pos = p->rs_pos;    /* between hist[1] and hist[2] */
+
+        /* hist[0..3] are input frames k-1, k, k+1, k+2; pos is the phase
+         * after hist[1].  Advance the window while pos >= 1. */
+        for (;;) {
+            while (pos >= 1.0) {
+                if (i >= frames) {
+                    goto flush;
+                }
+                p->rs_hist[0][0] = p->rs_hist[1][0];
+                p->rs_hist[0][1] = p->rs_hist[1][1];
+                p->rs_hist[1][0] = p->rs_hist[2][0];
+                p->rs_hist[1][1] = p->rs_hist[2][1];
+                p->rs_hist[2][0] = p->rs_hist[3][0];
+                p->rs_hist[2][1] = p->rs_hist[3][1];
+                p->rs_hist[3][0] = in[i * 2u];
+                p->rs_hist[3][1] = in[i * 2u + 1u];
+                i++;
+                pos -= 1.0;
+            }
+            out[n * 2u] = cubic16(p->rs_hist[0][0], p->rs_hist[1][0],
+                                  p->rs_hist[2][0], p->rs_hist[3][0], pos);
+            out[n * 2u + 1u] = cubic16(p->rs_hist[0][1], p->rs_hist[1][1],
+                                       p->rs_hist[2][1], p->rs_hist[3][1], pos);
+            n++;
+            pos += step;
+            if (n == 4096u) {
+                SDL_QueueAudio(p->audio_dev, out, n * 4u);
+                n = 0;
+            }
+        }
+flush:
+        p->rs_pos = pos;
+        if (n != 0) {
+            SDL_QueueAudio(p->audio_dev, out, n * 4u);
+        }
     }
 }
 
+/* Queued frames, in the game's 32768 Hz units. */
 u32 eidos_platform_audio_queued(const EidosPlatform *p)
 {
+    u64 dev;
+
     if (p == NULL || p->audio_dev == 0 || !p->audio_push) {
         return 0;
     }
-    return SDL_GetQueuedAudioSize(p->audio_dev) / (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS);
+    dev = SDL_GetQueuedAudioSize(p->audio_dev) / (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS);
+    return (u32)(dev * EIDOS_AUDIO_RATE / (u64)p->dev_rate);
 }
 
 int eidos_platform_audio_open(const EidosPlatform *p)
@@ -513,12 +590,20 @@ static void open_audio(EidosPlatform *p)
     want.callback = p->audio_push ? NULL : audio_callback;
     want.userdata = p->audio_push ? NULL : p;
 
-    p->audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    /* Push mode takes the device's own rate and resamples once itself
+     * (queue_audio); callback mode lets SDL convert. */
+    if (p->audio_push) {
+        want.samples = 1024;
+    }
+    p->audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have,
+                                       p->audio_push ? SDL_AUDIO_ALLOW_FREQUENCY_CHANGE : 0);
     if (p->audio_dev == 0) {
         fprintf(stderr, "eidos: no audio device (%s); running silent\n",
                 SDL_GetError());
         return;
     }
+    p->dev_rate = p->audio_push && have.freq > 0 ? have.freq : EIDOS_AUDIO_RATE;
+    p->rs_pos = 1.0;
     SDL_PauseAudioDevice(p->audio_dev, 0);
 }
 
