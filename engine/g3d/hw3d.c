@@ -173,6 +173,7 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -188,6 +189,16 @@
 #define STAT_PJ_LEVEL     0x00002000u
 #define STAT_LESS_HALF    0x02000000u
 #define STAT_EMPTY        0x04000000u
+
+/* The --g3d-trace diagnostics (g3d_hw_trace). */
+typedef struct Hw3dTrace {
+    int on;
+    u32 op_count[256];
+    u32 w_fifo, w_port, w_send, w_hook, w_ext;   /* words by write path */
+    u32 tex_polys[8];                            /* polygons by texture format */
+    u32 tex_missing;                             /* textured, no decode */
+} Hw3dTrace;
+static Hw3dTrace g_tr;
 
 typedef struct TexCacheEntry {
     u32 key_tex, key_pal;
@@ -719,6 +730,8 @@ static void rear_passes(G3dTarget *t, u32 d3, u32 cc, u32 cd)
     }
 }
 
+static void trace_report(const G3dTarget *t, u32 d3);
+
 static void render_frame(void)
 {
     G3dTarget *t = &g_hw.front;
@@ -731,6 +744,9 @@ static void render_frame(void)
         return;
     }
     g_hw.disp3dcnt = d3;
+    if (g_tr.on) {
+        memset(&g3d_raster_stats, 0, sizeof(g3d_raster_stats));
+    }
 
     t->wbuffer = (g_hw.swap_param >> 1) & 1u;
     t->aa = (d3 >> 4) & 1u;
@@ -756,11 +772,85 @@ static void render_frame(void)
     }
 
     g3d_raster_geom(t, &g_hw.geom, lookup, NULL);
+    if (g_tr.on) {
+        trace_report(t, d3);
+    }
     cache_clear();
     rear_passes(t, d3, cc, cd);
 
     g_hw.unsup_frame = unsup;
     g_hw.have_frame = 1;
+}
+
+static void trace_report(const G3dTarget *t, u32 d3)
+{
+    static const char *const fmt_name[8] = { "none", "A3I5", "PAL4", "PAL16",
+                                             "PAL256", "COMP", "A5I3", "DIRECT" };
+    const G3dMtxStack *st = &g_hw.gx.mtx;
+    const G3dRasterStats *r = &g3d_raster_stats;
+    u32 i, lit = 0, covered = 0, a0 = 0;
+    u32 fmts[8] = { 0 };
+
+    for (i = 0; i < g_hw.geom.n_polys; i++) {
+        const G3dPoly *p = &g_hw.geom.polys[i];
+
+        fmts[G3D_TEX_FORMAT(p->teximage) & 7u]++;
+        if (G3D_ATTR_LIGHTS(p->attr)) {
+            lit++;
+        }
+        if (G3D_ATTR_ALPHA(p->attr) == 0) {
+            a0++;
+        }
+    }
+    for (i = 0; i < t->width * t->height; i++) {
+        if (t->rgba[i * 4u + 3u] != 0) {
+            covered++;
+        }
+    }
+    fprintf(stderr, "g3d-trace swap %u: DISP3DCNT %04X viewport %08X swap_param %u
+",
+            g_hw.frames, d3, g_hw.viewport, g_hw.swap_param);
+    fprintf(stderr, "  words: fifo-stores %u direct-ports %u send/DMA %u extern-write %u
+",
+            g_tr.w_fifo, g_tr.w_port, g_tr.w_send, g_tr.w_ext);
+    fprintf(stderr, "  commands:");
+    for (i = 0; i < 256u; i++) {
+        if (g_tr.op_count[i]) {
+            fprintf(stderr, " %02X:%u", i, g_tr.op_count[i]);
+        }
+    }
+    fprintf(stderr, "
+  geometry: verts %u polys %u (lit %u, alpha0 %u)  textures:",
+            g_hw.geom.n_verts, g_hw.geom.n_polys, lit, a0);
+    for (i = 1; i < 8u; i++) {
+        if (fmts[i]) {
+            fprintf(stderr, " %s:%u", fmt_name[i], fmts[i]);
+        }
+    }
+    fprintf(stderr, "
+  raster: submitted %u drawn %u rejected: count %u alpha0 %u shadow %u clip %u degenerate %u cull %u
+",
+            r->submitted, r->drawn, r->rej_count, r->rej_alpha0, r->rej_shadow,
+            r->rej_clip, r->rej_degenerate, r->rej_cull);
+    fprintf(stderr, "  mtx: mode %u sp %u err %u pj_level %u; pixels with alpha %u of %u
+",
+            st->mode, st->sp, st->error, g_hw.pj_level, covered, t->width * t->height);
+    if (g_hw.geom.n_verts) {
+        const G3dVertex *v = &g_hw.geom.verts[0];
+
+        fprintf(stderr, "  first vertex: clip %d %d %d w %d  obj %d %d %d
+",
+                v->x, v->y, v->z, v->w, v->ox, v->oy, v->oz);
+    }
+    memset(&g_tr.op_count, 0, sizeof(g_tr.op_count));
+    g_tr.w_fifo = g_tr.w_port = g_tr.w_send = g_tr.w_ext = 0;
+}
+
+void g3d_hw_trace(int on)
+{
+    g_tr.on = on != 0;
+    memset(&g_tr.op_count, 0, sizeof(g_tr.op_count));
+    g_tr.w_fifo = g_tr.w_port = g_tr.w_send = g_tr.w_ext = 0;
 }
 
 static void swap_buffers(u32 param)
@@ -796,6 +886,9 @@ static void exec(u32 op, const u32 *par)
     G3dMtxStack *st = &g_hw.gx.mtx;
     u32 n = g3d_gx_param_count(op);
 
+    if (g_tr.on) {
+        g_tr.op_count[op & 0xFFu]++;
+    }
     switch (op) {
     case 0x11:      /* MTX_PUSH */
         if (st->mode == G3D_MTX_MODE_PROJECTION) {
@@ -965,6 +1058,13 @@ static void port_word(u32 op, u32 w)
 
 static void store(u32 addr, u32 w)
 {
+    if (g_tr.on) {
+        if (addr < G3D_HW_PORTS) {
+            g_tr.w_fifo++;
+        } else {
+            g_tr.w_port++;
+        }
+    }
     if (addr < G3D_HW_PORTS) {
         fifo_word(w);
     } else {
@@ -1075,6 +1175,9 @@ void g3d_hw_fifo_write(u32 word)
         return;
     }
     resolve_pending();
+    if (g_tr.on) {
+        g_tr.w_ext++;
+    }
     fifo_word(word);
 }
 
@@ -1087,6 +1190,9 @@ void g3d_hw_fifo_send(const void *src, u32 bytes)
         return;
     }
     resolve_pending();
+    if (g_tr.on) {
+        g_tr.w_send += bytes / 4u;
+    }
     for (i = 0; i + 4u <= bytes; i += 4u) {
         fifo_word(bw_rd32(p + i));
     }

@@ -674,6 +674,14 @@ void g3d_target_antialias(G3dTarget *t);
  * culling test, the edge walk, the depth test and the texture blend are
  * all inside; `tex` may be NULL for an untextured polygon.
  */
+/* Diagnostic counters of g3d_raster_polygon (never reset by the engine; the
+ * hw3d trace zeroes them per frame). */
+typedef struct G3dRasterStats {
+    u32 submitted, drawn, rej_count, rej_alpha0, rej_shadow, rej_clip,
+        rej_degenerate, rej_cull;
+} G3dRasterStats;
+extern G3dRasterStats g3d_raster_stats;
+
 void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                         u32 attr, u32 teximage, const G3dTexture *tex);
 

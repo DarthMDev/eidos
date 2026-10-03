@@ -113,6 +113,13 @@ u32       g3d_hw_unsupported(void);
  * the register file's copy reads that bit as 0 (see hw3d.c). */
 u32 g3d_hw_gxstat(void);
 
+/* Diagnostics: g3d_hw_trace(1) starts collecting the command stream
+ * (commands per opcode, the write path of each word, vertices, polygons,
+ * what the rasteriser rejected, textures bound, matrices, viewport,
+ * DISP3DCNT) and prints one summary to stderr at each SWAP_BUFFERS while on;
+ * g3d_hw_trace(0) stops. */
+void g3d_hw_trace(int on);
+
 /* The interpreter state, for tests and tools. */
 const G3dGx *g3d_hw_gx(void);
 
