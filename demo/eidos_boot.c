@@ -13,7 +13,7 @@
  * returns, the handler NitroMain installed runs, and the waiting thread
  * wakes, as on the console.
  *
- *     eidos_boot [--data-root PATH] [--frames N] [--window] [--watchdog S]
+ *     eidos_boot [--data-root PATH] [--frames N] [--window] [--profile [N]] [--watchdog S]
  *                [--screenshot N[,N...]] [--screenshot-dir DIR]
  *                [--press BUTTONS@FRAME[:HOLD]] [--input SCRIPT]
  *
@@ -190,6 +190,8 @@ static int parse_shots(const char *list)
 #include "arm7/arm7.h"
 #include "arm7/snd.h"
 #include "audio.h"
+#include "prof.h"
+#include "plat_thread.h"
 #include "dsmem.h"
 #include "g2d.h"
 #include "hw3d.h"
@@ -237,6 +239,7 @@ typedef struct BootRun {
     EidosFrameLoop loop;
     u64 limit;         /* frames to run before the clean exit            */
     u64 vblanks;       /* vblank interrupts raised                       */
+    u32 skipped;       /* presents skipped in a row (badly behind)       */
     u64 audio_rem;     /* the output-frame remainder, in clock units     */
     u8 *top;
     u8 *bottom;
@@ -471,13 +474,20 @@ static void boot_vblank(void *user)
     }
 }
 
+static u64 g_render_ns;   /* this frame's 3D + 2D time, for the profiler */
+
 #if EIDOS_BOOT_SDL
 static void boot_render(void *user, u8 *top, u8 *bottom)
 {
     u32 unsupported[2];
+    u64 t0 = eidos_prof_begin();
+    const u8 *rgba3d;
 
     (void)user;
-    (void)g2d_hw_render_dsmem(g3d_hw_frame(), top, bottom, unsupported);
+    rgba3d = g3d_hw_frame();
+    eidos_prof_end(EIDOS_PROF_G3D, t0);
+    (void)g2d_hw_render_dsmem(rgba3d, top, bottom, unsupported);
+    g_render_ns = eidos_prof_on ? bw_clock_ns() - t0 : 0;
 }
 
 #endif
@@ -519,26 +529,32 @@ static void boot_window_open(BootRun *run)
 }
 
 /*
- * One frame of sound.  The game's sound driver (sdk/arm7/snd.c) is the
- * ARM7's, driven by the game thread through the PXI: rendering it from
- * SDL's audio thread would race the game.  So it renders here, on the frame
- * thread, and the samples go to the device's queue, kept a few frames ahead;
- * when the queue is that full the frame's output is dropped (the driver's
- * clock still advances), and when it runs dry the device plays silence.
+ * Sound, clocked by the device.  The game's sound driver (sdk/arm7/snd.c)
+ * is the ARM7's, driven by the game thread through the PXI: rendering it
+ * from SDL's audio thread would race the game.  So it renders here, on the
+ * frame thread, in fixed chunks, and the device's queue is kept filled to a
+ * fixed latency (AUDIO_LATENCY_FRAMES, about 70 ms).  A frame that runs late
+ * finds the queue shorter and renders more chunks to catch up, so the device
+ * never runs dry for a late frame; a frame that is early finds it full and
+ * renders none.  The driver's clock follows what the device plays, so the
+ * sound neither drifts nor stutters in bursts when the game runs slow.
  */
-static void boot_audio_push(BootRun *run, u32 frames)
-{
-    static s16 buf[2u * 4096u];
+#define AUDIO_CHUNK_FRAMES   256u
+#define AUDIO_LATENCY_FRAMES 2304u     /* 70 ms at 32768 Hz */
+#define AUDIO_MAX_PER_CALL   8192u     /* a stall's catch-up bound */
 
-    if (frames > 4096u) {
-        frames = 4096u;
+static void boot_audio_push(BootRun *run)
+{
+    static s16 buf[2u * AUDIO_CHUNK_FRAMES];
+    u32 queued = eidos_platform_audio_queued(run->plat);
+    u32 done = 0;
+
+    while (queued < AUDIO_LATENCY_FRAMES && done < AUDIO_MAX_PER_CALL) {
+        bw_snd_render(buf, AUDIO_CHUNK_FRAMES);
+        eidos_platform_queue_audio(run->plat, buf, AUDIO_CHUNK_FRAMES);
+        queued += AUDIO_CHUNK_FRAMES;
+        done += AUDIO_CHUNK_FRAMES;
     }
-    if (eidos_platform_audio_queued(run->plat) > 4u * frames) {
-        bw_snd_render(NULL, frames);
-        return;
-    }
-    bw_snd_render(buf, frames);
-    eidos_platform_queue_audio(run->plat, buf, frames);
 }
 #endif
 
@@ -547,6 +563,7 @@ static void boot_frame(void *user)
 {
     BootRun *run = (BootRun *)user;
     int audio_device = 0;
+    u64 t_step, t_ph;
 
 #if EIDOS_BOOT_SDL
     if (run->want_window && !run->window_tried) {
@@ -564,8 +581,11 @@ static void boot_frame(void *user)
     /* The input of this frame, before its vblank (sdk/input.h): the
      * window's keys and the --press / --input script, KEYINPUT and the
      * ARM7's XY halfword written, the touch panel's automatic samples. */
+    t_step = eidos_prof_begin();
+    g_render_ns = 0;
     bw_input_frame();
     eidos_frame_run_one(&run->loop);
+    eidos_prof_end(EIDOS_PROF_STEP, t_step + g_render_ns);
     g_frames_seen++;
     {
         u64 n = eidos_frame_count(&run->loop);
@@ -582,17 +602,31 @@ static void boot_frame(void *user)
         if (!eidos_platform_pump(run->plat)) {
             boot_finish(0, "window closed");
         }
-        eidos_platform_present(run->plat, run->top, run->bottom);
-        audio_device = eidos_platform_audio_open(run->plat);
-        if (audio_device) {
-            boot_audio_push(run, boot_audio_frames(run));
+        t_ph = eidos_prof_begin();
+        /* Badly behind (two frames or more): skip showing this frame, at
+         * most three in a row; the game's steps are never skipped. */
+        if (eidos_platform_lag_frames(run->plat) >= 2u && run->skipped < 3u) {
+            run->skipped++;
+        } else {
+            run->skipped = 0;
+            eidos_platform_present(run->plat, run->top, run->bottom);
         }
+        eidos_prof_end(EIDOS_PROF_PRESENT, t_ph);
+        audio_device = eidos_platform_audio_open(run->plat);
+        t_ph = eidos_prof_begin();
+        if (audio_device) {
+            boot_audio_push(run);
+        }
+        eidos_prof_end(EIDOS_PROF_AUDIO, t_ph);
+        t_ph = eidos_prof_begin();
         eidos_platform_wait_frame(run->plat);
+        eidos_prof_end(EIDOS_PROF_WAIT, t_ph);
     }
 #endif
     if (!audio_device) {
         bw_snd_render(NULL, boot_audio_frames(run));
     }
+    eidos_prof_frame(eidos_frame_count(&run->loop));
 }
 
 /*
@@ -749,6 +783,13 @@ int main(int argc, char **argv)
             }
         } else if (strcmp(argv[i], "--screenshot-dir") == 0 && i + 1 < argc) {
             g_shot_dir = argv[++i];
+        } else if (strcmp(argv[i], "--profile") == 0) {
+            unsigned long every = 300;
+
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
+                every = strtoul(argv[++i], NULL, 10);
+            }
+            eidos_prof_enable((unsigned)every);
         } else if (strcmp(argv[i], "--window") == 0) {
             window = 1;
         } else if (strcmp(argv[i], "--watchdog") == 0 && i + 1 < argc) {

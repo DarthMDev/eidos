@@ -246,7 +246,6 @@ int g2d_bg_sample(const G2dBgLayer *layer, s32 sx, s32 sy,
     s32 px, py;
     u32 tx, ty, entry_idx;
     u16 entry;
-    u8 tile[64];
     u8 index;
     u32 base;
 
@@ -264,13 +263,23 @@ int g2d_bg_sample(const G2dBgLayer *layer, s32 sx, s32 sy,
         s32 mw = (s32)(tw * 8u);
         s32 mh = (s32)(th * 8u);
 
-        px %= mw;
-        if (px < 0) {
-            px += mw;
+        /* A power-of-two map (every hardware size) wraps with a mask: the
+         * same non-negative remainder, without the division. */
+        if ((mw & (mw - 1)) == 0) {
+            px &= mw - 1;
+        } else {
+            px %= mw;
+            if (px < 0) {
+                px += mw;
+            }
         }
-        py %= mh;
-        if (py < 0) {
-            py += mh;
+        if ((mh & (mh - 1)) == 0) {
+            py &= mh - 1;
+        } else {
+            py %= mh;
+            if (py < 0) {
+                py += mh;
+            }
         }
     } else if (px < 0 || py < 0
                || px >= (s32)(tw * 8u) || py >= (s32)(th * 8u)) {
@@ -298,9 +307,32 @@ int g2d_bg_sample(const G2dBgLayer *layer, s32 sx, s32 sy,
     }
     entry = layer->nscr->entries[entry_idx];
 
-    g2d_bg_tile(layer->ncgr, G2D_SCR_TILE(entry), G2D_SCR_HFLIP(entry),
-                G2D_SCR_VFLIP(entry), tile);
-    index = tile[((u32)py % 8u) * 8u + ((u32)px % 8u)];
+    /* One pixel of the tile, flips applied: the same value
+     * g2d_bg_tile would put at that spot, without decoding the other 63. */
+    {
+        const G2dNcgr *nc = layer->ncgr;
+        u32 bpt = nc->bytes_per_tile;
+        u32 lx = (u32)px % 8u, ly = (u32)py % 8u;
+        u32 off = G2D_SCR_TILE(entry) * bpt;
+
+        index = 0;
+        if (nc->tile_data != NULL && bpt != 0 && off <= nc->tile_data_size
+            && bpt <= nc->tile_data_size - off) {
+            if (G2D_SCR_HFLIP(entry)) {
+                lx = 7u - lx;
+            }
+            if (G2D_SCR_VFLIP(entry)) {
+                ly = 7u - ly;
+            }
+            if (bpt == 32u) {
+                u8 b = nc->tile_data[off + ly * 4u + (lx >> 1)];
+
+                index = (lx & 1u) ? (u8)(b >> 4) : (u8)(b & 0x0F);
+            } else {
+                index = nc->tile_data[off + ly * 8u + lx];
+            }
+        }
+    }
 
     /*
      * 4bpp selects one 16-colour bank with the entry's palette row; 8bpp
@@ -383,6 +415,18 @@ static void put_color(u8 *px, const G2dPalette *pal, u32 ci)
  */
 
 #define G2D_MAX_BG_INDEX 8u
+
+/* g2d_window_mask with its "no window enabled" answer taken inline: the
+ * per-pixel callers mostly have none, and a call per pixel adds up. */
+static u32 win_mask(const G2dWindows *w, s32 x, s32 y)
+{
+    if (w == NULL
+        || (!w->win0.enabled && !w->win1.enabled && !w->obj_enabled)) {
+        return G2D_LAYER_ALL;
+    }
+    return g2d_window_mask(w, x, y);
+}
+
 
 static int obj_sample(const G2dObjEntry *obj, s32 x, s32 y, u8 *out_index)
 {
@@ -473,7 +517,7 @@ u32 g2d_frame_stack(const G2dFrameDesc *desc, s32 x, s32 y,
 {
     u32 count = 0;
     u32 prio, i, bgi;
-    u32 allowed = g2d_window_mask(desc->windows, x, y);
+    u32 allowed = win_mask(desc->windows, x, y);
 
     for (prio = 0; prio < 4u && count < max; prio++) {
         for (i = 0; i < desc->n_objs && count < max; i++) {
@@ -625,15 +669,22 @@ static void stack_color(const G2dFrameDesc *desc, const G2dFrameSample *stack,
  */
 static void six_of(const u8 out[3], int is3d, u8 o6[3])
 {
+    static u8 lut[2][256];
+    static int ready;
     u32 i;
 
-    for (i = 0; i < 3u; i++) {
-        if (!is3d) {
-            o6[i] = (u8)g2d_c5to6(((u32)out[i] * 31u + 127u) / 255u);
-        } else {
-            o6[i] = (u8)g2d_c8to6(out[i]);
+    /* Both folds are pure functions of one byte: table them once (the
+     * values are the same whoever fills them, so no lock is needed). */
+    if (!ready) {
+        for (i = 0; i < 256u; i++) {
+            lut[0][i] = (u8)g2d_c5to6(((u32)i * 31u + 127u) / 255u);
+            lut[1][i] = (u8)g2d_c8to6((u8)i);
         }
+        ready = 1;
     }
+    o6[0] = lut[is3d != 0][out[0]];
+    o6[1] = lut[is3d != 0][out[1]];
+    o6[2] = lut[is3d != 0][out[2]];
 }
 
 /*
@@ -656,7 +707,7 @@ static int blend_pixel(const G2dFrameDesc *desc, const G2dFrameSample *stack,
      * the first target set, and for alpha the pixel directly beneath it
      * must belong to the second target set.  Nothing else blends.
      */
-    if ((g2d_window_mask(desc->windows, (s32)x, (s32)y)
+    if ((win_mask(desc->windows, (s32)x, (s32)y)
          & G2D_LAYER_EFFECT) == 0) {
         return top3d;
     }
@@ -718,10 +769,203 @@ static int blend_pixel(const G2dFrameDesc *desc, const G2dFrameSample *stack,
     return 0;
 }
 
+/*
+ * The per-frame plan: what g2d_frame_stack decides pixel by pixel from the
+ * descriptor alone (which layers exist, their priority and layer number),
+ * resolved once into the list of steps it walks, front to back.  Only the
+ * per-pixel parts (window, sample) are left for the pixel loop.  A step is
+ * one candidate layer; the candidates of one (priority, layer number) are
+ * adjacent, and the first that hits ends that group, as in g2d_frame_stack.
+ */
+enum { PLAN_OBJ, PLAN_3D, PLAN_RASTER, PLAN_BG, PLAN_ABG };
+
+typedef struct {
+    u8 kind;
+    u8 key;        /* priority * 8 + layer number                    */
+    u8 bgi;
+    u8 pad;
+    u32 idx;       /* the object, raster, BG or affine layer index   */
+} PlanStep;
+
+static void plan_add(PlanStep *plan, u32 *n, u8 kind, u32 key, u32 bgi,
+                     u32 idx)
+{
+    plan[*n].kind = kind;
+    plan[*n].key = (u8)key;
+    plan[*n].bgi = (u8)bgi;
+    plan[*n].pad = 0;
+    plan[*n].idx = idx;
+    (*n)++;
+}
+
+static u32 plan_build(const G2dFrameDesc *desc, PlanStep *plan)
+{
+    u32 n = 0, prio, i, bgi;
+
+    for (prio = 0; prio < 4u; prio++) {
+        for (i = 0; i < desc->n_objs; i++) {
+            if (desc->objs[i].priority == prio) {
+                plan_add(plan, &n, PLAN_OBJ, prio * 8u, 0, i);
+            }
+        }
+        for (bgi = 0; bgi < G2D_MAX_BG_INDEX; bgi++) {
+            u32 key = prio * 8u + bgi;
+            const G2dLayerRaster *r;
+
+            if (desc->g3d != NULL && desc->g3d->enabled
+                && desc->g3d->priority == prio && desc->g3d->bg_index == bgi) {
+                plan_add(plan, &n, PLAN_3D, key, bgi, 0);
+                continue;
+            }
+            r = raster_at(desc, prio, bgi);
+            if (r != NULL) {
+                plan_add(plan, &n, PLAN_RASTER, key, bgi,
+                         (u32)(r - desc->rasters));
+                continue;
+            }
+            if (bgi < desc->n_bgs && desc->bgs[bgi].enabled
+                && desc->bgs[bgi].priority == prio) {
+                plan_add(plan, &n, PLAN_BG, key, bgi, bgi);
+            }
+            for (i = 0; i < desc->n_abgs; i++) {
+                const G2dBgAffineLayer *a = &desc->abgs[i];
+
+                if (a->enabled && a->priority == prio && a->bg_index == bgi) {
+                    plan_add(plan, &n, PLAN_ABG, key, bgi, i);
+                }
+            }
+        }
+    }
+    return n;
+}
+
+static void put_sample(G2dFrameSample *o, const G2dPalette *pal, u32 ci,
+                       u32 layer, int is_obj)
+{
+    o->pal = pal;
+    o->color_index = ci;
+    o->is_obj = is_obj;
+    o->is_3d = 0;
+    o->is_raster = 0;
+    o->layer = layer;
+}
+
+/* g2d_frame_stack over a plan: the same samples, in the same order. */
+static u32 plan_stack(const G2dFrameDesc *desc, const PlanStep *plan, u32 np,
+                      s32 x, s32 y, G2dFrameSample *out, u32 max)
+{
+    u32 count = 0, k;
+    u32 allowed = win_mask(desc->windows, x, y);
+    int done_key = -1;
+
+    for (k = 0; k < np && count < max; k++) {
+        const PlanStep *st = &plan[k];
+        u8 index;
+        u32 ci;
+
+        if (st->kind == PLAN_OBJ) {
+            const G2dObjEntry *obj;
+
+            if ((allowed & G2D_LAYER_OBJ) == 0) {
+                continue;
+            }
+            obj = &desc->objs[st->idx];
+            if (obj_sample(obj, x, y, &index)) {
+                put_sample(&out[count], obj->pal, index, st->idx, 1);
+                count++;
+            }
+            continue;
+        }
+        if ((st->bgi < 4u && (allowed & (1u << st->bgi)) == 0)
+            || (int)st->key == done_key) {
+            continue;
+        }
+        switch (st->kind) {
+        case PLAN_3D: {
+            const G2dLayer3d *l3 = desc->g3d;
+            u32 bx = (u32)(x + l3->hofs) & 0x1FFu;
+
+            done_key = st->key;
+            if (l3->rgba != NULL && x >= 0 && y >= 0
+                && bx < l3->width && (u32)y < l3->height) {
+                const u8 *src = l3->rgba
+                    + ((size_t)(u32)y * l3->width + bx) * 4u;
+
+                if (src[3] != 0) {
+                    u32 a5 = ((u32)src[3] * 31u + 127u) / 255u;
+
+                    put_sample(&out[count], NULL, 0, st->bgi, 0);
+                    out[count].is_3d = 1;
+                    out[count].rgb[0] = src[0];
+                    out[count].rgb[1] = src[1];
+                    out[count].rgb[2] = src[2];
+                    out[count].alpha5 = (u8)(a5 != 0 ? a5 : 1u);
+                    count++;
+                }
+            }
+            break;
+        }
+        case PLAN_RASTER: {
+            const G2dLayerRaster *r = &desc->rasters[st->idx];
+            const u8 *src;
+
+            done_key = st->key;
+            if (r->rgba == NULL || x < 0 || y < 0
+                || (u32)x >= r->width || (u32)y >= r->height) {
+                break;
+            }
+            src = r->rgba + ((size_t)(u32)y * r->width + (u32)x) * 4u;
+            if (src[3] == 0) {
+                break;
+            }
+            put_sample(&out[count], NULL, 0, st->bgi, 0);
+            out[count].is_raster = 1;
+            out[count].rgb[0] = src[0];
+            out[count].rgb[1] = src[1];
+            out[count].rgb[2] = src[2];
+            count++;
+            break;
+        }
+        case PLAN_BG: {
+            const G2dBgLayer *layer = &desc->bgs[st->idx];
+
+            if (g2d_bg_sample(layer, x, y, &index, &ci) && index != 0) {
+                put_sample(&out[count], layer->pal, ci, st->bgi, 0);
+                count++;
+                done_key = st->key;
+            }
+            break;
+        }
+        default: {
+            const G2dBgAffineLayer *layer = &desc->abgs[st->idx];
+
+            if (g2d_bg_affine_sample(layer, x, y, &index, &ci) && index != 0) {
+                put_sample(&out[count], layer->pal, ci, st->bgi, 0);
+                count++;
+                done_key = st->key;
+            }
+            break;
+        }
+        }
+    }
+    return count;
+}
+
 void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
                             u8 *rgba)
 {
     u32 x, y;
+    u32 np = 0;
+    PlanStep *plan;
+
+    /* Each layer appears in at most one step; a raster or the 3D layer
+     * replaces the BG and affine steps of its slot. */
+    plan = (PlanStep *)malloc(((size_t)desc->n_objs + desc->n_rasters + 1u
+                               + desc->n_bgs + desc->n_abgs + 8u)
+                              * sizeof(PlanStep));
+    if (plan != NULL) {
+        np = plan_build(desc, plan);
+    }
 
     for (y = 0; y < height; y++) {
         for (x = 0; x < width; x++) {
@@ -731,7 +975,26 @@ void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
             u32 top_bit, n;
             int is3d;
 
-            n = g2d_frame_stack(desc, (s32)x, (s32)y, stack, 2);
+            /*
+             * The pixel beneath the top one is read only by the 3D blend,
+             * a semi-transparent OBJ and alpha blending (blend_pixel), so
+             * the walk stops at the first layer unless one of those can
+             * apply; the answer is the same either way.
+             */
+            n = plan != NULL
+                ? plan_stack(desc, plan, np, (s32)x, (s32)y, stack, 1)
+                : g2d_frame_stack(desc, (s32)x, (s32)y, stack, 1);
+            if (n == 1 && desc->blend != NULL
+                && (stack[0].is_3d
+                    || (stack[0].is_obj && stack[0].layer < desc->n_objs
+                        && desc->objs[stack[0].layer].semi)
+                    || (desc->blend->effect == G2D_BLEND_ALPHA
+                        && (g2d_frame_sample_bit(&stack[0])
+                            & desc->blend->first) != 0))) {
+                n = plan != NULL
+                    ? plan_stack(desc, plan, np, (s32)x, (s32)y, stack, 2)
+                    : g2d_frame_stack(desc, (s32)x, (s32)y, stack, 2);
+            }
             stack_color(desc, stack, n, 0, top, &top_bit);
 
             out[0] = top[0];
@@ -748,6 +1011,7 @@ void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
             }
         }
     }
+    free(plan);
 }
 
 void g2d_frame_compose(const G2dBgLayer *bgs, u32 n_bgs,
