@@ -368,6 +368,10 @@ static void interp(ScreenV *o, const ScreenV *a, const ScreenV *b,
     o->b     = (s32)(a->b     + ((s64)(b->b     - a->b)     * num) / den);
 }
 
+G3dRasterStats g3d_raster_stats;
+
+#define RSTAT(f) (g3d_raster_stats.f++)
+
 void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
                         u32 attr, u32 teximage, const G3dTexture *tex)
 {
@@ -379,7 +383,9 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
     int front;
     s32 ymin, ymax, y;
 
+    RSTAT(submitted);
     if (n < 3u || n > 4u) {
+        RSTAT(rej_count);
         return;
     }
     if (attr == 0) {
@@ -391,6 +397,7 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
         /* [HW] alpha 0 is the wireframe mode; this engine does not draw
          * wireframes, and a polygon asking for one is skipped rather
          * than quietly filled. */
+        RSTAT(rej_alpha0);
         return;
     }
     if (mode == G3D_POLY_MODE_SHADOW) {
@@ -398,6 +405,7 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
          * machinery and a second pass; nothing in the corpus this engine
          * has been pointed at uses them, and drawing them as ordinary
          * polygons would put black slabs in the picture. */
+        RSTAT(rej_shadow);
         return;
     }
 
@@ -408,10 +416,12 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
     }
     m = clip_plane(tmp, in, n, 0);
     if (m < 3u) {
+        RSTAT(rej_clip);
         return;
     }
     m = clip_plane(in, tmp, m, 1);
     if (m < 3u) {
+        RSTAT(rej_clip);
         return;
     }
 
@@ -455,15 +465,19 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
     area = (s64)(sv[1].x - sv[0].x) * (sv[2].y - sv[0].y) -
            (s64)(sv[2].x - sv[0].x) * (sv[1].y - sv[0].y);
     if (area == 0) {
+        RSTAT(rej_degenerate);
         return;
     }
     front = area < 0;
     if (front && !G3D_ATTR_FRONT(attr)) {
+        RSTAT(rej_cull);
         return;
     }
     if (!front && !G3D_ATTR_BACK(attr)) {
+        RSTAT(rej_cull);
         return;
     }
+    RSTAT(drawn);
 
     ymin = sv[0].y;
     ymax = sv[0].y;

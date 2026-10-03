@@ -87,6 +87,9 @@
 static u64         g_shots[BOOT_MAX_SHOTS];
 static int         g_shot_count;
 static const char *g_shot_dir = ".";
+/* --g3d-trace N: the 3D command trace of frame N (hw3d.c g3d_hw_trace). */
+static u64         g_trace_frame;
+static int         g_trace_on;
 
 /*
  * --press NAME@FRAME[:HOLD] and --input FILE: timed input as the text
@@ -565,6 +568,9 @@ static void boot_frame(void *user)
      * window's keys and the --press / --input script, KEYINPUT and the
      * ARM7's XY halfword written, the touch panel's automatic samples. */
     bw_input_frame();
+    if (g_trace_on) {
+        g3d_hw_trace(eidos_frame_count(&run->loop) + 1u == g_trace_frame);
+    }
     eidos_frame_run_one(&run->loop);
     g_frames_seen++;
     {
@@ -699,7 +705,7 @@ static void usage(void)
 {
     fprintf(stderr, "usage: eidos_boot [--data-root PATH] [--frames N] [--window] "
                     "[--watchdog SECONDS] [--screenshot N[,N...]] "
-                    "[--screenshot-dir DIR] [--press BUTTONS@FRAME[:HOLD]] "
+                    "[--screenshot-dir DIR] [--g3d-trace N] [--press BUTTONS@FRAME[:HOLD]] "
                     "[--input SCRIPT]\n");
 }
 
@@ -747,6 +753,14 @@ int main(int argc, char **argv)
                 fprintf(stderr, "eidos_boot: cannot read input script %s\n", argv[i]);
                 return 2;
             }
+        } else if (strcmp(argv[i], "--g3d-trace") == 0 && i + 1 < argc) {
+            char *end = NULL;
+            g_trace_frame = strtoull(argv[++i], &end, 10);
+            if (end == argv[i] || *end != ' ') {
+                usage();
+                return 2;
+            }
+            g_trace_on = 1;
         } else if (strcmp(argv[i], "--screenshot-dir") == 0 && i + 1 < argc) {
             g_shot_dir = argv[++i];
         } else if (strcmp(argv[i], "--window") == 0) {
