@@ -204,6 +204,7 @@ static int parse_shots(const char *list)
 
 #if EIDOS_BOOT_SDL
 #include "platform.h"
+#include "settings.h"
 #endif
 
 #ifndef EIDOS_OVERLAYS
@@ -553,11 +554,14 @@ static void boot_window_open(BootRun *run)
     run->window_tried = 1;
     memset(&cfg, 0, sizeof cfg);
     cfg.title = "eidos boot";
+    eidos_settings_fill_config(&cfg);
     cfg.audio = 1;
     cfg.audio_push = 1;
     if (eidos_platform_init(&run->plat, &cfg) != 0) {
         fprintf(stderr, "eidos_boot: no window; running headless\n");
         run->plat = NULL;
+    } else {
+        eidos_settings_attach(run->plat);
     }
 }
 
@@ -771,7 +775,10 @@ static void usage(void)
     fprintf(stderr, "usage: eidos_boot [--data-root PATH] [--frames N] [--window] "
                     "[--watchdog SECONDS] [--screenshot N[,N...]] "
                     "[--screenshot-dir DIR] [--g3d-trace N] [--press BUTTONS@FRAME[:HOLD]] "
-                    "[--input SCRIPT]\n");
+                    "[--input SCRIPT] [--fullscreen|--borderless|--windowed] "
+                    "[--scale N] [--scaling integer|fit] "
+                    "[--layout vertical|horizontal] [--swap-screens] "
+                    "[--gap N] [--volume N]\n");
 }
 
 int main(int argc, char **argv)
@@ -794,7 +801,21 @@ int main(int argc, char **argv)
     }
 #endif
     bw_plat_crash_install();
+#if EIDOS_BOOT_SDL
+    eidos_settings_load();      /* settings.ini; the flags below override it */
+#endif
     for (i = 1; i < argc; i++) {
+#if EIDOS_BOOT_SDL
+        int sr = eidos_settings_parse_arg(argc, argv, &i);
+
+        if (sr < 0) {
+            usage();
+            return 2;
+        }
+        if (sr > 0) {
+            continue;
+        }
+#endif
         if (strcmp(argv[i], "--data-root") == 0 && i + 1 < argc) {
             data_root = argv[++i];
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
@@ -836,7 +857,11 @@ int main(int argc, char **argv)
             if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
                 every = strtoul(argv[++i], NULL, 10);
             }
+#if EIDOS_BOOT
             eidos_prof_enable((unsigned)every);
+#else
+            (void)every;    /* the profiler is part of the boot build */
+#endif
         } else if (strcmp(argv[i], "--window") == 0) {
             window = 1;
         } else if (strcmp(argv[i], "--watchdog") == 0 && i + 1 < argc) {

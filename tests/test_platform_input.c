@@ -104,6 +104,25 @@ static void test_mapping(void)
     BW_CHECK_EQ("side: the gap is off the panel",
                 eidos_platform_window_to_touch(p, 528, 192, 265, 10, &x, &y),
                 0);
+    /* Swapped: the bottom screen is on the left, the top one on the right
+     * (the old bottom position is now the top screen).                     */
+    eidos_platform_set_layout(p, EIDOS_LAYOUT_SIDE_BY_SIDE, 1, 16);
+    BW_CHECK_EQ("swapped side: bottom at x 0",
+                eidos_platform_window_to_touch(p, 528, 192, 5, 7, &x, &y), 1);
+    BW_CHECK_EQ("swapped side: x", x, 5);
+    BW_CHECK_EQ("swapped side: y", y, 7);
+    BW_CHECK_EQ("swapped side: old place is the top screen",
+                eidos_platform_window_to_touch(p, 528, 192, 300, 10, &x, &y),
+                0);
+    /* A fullscreen-sized output, integer scaled and letterboxed: 1920x1080
+     * shows 528x192 at 3x (1584x576), centred at (168, 252).               */
+    BW_CHECK_EQ("letterboxed: bottom-left pixel",
+                eidos_platform_window_to_touch(p, 1920, 1080, 168 + 3 * 0,
+                                               252, &x, &y), 1);
+    BW_CHECK_EQ("letterboxed: x", x, 0);
+    BW_CHECK_EQ("letterboxed: left of the picture is off",
+                eidos_platform_window_to_touch(p, 1920, 1080, 100, 300, &x, &y),
+                0);
     eidos_platform_quit(p);
 }
 

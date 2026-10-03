@@ -135,12 +135,56 @@ const EidosPadBinding *eidos_default_padmap(u32 *count);
 
 #define EIDOS_LAYOUT_STACKED       0   /* top screen above the bottom one */
 #define EIDOS_LAYOUT_SIDE_BY_SIDE  1
+#define EIDOS_LAYOUT_VERTICAL      EIDOS_LAYOUT_STACKED
+#define EIDOS_LAYOUT_HORIZONTAL    EIDOS_LAYOUT_SIDE_BY_SIDE
+
+#define EIDOS_DISPLAY_WINDOWED     0
+#define EIDOS_DISPLAY_FULLSCREEN   1   /* exclusive, at the desktop's mode  */
+#define EIDOS_DISPLAY_BORDERLESS   2   /* desktop-sized borderless window   */
+
+#define EIDOS_SCALING_INTEGER      0   /* largest whole multiple that fits  */
+#define EIDOS_SCALING_FIT          1   /* aspect-preserving, fractional     */
+
+/*
+ * Screen geometry, as data and without SDL.  A placement says where each of
+ * the two screens (0 = top, 1 = bottom, the hardware's names) sits in DS
+ * pixels; a viewport says where they land in an output of a given size.
+ * `swap` puts the bottom screen first (above, or on the left).
+ */
+typedef struct EidosRect { int x, y, w, h; } EidosRect;
+
+typedef struct EidosScreenPlacement {
+    EidosRect screen[2];
+    int width, height;          /* the whole arrangement, DS pixels */
+} EidosScreenPlacement;
+
+typedef struct EidosViewport {
+    EidosRect content;          /* the letterboxed picture in the output   */
+    EidosRect screen[2];        /* each screen's destination rectangle     */
+    int scale;                  /* whole multiple used, 0 when fractional  */
+} EidosViewport;
+
+void eidos_layout_place(int layout, int swap, int gap,
+                        EidosScreenPlacement *out);
+/* `fit` non-zero: fractional aspect-preserving fit; zero: largest whole
+ * multiple (falls back to a fit when the output is under 1x). */
+void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
+                            int out_h, int fit, EidosViewport *vp);
+/* The bottom-screen pixel under output point (wx, wy); non-zero when the
+ * point is on the bottom screen; both coordinates are clamped to it either
+ * way. */
+int  eidos_viewport_to_touch(const EidosScreenPlacement *pl,
+                             const EidosViewport *vp, int wx, int wy,
+                             int *x, int *y);
 
 typedef struct EidosPlatformConfig {
     const char *title;       /* NULL: "eidos"                            */
     int   scale;             /* integer multiple of 256x192; 0 means 2   */
     int   layout;            /* EIDOS_LAYOUT_*                           */
     int   gap;               /* DS pixels between the two screens        */
+    int   swap_screens;      /* bottom screen first                      */
+    int   display_mode;      /* EIDOS_DISPLAY_*; 0 windowed              */
+    int   scaling;           /* EIDOS_SCALING_*; 0 integer               */
     int   audio;             /* non-zero: open the audio device          */
     int   audio_push;        /* non-zero: the program pushes its samples
                                 from its own thread (eidos_platform_queue_
@@ -197,6 +241,52 @@ int  eidos_platform_touch(const EidosPlatform *p, int *x, int *y);
 int  eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
                                     int win_h, int wx, int wy,
                                     int *x, int *y);
+
+/*
+ * Runtime changes (engine/platform/settings.h drives these).  None recreates
+ * the renderer or the textures.  Each returns 0 on success; a display mode
+ * the host refuses (a headless driver, say) returns -1 and leaves the window
+ * as it was.
+ */
+int  eidos_platform_set_display(EidosPlatform *p, int mode, int scale,
+                                int scaling);
+int  eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap);
+/* Master volume, percent, applied to the final mixed samples with
+ * saturation, in both the callback and the push path.  Default 100. */
+void eidos_platform_set_volume(EidosPlatform *p, int percent);
+/* The gain itself, exposed for tests: v * percent / 100, rounded, saturated. */
+s16  eidos_audio_gain(s16 v, int percent);
+/* Replace both binding tables; the tables are copied. */
+int  eidos_platform_set_bindings(EidosPlatform *p, const EidosKeyBinding *keys,
+                                 u32 nkeys, const EidosPadBinding *pads,
+                                 u32 npads);
+/* Each screen's destination rectangle in the current output (0 top, 1
+ * bottom), and the output size. */
+void eidos_platform_viewport(const EidosPlatform *p, EidosViewport *vp);
+int  eidos_platform_display_mode(const EidosPlatform *p);
+
+/*
+ * Capture the next control pressed, for a key-binding screen.  begin arms
+ * it: while armed the game sees no buttons and Escape cancels instead of
+ * quitting.  poll returns EIDOS_CAPTURE_PENDING until something happens,
+ * then one of KEY / PAD / CANCELLED once (the state returns to NONE);
+ * *out holds the control.
+ */
+#define EIDOS_CAPTURE_NONE      0
+#define EIDOS_CAPTURE_PENDING   1
+#define EIDOS_CAPTURE_KEY       2
+#define EIDOS_CAPTURE_PAD       3
+#define EIDOS_CAPTURE_CANCELLED 4
+
+typedef struct EidosCaptured {
+    int scancode;               /* KEY: SDL_Scancode                       */
+    int pad_kind;               /* PAD: EIDOS_PADBIND_*                    */
+    int pad_index;              /* PAD: SDL_GameControllerButton / Axis    */
+} EidosCaptured;
+
+void eidos_platform_capture_begin(EidosPlatform *p);
+void eidos_platform_capture_cancel(EidosPlatform *p);
+int  eidos_platform_capture_poll(EidosPlatform *p, EidosCaptured *out);
 
 /* Gamepads currently open.                                                */
 int  eidos_platform_pads(const EidosPlatform *p);

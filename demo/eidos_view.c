@@ -55,6 +55,7 @@
 #include "g2d.h"
 #include "g3d.h"
 #include "platform.h"
+#include "settings.h"
 #include "port.h"
 #include "tcbl.h"
 #include "wizard.h"
@@ -628,6 +629,8 @@ static void view_audio(void *user, s16 *out, u32 frames)
 static void usage(void)
 {
     printf("eidos_view [--data-root PATH] [--scale N] [--side-by-side]\n"
+           "           [--fullscreen|--borderless|--windowed] [--scaling integer|fit]\n"
+           "           [--layout vertical|horizontal] [--swap-screens] [--volume N]\n"
            "           [--gap N] [--species N] [--frames N] [--shot PATH]\n"
            "           [--shot-first PATH] [--anim-speed N] [--no-audio]\n"
            "           [--music [SEQ]]\n"
@@ -667,8 +670,8 @@ int main(int argc, char **argv)
 
     memset(&cfg, 0, sizeof(cfg));
     cfg.title = "eidos";
-    cfg.scale = 2;
-    cfg.layout = EIDOS_LAYOUT_STACKED;
+
+    eidos_settings_load();      /* settings.ini; flags below override it */
 
     memset(&setup, 0, sizeof(setup));
     argv = bw_os_utf8_argv(&argc, argv);    /* UTF-8 paths on Windows too */
@@ -680,12 +683,15 @@ int main(int argc, char **argv)
             return 2;
         } else if (used > 0) {
             continue;
-        } else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) {
-            cfg.scale = atoi(argv[++i]);
+        } else if ((used = eidos_settings_parse_arg(argc, argv, &i)) != 0) {
+            if (used < 0) {
+                usage();
+                return 2;
+            }
+            continue;
         } else if (strcmp(argv[i], "--side-by-side") == 0) {
-            cfg.layout = EIDOS_LAYOUT_SIDE_BY_SIDE;
-        } else if (strcmp(argv[i], "--gap") == 0 && i + 1 < argc) {
-            cfg.gap = atoi(argv[++i]);
+            (void)eidos_settings_set(EIDOS_OPT_LAYOUT_ARRANGEMENT,
+                                     EIDOS_LAYOUT_SIDE_BY_SIDE);
         } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
             map_index = strtol(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--species") == 0 && i + 1 < argc) {
@@ -714,6 +720,7 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+    eidos_settings_fill_config(&cfg);
     cfg.audio = audio;
 
     if (!eidos_firstrun(&setup, data_root, sizeof(data_root), &status)) {
@@ -748,6 +755,7 @@ int main(int argc, char **argv)
         view_free(&view);
         return 1;
     }
+    eidos_settings_attach(plat);
     view.plat = plat;
     printf("window: %d x %d at scale %d, frame period %llu ns "
            "(%s), audio %s\n",
@@ -838,6 +846,7 @@ int main(int argc, char **argv)
     /* Unhook the callback before the player is freed: the audio device is
      * still running until eidos_platform_quit() closes it. */
     eidos_platform_set_audio(plat, NULL, NULL);
+    eidos_settings_detach();
     eidos_platform_quit(plat);
     bw_audio_player_free(music);
     if (music_sdat_open) bw_sdat_close(&music_sdat);

@@ -715,11 +715,14 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/sdl2.cmake)
 if(EIDOS_SDL_FOUND)
     add_library(eidos_platform STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/platform.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/geometry.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_replace.c
     )
     target_include_directories(eidos_platform PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
     )
-    target_link_libraries(eidos_platform PUBLIC eidos eidos_sdl2)
+    target_link_libraries(eidos_platform PUBLIC eidos eidos_setup eidos_sdl2)
 endif()
 
 # The matched files are compiled with the port's warning set but without the
@@ -1863,7 +1866,7 @@ if(EIDOS_SDL_FOUND)
              COMMAND test_view $<TARGET_FILE:eidos_view> ${BW_DATA_ROOT_ABS}
                      ${CMAKE_CURRENT_BINARY_DIR}/eidos_view.bmp)
     set_tests_properties(test_view PROPERTIES
-        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;EIDOS_SETTINGS=${CMAKE_CURRENT_BINARY_DIR}/test_view_settings.ini")
     if(NOT EIDOS_DATA_TESTS)
         set_tests_properties(test_view PROPERTIES DISABLED TRUE)
     endif()
@@ -1884,6 +1887,23 @@ if(EIDOS_SDL_FOUND)
     add_test(NAME test_platform_input COMMAND test_platform_input)
     set_tests_properties(test_platform_input PROPERTIES
         ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+
+    # The settings backend: geometry and touch mapping for every layout and
+    # scale, bindings and capture, settings.ini, overrides, the volume gain.
+    add_executable(test_settings
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_settings.c)
+    target_include_directories(test_settings PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_settings PRIVATE eidos_platform)
+    if(EIDOS_SDL_RUNTIME)
+        add_custom_command(TARGET test_settings POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:test_settings>"
+            COMMENT "Copying SDL2.dll next to test_settings")
+    endif()
+    add_test(NAME test_settings COMMAND test_settings)
+    set_tests_properties(test_settings PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;EIDOS_SETTINGS=${CMAKE_CURRENT_BINARY_DIR}/test_settings_default.ini")
 
     # The setup window under the dummy video driver, driven by scripted
     # events: an archive dropped and refused, a mouse click on "Choose
