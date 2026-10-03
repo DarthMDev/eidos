@@ -104,6 +104,11 @@ static void bw_dma_run(u32 src, u32 dest, u32 ctrl)
     const u8 *s = (const u8 *)(uintptr_t)src;
     u32 i;
 
+    /* The addresses are raw: a VRAMCNT store since the last translation
+     * (GX_BeginLoadTexPltt maps a bank to LCDC just before its DMA) must
+     * have taken effect before the first byte moves. */
+    bw_io_sync();
+
     if (count == 0) {
         count = 0x200000u;          /* 0 means the maximum */
     }

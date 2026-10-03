@@ -365,12 +365,9 @@ static int write_screens_png(const char *path, const u8 *top, const u8 *bottom)
     return ok ? 0 : -1;
 }
 
-/* Both screens as the hardware state has them now, saved for frame `n`. */
-static void boot_screenshot(BootRun *run, u64 n)
+static void boot_ensure_screens(BootRun *run)
 {
     size_t screen = (size_t)256 * 192 * 4;
-    u32 unsupported[2];
-    char path[1024];
 
     if (run->top == NULL) {
         run->top = (u8 *)calloc(1, screen);
@@ -379,6 +376,39 @@ static void boot_screenshot(BootRun *run, u64 n)
             bw_panic("eidos_boot", 0, "out of memory for the screens");
         }
     }
+}
+
+/*
+ * The display capture runs with the frame it is enabled in, and the title
+ * screen feeds each capture back into the next (a blend of the 3D frame
+ * with the bank the main engine shows).  A headless run renders only the
+ * frames it saves, so without this step the bank holds whatever the last
+ * saved frame left in it.  With a window the frame is rendered every
+ * frame anyway.
+ */
+static void boot_capture_step(BootRun *run)
+{
+    u32 unsupported[2];
+
+#if EIDOS_BOOT_SDL
+    if (run->plat != NULL) {
+        return;
+    }
+#endif
+    if (!(bw_io_read32(G2D_HW_DISPCAPCNT) & 0x80000000u)) {
+        return;
+    }
+    boot_ensure_screens(run);
+    (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom, unsupported);
+}
+
+/* Both screens as the hardware state has them now, saved for frame `n`. */
+static void boot_screenshot(BootRun *run, u64 n)
+{
+    u32 unsupported[2];
+    char path[1024];
+
+    boot_ensure_screens(run);
     (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom, unsupported);
     snprintf(path, sizeof(path), "%s/eidos_boot_frame%llu.png", g_shot_dir,
              (unsigned long long)n);
@@ -573,6 +603,7 @@ static void boot_frame(void *user)
     }
     eidos_frame_run_one(&run->loop);
     g_frames_seen++;
+    boot_capture_step(run);
     {
         u64 n = eidos_frame_count(&run->loop);
         int i;
@@ -756,7 +787,7 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--g3d-trace") == 0 && i + 1 < argc) {
             char *end = NULL;
             g_trace_frame = strtoull(argv[++i], &end, 10);
-            if (end == argv[i] || *end != ' ') {
+            if (end == argv[i] || *end != '\0') {
                 usage();
                 return 2;
             }

@@ -807,11 +807,9 @@ static void trace_report(const G3dTarget *t, u32 d3)
             covered++;
         }
     }
-    fprintf(stderr, "g3d-trace swap %u: DISP3DCNT %04X viewport %08X swap_param %u
-",
+    fprintf(stderr, "g3d-trace swap %u: DISP3DCNT %04X viewport %08X swap_param %u\n",
             g_hw.frames, d3, g_hw.viewport, g_hw.swap_param);
-    fprintf(stderr, "  words: fifo-stores %u direct-ports %u send/DMA %u extern-write %u
-",
+    fprintf(stderr, "  words: fifo-stores %u direct-ports %u send/DMA %u extern-write %u\n",
             g_tr.w_fifo, g_tr.w_port, g_tr.w_send, g_tr.w_ext);
     fprintf(stderr, "  commands:");
     for (i = 0; i < 256u; i++) {
@@ -819,28 +817,72 @@ static void trace_report(const G3dTarget *t, u32 d3)
             fprintf(stderr, " %02X:%u", i, g_tr.op_count[i]);
         }
     }
-    fprintf(stderr, "
-  geometry: verts %u polys %u (lit %u, alpha0 %u)  textures:",
+    fprintf(stderr, "\n  geometry: verts %u polys %u (lit %u, alpha0 %u)  textures:",
             g_hw.geom.n_verts, g_hw.geom.n_polys, lit, a0);
     for (i = 1; i < 8u; i++) {
         if (fmts[i]) {
             fprintf(stderr, " %s:%u", fmt_name[i], fmts[i]);
         }
     }
-    fprintf(stderr, "
-  raster: submitted %u drawn %u rejected: count %u alpha0 %u shadow %u clip %u degenerate %u cull %u
-",
+    fprintf(stderr, "\n  raster: submitted %u drawn %u rejected: count %u alpha0 %u shadow %u clip %u degenerate %u cull %u\n",
             r->submitted, r->drawn, r->rej_count, r->rej_alpha0, r->rej_shadow,
             r->rej_clip, r->rej_degenerate, r->rej_cull);
-    fprintf(stderr, "  mtx: mode %u sp %u err %u pj_level %u; pixels with alpha %u of %u
-",
+    fprintf(stderr, "  mtx: mode %u sp %u err %u pj_level %u; pixels with alpha %u of %u\n",
             st->mode, st->sp, st->error, g_hw.pj_level, covered, t->width * t->height);
     if (g_hw.geom.n_verts) {
         const G3dVertex *v = &g_hw.geom.verts[0];
 
-        fprintf(stderr, "  first vertex: clip %d %d %d w %d  obj %d %d %d
-",
+        fprintf(stderr, "  first vertex: clip %d %d %d w %d  obj %d %d %d\n",
                 v->x, v->y, v->z, v->w, v->ox, v->oy, v->oz);
+    }
+    {
+        /* attribute groups: attr word, polygon count, clip-space extent */
+        u32 seen[16] = { 0 }, cnt[16] = { 0 }, ns = 0, k;
+        s32 mnx[16], mxx[16], mny[16], mxy[16];
+
+        for (i = 0; i < g_hw.geom.n_polys; i++) {
+            const G3dPoly *p = &g_hw.geom.polys[i];
+            u32 j;
+
+            for (k = 0; k < ns && seen[k] != p->attr; k++) {
+            }
+            if (k == ns) {
+                if (ns == 16u) {
+                    continue;
+                }
+                seen[ns] = p->attr;
+                mnx[ns] = mny[ns] = 0x7FFFFFF;
+                mxx[ns] = mxy[ns] = -0x7FFFFFF;
+                ns++;
+            }
+            cnt[k]++;
+            for (j = 0; j < p->count; j++) {
+                const G3dVertex *v = &g_hw.geom.verts[g_hw.geom.idx[p->first + j]];
+                s32 sx = v->w ? (s32)(((s64)v->x * 128) / v->w) + 128 : 0;
+                s32 sy = v->w ? 96 - (s32)(((s64)v->y * 96) / v->w) : 0;
+
+                if (sx < mnx[k]) mnx[k] = sx;
+                if (sx > mxx[k]) mxx[k] = sx;
+                if (sy < mny[k]) mny[k] = sy;
+                if (sy > mxy[k]) mxy[k] = sy;
+            }
+        }
+        for (k = 0; k < ns; k++) {
+            fprintf(stderr, "  attr %08X: %u polys, screen x %d..%d y %d..%d\n",
+                    seen[k], cnt[k], mnx[k], mxx[k], mny[k], mxy[k]);
+        }
+    }
+    {
+        char name[64];
+        FILE *fp;
+
+        /* The 3D engine's own frame, raw RGBA, for off-line viewing. */
+        snprintf(name, sizeof(name), "g3d-trace-%u.rgba", g_hw.frames);
+        fp = fopen(name, "wb");
+        if (fp != NULL) {
+            fwrite(t->rgba, 4u, (size_t)t->width * t->height, fp);
+            fclose(fp);
+        }
     }
     memset(&g_tr.op_count, 0, sizeof(g_tr.op_count));
     g_tr.w_fifo = g_tr.w_port = g_tr.w_send = g_tr.w_ext = 0;
