@@ -54,4 +54,4 @@ which is how a renamed or deleted aletheia file shows up).
 
 | Name | Files | What it does |
 |---|---|---|
-| `title_settings` | `stubs/ov/reimpl_ov088_func_021BB4B4.c`, `_021BA338.c`, `_021BA014.c`, `_021BAD08.c`, `_021BB608.c`, `_021BA2C8.c`; `sdk/mod_title.c`; `engine/platform/settings_ui.c` | the SETTINGS row of the title menu and the settings screen (tabs Display, Layout, Controls, Sound) |
+| `title_settings` | `stubs/ov/reimpl_ov088_func_021BB4B4.c`, `_021BA338.c`, `_021BA014.c`, `_021BAD08.c`, `_021BB608.c`, `_021BA2C8.c`; `sdk/mod_title.c`; `engine/platform/settings_ui.c` | the SETTINGS row of the title menu and the settings screen (sections Display, Layout, Controls, Sound) |
