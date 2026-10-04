@@ -384,13 +384,13 @@ static u16 rgb8(u32 r, u32 g, u32 b)
  * 6 and 14 the border's shading, 7, 8 and 10 the dark edge. */
 static void theme_bar(u16 *bank, u32 fill, const u32 line[3], const u32 shade[3])
 {
-    bank[4] = rgb8(fill, fill, fill);
-    bank[5] = rgb8(16, 16, 16);
-    bank[1] = rgb8(41, 41, 41);
-    bank[2] = rgb8(57, 57, 57);
-    bank[10] = rgb8(24, 24, 24);
-    bank[7] = rgb8(16, 16, 16);
-    bank[8] = rgb8(41, 41, 41);
+    bank[4] = rgb8(fill, fill + 6, fill + 18);
+    bank[5] = rgb8(fill - 14, fill - 10, fill - 2);
+    bank[1] = rgb8(fill - 6, fill, fill + 12);
+    bank[2] = rgb8(fill + 8, fill + 14, fill + 28);
+    bank[10] = rgb8(fill - 10, fill - 6, fill + 4);
+    bank[7] = rgb8(fill - 14, fill - 10, fill - 2);
+    bank[8] = rgb8(fill - 6, fill, fill + 12);
     bank[3] = rgb8(line[0], line[1], line[2]);
     bank[9] = rgb8(line[0], line[1], line[2]);
     bank[15] = rgb8(line[0], line[1], line[2]);
@@ -400,31 +400,36 @@ static void theme_bar(u16 *bank, u32 fill, const u32 line[3], const u32 shade[3]
 
 static void make_palettes(void)
 {
-    static const u32 white[3] = { 238, 238, 238 }, grey[3] = { 98, 98, 98 };
-    static const u32 teal[3] = { 8, 148, 139 }, deep[3] = { 6, 100, 95 };
+    static const u32 white[3] = { 245, 245, 245 }, grey[3] = { 140, 150, 172 };
+    static const u32 teal[3] = { 120, 236, 226 }, deep[3] = { 30, 150, 142 };
     u16 *main_pal = (u16 *)bw_ds_ptr(0x05000000u);
     u16 *sub_pal = (u16 *)bw_ds_ptr(0x05000400u);
     int i;
 
-    theme_bar(main_pal + 0 * 16, 24, white, grey);   /* the grey bar */
-    theme_bar(main_pal + 2 * 16, 24, white, grey);   /* the bars */
-    theme_bar(main_pal + 9 * 16, 24, teal, deep);    /* the selected bar */
-    main_pal[9 * 16 + 4] = rgb8(57, 65, 82);
+    main_pal[0] = rgb8(58, 68, 92);                  /* what shows through: the backdrop */
+    for (i = 0; i < 2; i++) {
+        sub_pal[i] = sub_pal[16 + i] = rgb8(30, 36, 52);
+    }
+    theme_bar(main_pal + 0 * 16, 104, white, grey);   /* the grey bar */
+    theme_bar(main_pal + 2 * 16, 104, white, grey);   /* the bars */
+    theme_bar(main_pal + 9 * 16, 30, teal, deep);    /* the selected bar */
+    main_pal[9 * 16 + 4] = rgb8(20, 120, 116);
     /* bank 13 is for a bar with no row: all of it the backdrop's colour */
     for (i = 0; i < 16; i++) {
-        main_pal[13 * 16 + i] = rgb8(32, 32, 32);
+        main_pal[13 * 16 + i] = rgb8(52, 60, 80);
+        main_pal[8 * 16 + i] = rgb8(52, 60, 80);
     }
     /* the grid of the other screen: neutral crosses on black */
-    sub_pal[1 * 16 + 2] = rgb8(41, 41, 41);
-    sub_pal[1 * 16 + 3] = rgb8(24, 24, 24);
+    sub_pal[1 * 16 + 2] = rgb8(110, 120, 142);
+    sub_pal[1 * 16 + 3] = rgb8(70, 80, 100);
     /* the text, in both screens' bank 15: 15 the text, 14 its shadow, 2 dimmer */
     for (i = 0; i < 16; i++) {
         main_pal[15 * 16 + i] = 0;
         sub_pal[15 * 16 + i] = 0;
     }
     main_pal[15 * 16 + 15] = sub_pal[15 * 16 + 15] = rgb8(255, 255, 255);
-    main_pal[15 * 16 + 14] = sub_pal[15 * 16 + 14] = rgb8(66, 66, 74);
-    main_pal[15 * 16 + 2] = sub_pal[15 * 16 + 2] = rgb8(139, 139, 139);
+    main_pal[15 * 16 + 14] = sub_pal[15 * 16 + 14] = rgb8(16, 18, 26);
+    main_pal[15 * 16 + 2] = sub_pal[15 * 16 + 2] = rgb8(200, 206, 220);
 }
 
 static void highlight(OptWork *w)
