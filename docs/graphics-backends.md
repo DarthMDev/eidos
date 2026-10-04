@@ -106,3 +106,39 @@ rasteriser); quads with non-planar vertex colours differ slightly from the
 software edge interpolation; the alpha-blend of the 3D layer with BLDALPHA is
 approximated by the 3D layer's own alpha; scenes with both a capture and a
 visible 3D layer read the frame back synchronously.
+
+## Prior art (checked 2026-10-04) and what it means for eidos
+
+- **RT64** (Zelda64Recomp, N64Recomp): the resolution choices are the original
+  resolution, twice the original, and "Auto" (the display's resolution), with
+  optional 2x or 4x downsampling (render larger, shrink) and MSAA up to 8x; the
+  maintainers note that downsampling together with Auto is demanding. Its
+  README says it upscales framebuffer effects by raising "the resolution of all
+  framebuffers and any associated region copies by a scaling factor". For
+  eidos: an "Auto" internal resolution that follows the window, plus a separate
+  quality option (downsampling, MSAA), is the established shape; and the DS
+  display capture (a framebuffer copy the game reads back) is exactly the case
+  RT64 handles by scaling the copied region too. Doing the same needs the
+  capture destination kept as a high-resolution shadow while the game does not
+  touch it from the CPU; scenes that capture every frame (the title and logo
+  scenes) are limited to DS resolution until that exists.
+- **melonDS**: a classic OpenGL renderer that needs OpenGL 3.1 and upscales the
+  3D, and a compute-shader renderer (OpenGL 4.3) that reproduces the DS
+  rasteriser more closely. The two-tier split (simple and compatible, exact and
+  modern) is the same as this document's software-reference plus GPU backends.
+- **Pixel-art filtering**: "sharp bilinear" (a nearest-neighbour scale to a whole
+  multiple, then linear for the rest; or the equivalent one-pixel blend at the
+  seam) keeps pixels crisp at any window size and is soft only below about 2x.
+  eidos uses the one-pixel-seam form in the presenter shader
+  (`engine/platform/plat_gl.c`) and has a test that reads the window back.
+- **Windows scaling**: SDL2 apps are not DPI aware by default, so Windows
+  stretches the finished window bitmap (blur) on a display set to 125 or 150
+  percent. SDL's `SDL_WINDOWS_DPI_SCALING` hint makes the process DPI aware and
+  measures windows in DPI-scaled points while the GL drawable is in real pixels
+  (`SDL_GL_GetDrawableSize`, which the presenter already uses). Set in
+  `eidos_platform_init`.
+- **Frame pacing**: emulators that run a fixed-rate system on a display with a
+  different refresh rate either lock the swap to the display and correct audio
+  with small resampling changes (dynamic rate control), or pace in software as
+  eidos does (the DS rate is 59.8261 Hz). eidos presents with a swap interval of
+  0, which can tear; a vsync option with audio rate control is a later item.

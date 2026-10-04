@@ -218,3 +218,41 @@ Defaults to on; `EIDOS_HOOKS_OFF=title_settings` or
   to a message member mods can replace.
 - To aletheia: `ov068 func_021B9980` unmatched; `0x021BA984` is not a
   listed code entry.
+
+## The Options-style screen (engine/platform/mod_options_proc.c)
+
+The first settings screen reused the title menu's process with its black bars.
+It now has a process of its own that follows the game's Options screen
+(overlay 68) closely, so it looks like part of the game.
+
+What it reproduces, all from the player's own data at run time:
+
+- The set-up of `func_021B9980` / `func_021B9850` (asm only in aletheia, so
+  read from `asm/overlays/ov068.s`): the VRAM bank table (`d_021BB598`), the
+  background system mode, six layer templates (`d_021BB614`, six entries of
+  ten words), the graphics archive `a/0/2/7` (arc 0x1B) with its members:
+  palette 1, char 0 and screen 2 (the six bars, 256x512 px map, the sixth bar
+  grey), char 13 and screen 14 (the flat back), char 7 and screen 9 with
+  palette 8 (the dark grid of the other screen), char 16 (window tiles), the
+  text palette (member 8, bank 4, into bank 15), the sprite bank of
+  `func_021B9E28` (members 3 to 6 and 10 to 12).
+- Three kinds of text window: a 16x3 tile header on layer 0, one 30x3 window per
+  bar on layer 3 (at tile row 2 + 3 per bar), and a 30x4 help window at the
+  bottom of the other screen on layer 4.
+- The choice layout of a row: label at the left, then the choices side by side
+  (three at x = 112, 160, 208; two at 112 and 184), the active one marked by a
+  sprite at 120, 165, 211 or 120, 192, as `d_021BB704` places them. Rows whose
+  options have more than three values (resolution, volume, gap, key bindings)
+  show label and value instead.
+- The list is six bars: up to five option rows and the grey bar, which is
+  "Done" on the list of sections and "Back" inside one (the game's CONFIRM bar).
+
+The process table is `{init, main, end}` like every game process
+(`src/matched/arm9/func_020315F0.c`), started with `func_020312F8(-1, table, 0)`
+from the title menu's exit function and handing back to the title with the
+overlay id and table noted by `bw_mod_title_set_return`. The model (rows, input,
+help text) stays in `engine/platform/settings_ui.c`; this file only draws.
+
+Open: the exact sprite and cursor art positions are taken from the tables and
+checked only against the game's data, not against a running original; the
+stylus is not read.

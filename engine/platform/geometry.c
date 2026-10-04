@@ -122,6 +122,11 @@ void eidos_window_reshape(int cur_w, int cur_h, const EidosScreenPlacement *to,
 
 int eidos_resolution_fit(const EidosViewport *vp, int max)
 {
+    return eidos_resolution_fit_cap(vp, max, EIDOS_RESOLUTION_FIT_CAP);
+}
+
+int eidos_resolution_fit_cap(const EidosViewport *vp, int max, int cap)
+{
     int n = 1, i;
     const int w = (int)EIDOS_DS_SCREEN_WIDTH, h = (int)EIDOS_DS_SCREEN_HEIGHT;
 
@@ -135,8 +140,8 @@ int eidos_resolution_fit(const EidosViewport *vp, int max)
     if (max < 1) {
         max = 1;
     }
-    if (max > EIDOS_RESOLUTION_FIT_CAP) {
-        max = EIDOS_RESOLUTION_FIT_CAP;     /* an explicit N may go higher */
+    if (max > cap) {
+        max = cap;                          /* an explicit N may go higher */
     }
     return n > max ? max : n;
 }

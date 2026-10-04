@@ -36,3 +36,22 @@ int bw_mod_title_take_rebuild(void)
     g_rebuild = 0;
     return r;
 }
+
+static int g_return_ov;
+static const void *g_return_table;
+
+void bw_mod_title_set_return(int overlay, const void *table)
+{
+    g_return_ov = overlay;
+    g_return_table = table;
+}
+
+int bw_mod_title_return_ov(void)
+{
+    return g_return_ov;
+}
+
+const void *bw_mod_title_return_table(void)
+{
+    return g_return_table;
+}

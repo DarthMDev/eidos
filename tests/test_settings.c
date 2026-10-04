@@ -125,6 +125,7 @@ static void test_geometry(void)
         BW_CHECK_EQ("fit N clamps to max", eidos_resolution_fit(&vp, 2), 2);
         BW_CHECK_EQ("fit N capped at 2", eidos_resolution_fit(&vp, 6), 2);
         BW_CHECK_EQ("fit N: max 1", eidos_resolution_fit(&vp, 0), 1);
+        BW_CHECK_EQ("fit N with a larger cap", eidos_resolution_fit_cap(&vp, 6, 6), 6);
     }
 }
 

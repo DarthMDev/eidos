@@ -126,8 +126,6 @@ int func_021BA338(char *p)
             return func_021BC0AC(p, 11);
         case 7:
             if (bw_mod_title_settings_on() && !func_0200C308(*(void **)(p + 8), 3)) {
-                bw_mod_title_set_in_settings(1);
-                eidos_sui_enter();
                 /* The leave path of kind 1 (func_021BA6B0): state 11's table
                  * entry is the unlabelled stub at 0x021BA984, which the
                  * boot does not list as a code entry yet. */

@@ -48,6 +48,8 @@ extern int bw_mod_title_settings_on(void);
 extern int bw_mod_title_in_settings(void);
 extern int bw_mod_title_set_in_settings(int on);
 extern void eidos_sui_leave(void);
+extern void bw_mod_title_set_return(int overlay, const void *table);
+extern const void *eidos_opt_proc_table(void);
 #define BW_TITLE_ROW_SETTINGS 7
 #define BW_TITLE_SEL_SETTINGS 9
 typedef unsigned char u8;
@@ -123,9 +125,10 @@ int func_021BA014(int a0, int a1, int a2, char *a3)
         func_020312F8((int)ov107_id, d_021F6D78, w);
         break;
     case BW_TITLE_SEL_SETTINGS:
-        /* The settings screen is the menu proc started again with the
-         * in-settings flag (see func_021BA338, func_021BB4B4, func_021BAD08). */
-        func_020312F8((int)ov088_id, d_021BD66C, 0);
+        /* The settings screen is a process of its own (engine/platform/
+         * mod_options_proc.c); it hands back to this menu. */
+        bw_mod_title_set_return((int)ov088_id, d_021BD66C);
+        func_020312F8(-1, (void *)eidos_opt_proc_table(), 0);
         break;
     default:
         if (bw_mod_title_in_settings()) {

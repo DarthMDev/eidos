@@ -182,6 +182,10 @@ void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
 /* The "Fit" internal resolution: the smallest N whose 256N x 192N frame is
  * at least as large as each screen's destination rectangle, in [1, max]. */
 int  eidos_resolution_fit(const EidosViewport *vp, int max);
+/* As eidos_resolution_fit with the cap given: the CPU renderer's cost grows
+ * with the square of N, so Fit is capped low there; the GPU renderer has no
+ * such limit. */
+int  eidos_resolution_fit_cap(const EidosViewport *vp, int max, int cap);
 /* The window size after the arrangement changes to `to`: the same area as
  * cur_w x cur_h, the aspect of `to`, scaled down to fit max_w x max_h (the
  * desktop work area; 0 = unbounded). */

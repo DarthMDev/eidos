@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define EIDOS_SUI_VISIBLE 6
+#define EIDOS_SUI_VISIBLE 5   /* option rows shown; the grey bar is a sixth */
 
 /* Result flags of eidos_sui_input. */
 #define EIDOS_SUI_REDRAW      0x01   /* rebuild the rows                      */
@@ -42,10 +42,16 @@ void eidos_sui_leave(void);     /* commit; cancels a capture                  */
  * the buttons down now (used for repeat).  Returns EIDOS_SUI_* flags. */
 int eidos_sui_input(unsigned pressed, unsigned held);
 
-/* What to draw.  Row 0 is the header; rows 1..eidos_sui_row_count()-1 are the
- * visible option rows.  `label` and `value` are ASCII; value may be "". */
+/* What to draw.  Row 0 is the header; rows 1..eidos_sui_row_count()-2 are the
+ * visible option rows and the last row, eidos_sui_row_count()-1, is the grey
+ * bar ("Done" on the list of sections, "Back" inside one).  `label` and `value` are ASCII; value may be "". */
 int  eidos_sui_row_count(void);
 void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv);
+/* A row that is an option with two or three named choices (window mode, screen
+ * layout, swap): how many, which is active (0..count-1) and each name.  The
+ * game's Options screen shows all the choices side by side and marks the
+ * active one; 0 means draw label and value instead. */
+int  eidos_sui_row_choices(int row, int *active, char names[3][20]);
 /* The highlighted row, 1..eidos_sui_row_count()-1. */
 int  eidos_sui_cursor_row(void);
 /* Non-zero while waiting for a key or pad control. */

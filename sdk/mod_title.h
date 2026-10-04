@@ -36,6 +36,12 @@ int  bw_mod_title_set_in_settings(int on);
 int  bw_mod_title_set_rebuild(void);
 int  bw_mod_title_take_rebuild(void);
 
+/* Where the settings screen sends the player back to: the title menu process
+ * (overlay id and process table), noted when the menu leaves for it. */
+void bw_mod_title_set_return(int overlay, const void *table);
+int  bw_mod_title_return_ov(void);
+const void *bw_mod_title_return_table(void);
+
 #ifdef __cplusplus
 }
 #endif

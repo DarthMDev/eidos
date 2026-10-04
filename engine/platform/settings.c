@@ -154,11 +154,16 @@ static void model_reset_bindings(Model *m)
 /* Applying to the platform                                            */
 /* ------------------------------------------------------------------ */
 
+static int g_attaching;     /* the first apply: the window was just created */
+
 static int apply_display(void)
 {
-    return eidos_platform_set_display(g_plat, g_cur.v[EIDOS_OPT_DISPLAY_MODE],
-                                      g_cur.v[EIDOS_OPT_DISPLAY_WIDTH],
-                                      g_cur.v[EIDOS_OPT_DISPLAY_HEIGHT]);
+    /* The window opens at the DS size for the layout: applying the stored
+     * size on top of that made it open small and jump larger. */
+    return eidos_platform_set_display(
+        g_plat, g_cur.v[EIDOS_OPT_DISPLAY_MODE],
+        g_attaching ? 0 : g_cur.v[EIDOS_OPT_DISPLAY_WIDTH],
+        g_attaching ? 0 : g_cur.v[EIDOS_OPT_DISPLAY_HEIGHT]);
 }
 
 static int apply_layout(void)
@@ -1166,7 +1171,9 @@ void eidos_settings_attach(EidosPlatform *p)
 {
     ensure_init();
     g_plat = p;
+    g_attaching = 1;
     apply_all();
+    g_attaching = 0;
 }
 
 void eidos_settings_detach(void)
@@ -1203,8 +1210,10 @@ int eidos_settings_internal_scale(void)
         return 1;
     }
     eidos_platform_viewport(g_plat, &vp);
-    return eidos_resolution_fit(&vp,
-                                k_options[EIDOS_OPT_DISPLAY_RESOLUTION].max);
+    return eidos_resolution_fit_cap(
+        &vp, k_options[EIDOS_OPT_DISPLAY_RESOLUTION].max,
+        eidos_platform_gpu3d(g_plat) ? EIDOS_RESOLUTION_MAX
+                                     : EIDOS_RESOLUTION_FIT_CAP);
 }
 
 void eidos_settings_on_resize(EidosPlatform *p, int w, int h)

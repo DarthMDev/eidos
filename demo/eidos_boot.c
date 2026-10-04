@@ -448,6 +448,30 @@ static const u8 *boot_gpu_frame(BootRun *run)
  * colours) and each decoded texture as a PPM (alpha in a second file).  A
  * debugging aid for 3D accuracy work.
  */
+/* EIDOS_IO_DUMP=1: the display registers at each screenshot. */
+static void boot_dump_io(u64 n)
+{
+    u32 base, e;
+
+    if (getenv("EIDOS_IO_DUMP") == NULL) {
+        return;
+    }
+    for (e = 0; e < 2u; e++) {
+        base = e ? 0x04001000u : 0x04000000u;
+        fprintf(stderr, "io %llu %s: DISPCNT %08X BG0CNT %04X BG1CNT %04X BG2CNT %04X BG3CNT %04X"
+                " BG0OFS %04X/%04X BG3OFS %04X/%04X BLDCNT %04X MASTER_BRIGHT %04X\n",
+                (unsigned long long)n, e ? "sub " : "main", bw_io_read32(base),
+                bw_io_read16(base + 8), bw_io_read16(base + 10), bw_io_read16(base + 12),
+                bw_io_read16(base + 14), bw_io_read16(base + 0x10), bw_io_read16(base + 0x12),
+                bw_io_read16(base + 0x1C), bw_io_read16(base + 0x1E), bw_io_read16(base + 0x50),
+                bw_io_read16(base + 0x6C));
+    }
+    fprintf(stderr, "io %llu POWCNT1 %04X VRAMCNT A-D %02X %02X %02X %02X\n", (unsigned long long)n,
+            bw_io_read16(0x04000304u), bw_io_read16(0x04000240u) & 0xFFu,
+            (bw_io_read16(0x04000240u) >> 8) & 0xFFu, bw_io_read16(0x04000242u) & 0xFFu,
+            (bw_io_read16(0x04000242u) >> 8) & 0xFFu);
+}
+
 static void boot_dump_g3d(u64 n)
 {
     const char *dir = getenv("EIDOS_G3D_DUMP");
@@ -479,7 +503,7 @@ static void boot_dump_g3d(u64 n)
             for (k = 0; k < p->count; k++) {
                 const G3dVertex *v = &s->verts[s->idx[p->first + k]];
 
-                fprintf(f, " (%u,%u,%u)", v->r, v->g, v->b);
+                fprintf(f, " (%u,%u,%u|%d,%d,%d,%d|%d,%d)", v->r, v->g, v->b, v->x, v->y, v->z, v->w, v->s, v->t);
             }
             fprintf(f, "\n");
         }
@@ -521,6 +545,7 @@ static void boot_screenshot(BootRun *run, u64 n)
 
     boot_ensure_screens(run);
     boot_dump_g3d(n);
+    boot_dump_io(n);
     {
         const u8 *gpu3 = boot_gpu_frame(run);
 

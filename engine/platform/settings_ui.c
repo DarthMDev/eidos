@@ -81,7 +81,20 @@ static const ValueName k_value_names[] = {
     { EIDOS_OPT_LAYOUT_SWAP,         1, "On" },
 };
 
+/* Short names for the side-by-side choices (a choice has about 48 pixels). */
+static const ValueName k_choice_names[] = {
+    { EIDOS_OPT_DISPLAY_MODE,        0, "Window" },
+    { EIDOS_OPT_DISPLAY_MODE,        1, "Full" },
+    { EIDOS_OPT_DISPLAY_MODE,        2, "Border" },
+    { EIDOS_OPT_LAYOUT_ARRANGEMENT,  0, "Stacked" },
+    { EIDOS_OPT_LAYOUT_ARRANGEMENT,  1, "Wide" },
+};
+
 #define STR_FIT         "Fit"
+#define STR_BACK_L0     "Done"
+#define STR_BACK_L1     "Back"
+#define HELP_BACK_L0    "Save the changes and leave"
+#define HELP_BACK_L1    "Go back to the list of sections"
 #define STR_REVERT      "Revert changes"
 #define STR_DEFAULTS    "Restore defaults"
 #define STR_PRESS_KEY   "Press a key"
@@ -149,8 +162,18 @@ static void build_rows(void)
     g.nrows = n;
 }
 
+/* The cursor runs over the rows and then one more place: the grey bar
+ * ("Done" or "Back"), always shown below the visible rows. */
+static int on_back(void)
+{
+    return g.cursor >= g.nrows;
+}
+
 static void clamp_scroll(void)
 {
+    if (on_back()) {
+        return;
+    }
     if (g.cursor < g.scroll) {
         g.scroll = g.cursor;
     }
@@ -200,7 +223,7 @@ static void leave_section(void)
 
 static void move_cursor(int d)
 {
-    g.cursor = (g.cursor + d + g.nrows) % g.nrows;
+    g.cursor = (g.cursor + d + g.nrows + 1) % (g.nrows + 1);
     clamp_scroll();
 }
 
@@ -304,6 +327,16 @@ int eidos_sui_input(unsigned pressed, unsigned held)
         move_cursor(1);
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
     }
+    if (on_back()) {
+        if (pressed & 1u) {
+            if (g.level == 0) {
+                return EIDOS_SUI_EXIT | EIDOS_SUI_SFX_SELECT;
+            }
+            leave_section();
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return 0;
+    }
     r = &g.rows[g.cursor];
     if (r->type == ROW_SECTION) {
         if (pressed & 1u) {
@@ -351,11 +384,14 @@ int eidos_sui_row_count(void)
     if (n > EIDOS_SUI_VISIBLE) {
         n = EIDOS_SUI_VISIBLE;
     }
-    return 1 + n;
+    return 1 + n + 1;        /* the header, the visible rows, the grey bar */
 }
 
 int eidos_sui_cursor_row(void)
 {
+    if (on_back()) {
+        return eidos_sui_row_count() - 1;
+    }
     return 1 + g.cursor - g.scroll;
 }
 
@@ -386,10 +422,9 @@ static void put(char *dst, int n, const char *s)
     }
 }
 
-static void option_value(int id, char *out, int n)
+static void option_value_of(int id, int v, char *out, int n)
 {
     const EidosOption *o = eidos_settings_option(id);
-    int v = eidos_settings_get(id);
     size_t i;
     if (o != NULL && o->kind == EIDOS_OPTKIND_CHOICE) {
         for (i = 0; i < sizeof k_value_names / sizeof k_value_names[0]; i++) {
@@ -404,6 +439,11 @@ static void option_value(int id, char *out, int n)
         return;
     }
     eidos_settings_value_text(id, out, (size_t)n);
+}
+
+static void option_value(int id, char *out, int n)
+{
+    option_value_of(id, eidos_settings_get(id), out, n);
 }
 
 static void pad_short(int kind, int index, char *out, int n)
@@ -463,6 +503,10 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         put(label, nl, g.level == 0 ? STR_TITLE : k_tab_names[g.tab]);
         return;
     }
+    if (row == eidos_sui_row_count() - 1) {
+        put(label, nl, g.level == 0 ? STR_BACK_L0 : STR_BACK_L1);
+        return;
+    }
     if (row < 1 || g.scroll + row - 1 >= g.nrows) {
         return;
     }
@@ -495,6 +539,48 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
     }
 }
 
+int eidos_sui_row_choices(int row, int *active, char names[3][20])
+{
+    const Row *r;
+    const EidosOption *o;
+    int i, count;
+
+    if (row < 1 || row == eidos_sui_row_count() - 1
+        || g.scroll + row - 1 >= g.nrows) {
+        return 0;
+    }
+    r = &g.rows[g.scroll + row - 1];
+    if (r->type != ROW_OPTION) {
+        return 0;
+    }
+    o = eidos_settings_option(r->arg);
+    if (o == NULL || o->kind != EIDOS_OPTKIND_CHOICE) {
+        return 0;
+    }
+    count = o->max - o->min + 1;
+    if (count < 2 || count > 3) {
+        return 0;
+    }
+    for (i = 0; i < count; i++) {
+        size_t k;
+        int found = 0;
+
+        for (k = 0; k < sizeof k_choice_names / sizeof k_choice_names[0]; k++) {
+            if (k_choice_names[k].id == r->arg && k_choice_names[k].index == o->min + i) {
+                put(names[i], 20, k_choice_names[k].text);
+                found = 1;
+            }
+        }
+        if (!found) {
+            option_value_of(r->arg, o->min + i, names[i], 20);
+        }
+    }
+    if (active != NULL) {
+        *active = eidos_settings_get(r->arg) - o->min;
+    }
+    return count;
+}
+
 /* ------------------------------------------------------------------ */
 /* Help text for the bottom screen */
 
@@ -506,13 +592,17 @@ int eidos_sui_help_count(void)
 void eidos_sui_help_line(int i, char *out, int n)
 {
     const char *l[4] = { "", "", "", "" };
-    const Row *r = g.nrows > 0 ? &g.rows[g.cursor] : NULL;
+    const Row *r = (g.nrows > 0 && !on_back()) ? &g.rows[g.cursor] : NULL;
     if (n > 0) {
         out[0] = '\0';
     }
     if (g.capturing) {
         l[0] = HELP_CAPTURE1;
         l[1] = HELP_CAPTURE2;
+    } else if (on_back()) {
+        l[0] = g.level == 0 ? HELP_BACK_L0 : HELP_BACK_L1;
+        l[2] = g.level == 0 ? HELP_KEYS_L0 : HELP_KEYS_L1;
+        l[3] = g.level == 0 ? HELP_KEYS_L0B : HELP_KEYS_L1B;
     } else if (g.level == 0 && r != NULL) {
         static const char *const sec[] = {
             HELP_SECTION_DISPLAY, HELP_SECTION_LAYOUT, HELP_SECTION_CONTROLS, HELP_SECTION_SOUND };

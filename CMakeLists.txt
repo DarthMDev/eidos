@@ -721,6 +721,7 @@ if(EIDOS_SDL_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/geometry.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_options_proc.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_replace.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_gl.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_gl3d.c
@@ -2052,7 +2053,8 @@ if(NOT _eidos_ovls STREQUAL "")
         # resolve to it (docs/settings-design.md).
         list(APPEND _ovl_link ${EIDOS_BOOT_MATCHED} ${EIDOS_BOOT_PORT_SOURCES}
             ${EIDOS_BOOT_ASM_SUBST}
-            ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c)
+            ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_options_proc.c)
     endif()
     set(_ovl_stub_opt)
     if(EIDOS_OVERLAYS_ARM9_STUBS)

@@ -49,7 +49,9 @@ int main(void)
     row(0);
     BW_CHECK_EQ("header", strcmp(g_label, "Settings"), 0);
     BW_CHECK_EQ("header has no counter", g_value[0], 0);
-    BW_CHECK_EQ("section rows", eidos_sui_row_count(), 1 + 4);
+    BW_CHECK_EQ("section rows", eidos_sui_row_count(), 1 + 4 + 1);
+    row(5);
+    BW_CHECK_EQ("grey bar on the list", strcmp(g_label, "Done"), 0);
     row(1);
     BW_CHECK_EQ("first section", strcmp(g_label, "Display"), 0);
     row(4);
@@ -66,7 +68,7 @@ int main(void)
     BW_CHECK_EQ("display section", eidos_sui_tab(), 0);
     row(0);
     BW_CHECK_EQ("display header", strcmp(g_label, "Display"), 0);
-    BW_CHECK_EQ("display rows", eidos_sui_row_count(), 1 + 4);
+    BW_CHECK_EQ("display rows", eidos_sui_row_count(), 1 + 4 + 1);
     row(1);
     BW_CHECK_EQ("mode label", strcmp(g_label, "Window mode"), 0);
     BW_CHECK_EQ("mode value", strcmp(g_value, "Windowed"), 0);
@@ -112,7 +114,7 @@ int main(void)
     press(DOWN);
     press(A);
     BW_CHECK_EQ("layout section", eidos_sui_tab(), 1);
-    BW_CHECK_EQ("layout rows", eidos_sui_row_count(), 1 + 5);
+    BW_CHECK_EQ("layout rows", eidos_sui_row_count(), 1 + 5 + 1);
     press(B);
     BW_CHECK_EQ("cursor on Layout", eidos_sui_cursor_row(), 2);
 
@@ -132,8 +134,12 @@ int main(void)
     BW_CHECK_EQ("cursor on Controls", eidos_sui_cursor_row(), 3);
     press(A);
     BW_CHECK_EQ("controls section", eidos_sui_tab(), 2);
-    BW_CHECK_EQ("controls rows", eidos_sui_row_count(), 1 + EIDOS_SUI_VISIBLE);
-    press(UP);                                /* wraps to the last row */
+    BW_CHECK_EQ("controls rows", eidos_sui_row_count(), 1 + EIDOS_SUI_VISIBLE + 1);
+    press(UP);                                /* wraps to the grey bar */
+    BW_CHECK_EQ("cursor on the grey bar", eidos_sui_cursor_row(), eidos_sui_row_count() - 1);
+    row(eidos_sui_cursor_row());
+    BW_CHECK_EQ("grey bar is Back", strcmp(g_label, "Back"), 0);
+    press(UP);                                /* the last real row */
     BW_CHECK_EQ("cursor at bottom", eidos_sui_cursor_row(), EIDOS_SUI_VISIBLE);
     row(eidos_sui_cursor_row());
     BW_CHECK_EQ("last row", strcmp(g_label, "Restore defaults"), 0);
