@@ -1,0 +1,75 @@
+/*
+ * function: func_021BB4B4
+ * address:  0x021BB4B4
+ * packet:   pkt_ov088_021BB4B4
+ * region:   ov088
+ * compiler: dsi/1.1p1
+ * flags:    -O4,p
+ * lang:     c99
+ * isa:      thumb
+ * replaces: src/matched/ov/ov088_func_021BB4B4.c
+ * port hook "title_settings" (docs/hooks.md, docs/settings-design.md):
+ * the row list. The last row, kind 7, is always present: it is the game's
+ * conditional row when its test holds, else the SETTINGS row. While the settings
+ * screen is up the list holds that row alone.
+ *
+ * With the hook off this is the matched function, unchanged.
+ *
+ * original status:   EXACT
+ *
+ * symbols:
+ *   func_020071EC  0x020071EC  thumb
+ *   func_0200C308  0x0200C308  thumb
+  */
+/* sdk/mod_title.h, spelled out: the overlay link header declares what the
+ * file itself does not (docs/hooks.md). */
+extern int bw_mod_title_settings_on(void);
+extern int bw_mod_title_in_settings(void);
+extern int bw_mod_title_set_in_settings(int on);
+#define BW_TITLE_ROW_SETTINGS 7
+#define BW_TITLE_SEL_SETTINGS 9
+typedef unsigned char u8;
+
+extern int func_020071EC(void *);
+extern u8 func_0200C308(void *, unsigned);
+
+void func_021BB4B4(char *p)
+{
+    unsigned i = 0;
+    int hook = bw_mod_title_settings_on();
+    if (hook && bw_mod_title_in_settings()) {
+        p[0x120] = BW_TITLE_ROW_SETTINGS;
+        i = 1;
+        while (i < 8) {
+            (p + i)[0x120] = 8;
+            i++;
+        }
+        return;
+    }
+    if (func_020071EC(*(void **)p) == 1) {
+        p[0x120] = 0;
+        i++;
+    }
+    (p + i)[0x120] = 1;
+    (p + i)[0x121] = 2;
+    i += 2;
+    if (func_0200C308(*(void **)(p + 8), 1)) {
+        (p + i)[0x120] = 3;
+        i++;
+    }
+    if (func_0200C308(*(void **)(p + 8), 2)) {
+        (p + i)[0x120] = 4;
+        i++;
+    }
+    (p + i)[0x120] = 5;
+    (p + i)[0x121] = 6;
+    i += 2;
+    if (func_0200C308(*(void **)(p + 8), 3) || hook) {
+        (p + i)[0x120] = 7;
+        i++;
+    }
+    while (i < 8) {
+        (p + i)[0x120] = 8;
+        i++;
+    }
+}

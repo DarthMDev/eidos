@@ -60,6 +60,7 @@
  * not in main().
  */
 
+#include "mod_hooks.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -810,6 +811,8 @@ int main(int argc, char **argv)
                 usage();
                 return 2;
             }
+        } else if (strcmp(argv[i], "--no-hook") == 0 && i + 1 < argc) {
+            bw_hook_set(argv[++i], 0);
         } else if (strcmp(argv[i], "--press") == 0 && i + 1 < argc) {
             if (parse_press(argv[++i]) != 0) {
                 usage();
