@@ -442,6 +442,77 @@ static const u8 *boot_gpu_frame(BootRun *run)
 }
 #endif
 
+/*
+ * EIDOS_G3D_DUMP=dir: at each screenshot, write what the 3D engine was given
+ * for that frame: a text summary per polygon (attributes, texture, vertex
+ * colours) and each decoded texture as a PPM (alpha in a second file).  A
+ * debugging aid for 3D accuracy work.
+ */
+static void boot_dump_g3d(u64 n)
+{
+    const char *dir = getenv("EIDOS_G3D_DUMP");
+    const G3dSnapshot *s = g3d_hw_snapshot();
+    char path[1024];
+    FILE *f;
+    u32 i;
+
+    if (dir == NULL || s == NULL) {
+        return;
+    }
+    snprintf(path, sizeof(path), "%s/g3d_%llu.txt", dir, (unsigned long long)n);
+    f = fopen(path, "w");
+    if (f != NULL) {
+        fprintf(f, "polys %u verts %u tex %u disp3dcnt %08X wbuf %u alpha_ref %u "
+                   "highlight %u clear %08X unsupported %u\n",
+                s->n_polys, s->n_verts, s->n_tex, s->disp3dcnt, s->wbuffer,
+                s->alpha_ref, s->highlight, s->clear_color, s->unsupported);
+        for (i = 0; i < s->n_polys; i++) {
+            const G3dPoly *p = &s->polys[i];
+            u32 k;
+
+            fprintf(f, "poly %u n=%u attr=%08X (mode %u alpha %u lights %X id %u) "
+                       "teximage=%08X (fmt %u) tex=%d  colours:",
+                    i, p->count, p->attr, G3D_ATTR_MODE(p->attr),
+                    G3D_ATTR_ALPHA(p->attr), G3D_ATTR_LIGHTS(p->attr),
+                    G3D_ATTR_ID(p->attr), p->teximage, G3D_TEX_FORMAT(p->teximage),
+                    s->poly_tex[i]);
+            for (k = 0; k < p->count; k++) {
+                const G3dVertex *v = &s->verts[s->idx[p->first + k]];
+
+                fprintf(f, " (%u,%u,%u)", v->r, v->g, v->b);
+            }
+            fprintf(f, "\n");
+        }
+        fclose(f);
+    }
+    for (i = 0; i < s->n_tex; i++) {
+        u32 k, npx = s->tex[i].w * s->tex[i].h;
+
+        snprintf(path, sizeof(path), "%s/g3d_%llu_tex%u.ppm", dir,
+                 (unsigned long long)n, i);
+        f = fopen(path, "wb");
+        if (f == NULL) {
+            continue;
+        }
+        fprintf(f, "P6 %u %u 255 ", s->tex[i].w, s->tex[i].h);
+        for (k = 0; k < npx; k++) {
+            fwrite(s->tex[i].rgba + k * 4u, 1, 3, f);
+        }
+        fclose(f);
+        snprintf(path, sizeof(path), "%s/g3d_%llu_tex%u_alpha.pgm", dir,
+                 (unsigned long long)n, i);
+        f = fopen(path, "wb");
+        if (f == NULL) {
+            continue;
+        }
+        fprintf(f, "P5 %u %u 255 ", s->tex[i].w, s->tex[i].h);
+        for (k = 0; k < npx; k++) {
+            fputc(s->tex[i].rgba[k * 4u + 3u], f);
+        }
+        fclose(f);
+    }
+}
+
 /* Both screens as the hardware state has them now, saved for frame `n`. */
 static void boot_screenshot(BootRun *run, u64 n)
 {
@@ -449,33 +520,33 @@ static void boot_screenshot(BootRun *run, u64 n)
     char path[1024];
 
     boot_ensure_screens(run);
+    boot_dump_g3d(n);
     {
         const u8 *gpu3 = boot_gpu_frame(run);
 
         if (gpu3 != NULL) {
             /* The GPU drew the 3D; its DS-size frame is the layer. */
             (void)g2d_hw_render_dsmem(gpu3, run->top, run->bottom, unsupported);
-            goto shot_composed;
-        }
-    }
-    if (g3d_hw_frame_scale() > 1u) {
-        /* A window runs the 3D at n times the DS size: render at n, then
-         * box-downsample to the 256x192 the PNG writer takes. */
-        u32 n = g3d_hw_frame_scale();
-        size_t bytes = (size_t)256 * n * 192 * n * 4;
-        u8 *a = (u8 *)calloc(2, bytes);
+        } else if (g3d_hw_frame_scale() > 1u) {
+            /* A window runs the 3D at n times the DS size: render at n, then
+             * box-downsample to the 256x192 the PNG writer takes. */
+            u32 n = g3d_hw_frame_scale();
+            size_t bytes = (size_t)256 * n * 192 * n * 4;
+            u8 *a = (u8 *)calloc(2, bytes);
 
-        if (a == NULL) {
-            bw_panic("eidos_boot", 0, "out of memory for the screenshot");
+            if (a == NULL) {
+                bw_panic("eidos_boot", 0, "out of memory for the screenshot");
+            }
+            (void)g2d_hw_render_dsmem_scaled(n, g3d_hw_frame(), a, a + bytes,
+                                             unsupported);
+            g2d_hw_box_downsample(a, n, run->top);
+            g2d_hw_box_downsample(a + bytes, n, run->bottom);
+            free(a);
+        } else {
+            (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom,
+                                      unsupported);
         }
-        (void)g2d_hw_render_dsmem_scaled(n, g3d_hw_frame(), a, a + bytes, unsupported);
-        g2d_hw_box_downsample(a, n, run->top);
-        g2d_hw_box_downsample(a + bytes, n, run->bottom);
-        free(a);
-    } else {
-        (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom, unsupported);
     }
-shot_composed:
     snprintf(path, sizeof(path), "%s/eidos_boot_frame%llu.png", g_shot_dir,
              (unsigned long long)n);
     if (write_screens_png(path, run->top, run->bottom) == 0) {
@@ -592,15 +663,6 @@ static void boot_gpu3d(BootRun *run, int behind_done)
     }
     snap = g3d_hw_snapshot();
     dispcnt = bw_io_read32(0x04000000u);
-    {
-        static unsigned dn;
-
-        if (eidos_prof_on && (++dn % 250u) == 0u) {
-            fprintf(stderr, "boot_gpu3d: snap=%d unsup=%u dispcnt=%08X behind_done=%d\n",
-                    snap != NULL, snap != NULL ? snap->unsupported : 0u,
-                    (unsigned)dispcnt, behind_done);
-        }
-    }
     if (snap == NULL || snap->unsupported != 0u || (dispcnt & 0x8u) == 0u
         || (dispcnt & 0x100u) == 0u || ((dispcnt >> 16) & 3u) != 1u) {
         (void)eidos_platform_set_3d(run->plat, -1, NULL, NULL, 1, 0, 0.f, 0);
@@ -963,6 +1025,9 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
 #endif
     bw_port_reset();
     bw_input_reset();
+    if (getenv("EIDOS_G3D_DUMP") != NULL) {
+        g3d_hw_snapshot_enable(1);
+    }
     if (g_input_script[0] != '\0') {
         char err[160];
         if (bw_input_script_load(g_input_script, err, sizeof(err)) != 0) {

@@ -1031,6 +1031,16 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     }
 
     SDL_SetMainReady();
+    /*
+     * Windows: without DPI awareness the system stretches the finished window
+     * bitmap (150 percent on a common laptop or 1440p display), which blurs
+     * the sharp picture the presenter draws.  DPI scaling makes SDL declare
+     * per-monitor awareness and measure windows in DPI-scaled points, so a
+     * 256x384 request is still the size it looks like, drawn at the display's
+     * real pixels (the drawable size, which the presenter uses).  Must be set
+     * before the video subsystem starts; a user's own setting wins.
+     */
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_SCALING, "1");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "eidos: SDL_Init failed: %s\n", SDL_GetError());
         free(p);
@@ -1068,7 +1078,8 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
         const char *want = getenv("EIDOS_RENDERER");
         int try_gl = !(drv != NULL && strcmp(drv, "dummy") == 0) &&
                      !(want != NULL && strcmp(want, "sdl") == 0);
-        Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
+        Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE |
+                       SDL_WINDOW_ALLOW_HIGHDPI;
         const char *title = cfg->title != NULL ? cfg->title : "eidos";
 
         if (getenv("EIDOS_WINDOW_HIDDEN") != NULL) {
@@ -1492,6 +1503,67 @@ void eidos_platform_shot_size(const EidosPlatform *p, u32 *w, u32 *h)
  * SDL_SaveBMP writes a plain 24-bit bottom-up BMP that a test can parse with
  * no BMP library.
  */
+/* The screenshot as the window shows it, the picture's rectangle only: the
+ * GPU path composes the picture on the GPU, so the CPU-side copies are not it
+ * (a GPU 3D layer is a placeholder colour there). */
+static int screenshot_gl(EidosPlatform *p, const char *path)
+{
+    EidosViewport vp;
+    SDL_Rect rects[2];
+    SDL_Surface *surf;
+    u8 *rgb, *crop;
+    int ow, oh, i, cw, ch, cx, cy, rc;
+
+    out_size(p, &ow, &oh);
+    eidos_platform_viewport(p, &vp);
+    for (i = 0; i < 2; i++) {
+        rects[i].x = vp.screen[i].x;
+        rects[i].y = vp.screen[i].y;
+        rects[i].w = vp.screen[i].w;
+        rects[i].h = vp.screen[i].h;
+    }
+    rgb = (u8 *)malloc((size_t)ow * (size_t)oh * 3u);
+    if (rgb == NULL || eidos_gl_grab(p->gl, ow, oh, rects, rgb) != 0) {
+        free(rgb);
+        return -1;
+    }
+    cx = vp.content.x < 0 ? 0 : vp.content.x;
+    cy = vp.content.y < 0 ? 0 : vp.content.y;
+    cw = vp.content.w;
+    ch = vp.content.h;
+    if (cx + cw > ow) {
+        cw = ow - cx;
+    }
+    if (cy + ch > oh) {
+        ch = oh - cy;
+    }
+    if (cw <= 0 || ch <= 0) {
+        free(rgb);
+        return -1;
+    }
+    crop = (u8 *)malloc((size_t)cw * (size_t)ch * 3u);
+    if (crop == NULL) {
+        free(rgb);
+        return -1;
+    }
+    for (i = 0; i < ch; i++) {
+        memcpy(crop + (size_t)i * (size_t)cw * 3u,
+               rgb + ((size_t)(cy + i) * (size_t)ow + (size_t)cx) * 3u,
+               (size_t)cw * 3u);
+    }
+    free(rgb);
+    surf = SDL_CreateRGBSurfaceWithFormatFrom(crop, cw, ch, 24, cw * 3,
+                                              SDL_PIXELFORMAT_RGB24);
+    if (surf == NULL) {
+        free(crop);
+        return -1;
+    }
+    rc = SDL_SaveBMP(surf, path);
+    SDL_FreeSurface(surf);
+    free(crop);
+    return rc == 0 ? 0 : -1;
+}
+
 int eidos_platform_screenshot(EidosPlatform *p, const char *path)
 {
     SDL_Surface *surf;
@@ -1503,6 +1575,9 @@ int eidos_platform_screenshot(EidosPlatform *p, const char *path)
 
     if (p == NULL || path == NULL) {
         return -1;
+    }
+    if (p->gl != NULL && p->presented) {
+        return screenshot_gl(p, path);
     }
     eidos_platform_shot_size(p, &w, &h);
     pitch = (size_t)w * 3u;

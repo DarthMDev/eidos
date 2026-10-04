@@ -667,21 +667,30 @@ static void stack_color(const G2dFrameDesc *desc, const G2dFrameSample *stack,
  * g2d_c5to6; a 3D pixel passed through, or the 3D blend's 6-bit result
  * expanded by g2d_c6to8, folds back exactly through g2d_c8to6.
  */
-static void six_of(const u8 out[3], int is3d, u8 o6[3])
+static u8 g_six_lut[2][256];
+static int g_six_ready;
+
+/* Both folds are pure functions of one byte.  Filled once, on the thread that
+ * starts a frame (g2d_tables_init), before the compositors run on the worker
+ * pool: a lazy fill from several threads would be a data race. */
+void g2d_tables_init(void)
 {
-    static u8 lut[2][256];
-    static int ready;
     u32 i;
 
-    /* Both folds are pure functions of one byte: table them once (the
-     * values are the same whoever fills them, so no lock is needed). */
-    if (!ready) {
+    if (!g_six_ready) {
         for (i = 0; i < 256u; i++) {
-            lut[0][i] = (u8)g2d_c5to6(((u32)i * 31u + 127u) / 255u);
-            lut[1][i] = (u8)g2d_c8to6((u8)i);
+            g_six_lut[0][i] = (u8)g2d_c5to6(((u32)i * 31u + 127u) / 255u);
+            g_six_lut[1][i] = (u8)g2d_c8to6((u8)i);
         }
-        ready = 1;
+        g_six_ready = 1;
     }
+    (void)g2d_sin_fx(0);
+}
+
+static void six_of(const u8 out[3], int is3d, u8 o6[3])
+{
+    const u8 (*lut)[256] = g_six_lut;
+
     o6[0] = lut[is3d != 0][out[0]];
     o6[1] = lut[is3d != 0][out[1]];
     o6[2] = lut[is3d != 0][out[2]];
@@ -1088,6 +1097,7 @@ void g2d_frame_compose_desc_scaled(const G2dFrameDesc *desc, u32 width,
     if (l3 != NULL && l3->enabled && (l3->scale == 0 ? 1u : l3->scale) != n3) {
         return;   /* a layer rendered at another scale cannot be mixed */
     }
+    g2d_tables_init();   /* a no-op after the first call */
 
     /* Each layer appears in at most one step; a raster or the 3D layer
      * replaces the BG and affine steps of its slot. */

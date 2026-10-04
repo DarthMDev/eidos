@@ -94,7 +94,7 @@ struct EidosGl {
     int have3d;
     GLuint p3d;
     GLint u_mode, u_alpha5, u_tex3, u_texture, u_texsize3, u_wrap, u_alpharef,
-          u_toon, u_highlight, u_toontab, u_front, u_back, u_wbuf;
+          u_toon, u_highlight, u_toontab, u_front, u_back, u_wbuf, u_pass;
     GlFb fb[2];                    /* 0: the display size, 1: DS size (readback) */
     unsigned read_serial;          /* snapshot serial last read back         */
     GLuint pbo;                    /* async readback target                  */

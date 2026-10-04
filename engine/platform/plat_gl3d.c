@@ -56,6 +56,7 @@ static const char *k_fs3 =
     "uniform int u_front;\n"
     "uniform int u_back;\n"
     "uniform int u_wbuf;\n"
+    "uniform int u_pass;\n"
     "int wrapc(int v, int size, int rep, int flip) {\n"
     "    if (size <= 0) { return 0; }\n"
     "    if (rep == 0) { return clamp(v, 0, size - 1); }\n"
@@ -102,6 +103,8 @@ static const char *k_fs3 =
     "        }\n"
     "    }\n"
     "    col = min(col + hl, ivec3(255));\n"
+    "    if (u_pass == 1 && a5 < 31) { discard; }\n"
+    "    if (u_pass == 2 && a5 >= 31) { discard; }\n"
     "    if (a5 == 0 || a5 <= u_alpharef) { discard; }\n"
     "    float a = float(a5) / 31.0;\n"
     "    o = vec4(vec3(col) / 255.0 * a, a);\n"
@@ -135,6 +138,7 @@ int eidos_gl3d_init(EidosGl *g)
     LOC(u_front, "u_front");
     LOC(u_back, "u_back");
     LOC(u_wbuf, "u_wbuf");
+    LOC(u_pass, "u_pass");
 #undef LOC
     g->glGenFramebuffers(1, &g->fb[0].fbo);
     g->glGenFramebuffers(1, &g->fb[1].fbo);
@@ -406,7 +410,23 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
             } else {
                 g->glUniform1i(g->u_tex3, 0);
             }
-            glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
+            if (a5 >= 31u && !G3D_ATTR_XLU_DEPTH(attr) && slot >= 0
+                && (s->disp3dcnt & 1u) && s->tex[slot].partial) {
+                /* An opaque polygon whose texture has partly transparent
+                 * texels: the hardware decides per pixel from the final alpha,
+                 * so the opaque texels write depth and the translucent ones
+                 * do not.  One draw cannot do both: two passes can. */
+                glDepthMask(GL_TRUE);
+                g->glUniform1i(g->u_pass, 1);
+                glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
+                glDepthMask(GL_FALSE);
+                g->glUniform1i(g->u_pass, 2);
+                glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
+                g->glUniform1i(g->u_pass, 0);
+                prev_mask = 0;
+            } else {
+                glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
+            }
             first += verts;
             drawn++;
         }

@@ -135,6 +135,7 @@ u32       g3d_hw_frame_count(void);
 typedef struct G3dSnapTex {
     u32 w, h;
     u8 *rgba;               /* owned copy, w*h*4 */
+    u8 partial;             /* some texel's 5-bit alpha is 1..30          */
 } G3dSnapTex;
 
 typedef struct G3dSnapshot {

@@ -1038,6 +1038,10 @@ int g2d_hw_render_dsmem_adaptive(u32 scale, const u8 *rgba3d, u8 *top,
 /* As above; with `behind` (256x192 RGBA) the main engine is also composed with
  * its 3D layer off when a GPU 3D layer needs it, on a worker thread beside the
  * other engines.  *behind_done says whether it was. */
+/* Fill the compositors' lookup tables.  Call before the first compose and
+ * before any compose runs on another thread (g2d_hw_render does). */
+void g2d_tables_init(void);
+
 /* The compositors' worker pool (engine/g2d/par.c): runs fn(ctx, 0..n-1), the
  * caller taking task 0 and helping with the rest; serial when the machine has
  * one hardware thread.  Safe to call from several threads at once. */

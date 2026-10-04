@@ -1478,6 +1478,7 @@ static int render_scaled_impl(const G2dHwState *hw, u32 scale, int adaptive,
         }
         free(tmp);
     }
+    g2d_tables_init();
     {
         /* The main engine, the sub engine and (for a GPU 3D layer) the main
          * screen with its 3D layer off are independent: they run together on

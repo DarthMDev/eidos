@@ -952,6 +952,25 @@ static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
                     return;
                 }
                 memcpy(s->tex[s->n_tex].rgba, tx->rgba, bytes);
+                s->tex[s->n_tex].partial = 0;
+                {
+                    u32 fmt = G3D_TEX_FORMAT(g->polys[i].teximage);
+
+                    /* only the two alpha formats carry a 5-bit alpha that can
+                     * land between transparent and opaque */
+                    if (fmt == G3D_TEXFMT_A3I5 || fmt == G3D_TEXFMT_A5I3) {
+                        size_t k;
+
+                        for (k = 0; k < (size_t)tx->width * tx->height; k++) {
+                            u32 a5 = (u32)tx->rgba[k * 4u + 3u] >> 3;
+
+                            if (a5 > 0u && a5 < 31u) {
+                                s->tex[s->n_tex].partial = 1;
+                                break;
+                            }
+                        }
+                    }
+                }
                 s->tex[s->n_tex].w = tx->width;
                 s->tex[s->n_tex].h = tx->height;
                 seen[n_seen++] = tx->rgba;
@@ -1035,7 +1054,8 @@ static void render_frame(void)
         build_snapshot(d3, cc, cd, t, unsup);
         eidos_prof_end(EIDOS_PROF_SNAP, ts);
     }
-    if (g_skip_raster && g_snap_on && g_snap_valid) {
+    if (g_skip_raster && g_snap_on && g_snap_valid
+        && g_snap.unsupported == 0u) {
         /* A GPU renderer draws this frame from the snapshot. */
         cache_clear();
         g_hw.unsup_frame = unsup;

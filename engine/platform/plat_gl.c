@@ -22,16 +22,21 @@ static const char *k_vs =
     "}\n";
 
 /*
- * Sharp bilinear: nearest at the centre of each source pixel, a linear blend
- * over about one output pixel at its edge.  Below 1:1 it is plain linear.
+ * Sharp bilinear: a texel stays its own colour except across the seam to its
+ * neighbour, where the blend is one output pixel wide whatever the scale.  Let
+ * t be the texture coordinate in texels, `seam` the nearest texel boundary and
+ * sc the output pixels per texel: sample at seam + clamp((t - seam) * sc, -0.5,
+ * 0.5).  Linear filtering at a seam is an even mix of the two texels, at half a
+ * texel from it the pure texel.  At a whole-number scale every output pixel
+ * centre is exactly half an output pixel from a seam, so it is pure nearest.
+ * Below 1:1 it is plain linear.
  */
 #define SHARP_FN \
     "vec3 sharp(sampler2D s, vec2 uv, vec2 texsize, vec2 dstsize) {\n" \
     "    vec2 t = uv * texsize;\n" \
     "    vec2 sc = dstsize / texsize;\n" \
-    "    vec2 f = fract(t);\n" \
-    "    vec2 off = clamp((f - 0.5) * sc, -0.5, 0.5);\n" \
-    "    vec2 p = floor(t) + 0.5 + off;\n" \
+    "    vec2 seam = floor(t + 0.5);\n" \
+    "    vec2 p = seam + clamp((t - seam) * sc, -0.5, 0.5);\n" \
     "    p = mix(t, p, step(vec2(1.0), sc));\n" \
     "    return texture(s, p / texsize).rgb;\n" \
     "}\n"
@@ -372,7 +377,7 @@ void eidos_gl_set_3d(EidosGl *g, int screen, const unsigned char *behind,
     g->dilate = dilate;
 }
 
-void eidos_gl_present(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
+static void draw_frame(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
 {
     int i;
 
@@ -421,6 +426,39 @@ void eidos_gl_present(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
         glBindTexture(GL_TEXTURE_2D, g->tex[i]);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
+}
+
+void eidos_gl_present(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
+{
+    if (g == NULL || out_w <= 0 || out_h <= 0) {
+        return;
+    }
+    draw_frame(g, out_w, out_h, dst);
     gl_debug_dump(out_w, out_h);
     SDL_GL_SwapWindow(g->window);
+}
+
+int eidos_gl_grab(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2],
+                  unsigned char *rgb)
+{
+    unsigned char *raw;
+    int y;
+
+    if (g == NULL || rgb == NULL || out_w <= 0 || out_h <= 0) {
+        return -1;
+    }
+    raw = (unsigned char *)malloc((size_t)out_w * (size_t)out_h * 3u);
+    if (raw == NULL) {
+        return -1;
+    }
+    draw_frame(g, out_w, out_h, dst);      /* not swapped: only read */
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, out_w, out_h, GL_RGB, GL_UNSIGNED_BYTE, raw);
+    for (y = 0; y < out_h; y++) {          /* GL rows run bottom-up */
+        memcpy(rgb + (size_t)y * (size_t)out_w * 3u,
+               raw + (size_t)(out_h - 1 - y) * (size_t)out_w * 3u,
+               (size_t)out_w * 3u);
+    }
+    free(raw);
+    return glGetError() == GL_NO_ERROR ? 0 : -1;
 }

@@ -29,6 +29,11 @@ void eidos_gl_upload(EidosGl *gl, int i, const unsigned char *rgba, int w,
  * y down) of an output out_w x out_h, then swap. */
 void eidos_gl_present(EidosGl *gl, int out_w, int out_h, const SDL_Rect dst[2]);
 
+/* Draw both screens as present does, but read the window's pixels instead of
+ * swapping: rgb is out_w x out_h x 3 bytes, top-down.  0 on success. */
+int eidos_gl_grab(EidosGl *gl, int out_w, int out_h, const SDL_Rect dst[2],
+                  unsigned char *rgb);
+
 /* The GPU 3D rasteriser (plat_gl3d.c).  has3d is false when the optional part
  * failed to build; then the platform keeps drawing screens only. */
 struct G3dSnapshot;
