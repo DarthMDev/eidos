@@ -58,11 +58,15 @@
     X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray) \
     X(PFNGLMAPBUFFERPROC, glMapBuffer) \
     X(PFNGLUNMAPBUFFERPROC, glUnmapBuffer) \
+    X(PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC, glRenderbufferStorageMultisample) \
+    X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer) \
     X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)
 
 typedef struct GlFb {
     GLuint fbo, color, depth;
     int w, h;
+    GLuint ms_fbo, ms_color, ms_depth;   /* the multisampled target (anti-aliasing) */
+    int ms_w, ms_h;
 } GlFb;
 
 struct EidosGl {

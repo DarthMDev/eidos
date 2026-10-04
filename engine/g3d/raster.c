@@ -703,6 +703,99 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
     }
 }
 
+/*
+ * [HW] The order the hardware draws polygons in: every opaque polygon first
+ * (in the order they were sent), then the translucent ones (alpha 1..30), which
+ * in the automatic sort mode (SWAP_BUFFERS bit 0 clear) are sorted by the
+ * screen Y of their top vertex, then X, and in manual sort mode keep the order
+ * they were sent.  A translucent polygon sent before an opaque one behind it
+ * therefore still blends with it.  [AP] "top" is the smallest projected Y of
+ * the polygon's vertices, taken in the 256x192 viewport.
+ */
+typedef struct SortKey {
+    u32 index;       /* the polygon's place in the order sent */
+    u32 translucent;
+    s32 ytop, xtop;
+} SortKey;
+
+static int sort_cmp_manual(const void *pa, const void *pb)
+{
+    const SortKey *a = (const SortKey *)pa, *b = (const SortKey *)pb;
+
+    if (a->translucent != b->translucent) {
+        return a->translucent < b->translucent ? -1 : 1;
+    }
+    return a->index < b->index ? -1 : (a->index > b->index ? 1 : 0);
+}
+
+static int sort_cmp_auto(const void *pa, const void *pb)
+{
+    const SortKey *a = (const SortKey *)pa, *b = (const SortKey *)pb;
+
+    if (a->translucent != b->translucent) {
+        return a->translucent < b->translucent ? -1 : 1;
+    }
+    if (a->translucent) {
+        if (a->ytop != b->ytop) {
+            return a->ytop < b->ytop ? -1 : 1;
+        }
+        if (a->xtop != b->xtop) {
+            return a->xtop < b->xtop ? -1 : 1;
+        }
+    }
+    return a->index < b->index ? -1 : (a->index > b->index ? 1 : 0);
+}
+
+void g3d_geom_sort(G3dGeom *g, int manual)
+{
+    SortKey *k;
+    G3dPoly *copy;
+    u32 i, any = 0;
+
+    if (g == NULL || g->n_polys < 2u) {
+        return;
+    }
+    k = (SortKey *)malloc((size_t)g->n_polys * sizeof(*k));
+    copy = (G3dPoly *)malloc((size_t)g->n_polys * sizeof(*copy));
+    if (k == NULL || copy == NULL) {
+        free(k);
+        free(copy);
+        return;
+    }
+    for (i = 0; i < g->n_polys; i++) {
+        const G3dPoly *p = &g->polys[i];
+        u32 a5 = G3D_ATTR_ALPHA(p->attr);
+        u32 j;
+        s32 ymin = 0x7FFFFFFF, xmin = 0x7FFFFFFF;
+
+        k[i].index = i;
+        k[i].translucent = (p->attr != 0 && a5 > 0u && a5 < 31u) ? 1u : 0u;
+        any |= k[i].translucent;
+        for (j = 0; k[i].translucent && j < p->count && j < 4u; j++) {
+            const G3dVertex *v = &g->verts[g->idx[p->first + j]];
+            s64 w = v->w > 0 ? v->w : 1;
+            s32 sy = (s32)(96 - ((s64)v->y * 96) / w);
+            s32 sx = (s32)(128 + ((s64)v->x * 128) / w);
+
+            if (sy < ymin || (sy == ymin && sx < xmin)) {
+                ymin = sy;
+                xmin = sx;
+            }
+        }
+        k[i].ytop = ymin;
+        k[i].xtop = xmin;
+    }
+    if (any) {
+        qsort(k, g->n_polys, sizeof(*k), manual ? sort_cmp_manual : sort_cmp_auto);
+        for (i = 0; i < g->n_polys; i++) {
+            copy[i] = g->polys[k[i].index];
+        }
+        memcpy(g->polys, copy, (size_t)g->n_polys * sizeof(*copy));
+    }
+    free(k);
+    free(copy);
+}
+
 void g3d_raster_geom(G3dTarget *t, const G3dGeom *g,
                      G3dTexLookup lookup, void *user)
 {

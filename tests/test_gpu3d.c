@@ -365,6 +365,57 @@ static void check_composite(const char *name, const G3dSnapshot *s, EidosGl *gl,
     free(rgb);
 }
 
+/* The hardware's polygon order: opaque first, then translucent sorted by the
+ * top vertex's Y (automatic mode) or as sent (manual mode). */
+static void test_sort(void)
+{
+    G3dVertex v[16];
+    u32 idx[16];
+    G3dPoly polys[5];
+    G3dGeom g;
+    u32 i;
+    /* sent: 0 translucent high on screen, 1 opaque, 2 translucent low on
+     * screen, 3 opaque, 4 translucent in the middle */
+    static const u32 alpha[5] = { 14, 31, 14, 31, 20 };
+    static const s32 ytop[5] = { 2000, 0, -2000, 0, 0 };
+
+    for (i = 0; i < 5u; i++) {
+        v[i * 3u + 0] = mkv(-100, ytop[i], 0, 4096, 0, 0, 255, 255, 255);
+        v[i * 3u + 1] = mkv(100, ytop[i] + 500, 0, 4096, 0, 0, 255, 255, 255);
+        v[i * 3u + 2] = mkv(0, ytop[i] + 900, 0, 4096, 0, 0, 255, 255, 255);
+        idx[i * 3u + 0] = i * 3u;
+        idx[i * 3u + 1] = i * 3u + 1u;
+        idx[i * 3u + 2] = i * 3u + 2u;
+        polys[i].first = i * 3u;
+        polys[i].count = 3;
+        polys[i].attr = ATTR(alpha[i], i, 1, 1);
+        polys[i].teximage = 0;
+        polys[i].pltt_base = 0;
+    }
+    memset(&g, 0, sizeof(g));
+    g.verts = v; g.n_verts = 15;
+    g.idx = idx; g.n_idx = 15;
+    g.polys = polys; g.n_polys = 5;
+    g3d_geom_sort(&g, 0);
+    /* opaque 1, 3; then translucent from the top of the screen down (clip y
+     * grows upwards): 0 (y 2000), 4 (y 0), 2 (y -2000) */
+    BW_CHECK_EQ("sort auto 0", polys[0].first / 3u, 1);
+    BW_CHECK_EQ("sort auto 1", polys[1].first / 3u, 3);
+    BW_CHECK_EQ("sort auto 2", polys[2].first / 3u, 0);
+    BW_CHECK_EQ("sort auto 3", polys[3].first / 3u, 4);
+    BW_CHECK_EQ("sort auto 4", polys[4].first / 3u, 2);
+    for (i = 0; i < 5u; i++) {      /* back to the order sent, then manual */
+        polys[i].first = i * 3u;
+        polys[i].attr = ATTR(alpha[i], i, 1, 1);
+    }
+    g3d_geom_sort(&g, 1);
+    BW_CHECK_EQ("sort manual 0", polys[0].first / 3u, 1);
+    BW_CHECK_EQ("sort manual 1", polys[1].first / 3u, 3);
+    BW_CHECK_EQ("sort manual 2", polys[2].first / 3u, 0);
+    BW_CHECK_EQ("sort manual 3", polys[3].first / 3u, 2);
+    BW_CHECK_EQ("sort manual 4", polys[4].first / 3u, 4);
+}
+
 int main(void)
 {
     SDL_Window *win;
@@ -375,6 +426,7 @@ int main(void)
     u32 i;
 
     setvbuf(stdout, NULL, _IONBF, 0);   /* a crash must not eat the log */
+    test_sort();
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         printf("test_gpu3d: SKIP (no video: %s)\n", SDL_GetError());
@@ -577,6 +629,30 @@ int main(void)
     add_poly(quad, 4, ATTR(31, 13, 1, 1), 0, -1);               /* middle, red */
     s = make_snap();
     check_scene("partly transparent texels and depth", &s, gl, 8, 0.03);
+
+    /* anti-aliasing (DISP3DCNT bit 4): edge pixels get partial coverage */
+    scene_reset();
+    tri[0] = mkv(-3000, -2500, 0, 4096, 0, 0, 255, 0, 0);
+    tri[1] = mkv(3200, -2000, 0, 4096, 0, 0, 255, 0, 0);
+    tri[2] = mkv(200, 3000, 0, 4096, 0, 0, 255, 0, 0);
+    add_poly(tri, 3, ATTR(31, 1, 1, 1), 0, -1);
+    for (i = 0; i < 2u; i++) {
+        static u8 gpu[W * H * 4];
+        u32 k, edge = 0;
+
+        s = make_snap();
+        s.disp3dcnt |= i ? 0x10u : 0u;
+        BW_CHECK_EQ("aa render", eidos_gl_render3d(gl, &s, W, H), 0);
+        BW_CHECK_EQ("aa read", eidos_gl_read3d(gl, gpu, W, H), 0);
+        for (k = 0; k < (u32)W * H; k++) {
+            if (gpu[k * 4u + 3u] != 0 && gpu[k * 4u + 3u] != 255) {
+                edge++;
+            }
+        }
+        printf("  anti-aliasing %s: %u edge pixels\n", i ? "on" : "off", edge);
+        BW_CHECK_EQ(i ? "aa on has partial edges" : "aa off has hard edges",
+                    i ? edge > 100u : edge == 0u, 1);
+    }
 
     test_presenter(gl, win);
 

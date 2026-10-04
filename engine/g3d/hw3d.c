@@ -1048,6 +1048,7 @@ static void render_frame(void)
         }
     }
 
+    g3d_geom_sort(&g_hw.geom, (int)(g_hw.swap_param & 1u));
     if (g_snap_on) {
         unsigned long long ts = eidos_prof_begin();
 

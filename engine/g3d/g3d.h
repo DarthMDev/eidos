@@ -689,6 +689,9 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
 /* Draw every polygon of a geometry buffer, looking a texture up per
  * polygon through the callback (which may return NULL). */
 typedef const G3dTexture *(*G3dTexLookup)(void *user, u32 poly_index);
+/* Put the polygons in the order the hardware draws them (opaque first, then
+ * translucent; the translucent ones sorted by Y unless `manual`). */
+void g3d_geom_sort(G3dGeom *g, int manual);
 void g3d_raster_geom(G3dTarget *t, const G3dGeom *g,
                      G3dTexLookup lookup, void *user);
 

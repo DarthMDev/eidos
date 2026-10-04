@@ -164,6 +164,11 @@ void eidos_gl3d_destroy(EidosGl *g)
         if (f->color != 0) {
             glDeleteTextures(1, &f->color);
         }
+        if (f->ms_fbo != 0) {
+            g->glDeleteFramebuffers(1, &f->ms_fbo);
+            g->glDeleteRenderbuffers(1, &f->ms_color);
+            g->glDeleteRenderbuffers(1, &f->ms_depth);
+        }
     }
     if (g->vbo3 != 0) {
         g->glDeleteBuffers(1, &g->vbo3);
@@ -213,6 +218,44 @@ static int fbo_resize(EidosGl *g, GlFb *f, int w, int h)
     return 0;
 }
 
+/*
+ * DISP3DCNT bit 4 turns on the hardware's edge anti-aliasing.  The GPU's
+ * equivalent is multisampling: render into a 4-sample target and resolve it
+ * into the frame's texture.  Not worth its memory at a large size, where the
+ * resolution does the same job.
+ */
+#define MSAA_SAMPLES 4
+#define MSAA_MAX_PIXELS (2048 * 1536)
+
+static int msaa_target(EidosGl *g, GlFb *f, int w, int h)
+{
+    if ((long)w * (long)h > MSAA_MAX_PIXELS) {
+        return 0;
+    }
+    if (f->ms_fbo == 0) {
+        g->glGenFramebuffers(1, &f->ms_fbo);
+        g->glGenRenderbuffers(1, &f->ms_color);
+        g->glGenRenderbuffers(1, &f->ms_depth);
+    }
+    if (f->ms_w != w || f->ms_h != h) {
+        g->glBindRenderbuffer(GL_RENDERBUFFER, f->ms_color);
+        g->glRenderbufferStorageMultisample(GL_RENDERBUFFER, MSAA_SAMPLES, GL_RGBA8, w, h);
+        g->glBindRenderbuffer(GL_RENDERBUFFER, f->ms_depth);
+        g->glRenderbufferStorageMultisample(GL_RENDERBUFFER, MSAA_SAMPLES, GL_DEPTH_COMPONENT24, w, h);
+        g->glBindFramebuffer(GL_FRAMEBUFFER, f->ms_fbo);
+        g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, f->ms_color);
+        g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, f->ms_depth);
+        f->ms_w = w;
+        f->ms_h = h;
+    }
+    g->glBindFramebuffer(GL_FRAMEBUFFER, f->ms_fbo);
+    if (g->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        f->ms_w = 0;
+        return 0;
+    }
+    return 1;
+}
+
 #define ATTR_DEFAULT (((u32)1 << 6) | ((u32)1 << 7) | ((u32)31 << 16))
 
 /* Render the snapshot at w x h into the framebuffer; the colour texture is
@@ -228,6 +271,7 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     int prev_depth_eq = -1, prev_mask = -1;
     GLfloat toon[96];
     unsigned long long t_up, t_dr;
+    int use_ms;
 
     if (g == NULL || !g->have3d || s == NULL || w < 1 || h < 1) {
         return -1;
@@ -300,7 +344,10 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
         }
     }
 
-    g->glBindFramebuffer(GL_FRAMEBUFFER, fb->fbo);
+    use_ms = (s->disp3dcnt & 0x10u) != 0 && msaa_target(g, fb, w, h);
+    if (!use_ms) {
+        g->glBindFramebuffer(GL_FRAMEBUFFER, fb->fbo);
+    }
     glViewport(0, 0, w, h);
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST);
@@ -435,6 +482,12 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     glDepthMask(GL_TRUE);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
+    if (use_ms) {
+        /* resolve the samples into the frame's texture */
+        g->glBindFramebuffer(GL_READ_FRAMEBUFFER, fb->ms_fbo);
+        g->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb->fbo);
+        g->glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
     g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     eidos_prof_end(EIDOS_PROF_GLDRAW, t_dr);
     return glGetError() == GL_NO_ERROR ? 0 : -1;
