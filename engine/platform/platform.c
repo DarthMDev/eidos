@@ -1047,6 +1047,16 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
      * opened oddly and could overflow the screen). */
     init_w = (int)w * DEFAULT_WINDOW_SCALE;
     init_h = (int)h * DEFAULT_WINDOW_SCALE;
+    {
+        /* For checks only: EIDOS_WINDOW_SIZE=WxH opens the window at that size. */
+        const char *ws = getenv("EIDOS_WINDOW_SIZE");
+        int ew = 0, eh = 0;
+
+        if (ws != NULL && sscanf(ws, "%dx%d", &ew, &eh) == 2 && ew > 0 && eh > 0) {
+            init_w = ew;
+            init_h = eh;
+        }
+    }
 
     /*
      * The GPU presenter is the default: the CPU hands over small images and

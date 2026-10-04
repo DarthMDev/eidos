@@ -7,17 +7,42 @@ Status of the renderer and where it goes. Written 2026-10-04.
 - The 2D engine (backgrounds, sprites, priorities, blending) and the 3D engine
   (polygons, textures, lighting) are software models of the DS chips, written in
   C (`engine/g2d`, `engine/g3d`). They are the reference: every other renderer is
-  tested against them.
+  tested against them (`tests/test_gpu3d.c` draws the same polygons both ways).
 - The presenter (`engine/platform/plat_gl.c`) is the GPU part. It uploads each
   screen as a texture and scales it to the window with one OpenGL 3.3 core
   shader. SDL's own renderer is the fallback when OpenGL 3.3 is not available
   (also used by the dummy video driver in the headless tests, or with
   `EIDOS_RENDERER=sdl`).
-- Internal resolution: the 2D layers have DS resolution, so a screen without the
-  3D layer stays 256x192 and the GPU scales it. Only the 3D layer gains from a
-  larger frame. The software 3D rasteriser costs about 360 ms per frame at 6x, so
-  it is capped (see `BOOT_CPU_3D_MAX` in `demo/eidos_boot.c`) until the GPU
-  rasteriser exists.
+- The 3D engine runs on the GPU too (`engine/platform/plat_gl3d.c`). Every
+  SWAP_BUFFERS also copies what the CPU rasteriser was given (polygons, decoded
+  textures, register state) into a snapshot (`g3d_hw_snapshot`); the thread that
+  owns the GL context draws it into a framebuffer of any size, following
+  `engine/g3d/raster.c` rule for rule (perspective correct colour and texture,
+  repeat/flip/clamp, modulate/decal/toon/highlight on 6-bit colour and 5-bit
+  alpha, alpha test, z or w depth, culling). The CPU rasteriser is skipped for
+  frames the GPU draws.
+- How the GPU 3D meets the 2D layers: the compositor stays on the CPU at DS
+  resolution. For a screen whose BG0 is the 3D layer it makes two small images,
+  the screen with the 3D layer set to one opaque unlikely colour and the screen
+  with the 3D layer off; the shader shows the GPU frame where the two differ and
+  folds the master brightness in exactly. When the display capture reads the 3D
+  layer (the title screen and the logo scenes do, every frame) the GPU frame is
+  also rendered at DS size and read back (asynchronously, one frame late when it
+  only feeds the capture) because the capture works at DS resolution on the
+  hardware too; those scenes cannot exceed DS resolution.
+- Frames that use edge marking, fog, the rear-plane bitmap or shadow polygons
+  are not drawn by the GPU yet (`G3dSnapshot.unsupported`); the CPU rasteriser
+  draws them (at most `BOOT_CPU_3D_MAX`).
+- Also done for speed: decoded textures persist across frames (hash of the
+  source bytes), the 2D compositors run on a worker pool (`engine/g2d/par.c`:
+  the engines in parallel, each screen in four row bands), the decoded-texture
+  and snapshot copies are cheap, and the screens without a 3D layer stay 256x192
+  with the GPU scaling them.
+- Measured on the title screen (frame 4750 on, a 6 core machine, hidden window):
+  60 fps at internal resolution 1x, 2x, 4x, 6x, 10x and 20x (the title is a
+  capture scene, so the setting changes nothing there); the CPU path (SDL
+  renderer) gets 31 fps at 1x and 12 fps at 6x. Debug aids: `--profile`,
+  `EIDOS_WINDOW_HIDDEN=1`, `EIDOS_WINDOW_SIZE=WxH`, `EIDOS_GL_DUMP=file.bmp:N`.
 
 ## Target backends
 
@@ -73,6 +98,9 @@ hand written backends later; eidos is on SDL2 today.
 
 ## Not done yet
 
-Edge marking, fog and anti-aliasing passes, the rear-plane bitmap, shadow
-polygons and `DISP_1DOT_DEPTH` on the GPU path; any of these missing falls back
-to the software frame for that scene.
+Edge marking, fog, the rear-plane bitmap, shadow polygons and
+`DISP_1DOT_DEPTH` on the GPU path (those frames fall back to the CPU
+rasteriser); quads with non-planar vertex colours differ slightly from the
+software edge interpolation; the alpha-blend of the 3D layer with BLDALPHA is
+approximated by the 3D layer's own alpha; scenes with both a capture and a
+visible 3D layer read the frame back synchronously.
