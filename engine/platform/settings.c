@@ -381,7 +381,10 @@ int eidos_settings_set_key(int button, int slot, int scancode)
         for (b = 0; b < NBTN; b++) {
             for (s = 0; s < EIDOS_BIND_SLOTS; s++) {
                 if (g_cur.key[b][s] == scancode) {
-                    g_cur.key[b][s] = 0;
+                    /* a key belongs to one button: the other one takes the
+                     * key this slot had, so it is never left without */
+                    g_cur.key[b][s] = (b == button && s == slot) ? scancode
+                                    : (b == button) ? 0 : g_cur.key[button][slot];
                 }
             }
         }
@@ -428,8 +431,12 @@ int eidos_settings_set_pad(int button, int slot, int kind, int index)
             for (s = 0; s < EIDOS_BIND_SLOTS; s++) {
                 if (g_cur.pad[b][s].kind == kind &&
                     g_cur.pad[b][s].index == index) {
-                    g_cur.pad[b][s].kind = -1;
-                    g_cur.pad[b][s].index = 0;
+                    if (b == button) {
+                        g_cur.pad[b][s].kind = -1;
+                        g_cur.pad[b][s].index = 0;
+                    } else {
+                        g_cur.pad[b][s] = g_cur.pad[button][slot];
+                    }
                 }
             }
         }

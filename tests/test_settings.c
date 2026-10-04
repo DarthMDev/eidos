@@ -311,6 +311,14 @@ static void test_bindings(EidosPlatform *p)
     /* Slot -1 takes the first empty slot (B's slot 0 is empty now). */
     BW_CHECK_EQ("bind K to B", eidos_settings_set_key(1, -1, SDL_SCANCODE_K), 0);
     BW_CHECK_EQ("K in B slot 0", eidos_settings_get_key(1, 0), SDL_SCANCODE_K);
+    /* Taking another button's key hands it the key the slot had: a swap. */
+    {
+        int a0 = eidos_settings_get_key(0, 0);
+
+        BW_CHECK_EQ("A takes B's K", eidos_settings_set_key(0, 0, SDL_SCANCODE_K), 0);
+        BW_CHECK_EQ("A slot 0 is K", eidos_settings_get_key(0, 0), SDL_SCANCODE_K);
+        BW_CHECK_EQ("B gets A's old key", eidos_settings_get_key(1, 0), a0);
+    }
     BW_CHECK_EQ("clear", eidos_settings_set_key(1, 0, 0), 0);
     BW_CHECK_EQ("cleared", eidos_settings_get_key(1, 0), 0);
     BW_CHECK_EQ("escape reserved",

@@ -112,6 +112,7 @@ static struct {
     int cursor;       /* index into the tab's rows                */
     int scroll;       /* first visible row                        */
     int capturing;    /* button index + 1, 0 when not capturing   */
+    int wait_release; /* a capture just ended: ignore buttons until all are up */
     int hold_dir;     /* held direction bit being repeated        */
     int hold_frames;
     Row rows[MAX_ROWS];
@@ -256,11 +257,13 @@ static int poll_capture(void)
         eidos_settings_set_pad(g.capturing - 1, 0, c.pad_kind, c.pad_index);
     } else if (r == EIDOS_CAPTURE_CANCELLED) {
         g.capturing = 0;
+        g.wait_release = 1;
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
     } else {
         return 0;
     }
     g.capturing = 0;
+    g.wait_release = 1;
     return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
 }
 
@@ -302,9 +305,18 @@ int eidos_sui_input(unsigned pressed, unsigned held)
         if (g.capturing && (pressed & 2u)) {          /* B cancels when no platform arms the capture */
             eidos_settings_capture_cancel();
             g.capturing = 0;
+            g.wait_release = 1;
             res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
         }
         return res;
+    }
+
+    if (g.wait_release) {
+        /* the press that set a key must not also act as that button */
+        if ((pressed | held) == 0u) {
+            g.wait_release = 0;
+        }
+        return 0;
     }
 
     act = repeat_dirs(pressed, held);

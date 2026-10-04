@@ -128,6 +128,7 @@ static LONG WINAPI bw_crash_filter(EXCEPTION_POINTERS *ep)
     bw_crash_context(ep->ContextRecord, &pc, &fp);
     pc = (uintptr_t)er->ExceptionAddress;
 
+    (void)freopen("eidos_crash.log", "w", stderr);   /* a double-clicked run has no console */
     fprintf(stderr, "CRASH: exception 0x%08lX", (unsigned long)er->ExceptionCode);
     if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2) {
         fprintf(stderr, ", %s of host address 0x%08llX",
