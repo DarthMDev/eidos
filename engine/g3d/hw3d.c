@@ -1087,6 +1087,27 @@ static void render_frame(void)
             }
         }
     }
+    {
+        /* EIDOS_G3D_SKIP=lo-hi leaves those polygons out (the opposite). */
+        static int init, lo, hi;
+
+        if (!init) {
+            const char *e = getenv("EIDOS_G3D_SKIP");
+
+            init = 1;
+            lo = 0;
+            hi = -1;
+            if (e != NULL && sscanf(e, "%d-%d", &lo, &hi) != 2) {
+                lo = 0;
+                hi = -1;
+            }
+        }
+        for (i = 0; hi >= lo && i < g_hw.geom.n_polys; i++) {
+            if ((int)i >= lo && (int)i <= hi) {
+                g_hw.geom.polys[i].attr &= ~((u32)0x1F << 16);
+            }
+        }
+    }
     if (g_snap_on) {
         unsigned long long ts = eidos_prof_begin();
 

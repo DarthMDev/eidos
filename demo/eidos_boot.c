@@ -466,6 +466,7 @@ static void boot_dump_io(u64 n)
                 bw_io_read16(base + 0x1C), bw_io_read16(base + 0x1E), bw_io_read16(base + 0x50),
                 bw_io_read16(base + 0x6C));
     }
+    fprintf(stderr, "io %llu DISPCAPCNT %08X\n", (unsigned long long)n, bw_io_read32(0x04000064u));
     fprintf(stderr, "io %llu POWCNT1 %04X VRAMCNT A-D %02X %02X %02X %02X\n", (unsigned long long)n,
             bw_io_read16(0x04000304u), bw_io_read16(0x04000240u) & 0xFFu,
             (bw_io_read16(0x04000240u) >> 8) & 0xFFu, bw_io_read16(0x04000242u) & 0xFFu,
