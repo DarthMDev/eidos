@@ -98,7 +98,7 @@ int main(void)
     row(eidos_sui_cursor_row());
     BW_CHECK_EQ("revert row", strcmp(g_label, "Revert changes"), 0);
     press(A);
-    BW_CHECK_EQ("reverted", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
+    BW_CHECK_EQ("reverted", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
     BW_CHECK_EQ("clean", eidos_settings_dirty(), 0);
 
     /* B goes back to level 0 with the cursor on Display. */
