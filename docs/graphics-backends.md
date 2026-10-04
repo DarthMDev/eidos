@@ -90,8 +90,10 @@ hand written backends later; eidos is on SDL2 today.
   the backend two small images per 3D screen: the screen with the software 3D
   and the screen with the 3D layer off. The backend draws the 3D at any
   resolution and composites it in a shader.
-- The software 3D rasteriser always runs at 1x as well: capture (DISPCAPCNT),
-  the 3D-over-2D priority mask and the tests need it.
+- The software 3D rasteriser stays as the reference and the fallback: it draws
+  any frame the GPU backend cannot (see below) and every frame when there is no
+  GPU backend. The display capture (DISPCAPCNT) needs the 3D frame at DS size; a
+  GPU backend gives it by reading its own 1x render back.
 - Every backend is tested against the software output at 1x on fixed scenes with
   a stated tolerance.
 - No backend may change the OS display mode (fullscreen is desktop fullscreen).
