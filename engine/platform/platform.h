@@ -184,7 +184,7 @@ int  eidos_viewport_to_touch(const EidosScreenPlacement *pl,
 
 typedef struct EidosPlatformConfig {
     const char *title;       /* NULL: "eidos"                            */
-    int   win_w, win_h;      /* windowed size in pixels; 0: 3x the
+    int   win_w, win_h;      /* windowed size in pixels; 0: 1x the
                                 layout (the window is freely resizable)   */
     int   layout;            /* EIDOS_LAYOUT_*                           */
     int   gap;               /* DS pixels between the two screens        */
@@ -255,7 +255,7 @@ int  eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
  */
 /* Windowed size win_w x win_h is applied when entering windowed mode from
  * another mode, or when it differs from the current size and is > 0; 0 keeps
- * the window as it is (3x the layout when coming back from fullscreen). */
+ * the window as it is (1x the layout when coming back from fullscreen). */
 int  eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
                                 int win_h);
 int  eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap);

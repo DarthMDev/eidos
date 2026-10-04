@@ -27,7 +27,7 @@
 #define SCREEN_H EIDOS_DS_SCREEN_HEIGHT
 #define SCREEN_PIXELS (SCREEN_W * SCREEN_H)
 
-#define DEFAULT_WINDOW_SCALE 3
+#define DEFAULT_WINDOW_SCALE 1
 
 struct EidosPlatform {
     SDL_Window   *window;

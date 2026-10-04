@@ -71,7 +71,7 @@ enum {
     EIDOS_OPT_DISPLAY_MODE = 0,
     EIDOS_OPT_DISPLAY_RESOLUTION,   /* 0 = fit, else 1..EIDOS_RESOLUTION_MAX */
     EIDOS_OPT_DISPLAY_WIDTH,        /* hidden: remembered window size     */
-    EIDOS_OPT_DISPLAY_HEIGHT,       /* hidden; 0 = 3x the layout          */
+    EIDOS_OPT_DISPLAY_HEIGHT,       /* hidden; 0 = 1x the layout          */
     EIDOS_OPT_LAYOUT_ARRANGEMENT,
     EIDOS_OPT_LAYOUT_SWAP,
     EIDOS_OPT_LAYOUT_GAP,

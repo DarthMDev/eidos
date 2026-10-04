@@ -249,6 +249,9 @@ typedef struct BootRun {
     u8 *top;
     u8 *bottom;
 #if EIDOS_BOOT_SDL
+    u8 *hi_top;        /* the window's frames, 256n x 192n               */
+    u8 *hi_bottom;
+    u32 hi_n;          /* the n those buffers hold                       */
     EidosPlatform *plat;
     int want_window;   /* --window: open one at the first frame          */
     int window_tried;
@@ -414,7 +417,23 @@ static void boot_screenshot(BootRun *run, u64 n)
     char path[1024];
 
     boot_ensure_screens(run);
-    (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom, unsupported);
+    if (g3d_hw_frame_scale() > 1u) {
+        /* A window runs the 3D at n times the DS size: render at n, then
+         * box-downsample to the 256x192 the PNG writer takes. */
+        u32 n = g3d_hw_frame_scale();
+        size_t bytes = (size_t)256 * n * 192 * n * 4;
+        u8 *a = (u8 *)calloc(2, bytes);
+
+        if (a == NULL) {
+            bw_panic("eidos_boot", 0, "out of memory for the screenshot");
+        }
+        (void)g2d_hw_render_dsmem_scaled(n, g3d_hw_frame(), a, a + bytes, unsupported);
+        g2d_hw_box_downsample(a, n, run->top);
+        g2d_hw_box_downsample(a + bytes, n, run->bottom);
+        free(a);
+    } else {
+        (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom, unsupported);
+    }
     snprintf(path, sizeof(path), "%s/eidos_boot_frame%llu.png", g_shot_dir,
              (unsigned long long)n);
     if (write_screens_png(path, run->top, run->bottom) == 0) {
@@ -516,12 +535,32 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
 {
     u32 unsupported[2];
     u64 t0 = eidos_prof_begin();
+    BootRun *run = (BootRun *)user;
     const u8 *rgba3d;
+    u32 n;
 
-    (void)user;
+    (void)top;
+    (void)bottom;
+    /* The 3D renders at the scale set before its swap, so a change shows
+     * one frame late; the 2D follows the 3D frame's own n. */
+    g3d_hw_set_scale((u32)eidos_settings_internal_scale());
     rgba3d = g3d_hw_frame();
+    n = g3d_hw_frame_scale();
     eidos_prof_end(EIDOS_PROF_G3D, t0);
-    (void)g2d_hw_render_dsmem(rgba3d, top, bottom, unsupported);
+    if (run->hi_n != n) {
+        size_t bytes = (size_t)256 * n * 192 * n * 4;
+
+        free(run->hi_top);
+        free(run->hi_bottom);
+        run->hi_top = (u8 *)calloc(1, bytes);
+        run->hi_bottom = (u8 *)calloc(1, bytes);
+        if (run->hi_top == NULL || run->hi_bottom == NULL) {
+            bw_panic("eidos_boot", 0, "out of memory for the screens");
+        }
+        run->hi_n = n;
+    }
+    (void)g2d_hw_render_dsmem_scaled(n, rgba3d, run->hi_top, run->hi_bottom,
+                                     unsupported);
     g_render_ns = eidos_prof_on ? bw_clock_ns() - t0 : 0;
 }
 
@@ -651,7 +690,10 @@ static void boot_frame(void *user)
             run->skipped++;
         } else {
             run->skipped = 0;
-            eidos_platform_present(run->plat, run->top, run->bottom);
+            if (run->hi_n != 0u) {
+                eidos_platform_present_n(run->plat, run->hi_top, run->hi_bottom,
+                                         (int)run->hi_n);
+            }
         }
         eidos_prof_end(EIDOS_PROF_PRESENT, t_ph);
         audio_device = eidos_platform_audio_open(run->plat);
