@@ -147,8 +147,10 @@ Steps for (1):
 - `main` is a state machine like `func_021B9750`: build, fade in, input
   (`func_020362DC` pressed, `func_0203633C` held; 0x40 up, 0x80 down, 1 A,
   2 B), fade out, return 1.
-- Rows are option bars: a label and a right-aligned value. L and R switch
-  tabs; the tab name is in a header bar.
+- Rows are option bars: a label and a right-aligned value. Two levels: a
+  list of sections (header "Settings"), and inside a section its rows
+  (header is the section name). The lower screen shows help text for the
+  highlighted row (slot 13 re-made as a window on layer 4).
 - Settings live in an eidos struct (`sdk/settings.h`: scale, filter, layout,
   key bindings, master volume), saved as a small file through `plat_save`.
 - Messages: an eidos member appended to `a/0/0/2`, generated from a repo text
@@ -179,12 +181,14 @@ own bg, bar tiles, font and print queue). Files:
 - `..._021BA014.c`: leaving (B) commits the settings and returns to the menu.
 
 Controls: up and down move (with repeat), left and right change a value
-(A also cycles a choice), L and R switch tab, B leaves and commits. A on a
+(A also cycles a choice). A on a section opens it, B in a section goes back
+to the section list, B in the list leaves and commits. A on a
 Controls row arms the capture ("Press a key"); the next key or pad control
 becomes that button's primary binding (slot 0), Escape cancels. A on
 "Revert changes" restores the last committed state, A on "Restore defaults"
 sets every option and binding to its default; both stay uncommitted until
-the screen is left. A tab with more than six rows scrolls (Controls).
+the screen is left. A section with more than six rows scrolls (Controls). Control rows show
+"key / pad" in short names.
 
 Not done: the row table is still the menu's eight kinds (six visible
 rows, header and cursor sprites hidden); the text table is in one file but

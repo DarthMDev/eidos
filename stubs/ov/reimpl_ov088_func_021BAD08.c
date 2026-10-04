@@ -68,6 +68,8 @@ extern int bw_mod_title_set_in_settings(int on);
 extern int eidos_sui_row_count(void);
 extern void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv);
 extern int eidos_sui_capturing(void);
+extern int eidos_sui_help_count(void);
+extern void eidos_sui_help_line(int i, char *out, int n);
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
@@ -158,7 +160,7 @@ static void *ascii_obj(const char *t, int n)
 /* One text on a row's slot, at x or (right >= 0) ending at `right`; the
  * text is cut at the end until it is at most `room` pixels wide. Returns
  * the width drawn. */
-static int settings_text(struct Menu *p, int slot, const char *t, int x, int right, int room)
+static int settings_text_y(struct Menu *p, int slot, const char *t, int x, int right, int room, int y)
 {
     int n = 0;
     void *o;
@@ -177,10 +179,39 @@ static int settings_text(struct Menu *p, int slot, const char *t, int x, int rig
     }
     if (right >= 0)
         x = right - w;
-    func_0201C724(p->f68, func_02045770(p->slot[slot].obj), x, 4, o, p->f58, 0x440);
+    func_0201C724(p->f68, func_02045770(p->slot[slot].obj), x, y, o, p->f58, 0x440);
     p->slot[slot].on = 1;
     func_02045808(o);
     return w;
+}
+
+static int settings_text(struct Menu *p, int slot, const char *t, int x, int right, int room)
+{
+    return settings_text_y(p, slot, t, x, right, room, 4);
+}
+
+/* The bottom screen: the help text of the highlighted row, in slot 13 (a
+ * window on the lower screen's first layer, see the table patch below). */
+#define SETTINGS_HELP_SLOT 13
+#define SETTINGS_HELP_PX (30 * 8 - 8)
+extern void func_02043B5C(void *win, unsigned c);
+extern void func_02045334(void *win);
+extern void func_02045374(void *win);
+extern void func_02041B6C(unsigned bit);
+extern unsigned char func_02045730(void *win);
+static void settings_help(struct Menu *p)
+{
+    char line[96];
+    int i, n = eidos_sui_help_count();
+    func_02043B5C(func_02045770(p->slot[SETTINGS_HELP_SLOT].obj), 0xF);
+    for (i = 0; i < n; i++) {
+        eidos_sui_help_line(i, line, sizeof line);
+        if (line[0] != 0)
+            settings_text_y(p, SETTINGS_HELP_SLOT, line, 4, -1, SETTINGS_HELP_PX, 2 + 16 * i + (i >= 2 ? 8 : 0));
+    }
+    func_02045334(p->slot[SETTINGS_HELP_SLOT].obj);
+    func_02045374(p->slot[SETTINGS_HELP_SLOT].obj);
+    func_02041B6C(func_02045730(p->slot[SETTINGS_HELP_SLOT].obj));
 }
 
 static void settings_print(struct Menu *p)
@@ -196,6 +227,7 @@ static void settings_print(struct Menu *p)
         if (value[0] != 0)
             settings_text(p, slot, value, 0, SETTINGS_TEXT_RIGHT, SETTINGS_TEXT_RIGHT - SETTINGS_TEXT_X - lw - 10);
     }
+    settings_help(p);
 }
 
 void func_021BAD08(struct Menu *p)
@@ -210,10 +242,16 @@ void func_021BAD08(struct Menu *p)
     func_02045088(11);
     for (i = 0; i < 14; i++) {
         int w = d_021BD7C4[i].a3;
-        if (bw_mod_title_settings_on() && bw_mod_title_in_settings() && i >= 6 && i <= 12)
-            w = SETTINGS_SLOT_TILES;
-        p->slot[i].obj = func_020450F0(d_021BD7C4[i].a0, d_021BD7C4[i].a1, d_021BD7C4[i].a2,
-                                       w, d_021BD7C4[i].a4, d_021BD7C4[i].a5, 1);
+        int layer = d_021BD7C4[i].a0, h = d_021BD7C4[i].a4, y = d_021BD7C4[i].a2;
+        int x = d_021BD7C4[i].a1, pal = d_021BD7C4[i].a5;
+        if (bw_mod_title_settings_on() && bw_mod_title_in_settings()) {
+            if (i >= 6 && i <= 12)
+                w = SETTINGS_SLOT_TILES;
+            if (i == SETTINGS_HELP_SLOT) {
+                layer = 4; x = 1; y = 2; w = 30; h = 10; pal = 15;
+            }
+        }
+        p->slot[i].obj = func_020450F0(layer, x, y, w, h, pal, 1);
     }
     if (bw_mod_title_settings_on() && bw_mod_title_in_settings()) {
         settings_print(p);

@@ -13,7 +13,49 @@
 /* A translation or a mod replaces this block.                         */
 /* ================================================================== */
 
+#define STR_TITLE "Settings"
 static const char *const k_tab_names[] = { "Display", "Layout", "Controls", "Sound" };
+
+/* Short button names for the Controls rows (the backend labels are long). */
+static const char *const k_button_short[] = {
+    "A", "B", "X", "Y", "L", "R", "Start", "Select", "Up", "Down", "Left", "Right"
+};
+
+/* Short gamepad control names: the value column is narrow.  Indexes match
+ * the backend's EIDOS_PADBIND_BUTTON order (SDL game controller buttons). */
+static const char *const k_pad_short[] = {
+    "Pad S", "Pad E", "Pad W", "Pad N", "Back", "Guide", "Start", "LS Click",
+    "RS Click", "LB", "RB", "DP Up", "DP Down", "DP Left", "DP Right"
+};
+static const char *const k_axis_pos_short[] = { "LS Right", "LS Down", "RS Right", "RS Down", "LT", "RT" };
+static const char *const k_axis_neg_short[] = { "LS Left", "LS Up", "RS Left", "RS Up", "LT -", "RT -" };
+
+/* Help text (bottom screen).  Two lines per option id, then fixed texts. */
+static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
+    { "How the game window is shown:", "windowed, fullscreen or borderless." },
+    { "Size of the 3D and 2D rendering.", "Fit follows the window size." },
+    { NULL, NULL }, { NULL, NULL },
+    { "Put the two screens above each", "other or side by side." },
+    { "Show the touch screen on top", "and the upper screen below." },
+    { "Space between the two screens,", "in pixels." },
+    { "Master volume, 0 to 100.", "Left and right change it by 5." },
+};
+#define HELP_BIND1     "Press A, then press the key or pad"
+#define HELP_BIND2     "button to bind. B cancels."
+#define HELP_REVERT1   "Undo every change made since you"
+#define HELP_REVERT2   "opened this screen."
+#define HELP_DEFAULTS1 "Set every option and every control"
+#define HELP_DEFAULTS2 "to its default."
+#define HELP_CAPTURE1  "Waiting for a key or pad button."
+#define HELP_CAPTURE2  "Press B to cancel."
+#define HELP_SECTION_DISPLAY  "Window mode and resolution."
+#define HELP_SECTION_LAYOUT   "Screen arrangement, swap and gap."
+#define HELP_SECTION_CONTROLS "Keyboard and gamepad bindings."
+#define HELP_SECTION_SOUND    "Master volume."
+#define HELP_KEYS_L0   "Up/Down: choose   A: open"
+#define HELP_KEYS_L0B  "B: save and go back"
+#define HELP_KEYS_L1   "Up/Down: choose   Left/Right: change"
+#define HELP_KEYS_L1B  "A: select   B: back"
 
 /* Row labels by option id (EIDOS_OPT_*); NULL for hidden options. */
 static const char *const k_option_labels[EIDOS_OPT_COUNT] = {
@@ -47,7 +89,7 @@ static const ValueName k_value_names[] = {
 
 /* ================================================================== */
 
-enum { ROW_OPTION, ROW_BIND, ROW_REVERT, ROW_DEFAULTS };
+enum { ROW_OPTION, ROW_BIND, ROW_REVERT, ROW_DEFAULTS, ROW_SECTION };
 
 typedef struct Row { int type; int arg; } Row;
 
@@ -55,7 +97,8 @@ typedef struct Row { int type; int arg; } Row;
 #define TAB_COUNT 4
 
 static struct {
-    int tab;
+    int level;        /* 0 section list, 1 inside a section      */
+    int tab;          /* the section                             */
     int cursor;       /* index into the tab's rows                */
     int scroll;       /* first visible row                        */
     int capturing;    /* button index + 1, 0 when not capturing   */
@@ -75,6 +118,13 @@ static void add_row(int *n, int type, int arg)
 static void build_rows(void)
 {
     int n = 0, i;
+    if (g.level == 0) {
+        for (i = 0; i < TAB_COUNT; i++) {
+            add_row(&n, ROW_SECTION, i);
+        }
+        g.nrows = n;
+        return;
+    }
     switch (g.tab) {
     case 0:
         add_row(&n, ROW_OPTION, EIDOS_OPT_DISPLAY_MODE);
@@ -130,12 +180,22 @@ void eidos_sui_leave(void)
     eidos_settings_commit();
 }
 
-static void set_tab(int t)
+static void enter_section(int t)
 {
-    g.tab = (t + TAB_COUNT) % TAB_COUNT;
+    g.tab = t;
+    g.level = 1;
     g.cursor = 0;
     g.scroll = 0;
     build_rows();
+}
+
+static void leave_section(void)
+{
+    g.level = 0;
+    g.cursor = g.tab;
+    g.scroll = 0;
+    build_rows();
+    clamp_scroll();
 }
 
 static void move_cursor(int d)
@@ -230,15 +290,11 @@ int eidos_sui_input(unsigned pressed, unsigned held)
 
     act = repeat_dirs(pressed, held);
     if (pressed & 2u) {
-        return EIDOS_SUI_EXIT | EIDOS_SUI_SFX_BACK;
-    }
-    if (pressed & 0x200u) {                           /* L */
-        set_tab(g.tab - 1);
-        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
-    }
-    if (pressed & 0x100u) {                           /* R */
-        set_tab(g.tab + 1);
-        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
+        if (g.level == 0) {
+            return EIDOS_SUI_EXIT | EIDOS_SUI_SFX_BACK;
+        }
+        leave_section();
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
     }
     if (act & 0x40u) {
         move_cursor(-1);
@@ -249,6 +305,13 @@ int eidos_sui_input(unsigned pressed, unsigned held)
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
     }
     r = &g.rows[g.cursor];
+    if (r->type == ROW_SECTION) {
+        if (pressed & 1u) {
+            enter_section(r->arg);
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return 0;
+    }
     if (r->type == ROW_OPTION) {
         int d = (act & 0x10u) ? 1 : (act & 0x20u) ? -1 : 0;
         const EidosOption *o = eidos_settings_option(r->arg);
@@ -303,7 +366,12 @@ int eidos_sui_capturing(void)
 
 int eidos_sui_tab(void)
 {
-    return g.tab;
+    return g.level == 0 ? -1 : g.tab;
+}
+
+int eidos_sui_level(void)
+{
+    return g.level;
 }
 
 int eidos_sui_tab_count(void)
@@ -338,37 +406,52 @@ static void option_value(int id, char *out, int n)
     eidos_settings_value_text(id, out, (size_t)n);
 }
 
-static void join(char *acc, size_t cap, const char *s, int *any)
-{
-    if (*any) {
-        strncat(acc, ", ", cap - strlen(acc) - 1);
-    }
-    strncat(acc, s, cap - strlen(acc) - 1);
-    *any = 1;
-}
-
-/* The primary key and the primary pad control: what a capture rebinds. */
-static void bind_value(int button, char *out, int n)
+static void pad_short(int kind, int index, char *out, int n)
 {
     char tmp[48];
-    char acc[128];
-    int slot, kind, index, any = 0;
-    acc[0] = '\0';
-    for (slot = 0; slot < EIDOS_BIND_SLOTS && !any; slot++) {
+    const char *t = NULL;
+    if (kind == EIDOS_PADBIND_BUTTON) {
+        if (index >= 0 && index < (int)(sizeof k_pad_short / sizeof k_pad_short[0])) {
+            t = k_pad_short[index];
+        }
+    } else if (index >= 0 && index < 6) {
+        t = kind == EIDOS_PADBIND_AXIS_POS ? k_axis_pos_short[index] : k_axis_neg_short[index];
+    }
+    if (t == NULL) {
+        eidos_pad_control_name(kind, index, tmp, sizeof tmp);
+        t = tmp;
+    }
+    put(out, n, t);
+}
+
+/* "Key / Pad": the first key and the first pad control, in short names. */
+static void bind_value(int button, char *out, int n)
+{
+    char key[48], pad[32];
+    int slot, kind, index;
+    key[0] = '\0';
+    pad[0] = '\0';
+    for (slot = 0; slot < EIDOS_BIND_SLOTS && key[0] == '\0'; slot++) {
         int sc = eidos_settings_get_key(button, slot);
         if (sc != 0) {
-            eidos_scancode_name(sc, tmp, sizeof tmp);
-            join(acc, sizeof acc, tmp, &any);
+            eidos_scancode_name(sc, key, sizeof key);
         }
     }
     for (slot = 0; slot < EIDOS_BIND_SLOTS; slot++) {
         if (eidos_settings_get_pad(button, slot, &kind, &index) == 0 && kind >= 0) {
-            eidos_pad_control_name(kind, index, tmp, sizeof tmp);
-            join(acc, sizeof acc, tmp, &any);
+            pad_short(kind, index, pad, sizeof pad);
             break;
         }
     }
-    put(out, n, any ? acc : STR_UNBOUND);
+    if (key[0] == '\0' && pad[0] == '\0') {
+        put(out, n, STR_UNBOUND);
+    } else if (pad[0] == '\0') {
+        put(out, n, key);
+    } else if (key[0] == '\0') {
+        snprintf(out, (size_t)n, "- / %s", pad);
+    } else {
+        snprintf(out, (size_t)n, "%s / %s", key, pad);
+    }
 }
 
 void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
@@ -377,10 +460,7 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
     if (nl > 0) { label[0] = '\0'; }
     if (nv > 0) { value[0] = '\0'; }
     if (row == 0) {
-        char t[16];
-        put(label, nl, k_tab_names[g.tab]);
-        snprintf(t, sizeof t, "%d/%d", g.tab + 1, TAB_COUNT);
-        put(value, nv, t);
+        put(label, nl, g.level == 0 ? STR_TITLE : k_tab_names[g.tab]);
         return;
     }
     if (row < 1 || g.scroll + row - 1 >= g.nrows) {
@@ -388,13 +468,17 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
     }
     r = &g.rows[g.scroll + row - 1];
     switch (r->type) {
+    case ROW_SECTION:
+        put(label, nl, k_tab_names[r->arg]);
+        break;
     case ROW_OPTION:
         put(label, nl, k_option_labels[r->arg] != NULL ? k_option_labels[r->arg] : "");
         option_value(r->arg, value, nv);
         break;
     case ROW_BIND: {
         const EidosButtonInfo *b = eidos_settings_button(r->arg);
-        put(label, nl, b != NULL ? b->label : "");
+        put(label, nl, r->arg >= 0 && r->arg < (int)(sizeof k_button_short / sizeof k_button_short[0])
+                           ? k_button_short[r->arg] : (b != NULL ? b->label : ""));
         if (g.capturing == r->arg + 1) {
             put(value, nv, STR_PRESS_KEY);
         } else {
@@ -408,5 +492,56 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
     default:
         put(label, nl, STR_DEFAULTS);
         break;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Help text for the bottom screen */
+
+int eidos_sui_help_count(void)
+{
+    return 4;
+}
+
+void eidos_sui_help_line(int i, char *out, int n)
+{
+    const char *l[4] = { "", "", "", "" };
+    const Row *r = g.nrows > 0 ? &g.rows[g.cursor] : NULL;
+    if (n > 0) {
+        out[0] = '\0';
+    }
+    if (g.capturing) {
+        l[0] = HELP_CAPTURE1;
+        l[1] = HELP_CAPTURE2;
+    } else if (g.level == 0 && r != NULL) {
+        static const char *const sec[] = {
+            HELP_SECTION_DISPLAY, HELP_SECTION_LAYOUT, HELP_SECTION_CONTROLS, HELP_SECTION_SOUND };
+        l[0] = sec[r->arg];
+        l[2] = HELP_KEYS_L0;
+        l[3] = HELP_KEYS_L0B;
+    } else if (r != NULL) {
+        switch (r->type) {
+        case ROW_OPTION:
+            l[0] = k_option_help[r->arg][0] != NULL ? k_option_help[r->arg][0] : "";
+            l[1] = k_option_help[r->arg][1] != NULL ? k_option_help[r->arg][1] : "";
+            break;
+        case ROW_BIND:
+            l[0] = HELP_BIND1;
+            l[1] = HELP_BIND2;
+            break;
+        case ROW_REVERT:
+            l[0] = HELP_REVERT1;
+            l[1] = HELP_REVERT2;
+            break;
+        default:
+            l[0] = HELP_DEFAULTS1;
+            l[1] = HELP_DEFAULTS2;
+            break;
+        }
+        l[2] = HELP_KEYS_L1;
+        l[3] = HELP_KEYS_L1B;
+    }
+    if (i >= 0 && i < 4) {
+        put(out, n, l[i]);
     }
 }
