@@ -308,7 +308,7 @@ static void draw_rows(void)
 
     eidos_sui_row_text(0, label, sizeof label, value, sizeof value);
     win_clear_and_commit_begin(g_w->win_head);
-    put_text(g_w->win_head, label, 4, -1, 16 * 8 - 8, 4, 0xf, 0xe);
+    put_text(g_w->win_head, label, 4, -1, 16 * 8 - 8, 0, 0xf, 0xe);
     win_commit(g_w->win_head);
 
     /* Bars 0..4 are the option rows (model rows 1..n-2); bar 5, the grey
@@ -320,7 +320,7 @@ static void draw_rows(void)
 
         char names[3][20];
         int active = 0, nch = 0, c;
-        u32 fg = 0xf, sh = 0xe;
+        u32 fg = 0xf, sh = 0xe;   /* white, dark shadow: arc 0x17's palette */
 
         win_clear_and_commit_begin(win);
         if (have) {
@@ -334,7 +334,7 @@ static void draw_rows(void)
                     /* the active choice in the bright colour, the others dim */
                     put_text(win, names[c], nch == 3 ? k_text3[c] : k_text2[c],
                              -1, 60, 4,
-                             c == active ? fg : 0xe, c == active ? sh : 0x3);
+                             c == active ? fg : 0x2, sh);   /* the other choices: light grey */
                 }
             } else if (value[0] != 0) {
                 put_text(win, value, 120, -1, 240 - 120 - 8, 4, fg, sh);
@@ -367,21 +367,65 @@ static void draw_help(void)
  */
 extern void func_020413B0(u32, u32, u32, u32, u32, u32);
 
-static void make_highlight_bank(void)
+/*
+ * The colours.  The game's Options art is purple and green; the title menu this
+ * screen is reached from is near-black with light borders and a teal
+ * selection.  The art keeps its shapes and the palettes are set to the title
+ * menu's colours (measured on its rows: fill 24/24/24, border 238 with 98 shading,
+ * selected fill 57/65/82 with a teal 8/148/139 border).  Set directly in
+ * the palette memory after the game has loaded the originals.
+ */
+static u16 rgb8(u32 r, u32 g, u32 b)
 {
-    u16 *pal = (u16 *)bw_ds_ptr(0x05000000u);
+    return (u16)((r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10));
+}
+
+/* The bar palette (banks 0 and 2 of the main background): index 4 is the
+ * fill, 5 and 1 the inner lines, 3, 9 and 15 the border and its end ticks,
+ * 6 and 14 the border's shading, 7, 8 and 10 the dark edge. */
+static void theme_bar(u16 *bank, u32 fill, const u32 line[3], const u32 shade[3])
+{
+    bank[4] = rgb8(fill, fill, fill);
+    bank[5] = rgb8(16, 16, 16);
+    bank[1] = rgb8(41, 41, 41);
+    bank[2] = rgb8(57, 57, 57);
+    bank[10] = rgb8(24, 24, 24);
+    bank[7] = rgb8(16, 16, 16);
+    bank[8] = rgb8(41, 41, 41);
+    bank[3] = rgb8(line[0], line[1], line[2]);
+    bank[9] = rgb8(line[0], line[1], line[2]);
+    bank[15] = rgb8(line[0], line[1], line[2]);
+    bank[6] = rgb8(shade[0], shade[1], shade[2]);
+    bank[14] = rgb8(shade[0], shade[1], shade[2]);
+}
+
+static void make_palettes(void)
+{
+    static const u32 white[3] = { 238, 238, 238 }, grey[3] = { 98, 98, 98 };
+    static const u32 teal[3] = { 8, 148, 139 }, deep[3] = { 6, 100, 95 };
+    u16 *main_pal = (u16 *)bw_ds_ptr(0x05000000u);
+    u16 *sub_pal = (u16 *)bw_ds_ptr(0x05000400u);
     int i;
 
+    theme_bar(main_pal + 0 * 16, 24, white, grey);   /* the grey bar */
+    theme_bar(main_pal + 2 * 16, 24, white, grey);   /* the bars */
+    theme_bar(main_pal + 9 * 16, 24, teal, deep);    /* the selected bar */
+    main_pal[9 * 16 + 4] = rgb8(57, 65, 82);
+    /* bank 13 is for a bar with no row: all of it the backdrop's colour */
     for (i = 0; i < 16; i++) {
-        u16 c = pal[2 * 16 + i];
-        u32 r = c & 31u, g = (c >> 5) & 31u, b = (c >> 10) & 31u;
-
-        /* a deeper, more saturated purple: the mint text stays readable */
-        r = r * 6u / 10u;
-        g = g * 6u / 10u;
-        b = b * 8u / 10u;
-        pal[9 * 16 + i] = (u16)(r | (g << 5) | (b << 10));
+        main_pal[13 * 16 + i] = rgb8(32, 32, 32);
     }
+    /* the grid of the other screen: neutral crosses on black */
+    sub_pal[1 * 16 + 2] = rgb8(41, 41, 41);
+    sub_pal[1 * 16 + 3] = rgb8(24, 24, 24);
+    /* the text, in both screens' bank 15: 15 the text, 14 its shadow, 2 dimmer */
+    for (i = 0; i < 16; i++) {
+        main_pal[15 * 16 + i] = 0;
+        sub_pal[15 * 16 + i] = 0;
+    }
+    main_pal[15 * 16 + 15] = sub_pal[15 * 16 + 15] = rgb8(255, 255, 255);
+    main_pal[15 * 16 + 14] = sub_pal[15 * 16 + 14] = rgb8(66, 66, 74);
+    main_pal[15 * 16 + 2] = sub_pal[15 * 16 + 2] = rgb8(139, 139, 139);
 }
 
 static void highlight(OptWork *w)
@@ -390,13 +434,21 @@ static void highlight(OptWork *w)
 
     bar = cr == eidos_sui_row_count() - 1 ? OPT_ROWS - 1 : cr - 1;
     if (!w->built) {
-        make_highlight_bank();
+        make_palettes();
         w->built = 1;
     }
     for (i = 0; i < OPT_ROWS; i++) {
-        /* bars 0..4 use palette bank 2, the grey bar bank 0 (the screen map) */
-        func_020413B0(2, 0, (u32)(2 + 3 * i), 32, 3,
-                      i == bar ? 9u : (i == OPT_ROWS - 1 ? 0u : 2u));
+        /* bars 0..4 use palette bank 2, the grey bar bank 0 (the screen map);
+         * a bar with no row takes the empty bank 13, so it is not drawn */
+        u32 pal = i == OPT_ROWS - 1 ? 0u : 2u;
+
+        if (i < OPT_ROWS - 1 && i >= eidos_sui_row_count() - 2) {
+            pal = 13u;
+        }
+        if (i == bar) {
+            pal = 9u;
+        }
+        func_020413B0(2, 0, (u32)(2 + 3 * i), 32, 3, pal);
     }
     func_02041B6C(2);
 }
@@ -432,19 +484,16 @@ static void gfx_build(OptWork *w)
 
     h = func_020490F4(0x1b, heap);
     func_02049B68(h, 1, 0, 0, 0, heap);                 /* main palette */
-    func_02049658(h, 0xd, 0, 0, 0, 0, heap);            /* layer 0: the flat back */
-    func_020498F4(h, 0xe, 0, 0, 0, 0, heap);
     func_02049658(h, 0, 2, 0, 0, 0, heap);              /* layer 2: the bars */
     func_020498F4(h, 2, 2, 0, 0, 0, heap);
     func_02049658(h, 0x10, 3, 1, 0, 0, heap);           /* layer 3: text tiles */
-    func_02049BDC(h, 8, 0, 0x80, 0x1e0, 0x20, heap);    /* the text palette */
     func_02049B68(h, 8, 4, 0, 0, heap);                 /* sub palette */
     func_02049658(h, 7, 5, 0, 0, 0, heap);              /* layer 5: the grid */
     func_020498F4(h, 9, 5, 0, 0, 0, heap);
     func_02049658(h, 0x10, 4, 1, 0, 0, heap);           /* layer 4: text tiles */
     func_02049238(h);
 
-    w->win_help = func_020450F0(4, 1, 0x13, 0x1e, 4, 4, 1);
+    w->win_help = func_020450F0(4, 1, 0x13, 0x1e, 4, 0xf, 1);
     w->win_head = func_020450F0(0, 0, 0, 0x10, 3, 0xf, 1);
     for (i = 0; i < OPT_ROWS; i++) {
         w->win_row[i] = func_020450F0(3, 1, (u32)(2 + 3 * i), 0x1e, 3, 0xf, 1);

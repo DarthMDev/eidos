@@ -42,8 +42,6 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 };
 #define HELP_BIND1     "Press A, then press the key or pad"
 #define HELP_BIND2     "button to bind. B cancels."
-#define HELP_REVERT1   "Undo every change made since you"
-#define HELP_REVERT2   "opened this screen."
 #define HELP_DEFAULTS1 "Set every option and every control"
 #define HELP_DEFAULTS2 "to its default."
 #define HELP_CAPTURE1  "Waiting for a key or pad button."
@@ -95,14 +93,13 @@ static const ValueName k_choice_names[] = {
 #define STR_BACK_L1     "Back"
 #define HELP_BACK_L0    "Save the changes and leave"
 #define HELP_BACK_L1    "Go back to the list of sections"
-#define STR_REVERT      "Revert changes"
 #define STR_DEFAULTS    "Restore defaults"
 #define STR_PRESS_KEY   "Press a key"
 #define STR_UNBOUND     "None"
 
 /* ================================================================== */
 
-enum { ROW_OPTION, ROW_BIND, ROW_REVERT, ROW_DEFAULTS, ROW_SECTION };
+enum { ROW_OPTION, ROW_BIND, ROW_DEFAULTS, ROW_SECTION };
 
 typedef struct Row { int type; int arg; } Row;
 
@@ -157,7 +154,6 @@ static void build_rows(void)
         add_row(&n, ROW_OPTION, EIDOS_OPT_SOUND_VOLUME);
         break;
     }
-    add_row(&n, ROW_REVERT, 0);
     add_row(&n, ROW_DEFAULTS, 0);
     g.nrows = n;
 }
@@ -363,9 +359,6 @@ int eidos_sui_input(unsigned pressed, unsigned held)
             eidos_settings_capture_begin();
             g.capturing = r->arg + 1;
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
-        case ROW_REVERT:
-            eidos_settings_revert();
-            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         case ROW_DEFAULTS:
             eidos_settings_defaults();
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
@@ -530,9 +523,6 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         }
         break;
     }
-    case ROW_REVERT:
-        put(label, nl, STR_REVERT);
-        break;
     default:
         put(label, nl, STR_DEFAULTS);
         break;
@@ -618,10 +608,6 @@ void eidos_sui_help_line(int i, char *out, int n)
         case ROW_BIND:
             l[0] = HELP_BIND1;
             l[1] = HELP_BIND2;
-            break;
-        case ROW_REVERT:
-            l[0] = HELP_REVERT1;
-            l[1] = HELP_REVERT2;
             break;
         default:
             l[0] = HELP_DEFAULTS1;

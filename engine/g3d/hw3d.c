@@ -1049,6 +1049,30 @@ static void render_frame(void)
     }
 
     g3d_geom_sort(&g_hw.geom, (int)(g_hw.swap_param & 1u));
+    {
+        /* A debugging aid: EIDOS_G3D_POLYS=lo-hi draws only those polygons of
+         * the frame (after the hardware order), to isolate one model part. */
+        static int init, lo, hi;
+
+        if (!init) {
+            const char *e = getenv("EIDOS_G3D_POLYS");
+
+            init = 1;
+            lo = 0;
+            hi = -1;
+            if (e != NULL && sscanf(e, "%d-%d", &lo, &hi) != 2) {
+                lo = 0;
+                hi = -1;
+            }
+        }
+        if (hi >= lo) {
+            for (i = 0; i < g_hw.geom.n_polys; i++) {
+                if ((int)i < lo || (int)i > hi) {
+                    g_hw.geom.polys[i].attr &= ~((u32)0x1F << 16);   /* alpha 0: not drawn */
+                }
+            }
+        }
+    }
     if (g_snap_on) {
         unsigned long long ts = eidos_prof_begin();
 

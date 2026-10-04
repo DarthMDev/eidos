@@ -160,6 +160,7 @@ static void gl_debug_dump(int w, int h)
     static int init;
     static char path[512];
     static int at;
+    static int done;
 
     if (!init) {
         const char *colon;
@@ -175,9 +176,10 @@ static void gl_debug_dump(int w, int h)
             spec = NULL;
         }
     }
-    if (spec == NULL || ++frame != at) {
+    if (spec == NULL || ++frame < at || done) {
         return;
     }
+    done = 1;
     {
         size_t row = ((size_t)w * 3u + 3u) & ~(size_t)3u;
         unsigned char *px = (unsigned char *)malloc(row * (size_t)h);

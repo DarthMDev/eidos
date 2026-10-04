@@ -68,7 +68,7 @@ int main(void)
     BW_CHECK_EQ("display section", eidos_sui_tab(), 0);
     row(0);
     BW_CHECK_EQ("display header", strcmp(g_label, "Display"), 0);
-    BW_CHECK_EQ("display rows", eidos_sui_row_count(), 1 + 4 + 1);
+    BW_CHECK_EQ("display rows", eidos_sui_row_count(), 1 + 3 + 1);
     row(1);
     BW_CHECK_EQ("mode label", strcmp(g_label, "Window mode"), 0);
     BW_CHECK_EQ("mode value", strcmp(g_value, "Windowed"), 0);
@@ -95,13 +95,12 @@ int main(void)
     row(2);
     BW_CHECK_EQ("resolution 2x", strcmp(g_value, "2x"), 0);
 
-    /* Revert row undoes it. */
+    /* The one action row puts the defaults back. */
     press(DOWN);
     row(eidos_sui_cursor_row());
-    BW_CHECK_EQ("revert row", strcmp(g_label, "Revert changes"), 0);
+    BW_CHECK_EQ("defaults row", strcmp(g_label, "Restore defaults"), 0);
     press(A);
-    BW_CHECK_EQ("reverted", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
-    BW_CHECK_EQ("clean", eidos_settings_dirty(), 0);
+    BW_CHECK_EQ("defaults restored", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
 
     /* B goes back to level 0 with the cursor on Display. */
     r = press(B);
@@ -114,7 +113,7 @@ int main(void)
     press(DOWN);
     press(A);
     BW_CHECK_EQ("layout section", eidos_sui_tab(), 1);
-    BW_CHECK_EQ("layout rows", eidos_sui_row_count(), 1 + 5 + 1);
+    BW_CHECK_EQ("layout rows", eidos_sui_row_count(), 1 + 4 + 1);
     press(B);
     BW_CHECK_EQ("cursor on Layout", eidos_sui_cursor_row(), 2);
 
@@ -147,6 +146,7 @@ int main(void)
     BW_CHECK_EQ("defaults volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 100);
 
     /* Every Controls value fits the value column (about 17 characters). */
+    press(DOWN);                              /* the grey bar */
     press(DOWN);                              /* wraps to the first row */
     for (i = 0; i < 12; i++) {
         row(eidos_sui_cursor_row());
