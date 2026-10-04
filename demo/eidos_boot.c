@@ -509,6 +509,21 @@ static void boot_dump_g3d(u64 n)
         }
         fclose(f);
     }
+    {
+        /* the 3D layer as the CPU rasteriser drew it, before the 2D engines */
+        const u8 *raw = g3d_hw_frame();
+        u32 n3 = g3d_hw_frame_scale(), px3 = 256u * n3 * 192u * n3, q;
+
+        snprintf(path, sizeof(path), "%s/g3d_%llu_layer.ppm", dir, (unsigned long long)n);
+        f = raw != NULL ? fopen(path, "wb") : NULL;
+        if (f != NULL) {
+            fprintf(f, "P6 %u %u 255 ", 256u * n3, 192u * n3);
+            for (q = 0; q < px3; q++) {
+                fwrite(raw + q * 4u, 1, 3, f);
+            }
+            fclose(f);
+        }
+    }
     for (i = 0; i < s->n_tex; i++) {
         u32 k, npx = s->tex[i].w * s->tex[i].h;
 

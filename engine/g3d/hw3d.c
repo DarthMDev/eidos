@@ -253,6 +253,7 @@ typedef struct Hw3d {
 } Hw3d;
 
 static Hw3d g_hw;
+static u32 g_ops_frame[256];     /* commands since the last swap (EIDOS_G3D_OPS) */
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -1049,6 +1050,19 @@ static void render_frame(void)
     }
 
     g3d_geom_sort(&g_hw.geom, (int)(g_hw.swap_param & 1u));
+    if (getenv("EIDOS_G3D_OPS") != NULL) {
+        static u32 n;
+
+        if ((++n % 60u) == 0) {
+            fprintf(stderr, "g3d ops (swap %u): POLYGON_ATTR %u NORMAL %u COLOR %u DIF_AMB %u SPE_EMI %u LIGHT_VECTOR %u LIGHT_COLOR %u"
+                    " VTX16 %u BEGIN %u TEXIMAGE %u; poly_attr now %08X lights %X\n",
+                    n, g_ops_frame[0x29], g_ops_frame[0x21], g_ops_frame[0x20], g_ops_frame[0x30],
+                    g_ops_frame[0x31], g_ops_frame[0x32], g_ops_frame[0x33], g_ops_frame[0x23],
+                    g_ops_frame[0x40], g_ops_frame[0x2A], g_hw.gx.poly_attr,
+                    G3D_ATTR_LIGHTS(g_hw.gx.poly_attr));
+        }
+        memset(g_ops_frame, 0, sizeof(g_ops_frame));
+    }
     {
         /* A debugging aid: EIDOS_G3D_POLYS=lo-hi draws only those polygons of
          * the frame (after the hardware order), to isolate one model part. */
@@ -1249,6 +1263,7 @@ static void exec_cmd(u32 op, const u32 *par);
 static void exec(u32 op, const u32 *par)
 {
     unsigned long long t0 = eidos_prof_begin();
+    g_ops_frame[op & 0xFFu]++;
 
     exec_cmd(op, par);
     eidos_prof_end(EIDOS_PROF_GEOM, t0);

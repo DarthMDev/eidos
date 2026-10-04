@@ -1106,6 +1106,12 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
                                          init_h, flags);
         }
     }
+    if (getenv("EIDOS_RENDERER_REPORT") != NULL) {
+        fprintf(stderr, "eidos: presenter %s (video driver %s)\n",
+                p->gl != NULL ? "OpenGL 3.3" : "SDL renderer",
+                SDL_GetCurrentVideoDriver() != NULL ? SDL_GetCurrentVideoDriver()
+                                                    : "none");
+    }
     if (p->window == NULL) {
         fprintf(stderr, "eidos: SDL_CreateWindow failed: %s\n", SDL_GetError());
         eidos_platform_quit(p);
