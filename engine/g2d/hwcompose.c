@@ -11,6 +11,25 @@
  * affine fetch, priority, windows, the colour effects) is one piece of
  * code, not two.
  *
+ * Internal resolution.  g2d_hw_render_scaled / g2d_hw_render_dsmem_scaled
+ * take an integer scale N (1..any; no limit is baked in) and write both
+ * screens as (256*N) x (192*N) RGBA buffers, 4 bytes per pixel, row-major.
+ * The platform layer calls them with N = eidos_settings_internal_scale()
+ * and presents W = 256*N by H = 192*N.  The contract:
+ *   - rgba3d, when not NULL, is the 3D frame rendered at the same N
+ *     (g3d_hw_frame_scaled, 256N x 192N).  The 1x entry points take a
+ *     256 x 192 frame, as before; N = 1 output is bit-identical.
+ *   - BG, OBJ and the windows are pixel art: every DS pixel becomes an
+ *     N x N block (affine BG/OBJ are sampled at DS resolution too).
+ *   - Priority, windows, blending, brightness and the 3D layer are
+ *     combined per output pixel: the 3D layer gives N*N distinct pixels
+ *     per DS pixel, the 2D layers the block value.
+ *   - The display capture always writes DS-resolution data into VRAM from
+ *     a 1x frame (the 3D frame box-downsampled, g2d_hw_box_downsample),
+ *     so memory the game can read is the same at every N, except for the
+ *     3D content itself, which is the downsampled hi-res render.
+ *   - A display-mode-2 (LCDC bank) screen is nearest-upscaled.
+ *
  * What maps onto an existing layer type, and how:
  *
  *   text BG             G2dBgLayer over a G2dNscr whose entries are the
@@ -171,11 +190,11 @@ static void put_rgb(u8 *px, G2dColor c)
     px[3] = 255;
 }
 
-static void fill(u8 *rgba, u8 v)
+static void fill(u8 *rgba, u8 v, u32 npx)
 {
     u32 i;
 
-    for (i = 0; i < SCREEN_PX; i++) {
+    for (i = 0; i < npx; i++) {
         rgba[i * 4u + 0u] = v;
         rgba[i * 4u + 1u] = v;
         rgba[i * 4u + 2u] = v;
@@ -224,6 +243,7 @@ typedef struct Engine {
     int       main;
     u32       dispcnt;
     u32       unsup;
+    u32       scale;       /* output is 256*scale x 192*scale */
 
     u8  *bgv;              /* BG window, contiguous, plus BG_GUARD    */
     u32  bg_size;
@@ -574,6 +594,7 @@ static int build_bgs(Engine *e, const u8 *rgba3d)
                 continue;
             }
             e->layer3d.rgba = rgba3d;
+            e->layer3d.scale = e->scale;
             e->layer3d.width = SCREEN_W;
             e->layer3d.height = SCREEN_H;
             e->layer3d.priority = cnt & 3u;
@@ -971,12 +992,12 @@ static void master_bright(const Engine *e, u8 *rgba, const u8 *out6)
     u16 mb = reg16(e, REG_MASTER_BRIGHT);
     u32 mode = ((u32)mb >> 14) & 3u;
     u32 factor = mb & 0x1Fu;
-    u32 i;
+    u32 i, npx = SCREEN_PX * e->scale * e->scale;
 
     if ((mode != 1u && mode != 2u) || factor == 0) {
         return;
     }
-    for (i = 0; i < SCREEN_PX; i++) {
+    for (i = 0; i < npx; i++) {
         u8 c6[3];
 
         c6[0] = out6[i * 3u];
@@ -1083,19 +1104,31 @@ static void build_blend(const Engine *e, G2dBlend *b)
     b->evy = reg16(e, REG_BLDY) & 0x1Fu;
 }
 
-/* Display mode 2: one of banks A..D shown directly as 256x192 BGR555. */
+/* Display mode 2: one of banks A..D shown directly as 256x192 BGR555, each
+ * pixel an N x N block at scale N. */
 static void lcdc_display(const Engine *e, u8 *rgba, u8 *out6)
 {
     const u8 *bank = e->hw->lcdc_bank[(e->dispcnt >> 18) & 3u];
-    u32 i;
+    u32 n = e->scale, w = SCREEN_W * n;
+    u32 x, y, sx, sy;
 
-    for (i = 0; i < SCREEN_PX; i++) {
-        u16 c = bank != NULL ? bw_rd16(bank + i * 2u) : 0;
+    for (y = 0; y < SCREEN_H; y++) {
+        for (x = 0; x < SCREEN_W; x++) {
+            u16 c = bank != NULL ? bw_rd16(bank + (y * SCREEN_W + x) * 2u) : 0;
+            u8 c6[3];
 
-        put_rgb(rgba + i * 4u, bgr555(c));
-        out6[i * 3u] = (u8)g2d_c5to6(c & 0x1Fu);
-        out6[i * 3u + 1u] = (u8)g2d_c5to6(((u32)c >> 5) & 0x1Fu);
-        out6[i * 3u + 2u] = (u8)g2d_c5to6(((u32)c >> 10) & 0x1Fu);
+            c6[0] = (u8)g2d_c5to6(c & 0x1Fu);
+            c6[1] = (u8)g2d_c5to6(((u32)c >> 5) & 0x1Fu);
+            c6[2] = (u8)g2d_c5to6(((u32)c >> 10) & 0x1Fu);
+            for (sy = 0; sy < n; sy++) {
+                for (sx = 0; sx < n; sx++) {
+                    size_t at = (size_t)(y * n + sy) * w + x * n + sx;
+
+                    put_rgb(rgba + at * 4u, bgr555(c));
+                    memcpy(out6 + at * 3u, c6, 3u);
+                }
+            }
+        }
     }
 }
 
@@ -1111,8 +1144,8 @@ static int compose_graphics(Engine *e, const u8 *rgba3d, u8 *rgba, u8 *out6)
     G2dBlend blend;
 
     if (e->dispcnt & 0x80u) {
-        fill(rgba, 255);
-        memset(out6, 63, (size_t)SCREEN_PX * 3u);
+        fill(rgba, 255, SCREEN_PX * e->scale * e->scale);
+        memset(out6, 63, (size_t)SCREEN_PX * e->scale * e->scale * 3u);
         return 0;
     }
     if (alloc_engine(e) != 0 || build_bgs(e, e->main ? rgba3d : NULL) != 0
@@ -1141,7 +1174,7 @@ static int compose_graphics(Engine *e, const u8 *rgba3d, u8 *rgba, u8 *out6)
     desc.rasters = e->rasters;
     desc.n_rasters = e->n_rasters;
     desc.out6 = out6;
-    g2d_frame_compose_desc(&desc, SCREEN_W, SCREEN_H, rgba);
+    g2d_frame_compose_desc_scaled(&desc, SCREEN_W, SCREEN_H, e->scale, rgba);
     return 0;
 }
 
@@ -1150,8 +1183,9 @@ static int compose_graphics(Engine *e, const u8 *rgba3d, u8 *rgba, u8 *out6)
  * graphics screen's 6-bit stage whatever the display mode shows (the
  * capture's source A).
  */
-static int render_engine(const G2dHwState *hw, int engine, const u8 *rgba3d,
-                         u8 *rgba, u32 *unsupported, u8 *graphics6)
+static int render_engine(const G2dHwState *hw, int engine, u32 scale,
+                         const u8 *rgba3d, u8 *rgba, u32 *unsupported,
+                         u8 *graphics6)
 {
     Engine *e;
     u8 *out6 = NULL;
@@ -1163,11 +1197,12 @@ static int render_engine(const G2dHwState *hw, int engine, const u8 *rgba3d,
         return -1;
     }
     e->hw = hw;
+    e->scale = scale;
     e->main = (engine == G2D_HW_MAIN);
     e->io = hw->io + (e->main ? 0u : REG_SUB_BASE);
     e->dispcnt = reg32(e, REG_DISPCNT);
     dmode = (e->dispcnt >> 16) & 3u;
-    out6 = (u8 *)malloc((size_t)SCREEN_PX * 3u);
+    out6 = (u8 *)malloc((size_t)SCREEN_PX * scale * scale * 3u);
     if (out6 == NULL) {
         rc = -1;
         goto done;
@@ -1192,10 +1227,10 @@ static int render_engine(const G2dHwState *hw, int engine, const u8 *rgba3d,
         }
     }
     if (dmode == 0u) {
-        fill(rgba, 255);          /* display off: the screen is white */
+        fill(rgba, 255, SCREEN_PX * scale * scale);   /* display off: white */
     } else if (dmode == 3u || !e->main) {
         e->unsup |= G2D_HW_UNSUP_DISPLAY_MODE;
-        fill(rgba, 255);
+        fill(rgba, 255, SCREEN_PX * scale * scale);
     } else {
         lcdc_display(e, rgba, out6);
         master_bright(e, rgba, out6);
@@ -1214,7 +1249,7 @@ done:
 int g2d_hw_render_engine(const G2dHwState *hw, int engine, const u8 *rgba3d,
                          u8 *rgba, u32 *unsupported)
 {
-    return render_engine(hw, engine, rgba3d, rgba, unsupported, NULL);
+    return render_engine(hw, engine, 1u, rgba3d, rgba, unsupported, NULL);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1303,44 +1338,117 @@ static void capture(const G2dHwState *hw, u32 cap, const u8 *rgba3d,
     }
 }
 
-int g2d_hw_render(const G2dHwState *hw, const u8 *rgba3d,
-                  u8 *top, u8 *bottom, u32 unsupported[2])
+/*
+ * Box-downsample a 3D frame rendered at `scale` to DS size: each channel is
+ * the mean of the block (colour weighted by alpha, so a half-covered edge
+ * keeps its colour), alpha the mean rounded up to 1 when any sub-pixel is
+ * drawn.  What the capture sees of a high-resolution frame.
+ */
+void g2d_hw_box_downsample(const u8 *src, u32 scale, u8 *dst)
+{
+    u32 x, y, sx, sy, n2 = scale * scale, w = SCREEN_W * scale;
+
+    for (y = 0; y < SCREEN_H; y++) {
+        for (x = 0; x < SCREEN_W; x++) {
+            u32 r = 0, g = 0, b = 0, a = 0;
+            u8 *o = dst + ((size_t)y * SCREEN_W + x) * 4u;
+
+            for (sy = 0; sy < scale; sy++) {
+                for (sx = 0; sx < scale; sx++) {
+                    const u8 *p = src + ((size_t)(y * scale + sy) * w
+                                         + x * scale + sx) * 4u;
+
+                    r += (u32)p[0] * p[3];
+                    g += (u32)p[1] * p[3];
+                    b += (u32)p[2] * p[3];
+                    a += p[3];
+                }
+            }
+            if (a == 0) {
+                o[0] = o[1] = o[2] = o[3] = 0;
+                continue;
+            }
+            o[0] = (u8)((r + a / 2u) / a);
+            o[1] = (u8)((g + a / 2u) / a);
+            o[2] = (u8)((b + a / 2u) / a);
+            a = (a + n2 - 1u) / n2;
+            o[3] = (u8)(a != 0 ? a : 1u);
+        }
+    }
+}
+
+int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
+                         u8 *top, u8 *bottom, u32 unsupported[2])
 {
     int main_on_top = (bw_rd16(hw->io + REG_POWCNT1) & 0x8000u) != 0;
     u32 cap = bw_rd32(hw->io + (G2D_HW_DISPCAPCNT - BW_DS_IO_BASE));
     u32 flags[2] = { 0, 0 };
     u8 *graphics6 = NULL;
+    u8 *down3d = NULL;       /* the 1x 3D frame, scale > 1 and capturing */
+    const u8 *cap3d = rgba3d;
     u64 t0;
     int rc = 0;
 
-    if ((cap & 0x80000000u) && ((cap >> 29) & 3u) != 1u
-        && (cap & 0x01000000u) == 0) {
-        graphics6 = (u8 *)malloc((size_t)SCREEN_PX * 3u);
-        if (graphics6 == NULL) {
-            return -1;
+    if (scale == 0) {
+        scale = 1;
+    }
+    if (cap & 0x80000000u) {
+        if (scale > 1u && rgba3d != NULL) {
+            down3d = (u8 *)malloc((size_t)SCREEN_PX * 4u);
+            if (down3d == NULL) {
+                return -1;
+            }
+            g2d_hw_box_downsample(rgba3d, scale, down3d);
+            cap3d = down3d;
+        }
+        if (((cap >> 29) & 3u) != 1u && (cap & 0x01000000u) == 0) {
+            graphics6 = (u8 *)malloc((size_t)SCREEN_PX * 3u);
+            if (graphics6 == NULL) {
+                free(down3d);
+                return -1;
+            }
         }
     }
     t0 = eidos_prof_begin();
-    if (render_engine(hw, G2D_HW_MAIN, rgba3d, main_on_top ? top : bottom,
-                      &flags[0], graphics6) != 0) {
+    if (scale > 1u && graphics6 != NULL) {
+        /* The capture's source A is the DS-resolution graphics screen. */
+        u8 *tmp = (u8 *)malloc((size_t)SCREEN_PX * 4u);
+
+        if (tmp == NULL
+            || render_engine(hw, G2D_HW_MAIN, 1u, cap3d, tmp, &flags[0],
+                             graphics6) != 0) {
+            rc = -1;
+        }
+        free(tmp);
+    }
+    if (render_engine(hw, G2D_HW_MAIN, scale, rgba3d,
+                      main_on_top ? top : bottom, &flags[0],
+                      scale > 1u ? NULL : graphics6) != 0) {
         rc = -1;
     }
     eidos_prof_end(EIDOS_PROF_MAIN, t0);
     t0 = eidos_prof_begin();
-    if (render_engine(hw, G2D_HW_SUB, NULL, main_on_top ? bottom : top,
+    if (render_engine(hw, G2D_HW_SUB, scale, NULL, main_on_top ? bottom : top,
                       &flags[1], NULL) != 0) {
         rc = -1;
     }
     eidos_prof_end(EIDOS_PROF_SUB, t0);
     if ((cap & 0x80000000u) && rc == 0) {
-        capture(hw, cap, rgba3d, graphics6, &flags[0]);
+        capture(hw, cap, cap3d, graphics6, &flags[0]);
     }
     free(graphics6);
+    free(down3d);
     if (unsupported != NULL) {
         unsupported[0] = flags[0];
         unsupported[1] = flags[1];
     }
     return rc;
+}
+
+int g2d_hw_render(const G2dHwState *hw, const u8 *rgba3d,
+                  u8 *top, u8 *bottom, u32 unsupported[2])
+{
+    return g2d_hw_render_scaled(hw, 1u, rgba3d, top, bottom, unsupported);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1393,8 +1501,8 @@ void g2d_hw_state_from_dsmem(G2dHwState *hw)
     }
 }
 
-int g2d_hw_render_dsmem(const u8 *rgba3d, u8 *top, u8 *bottom,
-                        u32 unsupported[2])
+int g2d_hw_render_dsmem_scaled(u32 scale, const u8 *rgba3d, u8 *top,
+                               u8 *bottom, u32 unsupported[2])
 {
     G2dHwState hw;
     u32 cap;
@@ -1404,7 +1512,7 @@ int g2d_hw_render_dsmem(const u8 *rgba3d, u8 *top, u8 *bottom,
     if (hw.io == NULL || hw.pal == NULL || hw.oam == NULL) {
         return -1;
     }
-    rc = g2d_hw_render(&hw, rgba3d, top, bottom, unsupported);
+    rc = g2d_hw_render_scaled(&hw, scale, rgba3d, top, bottom, unsupported);
     /* The capture has run through this frame: the hardware clears the
      * enable bit when it completes. */
     cap = bw_io_read32(G2D_HW_DISPCAPCNT);
@@ -1412,4 +1520,10 @@ int g2d_hw_render_dsmem(const u8 *rgba3d, u8 *top, u8 *bottom,
         bw_io_write32(G2D_HW_DISPCAPCNT, cap & 0x7FFFFFFFu);
     }
     return rc;
+}
+
+int g2d_hw_render_dsmem(const u8 *rgba3d, u8 *top, u8 *bottom,
+                        u32 unsupported[2])
+{
+    return g2d_hw_render_dsmem_scaled(1u, rgba3d, top, bottom, unsupported);
 }

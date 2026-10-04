@@ -852,7 +852,8 @@ static void put_sample(G2dFrameSample *o, const G2dPalette *pal, u32 ci,
 
 /* g2d_frame_stack over a plan: the same samples, in the same order. */
 static u32 plan_stack(const G2dFrameDesc *desc, const PlanStep *plan, u32 np,
-                      s32 x, s32 y, G2dFrameSample *out, u32 max)
+                      s32 x, s32 y, const u8 *src3, G2dFrameSample *out,
+                      u32 max)
 {
     u32 count = 0, k;
     u32 allowed = win_mask(desc->windows, x, y);
@@ -881,30 +882,20 @@ static u32 plan_stack(const G2dFrameDesc *desc, const PlanStep *plan, u32 np,
             continue;
         }
         switch (st->kind) {
-        case PLAN_3D: {
-            const G2dLayer3d *l3 = desc->g3d;
-            u32 bx = (u32)(x + l3->hofs) & 0x1FFu;
-
+        case PLAN_3D:
             done_key = st->key;
-            if (l3->rgba != NULL && x >= 0 && y >= 0
-                && bx < l3->width && (u32)y < l3->height) {
-                const u8 *src = l3->rgba
-                    + ((size_t)(u32)y * l3->width + bx) * 4u;
+            if (src3 != NULL) {
+                u32 a5 = ((u32)src3[3] * 31u + 127u) / 255u;
 
-                if (src[3] != 0) {
-                    u32 a5 = ((u32)src[3] * 31u + 127u) / 255u;
-
-                    put_sample(&out[count], NULL, 0, st->bgi, 0);
-                    out[count].is_3d = 1;
-                    out[count].rgb[0] = src[0];
-                    out[count].rgb[1] = src[1];
-                    out[count].rgb[2] = src[2];
-                    out[count].alpha5 = (u8)(a5 != 0 ? a5 : 1u);
-                    count++;
-                }
+                put_sample(&out[count], NULL, 0, st->bgi, 0);
+                out[count].is_3d = 1;
+                out[count].rgb[0] = src3[0];
+                out[count].rgb[1] = src3[1];
+                out[count].rgb[2] = src3[2];
+                out[count].alpha5 = (u8)(a5 != 0 ? a5 : 1u);
+                count++;
             }
             break;
-        }
         case PLAN_RASTER: {
             const G2dLayerRaster *r = &desc->rasters[st->idx];
             const u8 *src;
@@ -951,67 +942,141 @@ static u32 plan_stack(const G2dFrameDesc *desc, const PlanStep *plan, u32 np,
     return count;
 }
 
-void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
-                            u8 *rgba)
+/*
+ * The 3D layer's pixel for DS pixel (x, y), sub-pixel (sx, sy) of a layer
+ * rendered at `scale` times the DS size, or NULL where it is transparent
+ * (no layer, outside the buffer, alpha 0).  BG0HOFS moves whole DS pixels.
+ */
+static const u8 *l3_src(const G2dLayer3d *l3, u32 x, u32 y, u32 sx, u32 sy,
+                        u32 scale)
 {
-    u32 x, y;
+    u32 bx;
+    const u8 *src;
+
+    if (l3 == NULL || !l3->enabled || l3->rgba == NULL) {
+        return NULL;
+    }
+    bx = (u32)((s32)x + l3->hofs) & 0x1FFu;
+    if (bx >= l3->width || y >= l3->height) {
+        return NULL;
+    }
+    src = l3->rgba + (((size_t)y * scale + sy) * ((size_t)l3->width * scale)
+                      + (size_t)bx * scale + sx) * 4u;
+    return src[3] != 0 ? src : NULL;
+}
+
+/* One DS pixel's colour (and 6-bit stage) given its 3D sample. */
+static void compose_px(const G2dFrameDesc *desc, const PlanStep *plan,
+                       u32 np, u32 x, u32 y, const u8 *src3, u8 *out,
+                       u8 *out6)
+{
+    G2dFrameSample stack[2];
+    u8 top[3];
+    u32 top_bit, n;
+    int is3d;
+
+    /*
+     * The pixel beneath the top one is read only by the 3D blend, a
+     * semi-transparent OBJ and alpha blending (blend_pixel), so the walk
+     * stops at the first layer unless one of those can apply; the answer
+     * is the same either way.
+     */
+    n = plan_stack(desc, plan, np, (s32)x, (s32)y, src3, stack, 1);
+    if (n == 1 && desc->blend != NULL
+        && (stack[0].is_3d
+            || (stack[0].is_obj && stack[0].layer < desc->n_objs
+                && desc->objs[stack[0].layer].semi)
+            || (desc->blend->effect == G2D_BLEND_ALPHA
+                && (g2d_frame_sample_bit(&stack[0])
+                    & desc->blend->first) != 0))) {
+        n = plan_stack(desc, plan, np, (s32)x, (s32)y, src3, stack, 2);
+    }
+    stack_color(desc, stack, n, 0, top, &top_bit);
+
+    out[0] = top[0];
+    out[1] = top[1];
+    out[2] = top[2];
+    out[3] = 255;
+
+    is3d = (n > 0 && stack[0].is_3d) ? 1 : 0;
+    if (desc->blend != NULL) {
+        is3d = blend_pixel(desc, stack, n, top, top_bit, x, y, out);
+    }
+    if (out6 != NULL) {
+        six_of(out, is3d, out6);
+    }
+}
+
+void g2d_frame_compose_desc_scaled(const G2dFrameDesc *desc, u32 width,
+                                   u32 height, u32 scale, u8 *rgba)
+{
+    u32 x, y, sx, sy;
     u32 np = 0;
+    u32 n3 = (scale == 0) ? 1u : scale;
+    u32 w_out;
     PlanStep *plan;
+    const G2dLayer3d *l3 = desc->g3d;
+
+    if (l3 != NULL && l3->enabled && (l3->scale == 0 ? 1u : l3->scale) != n3) {
+        return;   /* a layer rendered at another scale cannot be mixed */
+    }
+    w_out = width * n3;
 
     /* Each layer appears in at most one step; a raster or the 3D layer
      * replaces the BG and affine steps of its slot. */
     plan = (PlanStep *)malloc(((size_t)desc->n_objs + desc->n_rasters + 1u
                                + desc->n_bgs + desc->n_abgs + 8u)
                               * sizeof(PlanStep));
-    if (plan != NULL) {
-        np = plan_build(desc, plan);
+    if (plan == NULL) {
+        return;
     }
+    np = plan_build(desc, plan);
 
     for (y = 0; y < height; y++) {
         for (x = 0; x < width; x++) {
-            u8 *out = rgba + ((size_t)y * width + x) * 4u;
-            G2dFrameSample stack[2];
-            u8 top[3];
-            u32 top_bit, n;
-            int is3d;
+            u8 base[4], base6[3];
+            int have_base = 0;
 
-            /*
-             * The pixel beneath the top one is read only by the 3D blend,
-             * a semi-transparent OBJ and alpha blending (blend_pixel), so
-             * the walk stops at the first layer unless one of those can
-             * apply; the answer is the same either way.
-             */
-            n = plan != NULL
-                ? plan_stack(desc, plan, np, (s32)x, (s32)y, stack, 1)
-                : g2d_frame_stack(desc, (s32)x, (s32)y, stack, 1);
-            if (n == 1 && desc->blend != NULL
-                && (stack[0].is_3d
-                    || (stack[0].is_obj && stack[0].layer < desc->n_objs
-                        && desc->objs[stack[0].layer].semi)
-                    || (desc->blend->effect == G2D_BLEND_ALPHA
-                        && (g2d_frame_sample_bit(&stack[0])
-                            & desc->blend->first) != 0))) {
-                n = plan != NULL
-                    ? plan_stack(desc, plan, np, (s32)x, (s32)y, stack, 2)
-                    : g2d_frame_stack(desc, (s32)x, (s32)y, stack, 2);
+            if (n3 == 1u) {
+                compose_px(desc, plan, np, x, y, l3_src(l3, x, y, 0, 0, 1u),
+                           rgba + ((size_t)y * w_out + x) * 4u,
+                           desc->out6 != NULL
+                               ? desc->out6 + ((size_t)y * w_out + x) * 3u
+                               : NULL);
+                continue;
             }
-            stack_color(desc, stack, n, 0, top, &top_bit);
+            /* The 2D result of this DS pixel is shared by every sub-pixel
+             * the 3D layer leaves transparent. */
+            for (sy = 0; sy < n3; sy++) {
+                for (sx = 0; sx < n3; sx++) {
+                    size_t at = (size_t)(y * n3 + sy) * w_out + (x * n3 + sx);
+                    const u8 *p3 = l3_src(l3, x, y, sx, sy, n3);
+                    u8 *out = rgba + at * 4u;
+                    u8 *o6 = desc->out6 != NULL ? desc->out6 + at * 3u : NULL;
 
-            out[0] = top[0];
-            out[1] = top[1];
-            out[2] = top[2];
-            out[3] = 255;
-
-            is3d = (n > 0 && stack[0].is_3d) ? 1 : 0;
-            if (desc->blend != NULL) {
-                is3d = blend_pixel(desc, stack, n, top, top_bit, x, y, out);
-            }
-            if (desc->out6 != NULL) {
-                six_of(out, is3d, desc->out6 + ((size_t)y * width + x) * 3u);
+                    if (p3 != NULL) {
+                        compose_px(desc, plan, np, x, y, p3, out, o6);
+                        continue;
+                    }
+                    if (!have_base) {
+                        compose_px(desc, plan, np, x, y, NULL, base, base6);
+                        have_base = 1;
+                    }
+                    memcpy(out, base, 4u);
+                    if (o6 != NULL) {
+                        memcpy(o6, base6, 3u);
+                    }
+                }
             }
         }
     }
     free(plan);
+}
+
+void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
+                            u8 *rgba)
+{
+    g2d_frame_compose_desc_scaled(desc, width, height, 1u, rgba);
 }
 
 void g2d_frame_compose(const G2dBgLayer *bgs, u32 n_bgs,

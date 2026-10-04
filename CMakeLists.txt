@@ -1242,6 +1242,11 @@ target_include_directories(test_g3dhw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_g3dhw PRIVATE eidos)
 add_test(NAME test_g3dhw COMMAND test_g3dhw)
 
+add_executable(test_hires ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_hires.c)
+target_include_directories(test_hires PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_hires PRIVATE eidos)
+add_test(NAME test_hires COMMAND test_hires)
+
 # The FS shim, the overlay registry and member-level mod overrides:
 # synthetic checks always, and the real-data half when the data root's
 # parent holds the extract's tables.

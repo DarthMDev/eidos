@@ -663,6 +663,8 @@ static s32 clear_depth_of(const G3dTarget *t, u32 cd)
  * (CLEAR_COLOR bits 24-29); the fog flag is CLEAR_COLOR bit 15 for the
  * plain clear.
  */
+static u32 g_scale = 1;   /* internal resolution, survives g3d_hw_reset */
+
 static void clear_planes(G3dTarget *t, u32 d3, u32 cc, u32 cd)
 {
     u32 n = t->width * t->height, i;
@@ -682,8 +684,9 @@ static void clear_planes(G3dTarget *t, u32 d3, u32 cc, u32 cd)
 
         for (y = 0; y < t->height; y++) {
             for (x = 0; x < t->width; x++) {
-                u32 at = ((((y + (ofs >> 8)) & 0xFFu) * 256u)
-                          + ((x + ofs) & 0xFFu)) * 2u;
+                /* the bitmap is DS resolution: nearest at scale N */
+                u32 at = ((((y / g_scale + (ofs >> 8)) & 0xFFu) * 256u)
+                          + ((x / g_scale + ofs) & 0xFFu)) * 2u;
                 const u8 *c = bw_vram_slot(BW_VSLOT_TEX, 0x40000u + at, NULL);
                 const u8 *d = bw_vram_slot(BW_VSLOT_TEX, 0x60000u + at, NULL);
                 u16 cv = c != NULL ? bw_rd16(c) : 0;
@@ -740,7 +743,12 @@ static void render_frame(void)
     u32 cd = bw_io_read16(G3D_HW_CLEAR_DEPTH) & 0x7FFFu;
     u32 unsup = 0, i;
 
-    if (t->rgba == NULL && g3d_target_init(t, G3D_SCREEN_W, G3D_SCREEN_H) != 0) {
+    if (t->rgba != NULL && t->width != G3D_SCREEN_W * g_scale) {
+        g3d_target_free(t);   /* the scale changed */
+    }
+    if (t->rgba == NULL
+        && g3d_target_init(t, G3D_SCREEN_W * g_scale,
+                           G3D_SCREEN_H * g_scale) != 0) {
         return;
     }
     g_hw.disp3dcnt = d3;
@@ -1311,6 +1319,21 @@ void g3d_hw_refresh(void)
     publish_ram_count();
     publish_clip();
     publish_vecmtx();
+}
+
+void g3d_hw_set_scale(u32 scale)
+{
+    g_scale = scale == 0 ? 1u : scale;
+}
+
+u32 g3d_hw_scale(void)
+{
+    return g_scale;
+}
+
+u32 g3d_hw_frame_scale(void)
+{
+    return g_hw.have_frame ? g_hw.front.width / G3D_SCREEN_W : g_scale;
 }
 
 const u8 *g3d_hw_frame(void)
