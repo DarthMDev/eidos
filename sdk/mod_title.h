@@ -30,6 +30,12 @@ int  bw_mod_title_settings_on(void);
 int  bw_mod_title_in_settings(void);
 int  bw_mod_title_set_in_settings(int on);
 
+/* The settings screen rebuilt its rows: the next time the cursor state is
+ * reached after the text is printed it comes back at once (no fade).
+ * take returns the flag and clears it. */
+int  bw_mod_title_set_rebuild(void);
+int  bw_mod_title_take_rebuild(void);
+
 #ifdef __cplusplus
 }
 #endif

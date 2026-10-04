@@ -47,6 +47,7 @@
 extern int bw_mod_title_settings_on(void);
 extern int bw_mod_title_in_settings(void);
 extern int bw_mod_title_set_in_settings(int on);
+extern void eidos_sui_leave(void);
 #define BW_TITLE_ROW_SETTINGS 7
 #define BW_TITLE_SEL_SETTINGS 9
 typedef unsigned char u8;
@@ -122,12 +123,13 @@ int func_021BA014(int a0, int a1, int a2, char *a3)
         func_020312F8((int)ov107_id, d_021F6D78, w);
         break;
     case BW_TITLE_SEL_SETTINGS:
-        /* The placeholder settings screen is the menu proc started again
-         * with the in-settings flag, which 4B4 turns into a one row list. */
+        /* The settings screen is the menu proc started again with the
+         * in-settings flag (see func_021BA338, func_021BB4B4, func_021BAD08). */
         func_020312F8((int)ov088_id, d_021BD66C, 0);
         break;
     default:
         if (bw_mod_title_in_settings()) {
+            eidos_sui_leave();
             bw_mod_title_set_in_settings(0);
             func_020312F8((int)ov088_id, d_021BD66C, 0);
             break;

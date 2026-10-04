@@ -11,6 +11,8 @@
  * port hook "title_settings" (docs/hooks.md, docs/settings-design.md):
  * the title menu text. Window 7 reads message 6 (the game's conditional row); when
  * the SETTINGS row owns kind 7 it holds the string "SETTINGS" instead.
+ * On the settings screen the row windows hold eidos_sui text: kind k (row k-1)
+ * prints in slot k+5, label at the left and value right-aligned.
  *
  * With the hook off this is the matched function, unchanged.
  *
@@ -63,6 +65,9 @@ extern int bw_mod_title_in_settings(void);
 extern int bw_mod_title_set_in_settings(int on);
 #define BW_TITLE_ROW_SETTINGS 7
 #define BW_TITLE_SEL_SETTINGS 9
+extern int eidos_sui_row_count(void);
+extern void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv);
+extern int eidos_sui_capturing(void);
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
@@ -132,6 +137,67 @@ static void *settings_label(void)
     return s;
 }
 
+/* A string object from ASCII text (code units, then the 0xFFFF end code). */
+static void *ascii_obj(const char *t, int n)
+{
+    u16 buf[64];
+    void *o;
+    int i;
+    for (i = 0; i < n && i < 62; i++)
+        buf[i] = (u8)t[i];
+    buf[i] = 0xFFFF;
+    o = func_020457B0(i + 1, 0xb);
+    func_02045994(o, buf, i + 1);
+    return o;
+}
+
+#define SETTINGS_SLOT_TILES 22
+#define SETTINGS_TEXT_X 6
+#define SETTINGS_TEXT_RIGHT (SETTINGS_SLOT_TILES * 8 - 6)
+
+/* One text on a row's slot, at x or (right >= 0) ending at `right`; the
+ * text is cut at the end until it is at most `room` pixels wide. Returns
+ * the width drawn. */
+static int settings_text(struct Menu *p, int slot, const char *t, int x, int right, int room)
+{
+    int n = 0;
+    void *o;
+    int w;
+    while (t[n])
+        n++;
+    if (n == 0)
+        return 0;
+    o = ascii_obj(t, n);
+    w = func_0201D304(o, p->f58, 0);
+    while (w > room && n > 1) {
+        func_02045808(o);
+        n--;
+        o = ascii_obj(t, n);
+        w = func_0201D304(o, p->f58, 0);
+    }
+    if (right >= 0)
+        x = right - w;
+    func_0201C724(p->f68, func_02045770(p->slot[slot].obj), x, 4, o, p->f58, 0x440);
+    p->slot[slot].on = 1;
+    func_02045808(o);
+    return w;
+}
+
+static void settings_print(struct Menu *p)
+{
+    char label[48];
+    char value[96];
+    int i, n = eidos_sui_row_count();
+    for (i = 0; i < n && i < 7; i++) {
+        int slot = i + 6;
+        int lw;
+        eidos_sui_row_text(i, label, sizeof label, value, sizeof value);
+        lw = settings_text(p, slot, label, SETTINGS_TEXT_X, -1, SETTINGS_TEXT_RIGHT - SETTINGS_TEXT_X);
+        if (value[0] != 0)
+            settings_text(p, slot, value, 0, SETTINGS_TEXT_RIGHT, SETTINGS_TEXT_RIGHT - SETTINGS_TEXT_X - lw - 10);
+    }
+}
+
 void func_021BAD08(struct Menu *p)
 {
     u32 i;
@@ -143,8 +209,15 @@ void func_021BAD08(struct Menu *p)
 
     func_02045088(11);
     for (i = 0; i < 14; i++) {
+        int w = d_021BD7C4[i].a3;
+        if (bw_mod_title_settings_on() && bw_mod_title_in_settings() && i >= 6 && i <= 12)
+            w = SETTINGS_SLOT_TILES;
         p->slot[i].obj = func_020450F0(d_021BD7C4[i].a0, d_021BD7C4[i].a1, d_021BD7C4[i].a2,
-                                       d_021BD7C4[i].a3, d_021BD7C4[i].a4, d_021BD7C4[i].a5, 1);
+                                       w, d_021BD7C4[i].a4, d_021BD7C4[i].a5, 1);
+    }
+    if (bw_mod_title_settings_on() && bw_mod_title_in_settings()) {
+        settings_print(p);
+        return;
     }
 
     a = func_02045EC0(p->f5c, 0);

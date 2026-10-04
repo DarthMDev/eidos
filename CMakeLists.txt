@@ -719,6 +719,7 @@ if(EIDOS_SDL_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/platform.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/geometry.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_replace.c
     )
     target_include_directories(eidos_platform PUBLIC
@@ -1912,6 +1913,22 @@ if(EIDOS_SDL_FOUND)
     set_tests_properties(test_settings PROPERTIES
         ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;EIDOS_SETTINGS=${CMAKE_CURRENT_BINARY_DIR}/test_settings_default.ini")
 
+    # The settings screen's model: tabs, rows, navigation, revert, commit.
+    add_executable(test_settings_ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_settings_ui.c)
+    target_include_directories(test_settings_ui PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_settings_ui PRIVATE eidos_platform)
+    if(EIDOS_SDL_RUNTIME)
+        add_custom_command(TARGET test_settings_ui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:test_settings_ui>"
+            COMMENT "Copying SDL2.dll next to test_settings_ui")
+    endif()
+    add_test(NAME test_settings_ui COMMAND test_settings_ui)
+    set_tests_properties(test_settings_ui PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;EIDOS_SETTINGS=${CMAKE_CURRENT_BINARY_DIR}/test_settings_ui_default.ini")
+
     # The setup window under the dummy video driver, driven by scripted
     # events: an archive dropped and refused, a mouse click on "Choose
     # another file", the synthetic cartridge refused as not the original
@@ -2005,8 +2022,12 @@ endif()
 if(NOT _eidos_ovls STREQUAL "")
     set(_ovl_link ${BW_OVL_LIBRARY_SOURCES})
     if(EIDOS_BOOT)
+        # engine/platform/settings_ui.c lives in eidos_platform, not in a
+        # port source list: named here so the overlays' eidos_sui_* calls
+        # resolve to it (docs/settings-design.md).
         list(APPEND _ovl_link ${EIDOS_BOOT_MATCHED} ${EIDOS_BOOT_PORT_SOURCES}
-            ${EIDOS_BOOT_ASM_SUBST})
+            ${EIDOS_BOOT_ASM_SUBST}
+            ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c)
     endif()
     set(_ovl_stub_opt)
     if(EIDOS_OVERLAYS_ARM9_STUBS)

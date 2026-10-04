@@ -11,7 +11,8 @@
  * port hook "title_settings" (docs/hooks.md, docs/settings-design.md):
  * the row list. The last row, kind 7, is always present: it is the game's
  * conditional row when its test holds, else the SETTINGS row. While the settings
- * screen is up the list holds that row alone.
+ * screen is up the list holds one kind per settings row (kind 1 is the header,
+ * kinds 2.. the option rows, as many as eidos_sui_row_count says).
  *
  * With the hook off this is the matched function, unchanged.
  *
@@ -28,6 +29,7 @@ extern int bw_mod_title_in_settings(void);
 extern int bw_mod_title_set_in_settings(int on);
 #define BW_TITLE_ROW_SETTINGS 7
 #define BW_TITLE_SEL_SETTINGS 9
+extern int eidos_sui_row_count(void);
 typedef unsigned char u8;
 
 extern int func_020071EC(void *);
@@ -38,8 +40,11 @@ void func_021BB4B4(char *p)
     unsigned i = 0;
     int hook = bw_mod_title_settings_on();
     if (hook && bw_mod_title_in_settings()) {
-        p[0x120] = BW_TITLE_ROW_SETTINGS;
-        i = 1;
+        int n = eidos_sui_row_count();
+        if (n > 7)
+            n = 7;
+        for (i = 0; i < (unsigned)n; i++)
+            (p + i)[0x120] = i + 1;
         while (i < 8) {
             (p + i)[0x120] = 8;
             i++;

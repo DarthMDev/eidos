@@ -155,7 +155,45 @@ Steps for (1):
   file into a cache mod root (`bw_add_mod_root`), opened with
   `func_02045B38`, so mods can translate it.
 
-### What the proof does
+### What the screen does now
+
+The screen is built, in the shape the title menu already has: the menu proc
+of overlay 88 started again in "settings mode" (design 1, through the game's
+own bg, bar tiles, font and print queue). Files:
+
+- `engine/platform/settings_ui.c` (model, no game calls): four tabs, a row
+  table per tab, navigation, value changes, capture, Revert and Restore
+  defaults rows, and one marked table of UI text ("UI TEXT"). It talks to
+  `settings.h` only. Test: `tests/test_settings_ui.c`.
+- `stubs/ov/reimpl_ov088_func_021BB4B4.c`: the row list is one kind per
+  settings row (kind 1 is the header bar, kinds 2 to 7 the visible rows).
+- `..._021BAD08.c`: prints the label (left) and the value (right aligned by
+  the font's own width function, cut to fit) into each row's text window.
+- `..._021BB608.c`: lays the rows out 3 tile rows apart, hides every sprite
+  (this removes the stray WFC icon) and puts the highlight on the cursor row.
+- `..._021BA338.c`: in settings mode the cursor state is the input handler.
+  A change that needs a redraw runs the state 0 set-up calls again (list,
+  buffers, text, window manager, layout) and waits in state 4.
+- `..._021BA2C8.c`: state 4 returns to the cursor state at once after such a
+  rebuild (no fade); the first entry still fades in as the game does.
+- `..._021BA014.c`: leaving (B) commits the settings and returns to the menu.
+
+Controls: up and down move (with repeat), left and right change a value
+(A also cycles a choice), L and R switch tab, B leaves and commits. A on a
+Controls row arms the capture ("Press a key"); the next key or pad control
+becomes that button's primary binding (slot 0), Escape cancels. A on
+"Revert changes" restores the last committed state, A on "Restore defaults"
+sets every option and binding to its default; both stay uncommitted until
+the screen is left. A tab with more than six rows scrolls (Controls).
+
+Not done: the row table is still the menu's eight kinds (six visible
+rows, header and cursor sprites hidden); the text table is in one file but
+not yet a message member mods can replace; stylus input; the header uses the
+same bar as the rows (the grey variant of the Options screen is not used); a
+capture binds only slot 0 (the other slots stay as they are and can be
+edited in settings.ini).
+
+### What the proof did (the first step)
 
 `title_settings` (docs/hooks.md) adds SETTINGS after MIC TEST. Kind 7 has a
 window, buffer and text slot, but the game uses it only when
@@ -168,15 +206,11 @@ placeholder. B (selection 8) clears the flag and restarts the menu.
 Defaults to on; `EIDOS_HOOKS_OFF=title_settings` or
 `--no-hook title_settings` restores the original menu.
 
-### What the UI lane needs next
 
-- Replace the menu's row model (list, buffers, windows, `func_021BB380`,
-  `func_021BB544`, `func_021BB5C4`, `func_021BB608`, `func_021BB890`) with an
-  eidos row table (kind, text source, action) so rows can be added without a
-  spare kind.
-- Build the real screen as design (1); the placeholder is only the menu proc
-  with one row. Title text on a bar is there, tabs and rows are not.
-- Hide the menu's stray sprite icon (top right of the placeholder) in
-  `func_021BB9DC` for settings mode.
+### What is left
+
+- Replace the menu's row model with an eidos row table (kind, text source,
+  action) so rows can be added without a spare kind, and move the UI text
+  to a message member mods can replace.
 - To aletheia: `ov068 func_021B9980` unmatched; `0x021BA984` is not a
   listed code entry.
