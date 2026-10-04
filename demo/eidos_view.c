@@ -28,7 +28,7 @@
  * vblank callback copies them into `live`; the render callback reads only
  * `live`.  That is what OAM and the BG registers do on hardware.
  *
- *     eidos_view [--data-root PATH] [--scale N] [--side-by-side] [--gap N]
+ *     eidos_view [--data-root PATH] [--resolution N|fit] [--side-by-side] [--gap N]
  *                [--species N] [--map N] [--frames N] [--shot PATH]
  *                [--shot-first PATH] [--no-audio]
  *                [--rom PATH] [--no-window] [--reset-data] [--move-data PATH]
@@ -628,8 +628,8 @@ static void view_audio(void *user, s16 *out, u32 frames)
 
 static void usage(void)
 {
-    printf("eidos_view [--data-root PATH] [--scale N] [--side-by-side]\n"
-           "           [--fullscreen|--borderless|--windowed] [--scaling integer|fit]\n"
+    printf("eidos_view [--data-root PATH] [--resolution N|fit] [--side-by-side]\n"
+           "           [--fullscreen|--borderless|--windowed]\n"
            "           [--layout vertical|horizontal] [--swap-screens] [--volume N]\n"
            "           [--gap N] [--species N] [--frames N] [--shot PATH]\n"
            "           [--shot-first PATH] [--anim-speed N] [--no-audio]\n"
@@ -757,13 +757,13 @@ int main(int argc, char **argv)
     }
     eidos_settings_attach(plat);
     view.plat = plat;
-    printf("window: %d x %d at scale %d, frame period %llu ns "
+    printf("layout: %d x %d, frame period %llu ns "
            "(%s), audio %s\n",
            cfg.layout == EIDOS_LAYOUT_SIDE_BY_SIDE
                ? (int)SCREEN_W * 2 + cfg.gap : (int)SCREEN_W,
            cfg.layout == EIDOS_LAYOUT_SIDE_BY_SIDE
                ? (int)SCREEN_H : (int)SCREEN_H * 2 + cfg.gap,
-           cfg.scale, (unsigned long long)eidos_frame_period_ns(),
+           (unsigned long long)eidos_frame_period_ns(),
            cfg.layout == EIDOS_LAYOUT_SIDE_BY_SIDE ? "side by side" : "stacked",
            eidos_platform_audio_open(plat) ? "open" : "silent");
 

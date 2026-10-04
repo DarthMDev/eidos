@@ -23,8 +23,16 @@
  * walking the table and a new option is one more row.  Values are ints: a
  * CHOICE is an index into its names, an INT is a number in [min, max].
  *
- *     Display   mode (windowed / fullscreen / borderless), scale (windowed
- *               multiple of 256x192), scaling (integer / fit)
+ *     Display   mode (windowed / fullscreen / borderless), resolution
+ *               (fit, 1x..6x; the internal frame is 256N x 192N per
+ *               screen).  Hidden rows width/height remember the window size.
+ *
+ * The picture always fills the window (or the screen), aspect preserved; the
+ * window is freely resizable and its size is remembered (settings.ini is
+ * written at exit when only the size changed).  The renderer asks
+ * eidos_settings_internal_scale() each frame for N, produces 256N x 192N
+ * frames and gives N to eidos_platform_present_n; "fit" is the smallest N
+ * whose frame covers the destination rectangle, re-evaluated on resize.
  *     Layout    arrangement (vertical / horizontal), swap_screens, gap
  *     Sound     volume (0..100 percent)
  *
@@ -61,8 +69,9 @@ extern "C" {
 
 enum {
     EIDOS_OPT_DISPLAY_MODE = 0,
-    EIDOS_OPT_DISPLAY_SCALE,
-    EIDOS_OPT_DISPLAY_SCALING,
+    EIDOS_OPT_DISPLAY_RESOLUTION,   /* 0 = fit, else 1..EIDOS_RESOLUTION_MAX */
+    EIDOS_OPT_DISPLAY_WIDTH,        /* hidden: remembered window size     */
+    EIDOS_OPT_DISPLAY_HEIGHT,       /* hidden; 0 = 3x the layout          */
     EIDOS_OPT_LAYOUT_ARRANGEMENT,
     EIDOS_OPT_LAYOUT_SWAP,
     EIDOS_OPT_LAYOUT_GAP,
@@ -81,6 +90,8 @@ typedef struct EidosOption {
     int min, max, step, def;
     const char *const *choices;  /* CHOICE: max + 1 lowercase names          */
     const char *unit;            /* INT: "x", "%", "px"; "" for none         */
+    int hidden;                  /* non-zero: kept in the file, not shown    */
+    const char *zero_name;       /* INT: text for the value 0 ("fit"), or NULL */
 } EidosOption;
 
 int eidos_settings_option_count(void);
@@ -159,9 +170,16 @@ int  eidos_settings_load(void);
 
 /* One command-line argument.  Returns 0 when it is not a settings option,
  * 1 when consumed (*i advanced past a value), -1 for a bad value (reported):
- *   --windowed --fullscreen --borderless  --scale N  --scaling integer|fit
+ *   --windowed --fullscreen --borderless  --resolution N|fit   (the old
+ *   --scale and --scaling are gone)
  *   --layout vertical|horizontal  --swap-screens  --gap N  --volume N     */
 int  eidos_settings_parse_arg(int argc, char **argv, int *i);
+
+/* The multiple N the renderer should produce this frame: the Resolution
+ * option, or for "fit" the smallest N covering the destination rectangle of
+ * each screen in the attached platform's window, clamped to the maximum
+ * (1 with no platform).  Present the frame with eidos_platform_present_n. */
+int  eidos_settings_internal_scale(void);
 
 /* Window size, mode, layout and tables for eidos_platform_init. */
 void eidos_settings_fill_config(EidosPlatformConfig *cfg);
@@ -175,6 +193,8 @@ void eidos_settings_detach(void);
  * the model, commits, and returns 1; 0 when `p` is not the attached one. */
 int  eidos_settings_on_toggle(EidosPlatform *p);
 void eidos_settings_on_quit(EidosPlatform *p);
+/* Platform to settings: the windowed size changed (remembered, not dirty). */
+void eidos_settings_on_resize(EidosPlatform *p, int w, int h);
 
 /* Atomically replace `to` with `from` (plat_replace.c). */
 int  eidos_replace_file(const char *from, const char *to);

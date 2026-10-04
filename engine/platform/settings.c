@@ -21,25 +21,26 @@
 /* ------------------------------------------------------------------ */
 
 static const char *const k_modes[] = { "windowed", "fullscreen", "borderless" };
-static const char *const k_scalings[] = { "integer", "fit" };
 static const char *const k_arrangements[] = { "vertical", "horizontal" };
 static const char *const k_offon[] = { "off", "on" };
 
 static const EidosOption k_options[EIDOS_OPT_COUNT] = {
     { "Display", "mode", "Display mode", EIDOS_OPTKIND_CHOICE, 0, 2, 1,
-      EIDOS_DISPLAY_WINDOWED, k_modes, "" },
-    { "Display", "scale", "Window scale", EIDOS_OPTKIND_INT, 1, 16, 1, 2,
-      NULL, "x" },
-    { "Display", "scaling", "Scaling", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
-      EIDOS_SCALING_INTEGER, k_scalings, "" },
+      EIDOS_DISPLAY_WINDOWED, k_modes, "", 0, NULL },
+    { "Display", "resolution", "Resolution", EIDOS_OPTKIND_INT, 0,
+      EIDOS_RESOLUTION_MAX, 1, 0, NULL, "x", 0, "fit" },
+    { "Display", "width", "Window width", EIDOS_OPTKIND_INT, 0, 16384, 1, 0,
+      NULL, "px", 1, NULL },
+    { "Display", "height", "Window height", EIDOS_OPTKIND_INT, 0, 16384, 1, 0,
+      NULL, "px", 1, NULL },
     { "Layout", "arrangement", "Screen layout", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
-      EIDOS_LAYOUT_VERTICAL, k_arrangements, "" },
+      EIDOS_LAYOUT_VERTICAL, k_arrangements, "", 0, NULL },
     { "Layout", "swap_screens", "Swap screens", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
-      0, k_offon, "" },
+      0, k_offon, "", 0, NULL },
     { "Layout", "gap", "Gap between screens", EIDOS_OPTKIND_INT, 0, 128, 1, 0,
-      NULL, "px" },
+      NULL, "px", 0, NULL },
     { "Sound", "volume", "Master volume", EIDOS_OPTKIND_INT, 0, 100, 5, 100,
-      NULL, "%" },
+      NULL, "%", 0, NULL },
 };
 
 static const EidosButtonInfo k_buttons[NBTN] = {
@@ -75,6 +76,7 @@ static EidosPlatform *g_plat;
 static char g_path[PATH_MAX_LEN + 16];
 static int g_have_path;
 static int g_inited;
+static int g_size_pending;   /* a window resize not yet in the file */
 
 static void model_defaults(Model *m);
 
@@ -155,8 +157,8 @@ static void model_reset_bindings(Model *m)
 static int apply_display(void)
 {
     return eidos_platform_set_display(g_plat, g_cur.v[EIDOS_OPT_DISPLAY_MODE],
-                                      g_cur.v[EIDOS_OPT_DISPLAY_SCALE],
-                                      g_cur.v[EIDOS_OPT_DISPLAY_SCALING]);
+                                      g_cur.v[EIDOS_OPT_DISPLAY_WIDTH],
+                                      g_cur.v[EIDOS_OPT_DISPLAY_HEIGHT]);
 }
 
 static int apply_layout(void)
@@ -214,9 +216,11 @@ static int apply_option_group(int id)
     }
     switch (id) {
     case EIDOS_OPT_DISPLAY_MODE:
-    case EIDOS_OPT_DISPLAY_SCALE:
-    case EIDOS_OPT_DISPLAY_SCALING:
+    case EIDOS_OPT_DISPLAY_WIDTH:
+    case EIDOS_OPT_DISPLAY_HEIGHT:
         return apply_display();
+    case EIDOS_OPT_DISPLAY_RESOLUTION:
+        return 0;               /* the renderer polls internal_scale() */
     case EIDOS_OPT_LAYOUT_ARRANGEMENT:
     case EIDOS_OPT_LAYOUT_SWAP:
     case EIDOS_OPT_LAYOUT_GAP:
@@ -302,7 +306,11 @@ const char *eidos_settings_value_text(int id, char *buf, size_t n)
     if (k_options[id].kind == EIDOS_OPTKIND_CHOICE) {
         snprintf(buf, n, "%s", k_options[id].choices[v]);
     } else {
-        snprintf(buf, n, "%d%s", v, k_options[id].unit);
+        if (v == 0 && k_options[id].zero_name != NULL) {
+            snprintf(buf, n, "%s", k_options[id].zero_name);
+        } else {
+            snprintf(buf, n, "%d%s", v, k_options[id].unit);
+        }
     }
     return buf;
 }
@@ -698,7 +706,15 @@ static int parse_value(int id, const char *text, int *out)
         }
         return -1;
     }
+    if (o->zero_name != NULL && strcmp(low, o->zero_name) == 0) {
+        *out = 0;
+        return 0;
+    }
     n = strtol(text, &end, 10);
+    if (end != text && o->unit[0] == 'x' && o->unit[1] == '\0' &&
+        (*end == 'x' || *end == 'X') && end[1] == '\0') {
+        end++;                           /* "3x" for the multiples */
+    }
     if (end == text || *end != '\0') {
         return -1;
     }
@@ -965,23 +981,14 @@ int eidos_settings_load(void)
     return 0;
 }
 
-int eidos_settings_commit(void)
+static int save_model(const Model *out)
 {
     const char *path = eidos_settings_path();
     char tmp[PATH_MAX_LEN + 8];
     char dir[PATH_MAX_LEN];
-    Model out;
     FILE *fp;
     char *sep;
-    int i;
 
-    ensure_init();
-    out = g_cur;
-    for (i = 0; i < EIDOS_OPT_COUNT; i++) {
-        if (g_ovr[i]) {
-            out.v[i] = g_saved.v[i];     /* a command-line value is not saved */
-        }
-    }
     if (path[0] == '\0') {
         fprintf(stderr, "eidos: no settings location; changes last this run\n");
         return -1;
@@ -1001,7 +1008,7 @@ int eidos_settings_commit(void)
         fprintf(stderr, "eidos: cannot write %s\n", tmp);
         return -1;
     }
-    if (write_file(fp, &out) != 0 || fflush(fp) != 0) {
+    if (write_file(fp, out) != 0 || fflush(fp) != 0) {
         fclose(fp);
         remove(tmp);
         fprintf(stderr, "eidos: write to %s failed\n", tmp);
@@ -1013,6 +1020,25 @@ int eidos_settings_commit(void)
         fprintf(stderr, "eidos: cannot replace %s\n", path);
         return -1;
     }
+    return 0;
+}
+
+int eidos_settings_commit(void)
+{
+    Model out;
+    int i;
+
+    ensure_init();
+    out = g_cur;
+    for (i = 0; i < EIDOS_OPT_COUNT; i++) {
+        if (g_ovr[i]) {
+            out.v[i] = g_saved.v[i];     /* a command-line value is not saved */
+        }
+    }
+    if (save_model(&out) != 0) {
+        return -1;
+    }
+    g_size_pending = 0;
     g_saved = out;
     return 0;
 }
@@ -1099,10 +1125,8 @@ int eidos_settings_parse_arg(int argc, char **argv, int *i)
         override_opt(EIDOS_OPT_LAYOUT_SWAP, 1);
         return 1;
     }
-    if (strcmp(a, "--scale") == 0) {
-        id = EIDOS_OPT_DISPLAY_SCALE;
-    } else if (strcmp(a, "--scaling") == 0) {
-        id = EIDOS_OPT_DISPLAY_SCALING;
+    if (strcmp(a, "--resolution") == 0) {
+        id = EIDOS_OPT_DISPLAY_RESOLUTION;
     } else if (strcmp(a, "--layout") == 0) {
         id = EIDOS_OPT_LAYOUT_ARRANGEMENT;
     } else if (strcmp(a, "--gap") == 0) {
@@ -1130,12 +1154,12 @@ int eidos_settings_parse_arg(int argc, char **argv, int *i)
 void eidos_settings_fill_config(EidosPlatformConfig *cfg)
 {
     ensure_init();
-    cfg->scale = g_cur.v[EIDOS_OPT_DISPLAY_SCALE];
+    cfg->win_w = g_cur.v[EIDOS_OPT_DISPLAY_WIDTH];
+    cfg->win_h = g_cur.v[EIDOS_OPT_DISPLAY_HEIGHT];
     cfg->layout = g_cur.v[EIDOS_OPT_LAYOUT_ARRANGEMENT];
     cfg->gap = g_cur.v[EIDOS_OPT_LAYOUT_GAP];
     cfg->swap_screens = g_cur.v[EIDOS_OPT_LAYOUT_SWAP];
     cfg->display_mode = g_cur.v[EIDOS_OPT_DISPLAY_MODE];
-    cfg->scaling = g_cur.v[EIDOS_OPT_DISPLAY_SCALING];
 }
 
 void eidos_settings_attach(EidosPlatform *p)
@@ -1165,9 +1189,47 @@ int eidos_settings_on_toggle(EidosPlatform *p)
     return 1;
 }
 
+int eidos_settings_internal_scale(void)
+{
+    EidosViewport vp;
+    int r;
+
+    ensure_init();
+    r = g_cur.v[EIDOS_OPT_DISPLAY_RESOLUTION];
+    if (r > 0) {
+        return r;
+    }
+    if (g_plat == NULL) {
+        return 1;
+    }
+    eidos_platform_viewport(g_plat, &vp);
+    return eidos_resolution_fit(&vp,
+                                k_options[EIDOS_OPT_DISPLAY_RESOLUTION].max);
+}
+
+void eidos_settings_on_resize(EidosPlatform *p, int w, int h)
+{
+    if (p == NULL || p != g_plat || w <= 0 || h <= 0) {
+        return;
+    }
+    w = clamp_opt(EIDOS_OPT_DISPLAY_WIDTH, w);
+    h = clamp_opt(EIDOS_OPT_DISPLAY_HEIGHT, h);
+    if (g_saved.v[EIDOS_OPT_DISPLAY_WIDTH] != w ||
+        g_saved.v[EIDOS_OPT_DISPLAY_HEIGHT] != h) {
+        g_size_pending = 1;
+    }
+    /* Remembered in the committed state too: a resize is never "dirty". */
+    g_cur.v[EIDOS_OPT_DISPLAY_WIDTH] = g_saved.v[EIDOS_OPT_DISPLAY_WIDTH] = w;
+    g_cur.v[EIDOS_OPT_DISPLAY_HEIGHT] = g_saved.v[EIDOS_OPT_DISPLAY_HEIGHT] = h;
+}
+
 void eidos_settings_on_quit(EidosPlatform *p)
 {
     if (p == g_plat) {
+        if (g_size_pending) {
+            g_size_pending = 0;
+            (void)save_model(&g_saved);
+        }
         g_plat = NULL;
     }
 }

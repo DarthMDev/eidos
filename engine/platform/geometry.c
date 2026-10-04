@@ -40,45 +40,29 @@ void eidos_layout_place(int layout, int swap, int gap,
     out->screen[0].h = out->screen[1].h = h;
 }
 
-static int mind(int a, int b)
-{
-    return a < b ? a : b;
-}
-
 void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
-                            int out_h, int fit, EidosViewport *vp)
+                            int out_h, EidosViewport *vp)
 {
     int lw = pl->width, lh = pl->height;
-    int cw, ch, s, i;
+    int cw, ch, i;
 
     vp->content.x = vp->content.y = vp->content.w = vp->content.h = 0;
     vp->screen[0] = vp->screen[1] = vp->content;
-    vp->scale = 0;
     if (out_w <= 0 || out_h <= 0 || lw <= 0 || lh <= 0) {
         return;
     }
-    s = mind(out_w / lw, out_h / lh);
-    if (!fit && s >= 1) {
-        /* The largest whole multiple that fits. */
-        cw = lw * s;
-        ch = lh * s;
-        vp->scale = s;
+    if ((s64)out_w * lh <= (s64)out_h * lw) {
+        cw = out_w;
+        ch = (int)((s64)lh * out_w / lw);
     } else {
-        /* Aspect-preserving fractional fit (also the fallback when the
-         * output is smaller than the layout at 1x). */
-        if ((s64)out_w * lh <= (s64)out_h * lw) {
-            cw = out_w;
-            ch = (int)((s64)lh * out_w / lw);
-        } else {
-            ch = out_h;
-            cw = (int)((s64)lw * out_h / lh);
-        }
-        if (cw < 1) {
-            cw = 1;
-        }
-        if (ch < 1) {
-            ch = 1;
-        }
+        ch = out_h;
+        cw = (int)((s64)lw * out_h / lh);
+    }
+    if (cw < 1) {
+        cw = 1;
+    }
+    if (ch < 1) {
+        ch = 1;
     }
     vp->content.w = cw;
     vp->content.h = ch;
@@ -97,35 +81,49 @@ void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
     }
 }
 
-static s64 floor_div(s64 a, s64 b)
+int eidos_resolution_fit(const EidosViewport *vp, int max)
 {
-    s64 q = a / b;
+    int n = 1, i;
+    const int w = (int)EIDOS_DS_SCREEN_WIDTH, h = (int)EIDOS_DS_SCREEN_HEIGHT;
 
-    return (a % b != 0 && ((a < 0) != (b < 0))) ? q - 1 : q;
+    for (i = 0; i < 2; i++) {
+        int nw = (vp->screen[i].w + w - 1) / w;
+        int nh = (vp->screen[i].h + h - 1) / h;
+
+        n = n < nw ? nw : n;
+        n = n < nh ? nh : n;
+    }
+    if (max < 1) {
+        max = 1;
+    }
+    return n > max ? max : n;
 }
 
+/* Mapped through the bottom screen's own destination rectangle, so its first
+ * and last pixel row/column are exact whatever the scale (edge rounding in
+ * the viewport can otherwise put its first pixel outside).  The sample is the
+ * centre of the output pixel. */
 int eidos_viewport_to_touch(const EidosScreenPlacement *pl,
                             const EidosViewport *vp, int wx, int wy,
                             int *x, int *y)
 {
-    int px, py, inside;
+    const EidosRect *r = &vp->screen[1];
+    int cx, cy, inside;
 
-    if (vp->content.w <= 0 || vp->content.h <= 0) {
+    (void)pl;
+    if (r->w <= 0 || r->h <= 0) {
         return 0;
     }
-    px = (int)floor_div((s64)(wx - vp->content.x) * pl->width, vp->content.w)
-         - pl->screen[1].x;
-    py = (int)floor_div((s64)(wy - vp->content.y) * pl->height, vp->content.h)
-         - pl->screen[1].y;
-    inside = px >= 0 && px < (int)EIDOS_DS_SCREEN_WIDTH && py >= 0 &&
-             py < (int)EIDOS_DS_SCREEN_HEIGHT;
+    cx = wx < r->x ? r->x : wx >= r->x + r->w ? r->x + r->w - 1 : wx;
+    cy = wy < r->y ? r->y : wy >= r->y + r->h ? r->y + r->h - 1 : wy;
+    inside = cx == wx && cy == wy;
     if (x != NULL) {
-        *x = px < 0 ? 0 : px >= (int)EIDOS_DS_SCREEN_WIDTH
-                 ? (int)EIDOS_DS_SCREEN_WIDTH - 1 : px;
+        *x = (int)((s64)(2 * (cx - r->x) + 1) * (s64)EIDOS_DS_SCREEN_WIDTH /
+                   (2 * (s64)r->w));
     }
     if (y != NULL) {
-        *y = py < 0 ? 0 : py >= (int)EIDOS_DS_SCREEN_HEIGHT
-                 ? (int)EIDOS_DS_SCREEN_HEIGHT - 1 : py;
+        *y = (int)((s64)(2 * (cy - r->y) + 1) * (s64)EIDOS_DS_SCREEN_HEIGHT /
+                   (2 * (s64)r->h));
     }
     return inside;
 }

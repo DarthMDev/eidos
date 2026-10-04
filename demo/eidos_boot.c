@@ -776,7 +776,7 @@ static void usage(void)
                     "[--watchdog SECONDS] [--screenshot N[,N...]] "
                     "[--screenshot-dir DIR] [--g3d-trace N] [--press BUTTONS@FRAME[:HOLD]] "
                     "[--input SCRIPT] [--fullscreen|--borderless|--windowed] "
-                    "[--scale N] [--scaling integer|fit] "
+                    "[--resolution N|fit] "
                     "[--layout vertical|horizontal] [--swap-screens] "
                     "[--gap N] [--volume N]\n");
 }

@@ -27,20 +27,22 @@
 #define SCREEN_H EIDOS_DS_SCREEN_HEIGHT
 #define SCREEN_PIXELS (SCREEN_W * SCREEN_H)
 
+#define DEFAULT_WINDOW_SCALE 3
+
 struct EidosPlatform {
     SDL_Window   *window;
     SDL_Renderer *renderer;
     SDL_Texture  *tex[2];          /* 0 = top, 1 = bottom */
     u8           *shadow[2];       /* the last buffer uploaded to each      */
+    SDL_Texture  *pre[2];          /* nearest pre-scale targets             */
+    int pre_w[2], pre_h[2];
+    int tex_n;                     /* internal multiple of tex/shadow       */
 
-    int scale;
     int layout;
     int gap;
     int swap;
     int display_mode;
-    int scaling;
     int presented;                  /* a frame has been drawn at least once  */
-    u32 shot_w, shot_h;
     EidosKeyBinding *keymap_own;    /* set by eidos_platform_set_bindings    */
     EidosPadBinding *padmap_own;
     int swallow_sc;                 /* a key held after Alt+Enter, not a press */
@@ -319,7 +321,7 @@ void eidos_platform_viewport(const EidosPlatform *p, EidosViewport *vp)
 
     place(p, &pl);
     out_size(p, &w, &h);
-    eidos_display_viewport(&pl, w, h, p->scaling == EIDOS_SCALING_FIT, vp);
+    eidos_display_viewport(&pl, w, h, vp);
 }
 
 int eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
@@ -332,8 +334,7 @@ int eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
         return 0;
     }
     place(p, &pl);
-    eidos_display_viewport(&pl, win_w, win_h, p->scaling == EIDOS_SCALING_FIT,
-                           &vp);
+    eidos_display_viewport(&pl, win_w, win_h, &vp);
     return eidos_viewport_to_touch(&pl, &vp, wx, wy, x, y);
 }
 
@@ -687,6 +688,75 @@ static void layout_size(const EidosPlatform *p, u32 *w, u32 *h)
     *h = (u32)pl.height;
 }
 
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+#define HAVE_SCALE_MODE 1
+#else
+#define HAVE_SCALE_MODE 0
+#endif
+
+static void set_filter(SDL_Texture *t, int linear)
+{
+#if HAVE_SCALE_MODE
+    (void)SDL_SetTextureScaleMode(t, linear ? SDL_ScaleModeLinear
+                                            : SDL_ScaleModeNearest);
+#else
+    (void)t;
+    (void)linear;
+#endif
+}
+
+#define PRE_MAX_SIDE 8192
+
+/* Draw screen i's texture into dst, choosing the filter (see platform.h). */
+static void draw_screen(EidosPlatform *p, int i, const SDL_Rect *dst)
+{
+    const int tw = (int)SCREEN_W * p->tex_n, th = (int)SCREEN_H * p->tex_n;
+    SDL_Texture *src = p->tex[i];
+
+    if (dst->w < tw || dst->h < th) {
+        set_filter(src, 1);                       /* downscale */
+    } else if (dst->w % tw == 0 && dst->h % th == 0 &&
+               dst->w / tw == dst->h / th) {
+        set_filter(src, 0);                       /* whole multiple */
+    } else {
+        int k = (dst->w + tw - 1) / tw, kh = (dst->h + th - 1) / th;
+
+        if (kh > k) {
+            k = kh;
+        }
+        set_filter(src, 0);
+#if HAVE_SCALE_MODE
+        if (k * tw <= PRE_MAX_SIDE && k * th <= PRE_MAX_SIDE) {
+            if (p->pre[i] == NULL || p->pre_w[i] != k * tw ||
+                p->pre_h[i] != k * th) {
+                if (p->pre[i] != NULL) {
+                    SDL_DestroyTexture(p->pre[i]);
+                }
+                p->pre[i] = SDL_CreateTexture(p->renderer,
+                                              SDL_PIXELFORMAT_ABGR8888,
+                                              SDL_TEXTUREACCESS_TARGET,
+                                              k * tw, k * th);
+                p->pre_w[i] = k * tw;
+                p->pre_h[i] = k * th;
+                if (p->pre[i] != NULL) {
+                    set_filter(p->pre[i], 1);
+                }
+            }
+            if (p->pre[i] != NULL &&
+                SDL_SetRenderTarget(p->renderer, p->pre[i]) == 0) {
+                SDL_RenderCopy(p->renderer, src, NULL, NULL);
+                SDL_SetRenderTarget(p->renderer, NULL);
+                SDL_RenderCopy(p->renderer, p->pre[i], NULL, dst);
+                return;
+            }
+            SDL_SetRenderTarget(p->renderer, NULL);
+        }
+#endif
+        set_filter(src, 1);                       /* plain linear */
+    }
+    SDL_RenderCopy(p->renderer, src, NULL, dst);
+}
+
 /* Draw both screen textures into the current output.  Used by present and
  * by every runtime change, so a new mode shows at once. */
 static void render(EidosPlatform *p)
@@ -703,11 +773,48 @@ static void render(EidosPlatform *p)
         dst.y = vp.screen[i].y;
         dst.w = vp.screen[i].w;
         dst.h = vp.screen[i].h;
-        if (dst.w > 0 && dst.h > 0) {
-            SDL_RenderCopy(p->renderer, p->tex[i], NULL, &dst);
+        if (dst.w > 0 && dst.h > 0 && p->tex[i] != NULL) {
+            draw_screen(p, i, &dst);
         }
     }
     SDL_RenderPresent(p->renderer);
+}
+
+/* (Re)create the screen textures and shadows for multiple n. */
+static int frame_alloc(EidosPlatform *p, int n)
+{
+    int i;
+    const int w = (int)SCREEN_W * n, h = (int)SCREEN_H * n;
+
+    for (i = 0; i < 2; i++) {
+        if (p->tex[i] != NULL) {
+            SDL_DestroyTexture(p->tex[i]);
+            p->tex[i] = NULL;
+        }
+        free(p->shadow[i]);
+        p->shadow[i] = NULL;
+    }
+    for (i = 0; i < 2; i++) {
+        /*
+         * ABGR8888 is a packed 32-bit pixel 0xAABBGGRR, which on a
+         * little-endian host is the byte order R, G, B, A -- exactly what
+         * g2d_frame_compose writes.  Naming the packed format rather than
+         * SDL_PIXELFORMAT_RGBA32 keeps that reasoning visible.
+         */
+        p->tex[i] = SDL_CreateTexture(p->renderer, SDL_PIXELFORMAT_ABGR8888,
+                                      SDL_TEXTUREACCESS_STREAMING, w, h);
+        if (p->tex[i] == NULL) {
+            fprintf(stderr, "eidos: SDL_CreateTexture failed: %s\n",
+                    SDL_GetError());
+            return -1;
+        }
+        p->shadow[i] = (u8 *)calloc((size_t)w * (size_t)h, 4);
+        if (p->shadow[i] == NULL) {
+            return -1;
+        }
+    }
+    p->tex_n = n;
+    return 0;
 }
 
 int eidos_platform_display_mode(const EidosPlatform *p)
@@ -715,8 +822,8 @@ int eidos_platform_display_mode(const EidosPlatform *p)
     return p == NULL ? 0 : p->display_mode;
 }
 
-int eidos_platform_set_display(EidosPlatform *p, int mode, int scale,
-                               int scaling)
+int eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
+                               int win_h)
 {
     u32 w, h;
     int was_full, rc = 0;
@@ -724,13 +831,7 @@ int eidos_platform_set_display(EidosPlatform *p, int mode, int scale,
     if (p == NULL || p->window == NULL) {
         return -1;
     }
-    if (scale < 1) {
-        scale = 1;
-    }
     was_full = p->display_mode != EIDOS_DISPLAY_WINDOWED;
-    p->scale = scale;
-    p->scaling = scaling == EIDOS_SCALING_FIT ? EIDOS_SCALING_FIT
-                                              : EIDOS_SCALING_INTEGER;
     layout_size(p, &w, &h);
 
     if (mode == EIDOS_DISPLAY_FULLSCREEN) {
@@ -758,17 +859,25 @@ int eidos_platform_set_display(EidosPlatform *p, int mode, int scale,
             p->display_mode = mode;
         }
     } else {
+        int cw = 0, ch = 0;
+
         SDL_SetWindowFullscreen(p->window, 0);
         SDL_SetWindowBordered(p->window, SDL_TRUE);
-        SDL_SetWindowSize(p->window, (int)w * p->scale, (int)h * p->scale);
+        SDL_GetWindowSize(p->window, &cw, &ch);
+        if (win_w > 0 && win_h > 0) {
+            if (was_full || win_w != cw || win_h != ch) {
+                SDL_SetWindowSize(p->window, win_w, win_h);
+            }
+        } else if (was_full) {
+            SDL_SetWindowSize(p->window, (int)w * DEFAULT_WINDOW_SCALE,
+                              (int)h * DEFAULT_WINDOW_SCALE);
+        }
         if (was_full) {
             SDL_SetWindowPosition(p->window, SDL_WINDOWPOS_CENTERED,
                                   SDL_WINDOWPOS_CENTERED);
         }
         p->display_mode = EIDOS_DISPLAY_WINDOWED;
     }
-    p->shot_w = w;
-    p->shot_h = h;
     if (p->presented) {
         render(p);
     }
@@ -777,8 +886,6 @@ int eidos_platform_set_display(EidosPlatform *p, int mode, int scale,
 
 int eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap)
 {
-    u32 w, h;
-
     if (p == NULL) {
         return -1;
     }
@@ -786,12 +893,6 @@ int eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap)
                 ? EIDOS_LAYOUT_SIDE_BY_SIDE : EIDOS_LAYOUT_STACKED;
     p->swap = swap != 0;
     p->gap = gap > 0 ? gap : 0;
-    layout_size(p, &w, &h);
-    p->shot_w = w;
-    p->shot_h = h;
-    if (p->window != NULL && p->display_mode == EIDOS_DISPLAY_WINDOWED) {
-        SDL_SetWindowSize(p->window, (int)w * p->scale, (int)h * p->scale);
-    }
     if (p->presented) {
         render(p);
     }
@@ -838,7 +939,6 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     EidosPlatformConfig defaults;
     EidosPlatform *p;
     u32 w, h;
-    int i;
 
     if (out == NULL) {
         return -1;
@@ -853,13 +953,11 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     if (p == NULL) {
         return -1;
     }
-    p->scale = cfg->scale > 0 ? cfg->scale : 2;
+    p->tex_n = 1;
     p->layout = cfg->layout == EIDOS_LAYOUT_SIDE_BY_SIDE
                 ? EIDOS_LAYOUT_SIDE_BY_SIDE : EIDOS_LAYOUT_STACKED;
     p->gap = cfg->gap > 0 ? cfg->gap : 0;
     p->swap = cfg->swap_screens != 0;
-    p->scaling = cfg->scaling == EIDOS_SCALING_FIT ? EIDOS_SCALING_FIT
-                                                   : EIDOS_SCALING_INTEGER;
     p->volume = 100;
     p->swallow_sc = -1;
     if (cfg->keymap != NULL && cfg->keymap_count > 0) {
@@ -882,19 +980,20 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
         return -1;
     }
 
-    /* Nearest-neighbour, set before the renderer and the textures exist:
-     * the hint is read when they are created, not when they are drawn.  An
-     * integer upscale of art whose every pixel the 2D engine placed exactly
-     * must not be filtered. */
+    /* Nearest by default (the hint is read when a texture is created); the
+     * filter is then chosen per draw (draw_screen), where SDL has it. */
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
 
     layout_size(p, &w, &h);
-    p->shot_w = w;
-    p->shot_h = h;
 
     p->window = SDL_CreateWindow(cfg->title != NULL ? cfg->title : "eidos",
                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                 (int)w * p->scale, (int)h * p->scale,
+                                 cfg->win_w > 0 && cfg->win_h > 0
+                                     ? cfg->win_w
+                                     : (int)w * DEFAULT_WINDOW_SCALE,
+                                 cfg->win_w > 0 && cfg->win_h > 0
+                                     ? cfg->win_h
+                                     : (int)h * DEFAULT_WINDOW_SCALE,
                                  SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (p->window == NULL) {
         fprintf(stderr, "eidos: SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -917,27 +1016,9 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     }
     SDL_SetRenderDrawColor(p->renderer, 0, 0, 0, 255);
 
-    for (i = 0; i < 2; i++) {
-        /*
-         * ABGR8888 is a packed 32-bit pixel 0xAABBGGRR, which on a
-         * little-endian host is the byte order R, G, B, A -- exactly what
-         * g2d_frame_compose writes.  Naming the packed format rather than
-         * SDL_PIXELFORMAT_RGBA32 keeps that reasoning visible.
-         */
-        p->tex[i] = SDL_CreateTexture(p->renderer, SDL_PIXELFORMAT_ABGR8888,
-                                      SDL_TEXTUREACCESS_STREAMING,
-                                      (int)SCREEN_W, (int)SCREEN_H);
-        if (p->tex[i] == NULL) {
-            fprintf(stderr, "eidos: SDL_CreateTexture failed: %s\n",
-                    SDL_GetError());
-            eidos_platform_quit(p);
-            return -1;
-        }
-        p->shadow[i] = (u8 *)calloc(SCREEN_PIXELS, 4);
-        if (p->shadow[i] == NULL) {
-            eidos_platform_quit(p);
-            return -1;
-        }
+    if (frame_alloc(p, 1) != 0) {
+        eidos_platform_quit(p);
+        return -1;
     }
 
     p->perf_freq = SDL_GetPerformanceFrequency();
@@ -966,8 +1047,8 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
 
     /* The requested mode, through the same path as a runtime change. */
     if (cfg->display_mode != EIDOS_DISPLAY_WINDOWED) {
-        (void)eidos_platform_set_display(p, cfg->display_mode, p->scale,
-                                         p->scaling);
+        (void)eidos_platform_set_display(p, cfg->display_mode, cfg->win_w,
+                                         cfg->win_h);
     }
 
     *out = p;
@@ -992,6 +1073,9 @@ void eidos_platform_quit(EidosPlatform *p)
     for (i = 0; i < 2; i++) {
         if (p->tex[i] != NULL) {
             SDL_DestroyTexture(p->tex[i]);
+        }
+        if (p->pre[i] != NULL) {
+            SDL_DestroyTexture(p->pre[i]);
         }
         free(p->shadow[i]);
     }
@@ -1034,7 +1118,7 @@ int eidos_platform_pump(EidosPlatform *p)
                         p, p->display_mode == EIDOS_DISPLAY_BORDERLESS
                                ? EIDOS_DISPLAY_WINDOWED
                                : EIDOS_DISPLAY_BORDERLESS,
-                        p->scale, p->scaling);
+                        0, 0);
                 }
             } else if (p->cap_state == EIDOS_CAPTURE_PENDING &&
                        ev.key.keysym.scancode != SDL_SCANCODE_F12) {
@@ -1073,6 +1157,16 @@ int eidos_platform_pump(EidosPlatform *p)
             }
             break;
         case SDL_WINDOWEVENT:
+            if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED &&
+                p->display_mode == EIDOS_DISPLAY_WINDOWED &&
+                !(SDL_GetWindowFlags(p->window) &
+                  (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP |
+                   SDL_WINDOW_MINIMIZED))) {
+                int cw = 0, ch = 0;
+
+                SDL_GetWindowSize(p->window, &cw, &ch);
+                eidos_settings_on_resize(p, cw, ch);
+            }
             if (p->presented &&
                 (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
                  ev.window.event == SDL_WINDOWEVENT_EXPOSED)) {
@@ -1138,20 +1232,44 @@ int eidos_platform_take_screenshot_request(EidosPlatform *p)
 
 void eidos_platform_present(EidosPlatform *p, const u8 *top, const u8 *bottom)
 {
+    eidos_platform_present_n(p, top, bottom, 1);
+}
+
+int eidos_platform_frame_scale(const EidosPlatform *p)
+{
+    return p == NULL ? 1 : p->tex_n;
+}
+
+void eidos_platform_present_n(EidosPlatform *p, const u8 *top,
+                              const u8 *bottom, int n)
+{
     const u8 *src[2];
+    size_t bytes;
     int i;
 
     if (p == NULL) {
         return;
     }
+    if (n < 1) {
+        n = 1;
+    }
+    if (n > 32) {
+        n = 32;
+    }
+    if (n != p->tex_n && frame_alloc(p, n) != 0) {
+        (void)frame_alloc(p, 1);
+        return;
+    }
     src[0] = top;
     src[1] = bottom;
+    bytes = (size_t)SCREEN_W * (size_t)n * SCREEN_H * (size_t)n * 4u;
 
     for (i = 0; i < 2; i++) {
         if (src[i] != NULL) {
-            memcpy(p->shadow[i], src[i], (size_t)SCREEN_PIXELS * 4u);
+            memcpy(p->shadow[i], src[i], bytes);
         }
-        SDL_UpdateTexture(p->tex[i], NULL, p->shadow[i], (int)SCREEN_W * 4);
+        SDL_UpdateTexture(p->tex[i], NULL, p->shadow[i],
+                          (int)SCREEN_W * n * 4);
     }
 
     p->presented = 1;
@@ -1192,14 +1310,17 @@ int eidos_platform_capture_poll(EidosPlatform *p, EidosCaptured *out)
 
 void eidos_platform_shot_size(const EidosPlatform *p, u32 *w, u32 *h)
 {
+    EidosScreenPlacement pl;
+
     if (p == NULL) {
         return;
     }
+    place(p, &pl);
     if (w != NULL) {
-        *w = p->shot_w;
+        *w = (u32)pl.width * (u32)p->tex_n;
     }
     if (h != NULL) {
-        *h = p->shot_h;
+        *h = (u32)pl.height * (u32)p->tex_n;
     }
 }
 
@@ -1223,8 +1344,7 @@ int eidos_platform_screenshot(EidosPlatform *p, const char *path)
     if (p == NULL || path == NULL) {
         return -1;
     }
-    w = p->shot_w;
-    h = p->shot_h;
+    eidos_platform_shot_size(p, &w, &h);
     pitch = (size_t)w * 3u;
     pixels = (u8 *)calloc((size_t)h, pitch);
     if (pixels == NULL) {
@@ -1233,12 +1353,13 @@ int eidos_platform_screenshot(EidosPlatform *p, const char *path)
 
     place(p, &pl);
     for (i = 0; i < 2; i++) {
-        u32 ox = (u32)pl.screen[i].x, oy = (u32)pl.screen[i].y;
+        u32 nn = (u32)p->tex_n, sw = SCREEN_W * nn, sh = SCREEN_H * nn;
+        u32 ox = (u32)pl.screen[i].x * nn, oy = (u32)pl.screen[i].y * nn;
 
-        for (y = 0; y < SCREEN_H; y++) {
-            const u8 *s = p->shadow[i] + (size_t)y * SCREEN_W * 4u;
+        for (y = 0; y < sh; y++) {
+            const u8 *s = p->shadow[i] + (size_t)y * sw * 4u;
             u8 *d = pixels + (size_t)(oy + y) * pitch + (size_t)ox * 3u;
-            for (x = 0; x < SCREEN_W; x++) {
+            for (x = 0; x < sw; x++) {
                 d[x * 3 + 0] = s[x * 4 + 0];
                 d[x * 3 + 1] = s[x * 4 + 1];
                 d[x * 3 + 2] = s[x * 4 + 2];
