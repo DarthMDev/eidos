@@ -9,49 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <SDL_opengl.h>
-
-#include "plat_gl.h"
-
-#ifndef GL_CLAMP_TO_EDGE
-#define GL_CLAMP_TO_EDGE 0x812F
-#endif
-
-#define GL_FUNCS(X) \
-    X(PFNGLCREATESHADERPROC, glCreateShader) \
-    X(PFNGLSHADERSOURCEPROC, glShaderSource) \
-    X(PFNGLCOMPILESHADERPROC, glCompileShader) \
-    X(PFNGLGETSHADERIVPROC, glGetShaderiv) \
-    X(PFNGLGETSHADERINFOLOGPROC, glGetShaderInfoLog) \
-    X(PFNGLCREATEPROGRAMPROC, glCreateProgram) \
-    X(PFNGLATTACHSHADERPROC, glAttachShader) \
-    X(PFNGLLINKPROGRAMPROC, glLinkProgram) \
-    X(PFNGLGETPROGRAMIVPROC, glGetProgramiv) \
-    X(PFNGLGETPROGRAMINFOLOGPROC, glGetProgramInfoLog) \
-    X(PFNGLUSEPROGRAMPROC, glUseProgram) \
-    X(PFNGLDELETESHADERPROC, glDeleteShader) \
-    X(PFNGLDELETEPROGRAMPROC, glDeleteProgram) \
-    X(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation) \
-    X(PFNGLUNIFORM1IPROC, glUniform1i) \
-    X(PFNGLUNIFORM2FPROC, glUniform2f) \
-    X(PFNGLUNIFORM4FPROC, glUniform4f) \
-    X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays) \
-    X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray) \
-    X(PFNGLDELETEVERTEXARRAYSPROC, glDeleteVertexArrays) \
-    X(PFNGLACTIVETEXTUREPROC, glActiveTexture)
-
-struct EidosGl {
-    SDL_Window *window;
-    SDL_GLContext ctx;
-#define X(T, N) T N;
-    GL_FUNCS(X)
-#undef X
-    GLuint prog;
-    GLuint vao;
-    GLint u_rect, u_tex, u_texsize, u_dstsize;
-    GLuint tex[2];
-    int tw[2], th[2];
-};
+#include "plat_gl_int.h"
 
 static const char *k_vs =
     "#version 330 core\n"
@@ -67,6 +25,17 @@ static const char *k_vs =
  * Sharp bilinear: nearest at the centre of each source pixel, a linear blend
  * over about one output pixel at its edge.  Below 1:1 it is plain linear.
  */
+#define SHARP_FN \
+    "vec3 sharp(sampler2D s, vec2 uv, vec2 texsize, vec2 dstsize) {\n" \
+    "    vec2 t = uv * texsize;\n" \
+    "    vec2 sc = dstsize / texsize;\n" \
+    "    vec2 f = fract(t);\n" \
+    "    vec2 off = clamp((f - 0.5) * sc, -0.5, 0.5);\n" \
+    "    vec2 p = floor(t) + 0.5 + off;\n" \
+    "    p = mix(t, p, step(vec2(1.0), sc));\n" \
+    "    return texture(s, p / texsize).rgb;\n" \
+    "}\n"
+
 static const char *k_fs =
     "#version 330 core\n"
     "uniform sampler2D tex;\n"
@@ -74,14 +43,58 @@ static const char *k_fs =
     "uniform vec2 dstsize;\n"
     "in vec2 uv;\n"
     "out vec4 color;\n"
+    SHARP_FN
     "void main() {\n"
-    "    vec2 t = uv * texsize;\n"
-    "    vec2 sc = dstsize / texsize;\n"
-    "    vec2 f = fract(t);\n"
-    "    vec2 off = clamp((f - 0.5) * sc, -0.5, 0.5);\n"
-    "    vec2 p = floor(t) + 0.5 + off;\n"
-    "    p = mix(t, p, step(vec2(1.0), sc));\n"
-    "    color = vec4(texture(tex, p / texsize).rgb, 1.0);\n"
+    "    color = vec4(sharp(tex, uv, texsize, dstsize), 1.0);\n"
+    "}\n";
+
+/*
+ * A screen whose 3D layer the GPU drew.  `tex` is the screen composed with
+ * the software 3D, `behind` the same screen with the 3D layer off, both at DS
+ * resolution; `g3d` is the GPU's premultiplied 3D frame at any size.  Where
+ * the two small images differ (dilated by one pixel, because the GPU's edges
+ * land between the DS pixels) the 3D shows through the GPU frame:
+ *   result = P + (1 - A) * behind
+ * with the master brightness folded in exactly:
+ *   up   (1 - f) P + f A + (1 - A) behind
+ *   down (1 - f) P + (1 - A) behind
+ * Everywhere else the screen shows as it is.
+ */
+static const char *k_fs3 =
+    "#version 330 core\n"
+    "uniform sampler2D tex;\n"
+    "uniform sampler2D behind;\n"
+    "uniform sampler2D g3d;\n"
+    "uniform vec2 texsize;\n"
+    "uniform vec2 dstsize;\n"
+    "uniform int bmode;\n"
+    "uniform int dil;\n"
+    "uniform float bfac;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    SHARP_FN
+    "void main() {\n"
+    "    ivec2 sz = ivec2(texsize);\n"
+    "    ivec2 ip = ivec2(floor(uv * texsize));\n"
+    "    bool m = false;\n"
+    "    int rad = (dil != 0) ? 1 : 0;\n"
+    "    for (int dy = -rad; dy <= rad; dy++) {\n"
+    "        for (int dx = -rad; dx <= rad; dx++) {\n"
+    "            ivec2 q = clamp(ip + ivec2(dx, dy), ivec2(0), sz - 1);\n"
+    "            if (texelFetch(tex, q, 0).rgb != texelFetch(behind, q, 0).rgb) { m = true; }\n"
+    "        }\n"
+    "    }\n"
+    "    if (!m) {\n"
+    "        color = vec4(sharp(tex, uv, texsize, dstsize), 1.0);\n"
+    "        return;\n"
+    "    }\n"
+    "    vec4 g = texture(g3d, vec2(uv.x, 1.0 - uv.y));\n"
+    "    vec3 P = g.rgb;\n"
+    "    float A = g.a;\n"
+    "    if (bmode == 1) { P = (1.0 - bfac) * P + bfac * A; }\n"
+    "    else if (bmode == 2) { P = (1.0 - bfac) * P; }\n"
+    "    vec3 b = sharp(behind, uv, texsize, dstsize);\n"
+    "    color = vec4(P + (1.0 - A) * b, 1.0);\n"
     "}\n";
 
 static GLuint compile(EidosGl *g, GLenum type, const char *src)
@@ -101,6 +114,34 @@ static GLuint compile(EidosGl *g, GLenum type, const char *src)
         return 0;
     }
     return s;
+}
+
+GLuint eidos_gl_compile_program(EidosGl *g, const char *vsrc, const char *fsrc)
+{
+    GLuint vs = compile(g, GL_VERTEX_SHADER, vsrc);
+    GLuint fs = compile(g, GL_FRAGMENT_SHADER, fsrc);
+    GLuint prog;
+    GLint ok = 0;
+
+    if (vs == 0 || fs == 0) {
+        return 0;
+    }
+    prog = g->glCreateProgram();
+    g->glAttachShader(prog, vs);
+    g->glAttachShader(prog, fs);
+    g->glLinkProgram(prog);
+    g->glDeleteShader(vs);
+    g->glDeleteShader(fs);
+    g->glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+
+        g->glGetProgramInfoLog(prog, sizeof(log), NULL, log);
+        fprintf(stderr, "eidos: GL link: %s\n", log);
+        g->glDeleteProgram(prog);
+        return 0;
+    }
+    return prog;
 }
 
 /*
@@ -123,7 +164,7 @@ static void gl_debug_dump(int w, int h)
         if (spec != NULL && (colon = strrchr(spec, ':')) != NULL &&
             (size_t)(colon - spec) < sizeof(path)) {
             memcpy(path, spec, (size_t)(colon - spec));
-            path[colon - spec] = '\0';
+            path[colon - spec] = 0;
             at = atoi(colon + 1);
         } else {
             spec = NULL;
@@ -178,8 +219,6 @@ static void gl_debug_dump(int w, int h)
 EidosGl *eidos_gl_create(SDL_Window *window)
 {
     EidosGl *g;
-    GLuint vs, fs;
-    GLint ok = 0;
     int i;
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -190,6 +229,7 @@ EidosGl *eidos_gl_create(SDL_Window *window)
         return NULL;
     }
     g->window = window;
+    g->s3d = -1;
     g->ctx = SDL_GL_CreateContext(window);
     if (g->ctx == NULL) {
         free(g);
@@ -203,24 +243,8 @@ EidosGl *eidos_gl_create(SDL_Window *window)
     /* The pacer is the timebase, never the display's refresh. */
     SDL_GL_SetSwapInterval(0);
 
-    vs = compile(g, GL_VERTEX_SHADER, k_vs);
-    fs = compile(g, GL_FRAGMENT_SHADER, k_fs);
-    if (vs == 0 || fs == 0) {
-        eidos_gl_destroy(g);
-        return NULL;
-    }
-    g->prog = g->glCreateProgram();
-    g->glAttachShader(g->prog, vs);
-    g->glAttachShader(g->prog, fs);
-    g->glLinkProgram(g->prog);
-    g->glDeleteShader(vs);
-    g->glDeleteShader(fs);
-    g->glGetProgramiv(g->prog, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[512];
-
-        g->glGetProgramInfoLog(g->prog, sizeof(log), NULL, log);
-        fprintf(stderr, "eidos: GL link: %s\n", log);
+    g->prog = eidos_gl_compile_program(g, k_vs, k_fs);
+    if (g->prog == 0) {
         eidos_gl_destroy(g);
         return NULL;
     }
@@ -237,9 +261,32 @@ EidosGl *eidos_gl_create(SDL_Window *window)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
+    glGenTextures(1, &g->behind_tex);
+    glBindTexture(GL_TEXTURE_2D, g->behind_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     if (glGetError() != GL_NO_ERROR) {
         eidos_gl_destroy(g);
         return NULL;
+    }
+
+    /* The 3D path is optional: a failure here leaves a working presenter. */
+    g->prog3 = eidos_gl_compile_program(g, k_vs, k_fs3);
+    if (g->prog3 != 0) {
+        g->u3_rect = g->glGetUniformLocation(g->prog3, "rect");
+        g->u3_tex = g->glGetUniformLocation(g->prog3, "tex");
+        g->u3_behind = g->glGetUniformLocation(g->prog3, "behind");
+        g->u3_g3d = g->glGetUniformLocation(g->prog3, "g3d");
+        g->u3_texsize = g->glGetUniformLocation(g->prog3, "texsize");
+        g->u3_dstsize = g->glGetUniformLocation(g->prog3, "dstsize");
+        g->u3_bmode = g->glGetUniformLocation(g->prog3, "bmode");
+        g->u3_bfac = g->glGetUniformLocation(g->prog3, "bfac");
+        g->u3_dil = g->glGetUniformLocation(g->prog3, "dil");
+        if (eidos_gl3d_init(g) != 0) {
+            g->have3d = 0;
+        }
     }
     return g;
 }
@@ -254,15 +301,29 @@ void eidos_gl_destroy(EidosGl *g)
         if (g->tex[0] != 0) {
             glDeleteTextures(2, g->tex);
         }
+        if (g->behind_tex != 0) {
+            glDeleteTextures(1, &g->behind_tex);
+        }
+        if (g->have3d || g->p3d != 0) {
+            eidos_gl3d_destroy(g);
+        }
         if (g->vao != 0 && g->glDeleteVertexArrays != NULL) {
             g->glDeleteVertexArrays(1, &g->vao);
         }
         if (g->prog != 0 && g->glDeleteProgram != NULL) {
             g->glDeleteProgram(g->prog);
         }
+        if (g->prog3 != 0 && g->glDeleteProgram != NULL) {
+            g->glDeleteProgram(g->prog3);
+        }
         SDL_GL_DeleteContext(g->ctx);
     }
     free(g);
+}
+
+int eidos_gl_has3d(const EidosGl *g)
+{
+    return g != NULL && g->have3d;
 }
 
 void eidos_gl_upload(EidosGl *g, int i, const unsigned char *rgba, int w,
@@ -284,6 +345,33 @@ void eidos_gl_upload(EidosGl *g, int i, const unsigned char *rgba, int w,
     }
 }
 
+void eidos_gl_set_3d(EidosGl *g, int screen, const unsigned char *behind,
+                     int w, int h, int bmode, float bfac, int dilate)
+{
+    if (g == NULL) {
+        return;
+    }
+    if (screen < 0 || behind == NULL || w <= 0 || h <= 0) {
+        g->s3d = -1;
+        return;
+    }
+    glBindTexture(GL_TEXTURE_2D, g->behind_tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (g->behind_w != w || g->behind_h != h) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, behind);
+        g->behind_w = w;
+        g->behind_h = h;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA,
+                        GL_UNSIGNED_BYTE, behind);
+    }
+    g->s3d = screen;
+    g->bmode = bmode;
+    g->bfac = bfac;
+    g->dilate = dilate;
+}
+
 void eidos_gl_present(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
 {
     int i;
@@ -294,11 +382,11 @@ void eidos_gl_present(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
     glViewport(0, 0, out_w, out_h);
     glClearColor(0.f, 0.f, 0.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
-    g->glUseProgram(g->prog);
     g->glBindVertexArray(g->vao);
-    g->glUniform1i(g->u_tex, 0);
     for (i = 0; i < 2; i++) {
         float x0, y0, x1, y1;
+        int is3d = (i == g->s3d && g->prog3 != 0 && g->fb[0].color != 0 &&
+                    g->behind_w == g->tw[i] && g->behind_h == g->th[i]);
 
         if (dst[i].w <= 0 || dst[i].h <= 0 || g->tw[i] == 0) {
             continue;
@@ -307,10 +395,29 @@ void eidos_gl_present(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
         x1 = 2.f * (float)(dst[i].x + dst[i].w) / (float)out_w - 1.f;
         y1 = 1.f - 2.f * (float)dst[i].y / (float)out_h;
         y0 = 1.f - 2.f * (float)(dst[i].y + dst[i].h) / (float)out_h;
-        g->glUniform4f(g->u_rect, x0, y0, x1, y1);
-        g->glUniform2f(g->u_texsize, (float)g->tw[i], (float)g->th[i]);
-        g->glUniform2f(g->u_dstsize, (float)dst[i].w, (float)dst[i].h);
-        g->glActiveTexture(GL_TEXTURE0);
+        if (is3d) {
+            g->glUseProgram(g->prog3);
+            g->glUniform1i(g->u3_tex, 0);
+            g->glUniform1i(g->u3_behind, 1);
+            g->glUniform1i(g->u3_g3d, 2);
+            g->glUniform4f(g->u3_rect, x0, y0, x1, y1);
+            g->glUniform2f(g->u3_texsize, (float)g->tw[i], (float)g->th[i]);
+            g->glUniform2f(g->u3_dstsize, (float)dst[i].w, (float)dst[i].h);
+            g->glUniform1i(g->u3_bmode, g->bmode);
+            g->glUniform1f(g->u3_bfac, g->bfac);
+            g->glUniform1i(g->u3_dil, g->dilate);
+            g->glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, g->behind_tex);
+            g->glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, g->fb[0].color);
+            g->glActiveTexture(GL_TEXTURE0);
+        } else {
+            g->glUseProgram(g->prog);
+            g->glUniform1i(g->u_tex, 0);
+            g->glUniform4f(g->u_rect, x0, y0, x1, y1);
+            g->glUniform2f(g->u_texsize, (float)g->tw[i], (float)g->th[i]);
+            g->glUniform2f(g->u_dstsize, (float)dst[i].w, (float)dst[i].h);
+        }
         glBindTexture(GL_TEXTURE_2D, g->tex[i]);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }

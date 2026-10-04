@@ -337,6 +337,25 @@ void eidos_platform_present_n(EidosPlatform *p, const u8 *top,
  * can stay at 1 while the other is larger). */
 void eidos_platform_present_nn(EidosPlatform *p, const u8 *top, int n_top,
                                const u8 *bottom, int n_bottom);
+
+/*
+ * The GPU 3D path.  eidos_platform_gpu3d is true when the OpenGL presenter
+ * can rasterise the 3D engine itself.  eidos_platform_set_3d (before the
+ * next present) draws `snap` at 256n x 192n on the GPU and shows it as the
+ * 3D layer of screen `screen` (0 top, 1 bottom) over `behind`, that screen's
+ * 256x192 RGBA with the 3D layer off; `bmode` 0/1/2 and `bfac` 0..1 are the
+ * engine's master brightness.  screen < 0 turns the GPU 3D off.  Returns 0,
+ * or -1 if it cannot (draw the CPU frame instead).
+ */
+struct G3dSnapshot;
+int  eidos_platform_gpu3d(const EidosPlatform *p);
+/* The GPU's 3D frame at DS size into `out` (256x192 RGBA); 0 new, 1 unchanged,
+ * -1 failure. */
+int  eidos_platform_read3d_1x(EidosPlatform *p, const struct G3dSnapshot *snap,
+                              u8 *out, int async);
+int  eidos_platform_set_3d(EidosPlatform *p, int screen, const u8 *behind,
+                           const struct G3dSnapshot *snap, int n, int bmode,
+                           float bfac, int dilate);
 /* The multiple of the last presented frame (1 before the first). */
 int  eidos_platform_frame_scale(const EidosPlatform *p);
 

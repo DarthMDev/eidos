@@ -121,6 +121,53 @@ void g3d_hw_set_scale(u32 scale);
 u32  g3d_hw_scale(void);
 u32  g3d_hw_frame_scale(void);
 u32       g3d_hw_frame_count(void);
+
+/*
+ * The frame as a GPU renderer needs it.  With the snapshot enabled, every
+ * SWAP_BUFFERS also copies what the rasteriser was given (the polygons after
+ * the per-frame attribute fix-ups, their vertices and decoded textures, and
+ * the register state that shades them) into a buffer this module owns.  The
+ * copy is made on the game's thread; the renderer reads it later on the
+ * thread that owns the graphics context.  The CPU rasteriser still renders
+ * the frame at g3d_hw_scale() as usual (the capture and the 2D layer
+ * priorities need it).  NULL before the first swap or while disabled.
+ */
+typedef struct G3dSnapTex {
+    u32 w, h;
+    u8 *rgba;               /* owned copy, w*h*4 */
+} G3dSnapTex;
+
+typedef struct G3dSnapshot {
+    u32 serial;             /* g3d_hw_frame_count() when it was taken     */
+    G3dVertex *verts;  u32 n_verts;
+    u32 *idx;          u32 n_idx;
+    G3dPoly *polys;    u32 n_polys;
+    s32 *poly_tex;          /* per polygon: index into tex, -1 untextured  */
+    G3dSnapTex *tex;   u32 n_tex;
+    u32 cap_verts, cap_idx, cap_polys, cap_tex;
+    u32 disp3dcnt;
+    u32 wbuffer;            /* depth is w                                 */
+    u32 alpha_ref;          /* 0 when the alpha test is off               */
+    u32 highlight;          /* DISP3DCNT bit 1                            */
+    u32 clear_color;        /* CLEAR_COLOR                                */
+    u32 clear_depth;        /* CLEAR_DEPTH, 15 bits                       */
+    u32 unsupported;        /* G3D_SNAP_* the GPU path cannot honour      */
+    u8  toon[32 * 3];       /* R,G,B per entry                            */
+} G3dSnapshot;
+
+/* Frame features the GPU renderer does not do yet (a frame using one is
+ * shown from the CPU rasteriser instead). */
+#define G3D_SNAP_EDGE    0x1u   /* edge marking                        */
+#define G3D_SNAP_FOG     0x2u   /* fog                                 */
+#define G3D_SNAP_REARBMP 0x4u   /* rear-plane bitmap                   */
+#define G3D_SNAP_SHADOW  0x8u   /* shadow polygons                     */
+
+/* With the snapshot on, skip the CPU rasteriser for the following frames: a
+ * GPU renderer draws them from the snapshot and g3d_hw_frame() goes stale.
+ * Frames the snapshot marks unsupported (G3D_SNAP_*) need it back. */
+void g3d_hw_skip_raster(int on);
+void g3d_hw_snapshot_enable(int on);
+const G3dSnapshot *g3d_hw_snapshot(void);
 u32       g3d_hw_unsupported(void);
 
 /* GXSTAT as the hardware holds it, bit 15 (the matrix stack error) included;

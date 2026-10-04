@@ -549,6 +549,7 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/bg_affine.c  # rotation/scaling BG layers
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/window.c     # windows, alpha and brightness
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/hwcompose.c  # both screens from the hardware state
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d/par.c        # the compositors' worker pool
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/frame/frame.c    # the vblank frame loop and the OS tick
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/frame/prof.c     # the per-phase frame profiler
 
@@ -722,6 +723,7 @@ if(EIDOS_SDL_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_replace.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_gl.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_gl3d.c
     )
     target_include_directories(eidos_platform PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
@@ -1904,6 +1906,20 @@ if(EIDOS_SDL_FOUND)
     add_test(NAME test_platform_input COMMAND test_platform_input)
     set_tests_properties(test_platform_input PROPERTIES
         ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+
+    # The GPU 3D rasteriser against the software one (a hidden OpenGL 3.3
+    # window; skips where there is no window system).
+    add_executable(test_gpu3d ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gpu3d.c)
+    target_include_directories(test_gpu3d PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_gpu3d PRIVATE eidos_platform)
+    if(EIDOS_SDL_RUNTIME)
+        add_custom_command(TARGET test_gpu3d POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:test_gpu3d>"
+            COMMENT "Copying SDL2.dll next to test_gpu3d")
+    endif()
+    add_test(NAME test_gpu3d COMMAND test_gpu3d)
 
     # The settings backend: geometry and touch mapping for every layout and
     # scale, bindings and capture, settings.ini, overrides, the volume gain.

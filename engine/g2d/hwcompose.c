@@ -1384,9 +1384,39 @@ void g2d_hw_box_downsample(const u8 *src, u32 scale, u8 *dst)
  * engine with BG0 as the 3D layer is rendered at `scale`.  screen_scale[0]
  * and [1] (top, bottom) then hold the multiple each buffer was written at.
  */
+/* The engines of one frame as tasks of the worker pool: they only read the
+ * hardware state and each writes its own buffer. */
+typedef struct EngineJobs {
+    const G2dHwState *hw;
+    const u8 *rgba3d;
+    u32 main_scale, sub_scale;
+    u8 *main_out, *sub_out, *behind;
+    u8 *main_graphics6;
+    u32 main_flags, sub_flags, behind_flags;
+    int main_rc, sub_rc, behind_rc;
+} EngineJobs;
+
+static void engine_task(void *arg, unsigned i)
+{
+    EngineJobs *j = (EngineJobs *)arg;
+
+    if (i == 0) {
+        j->main_rc = render_engine(j->hw, G2D_HW_MAIN, j->main_scale, j->rgba3d,
+                                   j->main_out, &j->main_flags,
+                                   j->main_graphics6);
+    } else if (i == 1) {
+        j->sub_rc = render_engine(j->hw, G2D_HW_SUB, j->sub_scale, NULL,
+                                  j->sub_out, &j->sub_flags, NULL);
+    } else {
+        j->behind_rc = render_engine(j->hw, G2D_HW_MAIN, 1u, NULL, j->behind,
+                                     &j->behind_flags, NULL);
+    }
+}
+
 static int render_scaled_impl(const G2dHwState *hw, u32 scale, int adaptive,
                               const u8 *rgba3d, u8 *top, u8 *bottom,
-                              u32 unsupported[2], u32 screen_scale[2])
+                              u32 unsupported[2], u32 screen_scale[2],
+                              u8 *behind, int *behind_done)
 {
     int main_on_top = (bw_rd16(hw->io + REG_POWCNT1) & 0x8000u) != 0;
     u32 cap = bw_rd32(hw->io + (G2D_HW_DISPCAPCNT - BW_DS_IO_BASE));
@@ -1398,13 +1428,19 @@ static int render_scaled_impl(const G2dHwState *hw, u32 scale, int adaptive,
     int rc = 0;
     u32 main_scale;
     u32 sub_scale;
+    int main_3d;
 
     if (scale == 0) {
         scale = 1;
     }
+    if (behind_done != NULL) {
+        *behind_done = 0;
+    }
     {
         u32 dispcnt = bw_rd32(hw->io + REG_DISPCNT);
-        int main_3d = (dispcnt & 0x8u) && (dispcnt & 0x100u);
+
+        main_3d = (dispcnt & 0x8u) && (dispcnt & 0x100u)
+                  && ((dispcnt >> 16) & 3u) == 1u;
 
         main_scale = (adaptive && !main_3d) ? 1u : scale;
         sub_scale = adaptive ? 1u : scale;
@@ -1442,18 +1478,33 @@ static int render_scaled_impl(const G2dHwState *hw, u32 scale, int adaptive,
         }
         free(tmp);
     }
-    if (render_engine(hw, G2D_HW_MAIN, main_scale, rgba3d,
-                      main_on_top ? top : bottom, &flags[0],
-                      main_scale > 1u ? NULL : graphics6) != 0) {
-        rc = -1;
+    {
+        /* The main engine, the sub engine and (for a GPU 3D layer) the main
+         * screen with its 3D layer off are independent: they run together on
+         * the worker pool. */
+        EngineJobs jobs;
+
+        memset(&jobs, 0, sizeof(jobs));
+        jobs.hw = hw;
+        jobs.rgba3d = rgba3d;
+        jobs.main_scale = main_scale;
+        jobs.main_out = main_on_top ? top : bottom;
+        jobs.main_graphics6 = main_scale > 1u ? NULL : graphics6;
+        jobs.sub_scale = sub_scale;
+        jobs.sub_out = main_on_top ? bottom : top;
+        jobs.behind = (behind != NULL && main_3d && main_scale == 1u) ? behind
+                                                                      : NULL;
+        g2d_par_run(jobs.behind != NULL ? 3u : 2u, engine_task, &jobs);
+        if (jobs.main_rc != 0 || jobs.sub_rc != 0) {
+            rc = -1;
+        }
+        flags[0] = jobs.main_flags;
+        flags[1] = jobs.sub_flags;
+        if (jobs.behind != NULL && jobs.behind_rc == 0 && behind_done != NULL) {
+            *behind_done = 1;
+        }
+        eidos_prof_end(EIDOS_PROF_MAIN, t0);
     }
-    eidos_prof_end(EIDOS_PROF_MAIN, t0);
-    t0 = eidos_prof_begin();
-    if (render_engine(hw, G2D_HW_SUB, sub_scale, NULL, main_on_top ? bottom : top,
-                      &flags[1], NULL) != 0) {
-        rc = -1;
-    }
-    eidos_prof_end(EIDOS_PROF_SUB, t0);
     if ((cap & 0x80000000u) && rc == 0) {
         capture(hw, cap, cap3d, graphics6, &flags[0]);
     }
@@ -1470,7 +1521,7 @@ int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
                          u8 *top, u8 *bottom, u32 unsupported[2])
 {
     return render_scaled_impl(hw, scale, 0, rgba3d, top, bottom, unsupported,
-                              NULL);
+                              NULL, NULL, NULL);
 }
 
 int g2d_hw_render(const G2dHwState *hw, const u8 *rgba3d,
@@ -1554,6 +1605,16 @@ int g2d_hw_render_dsmem_adaptive(u32 scale, const u8 *rgba3d, u8 *top,
                                  u8 *bottom, u32 unsupported[2],
                                  u32 screen_scale[2])
 {
+    return g2d_hw_render_dsmem_adaptive_ex(scale, rgba3d, top, bottom,
+                                           unsupported, screen_scale, NULL,
+                                           NULL);
+}
+
+int g2d_hw_render_dsmem_adaptive_ex(u32 scale, const u8 *rgba3d, u8 *top,
+                                    u8 *bottom, u32 unsupported[2],
+                                    u32 screen_scale[2], u8 *behind,
+                                    int *behind_done)
+{
     G2dHwState hw;
     u32 cap;
     int rc;
@@ -1563,7 +1624,7 @@ int g2d_hw_render_dsmem_adaptive(u32 scale, const u8 *rgba3d, u8 *top,
         return -1;
     }
     rc = render_scaled_impl(&hw, scale, 1, rgba3d, top, bottom, unsupported,
-                            screen_scale);
+                            screen_scale, behind, behind_done);
     cap = bw_io_read32(G2D_HW_DISPCAPCNT);
     if (cap & 0x80000000u) {
         bw_io_write32(G2D_HW_DISPCAPCNT, cap & 0x7FFFFFFFu);

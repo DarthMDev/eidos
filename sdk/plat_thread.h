@@ -41,6 +41,9 @@ BwThread *bw_thread_start(void (*fn)(void *arg), void *arg);
 /* Wait for the thread to return, then release the handle.                 */
 void      bw_thread_join(BwThread *t);
 
+/* The number of hardware threads (at least 1). */
+unsigned bw_cpu_count(void);
+
 /* A monotonic clock in nanoseconds (the frame profiler's). */
 unsigned long long bw_clock_ns(void);
 

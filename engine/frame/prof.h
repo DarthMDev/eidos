@@ -20,6 +20,16 @@ enum {
     EIDOS_PROF_PRESENT,   /* upload and present                         */
     EIDOS_PROF_AUDIO,     /* sound render and queue                     */
     EIDOS_PROF_WAIT,      /* the pacing sleep                           */
+    EIDOS_PROF_GEOM,      /* 3D geometry commands (inside step)         */
+    EIDOS_PROF_RASTER,    /* software 3D rasteriser (inside step)       */
+    EIDOS_PROF_SNAP,      /* GPU snapshot copy (inside step)            */
+    EIDOS_PROF_TEXDEC,    /* texture decode (inside snap or raster)     */
+    EIDOS_PROF_GLDRAW,    /* GL 3D draw calls (CPU side)                */
+    EIDOS_PROF_GLUP,      /* GL texture uploads                         */
+    EIDOS_PROF_RENDER,    /* the whole render hook                      */
+    EIDOS_PROF_BOOT3D,    /* the GPU 3D layer set-up                    */
+    EIDOS_PROF_GLREAD,    /* glReadPixels (waits for the GPU)           */
+    EIDOS_PROF_UNPREM,    /* un-premultiply and flip after the read     */
     EIDOS_PROF_COUNT
 };
 

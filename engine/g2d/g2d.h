@@ -1035,6 +1035,19 @@ int g2d_hw_render_dsmem_scaled(u32 scale, const u8 *rgba3d, u8 *top,
 int g2d_hw_render_dsmem_adaptive(u32 scale, const u8 *rgba3d, u8 *top,
                                  u8 *bottom, u32 unsupported[2],
                                  u32 screen_scale[2]);
+/* As above; with `behind` (256x192 RGBA) the main engine is also composed with
+ * its 3D layer off when a GPU 3D layer needs it, on a worker thread beside the
+ * other engines.  *behind_done says whether it was. */
+/* The compositors' worker pool (engine/g2d/par.c): runs fn(ctx, 0..n-1), the
+ * caller taking task 0 and helping with the rest; serial when the machine has
+ * one hardware thread.  Safe to call from several threads at once. */
+void g2d_par_run(unsigned n, void (*fn)(void *ctx, unsigned index), void *ctx);
+unsigned g2d_par_workers(void);
+
+int g2d_hw_render_dsmem_adaptive_ex(u32 scale, const u8 *rgba3d, u8 *top,
+                                    u8 *bottom, u32 unsupported[2],
+                                    u32 screen_scale[2], u8 *behind,
+                                    int *behind_done);
 
 /* ------------------------------------------------------------------ */
 /* Rig blocks (a/0/0/4 and its siblings)                               */

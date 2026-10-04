@@ -180,6 +180,7 @@
 #include "dsmem.h"
 #include "dsmem_ext.h"
 #include "hw3d.h"
+#include "prof.h"
 
 #define G3D_HW_SENTINEL 0xFAED5E00u
 
@@ -203,6 +204,7 @@ static Hw3dTrace g_tr;
 typedef struct TexCacheEntry {
     u32 key_tex, key_pal;
     int ok;
+    int borrowed;             /* tex.rgba belongs to the persistent store */
     G3dTexture tex;
 } TexCacheEntry;
 
@@ -546,7 +548,54 @@ static u32 pal_bytes_of(u32 fmt)
 #define TEX_SPACE 0x80000u
 #define PAL_SPACE 0x18000u
 
-static int decode_vram_texture(G3dTexture *out, u32 tp, u32 pltt)
+/*
+ * Decoded textures persist across frames.  Decoding is the expensive part
+ * (about 3.7 ms a frame on the title screen), but a texture's bytes rarely
+ * change, so each frame the texel and palette bytes are fetched and hashed
+ * (cheap) and the stored decode is reused when the hash matches.
+ */
+typedef struct TexStore {
+    u32 key_tex, key_pal;
+    u64 hash;
+    int ok;
+    G3dTexture tex;
+} TexStore;
+
+static TexStore *g_store;
+static u32 g_n_store, g_cap_store;
+
+#define TEX_STORE_MAX 512u
+
+static u64 hash_bytes(const u8 *p, size_t n, u64 h)
+{
+    while (n >= 8u) {
+        u64 v;
+
+        memcpy(&v, p, 8);
+        h = (h ^ v) * 0x9E3779B97F4A7C15ull;
+        h ^= h >> 29;
+        p += 8;
+        n -= 8;
+    }
+    while (n > 0) {
+        h = (h ^ *p++) * 0x100000001B3ull;
+        n--;
+    }
+    return h;
+}
+
+static void store_clear(void)
+{
+    u32 i;
+
+    for (i = 0; i < g_n_store; i++) {
+        g3d_texture_free(&g_store[i].tex);
+    }
+    g_n_store = 0;
+}
+
+static int decode_vram_texture(G3dTexture *out, u32 tp, u32 pltt, u32 key_tex,
+                               u32 key_pal)
 {
     u32 fmt = G3D_TEX_FORMAT(tp);
     u32 w = 8u << ((tp >> 20) & 7u), h = 8u << ((tp >> 23) & 7u);
@@ -554,6 +603,8 @@ static int decode_vram_texture(G3dTexture *out, u32 tp, u32 pltt)
     u32 bytes = g3d_texture_byte_size(fmt, w, h);
     u32 pbytes = pal_bytes_of(fmt);
     u8 *texel, *pal = NULL;
+    u64 hash;
+    u32 i;
     int rc;
 
     texel = (u8 *)malloc(bytes ? bytes : 1u);
@@ -585,8 +636,57 @@ static int decode_vram_texture(G3dTexture *out, u32 tp, u32 pltt)
         }
         copy_slot(BW_VSLOT_TEXPAL, PAL_SPACE, poff, pal, pbytes);
     }
-    rc = g3d_texture_decode(out, fmt, w, h, texel, bytes, pal, pbytes,
-                            (int)((tp >> 29) & 1u));
+    /* what the decode depends on: the bytes and the format bits */
+    hash = hash_bytes(texel, bytes, 0xCBF29CE484222325ull ^ tp);
+    if (pal != NULL) {
+        hash = hash_bytes(pal, pbytes, hash);
+    }
+    for (i = 0; i < g_n_store; i++) {
+        TexStore *s = &g_store[i];
+
+        if (s->key_tex == key_tex && s->key_pal == key_pal) {
+            if (s->hash == hash) {
+                *out = s->tex;           /* borrowed */
+                free(texel);
+                free(pal);
+                return s->ok ? 0 : -1;
+            }
+            g3d_texture_free(&s->tex);   /* changed: decode again */
+            memset(&s->tex, 0, sizeof(s->tex));
+            rc = g3d_texture_decode(&s->tex, fmt, w, h, texel, bytes, pal,
+                                    pbytes, (int)((tp >> 29) & 1u));
+            s->hash = hash;
+            s->ok = rc == 0;
+            *out = s->tex;
+            free(texel);
+            free(pal);
+            return rc;
+        }
+    }
+    if (g_n_store == g_cap_store) {
+        u32 cap = g_cap_store ? g_cap_store * 2u : 32u;
+        TexStore *n = (TexStore *)realloc(g_store, (size_t)cap * sizeof(*n));
+
+        if (n == NULL) {
+            free(texel);
+            free(pal);
+            return -1;
+        }
+        g_store = n;
+        g_cap_store = cap;
+    }
+    {
+        TexStore *s = &g_store[g_n_store++];
+
+        memset(s, 0, sizeof(*s));
+        s->key_tex = key_tex;
+        s->key_pal = key_pal;
+        s->hash = hash;
+        rc = g3d_texture_decode(&s->tex, fmt, w, h, texel, bytes, pal, pbytes,
+                                (int)((tp >> 29) & 1u));
+        s->ok = rc == 0;
+        *out = s->tex;
+    }
     free(texel);
     free(pal);
     return rc;
@@ -625,7 +725,8 @@ static const G3dTexture *lookup(void *user, u32 poly_index)
     memset(e, 0, sizeof(*e));
     e->key_tex = key_tex;
     e->key_pal = key_pal;
-    e->ok = decode_vram_texture(&e->tex, tp, poly->pltt_base) == 0;
+    e->borrowed = 1;
+    e->ok = decode_vram_texture(&e->tex, tp, poly->pltt_base, key_tex, key_pal) == 0;
     return e->ok ? &e->tex : NULL;
 }
 
@@ -634,9 +735,14 @@ static void cache_clear(void)
     u32 i;
 
     for (i = 0; i < g_hw.n_cache; i++) {
-        g3d_texture_free(&g_hw.cache[i].tex);
+        if (!g_hw.cache[i].borrowed) {
+            g3d_texture_free(&g_hw.cache[i].tex);
+        }
     }
     g_hw.n_cache = 0;
+    if (g_n_store > TEX_STORE_MAX) {
+        store_clear();     /* between frames: nothing borrows from it now */
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -735,6 +841,150 @@ static void rear_passes(G3dTarget *t, u32 d3, u32 cc, u32 cd)
 
 static void trace_report(const G3dTarget *t, u32 d3);
 
+/* The snapshot for a GPU renderer (hw3d.h).  Textures are copied once each,
+ * identified by their decoded pixel buffer. */
+static G3dSnapshot g_snap;
+static int g_snap_on;
+static int g_snap_valid;
+static u32 g_snap_cap_ptex;
+
+static int g_skip_raster;
+
+void g3d_hw_skip_raster(int on)
+{
+    g_skip_raster = on != 0;
+}
+
+void g3d_hw_snapshot_enable(int on)
+{
+    g_snap_on = on != 0;
+    if (!g_snap_on) {
+        g_snap_valid = 0;
+    }
+}
+
+const G3dSnapshot *g3d_hw_snapshot(void)
+{
+    return g_snap_on && g_snap_valid ? &g_snap : NULL;
+}
+
+static int snap_grow(void **p, u32 *cap, u32 need, size_t elem)
+{
+    void *n;
+    u32 c;
+
+    if (need <= *cap) {
+        return 0;
+    }
+    c = *cap ? *cap : 64u;
+    while (c < need) {
+        c *= 2u;
+    }
+    n = realloc(*p, (size_t)c * elem);
+    if (n == NULL) {
+        return -1;
+    }
+    *p = n;
+    *cap = c;
+    return 0;
+}
+
+static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
+                           u32 unsup)
+{
+    G3dSnapshot *s = &g_snap;
+    const G3dGeom *g = &g_hw.geom;
+    const u8 **seen = NULL;
+    u32 n_seen = 0, cap_seen = 0, i;
+
+    g_snap_valid = 0;
+    s->n_verts = s->n_idx = s->n_polys = 0;
+    for (i = 0; i < s->n_tex; i++) {
+        free(s->tex[i].rgba);
+        s->tex[i].rgba = NULL;
+    }
+    s->n_tex = 0;
+    if (snap_grow((void **)&s->verts, &s->cap_verts, g->n_verts, sizeof(*s->verts)) != 0
+        || snap_grow((void **)&s->idx, &s->cap_idx, g->n_idx, sizeof(*s->idx)) != 0
+        || snap_grow((void **)&s->polys, &s->cap_polys, g->n_polys, sizeof(*s->polys)) != 0
+        || snap_grow((void **)&s->poly_tex, &g_snap_cap_ptex, g->n_polys, sizeof(*s->poly_tex)) != 0) {
+        return;
+    }
+    if (g->n_verts > 0) {
+        memcpy(s->verts, g->verts, (size_t)g->n_verts * sizeof(*s->verts));
+    }
+    if (g->n_idx > 0) {
+        memcpy(s->idx, g->idx, (size_t)g->n_idx * sizeof(*s->idx));
+    }
+    if (g->n_polys > 0) {
+        memcpy(s->polys, g->polys, (size_t)g->n_polys * sizeof(*s->polys));
+    }
+    s->n_verts = g->n_verts;
+    s->n_idx = g->n_idx;
+    s->n_polys = g->n_polys;
+    for (i = 0; i < g->n_polys; i++) {
+        unsigned long long tt = eidos_prof_begin();
+        const G3dTexture *tx = lookup(NULL, i);
+
+        eidos_prof_end(EIDOS_PROF_TEXDEC, tt);
+        s32 slot = -1;
+
+        if (tx != NULL && tx->rgba != NULL && tx->width > 0 && tx->height > 0) {
+            u32 k;
+
+            for (k = 0; k < n_seen; k++) {
+                if (seen[k] == tx->rgba) {
+                    slot = (s32)k;
+                    break;
+                }
+            }
+            if (slot < 0) {
+                size_t bytes = (size_t)tx->width * tx->height * 4u;
+
+                if (snap_grow((void **)&seen, &cap_seen, n_seen + 1u, sizeof(*seen)) != 0
+                    || snap_grow((void **)&s->tex, &s->cap_tex, s->n_tex + 1u, sizeof(*s->tex)) != 0) {
+                    free(seen);
+                    return;
+                }
+                s->tex[s->n_tex].rgba = (u8 *)malloc(bytes);
+                if (s->tex[s->n_tex].rgba == NULL) {
+                    free(seen);
+                    return;
+                }
+                memcpy(s->tex[s->n_tex].rgba, tx->rgba, bytes);
+                s->tex[s->n_tex].w = tx->width;
+                s->tex[s->n_tex].h = tx->height;
+                seen[n_seen++] = tx->rgba;
+                slot = (s32)s->n_tex++;
+            }
+        }
+        s->poly_tex[i] = slot;
+    }
+    free(seen);
+    s->serial = g_hw.frames;
+    s->disp3dcnt = d3;
+    s->wbuffer = t->wbuffer;
+    s->alpha_ref = t->alpha_ref;
+    s->highlight = t->highlight;
+    s->clear_color = cc;
+    s->clear_depth = cd;
+    memcpy(s->toon, g_hw.toon, sizeof(s->toon));
+    s->unsupported = 0;
+    if (d3 & 0x0020u) {
+        s->unsupported |= G3D_SNAP_EDGE;
+    }
+    if (d3 & 0x0080u) {
+        s->unsupported |= G3D_SNAP_FOG;
+    }
+    if (d3 & 0x4000u) {
+        s->unsupported |= G3D_SNAP_REARBMP;
+    }
+    if (unsup & G3D_HW_UNSUP_SHADOW) {
+        s->unsupported |= G3D_SNAP_SHADOW;
+    }
+    g_snap_valid = 1;
+}
+
 static void render_frame(void)
 {
     G3dTarget *t = &g_hw.front;
@@ -779,7 +1029,25 @@ static void render_frame(void)
         }
     }
 
-    g3d_raster_geom(t, &g_hw.geom, lookup, NULL);
+    if (g_snap_on) {
+        unsigned long long ts = eidos_prof_begin();
+
+        build_snapshot(d3, cc, cd, t, unsup);
+        eidos_prof_end(EIDOS_PROF_SNAP, ts);
+    }
+    if (g_skip_raster && g_snap_on && g_snap_valid) {
+        /* A GPU renderer draws this frame from the snapshot. */
+        cache_clear();
+        g_hw.unsup_frame = unsup;
+        g_hw.have_frame = 1;
+        return;
+    }
+    {
+        unsigned long long tr = eidos_prof_begin();
+
+        g3d_raster_geom(t, &g_hw.geom, lookup, NULL);
+        eidos_prof_end(EIDOS_PROF_RASTER, tr);
+    }
     if (g_tr.on) {
         trace_report(t, d3);
     }
@@ -931,7 +1199,17 @@ static void set_color(u16 c)
     g_hw.gx.cb = c5to8((u32)c >> 10);
 }
 
+static void exec_cmd(u32 op, const u32 *par);
+
 static void exec(u32 op, const u32 *par)
+{
+    unsigned long long t0 = eidos_prof_begin();
+
+    exec_cmd(op, par);
+    eidos_prof_end(EIDOS_PROF_GEOM, t0);
+}
+
+static void exec_cmd(u32 op, const u32 *par)
 {
     G3dMtxStack *st = &g_hw.gx.mtx;
     u32 n = g3d_gx_param_count(op);

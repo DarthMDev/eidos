@@ -102,6 +102,14 @@ void bw_thread_join(BwThread *t)
     }
 }
 
+unsigned bw_cpu_count(void)
+{
+    SYSTEM_INFO si;
+
+    GetSystemInfo(&si);
+    return si.dwNumberOfProcessors > 0 ? (unsigned)si.dwNumberOfProcessors : 1u;
+}
+
 unsigned long long bw_clock_ns(void)
 {
     LARGE_INTEGER f, c;
@@ -116,6 +124,7 @@ unsigned long long bw_clock_ns(void)
 #else /* POSIX */
 
 #include <pthread.h>
+#include <unistd.h>
 #include <time.h>
 
 struct BwMutex  { pthread_mutex_t mx; };
@@ -196,6 +205,13 @@ void bw_thread_join(BwThread *t)
         pthread_join(t->th, NULL);
         free(t);
     }
+}
+
+unsigned bw_cpu_count(void)
+{
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+
+    return n > 0 ? (unsigned)n : 1u;
 }
 
 unsigned long long bw_clock_ns(void)

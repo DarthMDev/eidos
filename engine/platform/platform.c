@@ -1061,6 +1061,12 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
         Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
         const char *title = cfg->title != NULL ? cfg->title : "eidos";
 
+        if (getenv("EIDOS_WINDOW_HIDDEN") != NULL) {
+            /* For unattended checks: a real window system and GPU, no window
+             * on the desktop. */
+            flags = (flags & ~(Uint32)SDL_WINDOW_SHOWN) | SDL_WINDOW_HIDDEN;
+        }
+
         if (try_gl) {
             p->window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED,
                                          SDL_WINDOWPOS_CENTERED, init_w,
@@ -1378,6 +1384,46 @@ void eidos_platform_present_nn(EidosPlatform *p, const u8 *top, int n_top,
 
     p->presented = 1;
     render(p);
+}
+
+int eidos_platform_gpu3d(const EidosPlatform *p)
+{
+    return p != NULL && p->gl != NULL && eidos_gl_has3d(p->gl);
+}
+
+int eidos_platform_read3d_1x(EidosPlatform *p, const struct G3dSnapshot *snap,
+                             u8 *out, int async)
+{
+    if (!eidos_platform_gpu3d(p)) {
+        return -1;
+    }
+    return eidos_gl_read3d_1x(p->gl, snap, out, async);
+}
+
+int eidos_platform_set_3d(EidosPlatform *p, int screen, const u8 *behind,
+                          const struct G3dSnapshot *snap, int n, int bmode,
+                          float bfac, int dilate)
+{
+    if (!eidos_platform_gpu3d(p)) {
+        return -1;
+    }
+    if (screen < 0 || behind == NULL || snap == NULL) {
+        eidos_gl_set_3d(p->gl, -1, NULL, 0, 0, 0, 0.f, 0);
+        return 0;
+    }
+    if (n < 1) {
+        n = 1;
+    }
+    if (n > 20) {
+        n = 20;
+    }
+    if (eidos_gl_render3d(p->gl, snap, (int)SCREEN_W * n, (int)SCREEN_H * n) != 0) {
+        eidos_gl_set_3d(p->gl, -1, NULL, 0, 0, 0, 0.f, 0);
+        return -1;
+    }
+    eidos_gl_set_3d(p->gl, screen, behind, (int)SCREEN_W, (int)SCREEN_H, bmode,
+                    bfac, dilate);
+    return 0;
 }
 
 void eidos_platform_capture_begin(EidosPlatform *p)

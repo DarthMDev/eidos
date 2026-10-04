@@ -1007,20 +1007,87 @@ static void compose_px(const G2dFrameDesc *desc, const PlanStep *plan,
     }
 }
 
+/* The rows [y0, y1) of a frame: independent of every other row, so bands of
+ * them run on the worker pool. */
+typedef struct ComposeCtx {
+    const G2dFrameDesc *desc;
+    const PlanStep *plan;
+    u32 np, width, height, n3, w_out;
+    const G2dLayer3d *l3;
+    u8 *rgba;
+} ComposeCtx;
+
+static void compose_rows(const ComposeCtx *c, u32 y0, u32 y1)
+{
+    const G2dFrameDesc *desc = c->desc;
+    u32 x, y, sx, sy;
+    u32 n3 = c->n3, w_out = c->w_out;
+
+    for (y = y0; y < y1; y++) {
+        for (x = 0; x < c->width; x++) {
+            u8 base[4], base6[3];
+            int have_base = 0;
+
+            if (n3 == 1u) {
+                compose_px(desc, c->plan, c->np, x, y,
+                           l3_src(c->l3, x, y, 0, 0, 1u),
+                           c->rgba + ((size_t)y * w_out + x) * 4u,
+                           desc->out6 != NULL
+                               ? desc->out6 + ((size_t)y * w_out + x) * 3u
+                               : NULL);
+                continue;
+            }
+            /* The 2D result of this DS pixel is shared by every sub-pixel
+             * the 3D layer leaves transparent. */
+            for (sy = 0; sy < n3; sy++) {
+                for (sx = 0; sx < n3; sx++) {
+                    size_t at = (size_t)(y * n3 + sy) * w_out + (x * n3 + sx);
+                    const u8 *p3 = l3_src(c->l3, x, y, sx, sy, n3);
+                    u8 *out = c->rgba + at * 4u;
+                    u8 *o6 = desc->out6 != NULL ? desc->out6 + at * 3u : NULL;
+
+                    if (p3 != NULL) {
+                        compose_px(desc, c->plan, c->np, x, y, p3, out, o6);
+                        continue;
+                    }
+                    if (!have_base) {
+                        compose_px(desc, c->plan, c->np, x, y, NULL, base,
+                                   base6);
+                        have_base = 1;
+                    }
+                    memcpy(out, base, 4u);
+                    if (o6 != NULL) {
+                        memcpy(o6, base6, 3u);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#define COMPOSE_BANDS 4u
+
+static void compose_band(void *arg, unsigned band)
+{
+    const ComposeCtx *c = (const ComposeCtx *)arg;
+    u32 y0 = c->height * band / COMPOSE_BANDS;
+    u32 y1 = c->height * (band + 1u) / COMPOSE_BANDS;
+
+    compose_rows(c, y0, y1);
+}
+
 void g2d_frame_compose_desc_scaled(const G2dFrameDesc *desc, u32 width,
                                    u32 height, u32 scale, u8 *rgba)
 {
-    u32 x, y, sx, sy;
     u32 np = 0;
     u32 n3 = (scale == 0) ? 1u : scale;
-    u32 w_out;
     PlanStep *plan;
     const G2dLayer3d *l3 = desc->g3d;
+    ComposeCtx ctx;
 
     if (l3 != NULL && l3->enabled && (l3->scale == 0 ? 1u : l3->scale) != n3) {
         return;   /* a layer rendered at another scale cannot be mixed */
     }
-    w_out = width * n3;
 
     /* Each layer appears in at most one step; a raster or the 3D layer
      * replaces the BG and affine steps of its slot. */
@@ -1032,43 +1099,19 @@ void g2d_frame_compose_desc_scaled(const G2dFrameDesc *desc, u32 width,
     }
     np = plan_build(desc, plan);
 
-    for (y = 0; y < height; y++) {
-        for (x = 0; x < width; x++) {
-            u8 base[4], base6[3];
-            int have_base = 0;
-
-            if (n3 == 1u) {
-                compose_px(desc, plan, np, x, y, l3_src(l3, x, y, 0, 0, 1u),
-                           rgba + ((size_t)y * w_out + x) * 4u,
-                           desc->out6 != NULL
-                               ? desc->out6 + ((size_t)y * w_out + x) * 3u
-                               : NULL);
-                continue;
-            }
-            /* The 2D result of this DS pixel is shared by every sub-pixel
-             * the 3D layer leaves transparent. */
-            for (sy = 0; sy < n3; sy++) {
-                for (sx = 0; sx < n3; sx++) {
-                    size_t at = (size_t)(y * n3 + sy) * w_out + (x * n3 + sx);
-                    const u8 *p3 = l3_src(l3, x, y, sx, sy, n3);
-                    u8 *out = rgba + at * 4u;
-                    u8 *o6 = desc->out6 != NULL ? desc->out6 + at * 3u : NULL;
-
-                    if (p3 != NULL) {
-                        compose_px(desc, plan, np, x, y, p3, out, o6);
-                        continue;
-                    }
-                    if (!have_base) {
-                        compose_px(desc, plan, np, x, y, NULL, base, base6);
-                        have_base = 1;
-                    }
-                    memcpy(out, base, 4u);
-                    if (o6 != NULL) {
-                        memcpy(o6, base6, 3u);
-                    }
-                }
-            }
-        }
+    ctx.desc = desc;
+    ctx.plan = plan;
+    ctx.np = np;
+    ctx.width = width;
+    ctx.height = height;
+    ctx.n3 = n3;
+    ctx.w_out = width * n3;
+    ctx.l3 = l3;
+    ctx.rgba = rgba;
+    if (height >= COMPOSE_BANDS * 8u) {
+        g2d_par_run(COMPOSE_BANDS, compose_band, &ctx);
+    } else {
+        compose_rows(&ctx, 0, height);
     }
     free(plan);
 }

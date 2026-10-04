@@ -253,6 +253,12 @@ typedef struct BootRun {
     u8 *hi_top;        /* the window's frames, 256n x 192n               */
     u8 *hi_bottom;
     u32 hi_n;          /* the n those buffers are sized for              */
+    u8 *behind;        /* the 3D screen with its 3D layer off, 256x192   */
+    int gpu3d_ok;      /* the last frame could use the GPU rasteriser    */
+    u8 *frame1x;       /* the GPU's 3D frame at DS size (read back)      */
+    int frame1x_valid; /* the GPU drew this frame's 3D (frame1x or sentinel) */
+    u8 *sentinel;      /* a 3D layer of one unlikely colour, alpha 255   */
+    int gpu_real;      /* this frame's 3D layer is the real read-back frame */
     u32 hi_sn[2];      /* the n each screen was written at (top, bottom) */
     EidosPlatform *plat;
     int want_window;   /* --window: open one at the first frame          */
@@ -412,6 +418,30 @@ static void boot_capture_step(BootRun *run)
     (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom, unsupported);
 }
 
+#if EIDOS_BOOT_SDL
+/* The GPU's 3D frame at DS size, read back now, or NULL when the CPU drew it. */
+static const u8 *boot_gpu_frame(BootRun *run)
+{
+    const G3dSnapshot *snap;
+
+    if (!run->frame1x_valid || run->plat == NULL || run->frame1x == NULL) {
+        return NULL;
+    }
+    snap = g3d_hw_snapshot();
+    if (snap == NULL
+        || eidos_platform_read3d_1x(run->plat, snap, run->frame1x, 0) < 0) {
+        return NULL;
+    }
+    return run->frame1x;
+}
+#else
+static const u8 *boot_gpu_frame(BootRun *run)
+{
+    (void)run;
+    return NULL;
+}
+#endif
+
 /* Both screens as the hardware state has them now, saved for frame `n`. */
 static void boot_screenshot(BootRun *run, u64 n)
 {
@@ -419,6 +449,15 @@ static void boot_screenshot(BootRun *run, u64 n)
     char path[1024];
 
     boot_ensure_screens(run);
+    {
+        const u8 *gpu3 = boot_gpu_frame(run);
+
+        if (gpu3 != NULL) {
+            /* The GPU drew the 3D; its DS-size frame is the layer. */
+            (void)g2d_hw_render_dsmem(gpu3, run->top, run->bottom, unsupported);
+            goto shot_composed;
+        }
+    }
     if (g3d_hw_frame_scale() > 1u) {
         /* A window runs the 3D at n times the DS size: render at n, then
          * box-downsample to the 256x192 the PNG writer takes. */
@@ -436,6 +475,7 @@ static void boot_screenshot(BootRun *run, u64 n)
     } else {
         (void)g2d_hw_render_dsmem(g3d_hw_frame(), run->top, run->bottom, unsupported);
     }
+shot_composed:
     snprintf(path, sizeof(path), "%s/eidos_boot_frame%llu.png", g_shot_dir,
              (unsigned long long)n);
     if (write_screens_png(path, run->top, run->bottom) == 0) {
@@ -533,6 +573,62 @@ static void boot_vblank(void *user)
 static u64 g_render_ns;   /* this frame's 3D + 2D time, for the profiler */
 
 #if EIDOS_BOOT_SDL
+/*
+ * The GPU 3D layer for this frame, when the main engine shows one and the
+ * snapshot is something the GPU path can draw.  The screen composed with the
+ * 3D layer off goes to the presenter beside the one the CPU composed with its
+ * own 1x 3D; the presenter shows the GPU's frame where the two differ.
+ */
+static void boot_gpu3d(BootRun *run, int behind_done)
+{
+    const G3dSnapshot *snap;
+    u32 dispcnt, bright;
+    int main_on_top, screen;
+    u32 bmode;
+
+    run->gpu3d_ok = 0;
+    if (run->plat == NULL || !eidos_platform_gpu3d(run->plat)) {
+        return;
+    }
+    snap = g3d_hw_snapshot();
+    dispcnt = bw_io_read32(0x04000000u);
+    {
+        static unsigned dn;
+
+        if (eidos_prof_on && (++dn % 250u) == 0u) {
+            fprintf(stderr, "boot_gpu3d: snap=%d unsup=%u dispcnt=%08X behind_done=%d\n",
+                    snap != NULL, snap != NULL ? snap->unsupported : 0u,
+                    (unsigned)dispcnt, behind_done);
+        }
+    }
+    if (snap == NULL || snap->unsupported != 0u || (dispcnt & 0x8u) == 0u
+        || (dispcnt & 0x100u) == 0u || ((dispcnt >> 16) & 3u) != 1u) {
+        (void)eidos_platform_set_3d(run->plat, -1, NULL, NULL, 1, 0, 0.f, 0);
+        run->gpu3d_ok = snap != NULL && snap->unsupported == 0u;
+        return;
+    }
+    if (!behind_done || run->behind == NULL) {
+        return;     /* the compositor did not make the 3D-off screen */
+    }
+    main_on_top = (bw_io_read16(0x04000304u) & 0x8000u) != 0;
+    screen = main_on_top ? 0 : 1;
+    bright = bw_io_read16(0x0400006Cu);
+    bmode = (bright >> 14) & 3u;
+    {
+        u32 f = bright & 0x1Fu;
+
+        if (f > 16u) {
+            f = 16u;
+        }
+        if (eidos_platform_set_3d(run->plat, screen, run->behind, snap,
+                                  eidos_settings_internal_scale(),
+                                  bmode == 1u || bmode == 2u ? (int)bmode : 0,
+                                  (float)f / 16.f, run->gpu_real) == 0) {
+            run->gpu3d_ok = 1;
+        }
+    }
+}
+
 static void boot_render(void *user, u8 *top, u8 *bottom)
 {
     u32 unsupported[2];
@@ -543,19 +639,80 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
 
     (void)top;
     (void)bottom;
-    /* The 3D renders at the scale set before its swap, so a change shows
-     * one frame late; the 2D follows the 3D frame's own n. */
-    /* The 3D is software-rasterised: its cost grows with n squared (about
-     * 360 ms a frame at 6x), so it is held at BOOT_CPU_3D_MAX until the GPU
-     * rasteriser exists.  The 2D is not affected: it stays DS-sized and the
-     * GPU presenter scales it to any window. */
+    /*
+     * The 3D renders at the scale set before its swap, so a change shows one
+     * frame late.  With the GPU rasteriser the CPU renders the 3D at 1x only
+     * (the 2D layer priorities and the capture need it) and the GPU draws the
+     * same polygons at the chosen resolution.  Without it, or for a frame that
+     * uses a feature the GPU path lacks, the CPU rasteriser draws the frame at
+     * the chosen scale, held at BOOT_CPU_3D_MAX: its cost grows with n
+     * squared (about 360 ms a frame at 6x).
+     */
     {
         u32 want = (u32)eidos_settings_internal_scale();
+        int gpu = run->plat != NULL && eidos_platform_gpu3d(run->plat);
+        int skip = gpu && run->gpu3d_ok;
 
-        g3d_hw_set_scale(want > BOOT_CPU_3D_MAX ? BOOT_CPU_3D_MAX : want);
+        g3d_hw_snapshot_enable(gpu);
+        g3d_hw_skip_raster(skip);
+        if (skip) {
+            g3d_hw_set_scale(1u);
+        } else {
+            g3d_hw_set_scale(want > BOOT_CPU_3D_MAX ? BOOT_CPU_3D_MAX : want);
+        }
     }
     rgba3d = g3d_hw_frame();
     n = g3d_hw_frame_scale();
+    run->frame1x_valid = 0;
+    run->gpu_real = 0;
+    if (run->plat != NULL && eidos_platform_gpu3d(run->plat)) {
+        const G3dSnapshot *snap = g3d_hw_snapshot();
+
+        if (snap != NULL && snap->unsupported == 0u) {
+            u32 dispcnt = bw_io_read32(0x04000000u);
+            u32 cap = bw_io_read32(G2D_HW_DISPCAPCNT);
+            int main3d = (dispcnt & 0x8u) && (dispcnt & 0x100u);
+            int graphics = ((dispcnt >> 16) & 3u) == 1u;
+
+            if (run->frame1x == NULL) {
+                run->frame1x = (u8 *)calloc(1, (size_t)256 * 192 * 4);
+            }
+            if (cap & 0x80000000u) {
+                /* The display capture reads the 3D layer: it needs the real
+                 * frame at DS size.  When that frame only feeds the capture
+                 * (the screen shows VRAM) the read does not wait for the GPU
+                 * and arrives a frame late. */
+                if (run->frame1x != NULL
+                    && eidos_platform_read3d_1x(run->plat, snap, run->frame1x,
+                                                !(main3d && graphics)) >= 0) {
+                    rgba3d = run->frame1x;
+                    n = 1u;
+                    run->frame1x_valid = 1;
+                    run->gpu_real = 1;
+                }
+            } else {
+                /* The GPU draws the 3D layer itself; the 2D compositor only
+                 * needs to know where it shows, so its 3D layer is one
+                 * opaque unlikely colour. */
+                if (run->sentinel == NULL) {
+                    u32 k;
+
+                    run->sentinel = (u8 *)malloc((size_t)256 * 192 * 4);
+                    for (k = 0; run->sentinel != NULL && k < 256u * 192u; k++) {
+                        run->sentinel[k * 4u + 0] = 84;
+                        run->sentinel[k * 4u + 1] = 168;
+                        run->sentinel[k * 4u + 2] = 52;
+                        run->sentinel[k * 4u + 3] = 255;
+                    }
+                }
+                if (run->sentinel != NULL) {
+                    rgba3d = run->sentinel;
+                    n = 1u;
+                    run->frame1x_valid = 1;
+                }
+            }
+        }
+    }
     eidos_prof_end(EIDOS_PROF_G3D, t0);
     if (run->hi_n != n) {
         size_t bytes = (size_t)256 * n * 192 * n * 4;
@@ -570,9 +727,24 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
         run->hi_n = n;
     }
     run->hi_sn[0] = run->hi_sn[1] = 1u;
-    (void)g2d_hw_render_dsmem_adaptive(n, rgba3d, run->hi_top, run->hi_bottom,
-                                       unsupported, run->hi_sn);
+    if (run->behind == NULL && run->plat != NULL && eidos_platform_gpu3d(run->plat)) {
+        run->behind = (u8 *)calloc(1, (size_t)256 * 192 * 4);
+    }
+    {
+        int behind_done = 0;
+
+        (void)g2d_hw_render_dsmem_adaptive_ex(
+            n, rgba3d, run->hi_top, run->hi_bottom, unsupported, run->hi_sn,
+            run->frame1x_valid ? run->behind : NULL, &behind_done);
+        {
+            unsigned long long t3 = eidos_prof_begin();
+
+            boot_gpu3d(run, behind_done);
+            eidos_prof_end(EIDOS_PROF_BOOT3D, t3);
+        }
+    }
     g_render_ns = eidos_prof_on ? bw_clock_ns() - t0 : 0;
+    eidos_prof_end(EIDOS_PROF_RENDER, t0);
 }
 
 #endif
