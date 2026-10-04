@@ -46,6 +46,9 @@ struct EidosPlatform {
     int display_mode;
     int win_x, win_y;               /* windowed position, kept across fullscreen */
     int presented;                  /* a frame has been drawn at least once  */
+    SDL_threadID owner;             /* the thread that made the window and GL context */
+    int pend_display, pend_layout;  /* a change asked for from another thread  */
+    int pd_mode, pd_w, pd_h, pl_layout, pl_swap, pl_gap;
     EidosKeyBinding *keymap_own;    /* set by eidos_platform_set_bindings    */
     EidosPadBinding *padmap_own;
     int swallow_sc;                 /* a key held after Alt+Enter, not a press */
@@ -881,7 +884,7 @@ int eidos_platform_display_mode(const EidosPlatform *p)
     return p == NULL ? 0 : p->display_mode;
 }
 
-int eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
+static int set_display_now(EidosPlatform *p, int mode, int win_w,
                                int win_h)
 {
     u32 w, h;
@@ -933,7 +936,7 @@ int eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
     return rc;
 }
 
-int eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap)
+static int set_layout_now(EidosPlatform *p, int layout, int swap, int gap)
 {
     u32 ow, oh, nw, nh;
 
@@ -953,6 +956,40 @@ int eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap)
         render(p);
     }
     return 0;
+}
+
+/* The window and the GL context belong to the thread that made them (the
+ * frame thread).  The settings screen runs on a game thread, so a change it
+ * asks for is stored and applied by the owner in eidos_platform_pump. */
+int eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
+                               int win_h)
+{
+    if (p == NULL || p->window == NULL) {
+        return -1;
+    }
+    if (p->owner != 0 && SDL_ThreadID() != p->owner) {
+        p->pd_mode = mode;
+        p->pd_w = win_w;
+        p->pd_h = win_h;
+        p->pend_display = 1;
+        return 0;
+    }
+    return set_display_now(p, mode, win_w, win_h);
+}
+
+int eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap)
+{
+    if (p == NULL) {
+        return -1;
+    }
+    if (p->owner != 0 && SDL_ThreadID() != p->owner) {
+        p->pl_layout = layout;
+        p->pl_swap = swap;
+        p->pl_gap = gap;
+        p->pend_layout = 1;
+        return 0;
+    }
+    return set_layout_now(p, layout, swap, gap);
 }
 
 int eidos_platform_set_bindings(EidosPlatform *p, const EidosKeyBinding *keys,
@@ -1010,6 +1047,7 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     if (p == NULL) {
         return -1;
     }
+    p->owner = SDL_ThreadID();
     p->tex_n[0] = p->tex_n[1] = 1;
     p->layout = cfg->layout == EIDOS_LAYOUT_SIDE_BY_SIDE
                 ? EIDOS_LAYOUT_SIDE_BY_SIDE : EIDOS_LAYOUT_STACKED;
@@ -1219,6 +1257,14 @@ int eidos_platform_pump(EidosPlatform *p)
 
     if (p == NULL) {
         return 0;
+    }
+    if (p->pend_display) {
+        p->pend_display = 0;
+        (void)set_display_now(p, p->pd_mode, p->pd_w, p->pd_h);
+    }
+    if (p->pend_layout) {
+        p->pend_layout = 0;
+        (void)set_layout_now(p, p->pl_layout, p->pl_swap, p->pl_gap);
     }
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
