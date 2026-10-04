@@ -122,7 +122,6 @@ extern void func_02040C14(u32, u32, u32, u32);
 extern void func_02041B6C(u32);
 extern void func_020419E4(void);
 extern void func_020450C8(void);
-extern void func_02046788(void);
 extern void func_0203F9B4(void);
 
 extern void *func_020490F4(u32, u32);
@@ -559,7 +558,6 @@ static void screen_free(OptWork *w)
     func_0204361C();
     func_02030EAC(w->vtask);
     func_02031140(w->tcb);
-    func_02046788();
     func_020450C8();
     func_0203F9B4();
 }
