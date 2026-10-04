@@ -112,9 +112,9 @@ static void test_geometry(void)
     eidos_layout_place(EIDOS_LAYOUT_VERTICAL, 0, 0, &pl);
     {
         static const int fw[][3] = { { 256, 384, 1 }, { 258, 387, 2 },
-                                     { 512, 768, 2 }, { 768, 1152, 3 },
-                                     { 760, 1152, 3 }, { 1920, 1080, 3 },
-                                     { 3840, 2160, 3 }, { 6000, 6000, 3 },
+                                     { 512, 768, 2 }, { 768, 1152, 2 },
+                                     { 760, 1152, 2 }, { 1920, 1080, 2 },
+                                     { 3840, 2160, 2 }, { 6000, 6000, 2 },
                                      { 100, 100, 1 } };
 
         for (i = 0; i < (int)(sizeof fw / sizeof fw[0]); i++) {
@@ -123,7 +123,7 @@ static void test_geometry(void)
         }
         eidos_display_viewport(&pl, 3840, 2160, &vp);
         BW_CHECK_EQ("fit N clamps to max", eidos_resolution_fit(&vp, 2), 2);
-        BW_CHECK_EQ("fit N capped at 3", eidos_resolution_fit(&vp, 6), 3);
+        BW_CHECK_EQ("fit N capped at 2", eidos_resolution_fit(&vp, 6), 2);
         BW_CHECK_EQ("fit N: max 1", eidos_resolution_fit(&vp, 0), 1);
     }
 }
@@ -570,7 +570,7 @@ int main(void)
         BW_CHECK_EQ("fit at 512x768", v, 2);
         eidos_settings_set(EIDOS_OPT_DISPLAY_WIDTH, 1024);
         eidos_settings_set(EIDOS_OPT_DISPLAY_HEIGHT, 1536);
-        BW_CHECK_EQ("fit at 1024x1536 capped", eidos_settings_internal_scale(), 3);
+        BW_CHECK_EQ("fit at 1024x1536 capped", eidos_settings_internal_scale(), 2);
         eidos_settings_revert();
     }
     eidos_settings_set(EIDOS_OPT_SOUND_VOLUME, 50);

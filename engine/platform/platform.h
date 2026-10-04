@@ -152,7 +152,7 @@ const EidosPadBinding *eidos_default_padmap(u32 *count);
 /* "Fit" never picks more than this: the per-frame cost grows with N^2, and
  * a maximized window would otherwise render at 6x.  A user who wants more
  * sets the explicit N. */
-#define EIDOS_RESOLUTION_FIT_CAP   3
+#define EIDOS_RESOLUTION_FIT_CAP   2
 
 /*
  * Screen geometry, as data and without SDL.  A placement says where each of
