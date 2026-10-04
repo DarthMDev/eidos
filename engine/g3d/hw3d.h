@@ -106,6 +106,20 @@ void g3d_hw_refresh(void);
  * first swap.
  */
 const u8 *g3d_hw_frame(void);
+/*
+ * Internal resolution.  g3d_hw_set_scale(N) makes every following SWAP_BUFFERS
+ * render at (256*N) x (192*N): the viewport and screen coordinates scale
+ * with the target (20.4 subpixels kept), texture, colour, depth, alpha,
+ * fog, edge marking and anti-aliasing run per high-resolution pixel (edge
+ * marking and anti-aliasing keep a one-pixel width, so thinner on screen).
+ * g3d_hw_frame() then returns that buffer, g3d_hw_frame_scale() its N (a
+ * frame already rendered keeps its own N until the next swap).  The default
+ * is 1, bit-identical to the 256x192 output.  Pass the N the 2D side uses
+ * (g2d_hw_render_dsmem_scaled).  The setting survives g3d_hw_reset.
+ */
+void g3d_hw_set_scale(u32 scale);
+u32  g3d_hw_scale(void);
+u32  g3d_hw_frame_scale(void);
 u32       g3d_hw_frame_count(void);
 u32       g3d_hw_unsupported(void);
 

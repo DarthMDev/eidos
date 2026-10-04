@@ -791,6 +791,13 @@ typedef struct G2dLayer3d {
     u32 bg_index;      /* 0..3: the hardware layer number it occupies */
     int enabled;
     s32 hofs;          /* BG0HOFS, 0..511 */
+    /*
+     * 0 or 1: rgba is width*height pixels.  N > 1: rgba holds
+     * (width*N) x (height*N) pixels, N x N per DS pixel, and is only
+     * accepted by g2d_frame_compose_desc_scaled with the same scale.
+     * width, height, hofs and the window stay in DS pixels.
+     */
+    u32 scale;
 } G2dLayer3d;
 
 /*
@@ -839,6 +846,18 @@ typedef struct G2dFrameDesc {
 
 void g2d_frame_compose_desc(const G2dFrameDesc *desc, u32 width, u32 height,
                             u8 *rgba);
+
+/*
+ * The same composition into a (width*scale) x (height*scale) buffer
+ * (desc->out6, when set, is that size too).  Every 2D layer, the windows
+ * and the blend registers work in DS pixels, so each DS pixel's 2D result
+ * is one scale x scale block; the 3D layer (G2dLayer3d.scale == scale)
+ * contributes its own pixel per output pixel and the priority walk, the 3D
+ * blend and the colour effects run on those.  scale 0 or 1 is
+ * g2d_frame_compose_desc.
+ */
+void g2d_frame_compose_desc_scaled(const G2dFrameDesc *desc, u32 width,
+                                   u32 height, u32 scale, u8 *rgba);
 
 /*
  * One opaque contributor at one pixel.  `layer` is the OBJ entry's index
@@ -998,6 +1017,17 @@ void g2d_hw_state_from_dsmem(G2dHwState *hw);
 /* g2d_hw_render over g2d_hw_state_from_dsmem. */
 int g2d_hw_render_dsmem(const u8 *rgba3d, u8 *top, u8 *bottom,
                         u32 unsupported[2]);
+
+/*
+ * Internal resolution: see the contract at the top of hwcompose.c.  `scale`
+ * N >= 1 (0 means 1); top and bottom hold 256N x 192N RGBA pixels and
+ * rgba3d, when not NULL, is the 3D frame rendered at the same N.
+ */
+void g2d_hw_box_downsample(const u8 *src, u32 scale, u8 *dst);
+int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
+                         u8 *top, u8 *bottom, u32 unsupported[2]);
+int g2d_hw_render_dsmem_scaled(u32 scale, const u8 *rgba3d, u8 *top,
+                               u8 *bottom, u32 unsupported[2]);
 
 /* ------------------------------------------------------------------ */
 /* Rig blocks (a/0/0/4 and its siblings)                               */
