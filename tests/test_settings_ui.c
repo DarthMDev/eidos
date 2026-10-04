@@ -58,17 +58,17 @@ int main(void)
     eidos_sui_input(LEFT, LEFT);
     BW_CHECK_EQ("mode back", eidos_settings_get(EIDOS_OPT_DISPLAY_MODE), 0);
 
-    /* Down moves, resolution steps, fit text. */
+    /* Down moves, resolution steps, 1x default. */
     eidos_sui_input(0, 0);
     eidos_sui_input(DOWN, DOWN);
     BW_CHECK_EQ("cursor moved", eidos_sui_cursor_row(), 2);
     row(2);
     BW_CHECK_EQ("resolution label", strcmp(g_label, "Resolution"), 0);
-    BW_CHECK_EQ("resolution fit", strcmp(g_value, "Fit"), 0);
+    BW_CHECK_EQ("resolution 1x default", strcmp(g_value, "1x"), 0);
     eidos_sui_input(0, 0);
     eidos_sui_input(RIGHT, RIGHT);
     row(2);
-    BW_CHECK_EQ("resolution 1x", strcmp(g_value, "1x"), 0);
+    BW_CHECK_EQ("resolution 2x", strcmp(g_value, "2x"), 0);
 
     /* Revert row undoes it. */
     eidos_sui_input(0, 0);
@@ -77,7 +77,7 @@ int main(void)
     BW_CHECK_EQ("revert row", strcmp(g_label, "Revert changes"), 0);
     eidos_sui_input(0, 0);
     eidos_sui_input(A, A);
-    BW_CHECK_EQ("reverted", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
+    BW_CHECK_EQ("reverted", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
     BW_CHECK_EQ("clean", eidos_settings_dirty(), 0);
 
     /* Tabs wrap with L and R. */

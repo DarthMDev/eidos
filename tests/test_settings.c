@@ -114,7 +114,7 @@ static void test_geometry(void)
         static const int fw[][3] = { { 256, 384, 1 }, { 258, 387, 2 },
                                      { 512, 768, 2 }, { 768, 1152, 3 },
                                      { 760, 1152, 3 }, { 1920, 1080, 3 },
-                                     { 3840, 2160, 6 }, { 6000, 6000, 6 },
+                                     { 3840, 2160, 3 }, { 6000, 6000, 3 },
                                      { 100, 100, 1 } };
 
         for (i = 0; i < (int)(sizeof fw / sizeof fw[0]); i++) {
@@ -122,8 +122,61 @@ static void test_geometry(void)
             BW_CHECK_EQ("fit N", eidos_resolution_fit(&vp, 6), fw[i][2]);
         }
         eidos_display_viewport(&pl, 3840, 2160, &vp);
-        BW_CHECK_EQ("fit N clamps to max", eidos_resolution_fit(&vp, 4), 4);
+        BW_CHECK_EQ("fit N clamps to max", eidos_resolution_fit(&vp, 2), 2);
+        BW_CHECK_EQ("fit N capped at 3", eidos_resolution_fit(&vp, 6), 3);
         BW_CHECK_EQ("fit N: max 1", eidos_resolution_fit(&vp, 0), 1);
+    }
+}
+
+static void test_reshape(void)
+{
+    EidosScreenPlacement pl;
+    int w, h;
+
+    eidos_layout_place(EIDOS_LAYOUT_HORIZONTAL, 0, 0, &pl);
+    eidos_window_reshape(256, 384, &pl, 0, 0, &w, &h);
+    BW_CHECK_EQ("tall -> wide, same area", w == 512 && h == 192, 1);
+    eidos_window_reshape(768, 1152, &pl, 0, 0, &w, &h);
+    BW_CHECK_EQ("3x tall -> 3x wide", w == 1536 && h == 576, 1);
+    eidos_layout_place(EIDOS_LAYOUT_VERTICAL, 0, 0, &pl);
+    eidos_window_reshape(1536, 576, &pl, 0, 0, &w, &h);
+    BW_CHECK_EQ("wide -> tall", w == 768 && h == 1152, 1);
+    /* Clamped to the work area, aspect kept. */
+    eidos_window_reshape(1536, 576, &pl, 800, 600, &w, &h);
+    BW_CHECK_EQ("clamp height", h == 600 && w == 400, 1);
+    eidos_layout_place(EIDOS_LAYOUT_HORIZONTAL, 0, 0, &pl);
+    eidos_window_reshape(768, 1152, &pl, 1000, 2000, &w, &h);
+    BW_CHECK_EQ("clamp width", w == 1000 && h == 375, 1);
+    eidos_window_reshape(0, 0, &pl, 0, 0, &w, &h);
+    BW_CHECK_EQ("degenerate stays positive", w >= 1 && h >= 1, 1);
+}
+
+/* The window takes the new arrangement's shape; fullscreen never leaves a
+ * real (mode-switching) fullscreen flag.  Under the dummy driver the window
+ * calls still run, so the size is observable. */
+static void test_window_follows_layout(EidosPlatform *p)
+{
+    int w = 0, h = 0;
+    SDL_Window *win = SDL_GetWindowFromID(1);
+
+    eidos_platform_set_layout(p, EIDOS_LAYOUT_STACKED, 0, 0);
+    eidos_platform_set_display(p, EIDOS_DISPLAY_WINDOWED, 400, 600);
+    eidos_platform_set_layout(p, EIDOS_LAYOUT_SIDE_BY_SIDE, 0, 0);
+    if (win != NULL) {
+        SDL_GetWindowSize(win, &w, &h);
+        BW_CHECK_EQ("window turns wide", w > h, 1);
+        BW_CHECK_EQ("settings width follows",
+                    eidos_settings_get(EIDOS_OPT_DISPLAY_WIDTH), w);
+        BW_CHECK_EQ("settings height follows",
+                    eidos_settings_get(EIDOS_OPT_DISPLAY_HEIGHT), h);
+        eidos_platform_set_layout(p, EIDOS_LAYOUT_STACKED, 0, 0);
+        SDL_GetWindowSize(win, &w, &h);
+        BW_CHECK_EQ("window turns tall", h > w, 1);
+        eidos_platform_set_display(p, EIDOS_DISPLAY_FULLSCREEN, 0, 0);
+        BW_CHECK_EQ("no real fullscreen flag",
+                    (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP) ==
+                        SDL_WINDOW_FULLSCREEN, 0);
+        eidos_platform_set_display(p, EIDOS_DISPLAY_WINDOWED, 0, 0);
     }
 }
 
@@ -355,8 +408,8 @@ static void test_file(void)
     eidos_settings_set_path(INI);
     remove(INI);
     BW_CHECK_EQ("no file -> defaults", eidos_settings_load(), 1);
-    BW_CHECK_EQ("default resolution is fit",
-                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
+    BW_CHECK_EQ("default resolution is 1x",
+                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
     BW_CHECK_EQ("default volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 100);
     BW_CHECK_EQ("default gap", eidos_settings_get(EIDOS_OPT_LAYOUT_GAP), 0);
     BW_CHECK_EQ("clean at start", eidos_settings_dirty(), 0);
@@ -406,7 +459,7 @@ static void test_file(void)
     BW_CHECK_EQ("mode", eidos_settings_get(EIDOS_OPT_DISPLAY_MODE),
                 EIDOS_DISPLAY_FULLSCREEN);
     BW_CHECK_EQ("bad resolution keeps default",
-                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
+                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
     BW_CHECK_EQ("volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 70);
     BW_CHECK_EQ("a is Space", eidos_settings_get_key(0, 0), SDL_SCANCODE_SPACE);
     BW_CHECK_EQ("b emptied", eidos_settings_get_key(1, 0), 0);
@@ -438,7 +491,7 @@ static void test_file(void)
     BW_CHECK_EQ("override not saved: volume",
                 eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 70);
     BW_CHECK_EQ("override not saved: resolution",
-                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
+                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
     BW_CHECK_EQ("real change saved", eidos_settings_get(EIDOS_OPT_LAYOUT_GAP), 6);
     i = 1;
     BW_CHECK_EQ("bad value", eidos_settings_parse_arg(3, argv_bad, &i), -1);
@@ -474,6 +527,7 @@ int main(void)
     SDL_setenv("SDL_VIDEODRIVER", "dummy", 0);
     SDL_setenv("SDL_AUDIODRIVER", "dummy", 0);
     test_geometry();
+    test_reshape();
     test_gain();
 
     eidos_settings_set_path(INI);
@@ -489,6 +543,7 @@ int main(void)
     }
     eidos_settings_attach(p);
     test_platform_modes(p);
+    test_window_follows_layout(p);
     {
         char buf[16];
         int v = 0;
@@ -515,7 +570,7 @@ int main(void)
         BW_CHECK_EQ("fit at 512x768", v, 2);
         eidos_settings_set(EIDOS_OPT_DISPLAY_WIDTH, 1024);
         eidos_settings_set(EIDOS_OPT_DISPLAY_HEIGHT, 1536);
-        BW_CHECK_EQ("fit at 1024x1536", eidos_settings_internal_scale(), 4);
+        BW_CHECK_EQ("fit at 1024x1536 capped", eidos_settings_internal_scale(), 3);
         eidos_settings_revert();
     }
     eidos_settings_set(EIDOS_OPT_SOUND_VOLUME, 50);

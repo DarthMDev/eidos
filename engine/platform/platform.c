@@ -42,6 +42,7 @@ struct EidosPlatform {
     int gap;
     int swap;
     int display_mode;
+    int win_x, win_y;               /* windowed position, kept across fullscreen */
     int presented;                  /* a frame has been drawn at least once  */
     EidosKeyBinding *keymap_own;    /* set by eidos_platform_set_bindings    */
     EidosPadBinding *padmap_own;
@@ -706,6 +707,18 @@ static void set_filter(SDL_Texture *t, int linear)
 }
 
 #define PRE_MAX_SIDE 8192
+/* Above this many pixels per screen (a 6x6 frame is 1.8M) the nearest
+ * prescale pass costs more than it gains: plain linear instead.  The same
+ * for a software renderer, where the pass is a CPU copy. */
+#define PRE_MAX_PIXELS (2 * 1024 * 1024)
+
+static int renderer_is_software(const EidosPlatform *p)
+{
+    SDL_RendererInfo ri;
+
+    return SDL_GetRendererInfo(p->renderer, &ri) == 0 &&
+           (ri.flags & SDL_RENDERER_SOFTWARE) != 0;
+}
 
 /* Draw screen i's texture into dst, choosing the filter (see platform.h). */
 static void draw_screen(EidosPlatform *p, int i, const SDL_Rect *dst)
@@ -726,7 +739,8 @@ static void draw_screen(EidosPlatform *p, int i, const SDL_Rect *dst)
         }
         set_filter(src, 0);
 #if HAVE_SCALE_MODE
-        if (k * tw <= PRE_MAX_SIDE && k * th <= PRE_MAX_SIDE) {
+        if (k * tw <= PRE_MAX_SIDE && k * th <= PRE_MAX_SIDE &&
+            (s64)k * tw * k * th <= PRE_MAX_PIXELS && !renderer_is_software(p)) {
             if (p->pre[i] == NULL || p->pre_w[i] != k * tw ||
                 p->pre_h[i] != k * th) {
                 if (p->pre[i] != NULL) {
@@ -817,6 +831,36 @@ static int frame_alloc(EidosPlatform *p, int n)
     return 0;
 }
 
+/* The arrangement changed shape: a windowed (not maximized) window takes the
+ * new shape at about the same area, within the desktop work area.  The
+ * settings layer learns the new size at once (the SIZE_CHANGED event would
+ * tell it later). */
+static void reshape_window(EidosPlatform *p)
+{
+    EidosScreenPlacement pl;
+    SDL_Rect area;
+    int cw = 0, ch = 0, nw, nh, mw = 0, mh = 0, idx;
+
+    if (p->display_mode != EIDOS_DISPLAY_WINDOWED ||
+        (SDL_GetWindowFlags(p->window) &
+         (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED |
+          SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP))) {
+        return;
+    }
+    idx = SDL_GetWindowDisplayIndex(p->window);
+    if (idx >= 0 && SDL_GetDisplayUsableBounds(idx, &area) == 0) {
+        mw = area.w;
+        mh = area.h;
+    }
+    SDL_GetWindowSize(p->window, &cw, &ch);
+    place(p, &pl);
+    eidos_window_reshape(cw, ch, &pl, mw, mh, &nw, &nh);
+    if (nw != cw || nh != ch) {
+        SDL_SetWindowSize(p->window, nw, nh);
+        eidos_settings_on_resize(p, nw, nh);
+    }
+}
+
 int eidos_platform_display_mode(const EidosPlatform *p)
 {
     return p == NULL ? 0 : p->display_mode;
@@ -834,25 +878,16 @@ int eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
     was_full = p->display_mode != EIDOS_DISPLAY_WINDOWED;
     layout_size(p, &w, &h);
 
-    if (mode == EIDOS_DISPLAY_FULLSCREEN) {
-        SDL_DisplayMode dm;
-        int idx = SDL_GetWindowDisplayIndex(p->window);
-
-        /* Exclusive, at the desktop's own mode: no mode switch, so no
-         * flicker on the way in or out. */
-        if (idx >= 0 && SDL_GetDesktopDisplayMode(idx, &dm) == 0) {
-            SDL_SetWindowDisplayMode(p->window, &dm);
+    if (mode == EIDOS_DISPLAY_FULLSCREEN || mode == EIDOS_DISPLAY_BORDERLESS) {
+        /* Desktop-resolution fullscreen for both: SDL never switches the OS
+         * video mode with FULLSCREEN_DESKTOP, and the presenter scales the
+         * picture.  Plain SDL_WINDOW_FULLSCREEN would change it. */
+        if (!was_full) {
+            SDL_GetWindowPosition(p->window, &p->win_x, &p->win_y);
         }
-        if (SDL_SetWindowFullscreen(p->window, SDL_WINDOW_FULLSCREEN) != 0) {
-            fprintf(stderr, "eidos: fullscreen refused (%s)\n", SDL_GetError());
-            rc = -1;
-        } else {
-            p->display_mode = mode;
-        }
-    } else if (mode == EIDOS_DISPLAY_BORDERLESS) {
         if (SDL_SetWindowFullscreen(p->window,
                                     SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
-            fprintf(stderr, "eidos: borderless fullscreen refused (%s)\n",
+            fprintf(stderr, "eidos: fullscreen refused (%s)\n",
                     SDL_GetError());
             rc = -1;
         } else {
@@ -873,8 +908,7 @@ int eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
                               (int)h * DEFAULT_WINDOW_SCALE);
         }
         if (was_full) {
-            SDL_SetWindowPosition(p->window, SDL_WINDOWPOS_CENTERED,
-                                  SDL_WINDOWPOS_CENTERED);
+            SDL_SetWindowPosition(p->window, p->win_x, p->win_y);
         }
         p->display_mode = EIDOS_DISPLAY_WINDOWED;
     }
@@ -886,13 +920,20 @@ int eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
 
 int eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap)
 {
+    u32 ow, oh, nw, nh;
+
     if (p == NULL) {
         return -1;
     }
+    layout_size(p, &ow, &oh);
     p->layout = layout == EIDOS_LAYOUT_SIDE_BY_SIDE
                 ? EIDOS_LAYOUT_SIDE_BY_SIDE : EIDOS_LAYOUT_STACKED;
     p->swap = swap != 0;
     p->gap = gap > 0 ? gap : 0;
+    layout_size(p, &nw, &nh);
+    if (p->window != NULL && (nw != ow || nh != oh)) {
+        reshape_window(p);
+    }
     if (p->presented) {
         render(p);
     }
@@ -939,6 +980,7 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     EidosPlatformConfig defaults;
     EidosPlatform *p;
     u32 w, h;
+    int init_w, init_h;
 
     if (out == NULL) {
         return -1;
@@ -985,15 +1027,22 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
 
     layout_size(p, &w, &h);
+    init_w = cfg->win_w > 0 && cfg->win_h > 0 ? cfg->win_w
+                                              : (int)w * DEFAULT_WINDOW_SCALE;
+    init_h = cfg->win_w > 0 && cfg->win_h > 0 ? cfg->win_h
+                                              : (int)h * DEFAULT_WINDOW_SCALE;
+    if ((init_w >= init_h) != ((int)w >= (int)h)) {
+        /* A remembered size of the other arrangement (the layout came from
+         * the command line): same area, this arrangement's shape. */
+        EidosScreenPlacement ipl;
+
+        place(p, &ipl);
+        eidos_window_reshape(init_w, init_h, &ipl, 0, 0, &init_w, &init_h);
+    }
 
     p->window = SDL_CreateWindow(cfg->title != NULL ? cfg->title : "eidos",
                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                 cfg->win_w > 0 && cfg->win_h > 0
-                                     ? cfg->win_w
-                                     : (int)w * DEFAULT_WINDOW_SCALE,
-                                 cfg->win_w > 0 && cfg->win_h > 0
-                                     ? cfg->win_h
-                                     : (int)h * DEFAULT_WINDOW_SCALE,
+                                 init_w, init_h,
                                  SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (p->window == NULL) {
         fprintf(stderr, "eidos: SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -1115,7 +1164,7 @@ int eidos_platform_pump(EidosPlatform *p)
                 p->swallow_sc = SDL_SCANCODE_RETURN;
                 if (!eidos_settings_on_toggle(p)) {
                     (void)eidos_platform_set_display(
-                        p, p->display_mode == EIDOS_DISPLAY_BORDERLESS
+                        p, p->display_mode != EIDOS_DISPLAY_WINDOWED
                                ? EIDOS_DISPLAY_WINDOWED
                                : EIDOS_DISPLAY_BORDERLESS,
                         0, 0);

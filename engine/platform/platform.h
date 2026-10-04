@@ -139,13 +139,20 @@ const EidosPadBinding *eidos_default_padmap(u32 *count);
 #define EIDOS_LAYOUT_HORIZONTAL    EIDOS_LAYOUT_SIDE_BY_SIDE
 
 #define EIDOS_DISPLAY_WINDOWED     0
-#define EIDOS_DISPLAY_FULLSCREEN   1   /* exclusive, at the desktop's mode  */
-#define EIDOS_DISPLAY_BORDERLESS   2   /* desktop-sized borderless window   */
+/* Neither fullscreen mode ever changes the OS video mode: both are
+ * SDL_WINDOW_FULLSCREEN_DESKTOP (desktop-sized, picture scaled by the
+ * presenter).  They are kept as two values for the settings file only. */
+#define EIDOS_DISPLAY_FULLSCREEN   1
+#define EIDOS_DISPLAY_BORDERLESS   2
 
 /* The largest internal resolution multiple the port offers (a data value:
  * the Resolution option's range follows it).  A frame is 256N x 192N per
  * screen. */
 #define EIDOS_RESOLUTION_MAX       6
+/* "Fit" never picks more than this: the per-frame cost grows with N^2, and
+ * a maximized window would otherwise render at 6x.  A user who wants more
+ * sets the explicit N. */
+#define EIDOS_RESOLUTION_FIT_CAP   3
 
 /*
  * Screen geometry, as data and without SDL.  A placement says where each of
@@ -175,6 +182,11 @@ void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
 /* The "Fit" internal resolution: the smallest N whose 256N x 192N frame is
  * at least as large as each screen's destination rectangle, in [1, max]. */
 int  eidos_resolution_fit(const EidosViewport *vp, int max);
+/* The window size after the arrangement changes to `to`: the same area as
+ * cur_w x cur_h, the aspect of `to`, scaled down to fit max_w x max_h (the
+ * desktop work area; 0 = unbounded). */
+void eidos_window_reshape(int cur_w, int cur_h, const EidosScreenPlacement *to,
+                          int max_w, int max_h, int *out_w, int *out_h);
 /* The bottom-screen pixel under output point (wx, wy); non-zero when the
  * point is on the bottom screen; both coordinates are clamped to it either
  * way. */

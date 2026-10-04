@@ -28,7 +28,7 @@ static const EidosOption k_options[EIDOS_OPT_COUNT] = {
     { "Display", "mode", "Display mode", EIDOS_OPTKIND_CHOICE, 0, 2, 1,
       EIDOS_DISPLAY_WINDOWED, k_modes, "", 0, NULL },
     { "Display", "resolution", "Resolution", EIDOS_OPTKIND_INT, 0,
-      EIDOS_RESOLUTION_MAX, 1, 0, NULL, "x", 0, "fit" },
+      EIDOS_RESOLUTION_MAX, 1, 1, NULL, "x", 0, "fit" },
     { "Display", "width", "Window width", EIDOS_OPTKIND_INT, 0, 16384, 1, 0,
       NULL, "px", 1, NULL },
     { "Display", "height", "Window height", EIDOS_OPTKIND_INT, 0, 16384, 1, 0,
@@ -1180,8 +1180,8 @@ int eidos_settings_on_toggle(EidosPlatform *p)
         return 0;
     }
     if (eidos_settings_set(EIDOS_OPT_DISPLAY_MODE,
-                           g_cur.v[EIDOS_OPT_DISPLAY_MODE] ==
-                                   EIDOS_DISPLAY_BORDERLESS
+                           g_cur.v[EIDOS_OPT_DISPLAY_MODE] !=
+                                   EIDOS_DISPLAY_WINDOWED
                                ? EIDOS_DISPLAY_WINDOWED
                                : EIDOS_DISPLAY_BORDERLESS) == 0) {
         (void)eidos_settings_commit();

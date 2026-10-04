@@ -81,6 +81,45 @@ void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
     }
 }
 
+/* Newton's square root: this file stays free of libm. */
+static double root(double v)
+{
+    double x = v > 1.0 ? v : 1.0;
+    int i;
+
+    for (i = 0; i < 64; i++) {
+        x = 0.5 * (x + v / x);
+    }
+    return x;
+}
+
+void eidos_window_reshape(int cur_w, int cur_h, const EidosScreenPlacement *to,
+                          int max_w, int max_h, int *out_w, int *out_h)
+{
+    double area, aspect, w, h;
+
+    if (cur_w < 1) {
+        cur_w = 1;
+    }
+    if (cur_h < 1) {
+        cur_h = 1;
+    }
+    aspect = (double)to->width / (double)(to->height > 0 ? to->height : 1);
+    area = (double)cur_w * (double)cur_h;
+    w = root(area * aspect);
+    h = w / aspect;
+    if (max_w > 0 && w > (double)max_w) {
+        h *= (double)max_w / w;
+        w = (double)max_w;
+    }
+    if (max_h > 0 && h > (double)max_h) {
+        w *= (double)max_h / h;
+        h = (double)max_h;
+    }
+    *out_w = (int)(w + 0.5) < 1 ? 1 : (int)(w + 0.5);
+    *out_h = (int)(h + 0.5) < 1 ? 1 : (int)(h + 0.5);
+}
+
 int eidos_resolution_fit(const EidosViewport *vp, int max)
 {
     int n = 1, i;
@@ -95,6 +134,9 @@ int eidos_resolution_fit(const EidosViewport *vp, int max)
     }
     if (max < 1) {
         max = 1;
+    }
+    if (max > EIDOS_RESOLUTION_FIT_CAP) {
+        max = EIDOS_RESOLUTION_FIT_CAP;     /* an explicit N may go higher */
     }
     return n > max ? max : n;
 }
