@@ -51,7 +51,7 @@ static void test_mapping(void)
     int x = -1, y = -1;
 
     memset(&cfg, 0, sizeof cfg);
-    cfg.scale = 2;
+    cfg.win_w = 512; cfg.win_h = 768;
     cfg.layout = EIDOS_LAYOUT_STACKED;
     if (eidos_platform_init(&p, &cfg) != 0) {
         printf("no SDL video (dummy driver unavailable): skipped\n");
@@ -88,7 +88,7 @@ static void test_mapping(void)
 
     /* Side by side, 1x, a gap of 16: the bottom screen from x 272.         */
     memset(&cfg, 0, sizeof cfg);
-    cfg.scale = 1;
+    cfg.win_w = 528; cfg.win_h = 192;
     cfg.layout = EIDOS_LAYOUT_SIDE_BY_SIDE;
     cfg.gap = 16;
     p = NULL;
@@ -104,6 +104,32 @@ static void test_mapping(void)
     BW_CHECK_EQ("side: the gap is off the panel",
                 eidos_platform_window_to_touch(p, 528, 192, 265, 10, &x, &y),
                 0);
+    /* Swapped: the bottom screen is on the left, the top one on the right
+     * (the old bottom position is now the top screen).                     */
+    eidos_platform_set_layout(p, EIDOS_LAYOUT_SIDE_BY_SIDE, 1, 16);
+    BW_CHECK_EQ("swapped side: bottom at x 0",
+                eidos_platform_window_to_touch(p, 528, 192, 5, 7, &x, &y), 1);
+    BW_CHECK_EQ("swapped side: x", x, 5);
+    BW_CHECK_EQ("swapped side: y", y, 7);
+    BW_CHECK_EQ("swapped side: old place is the top screen",
+                eidos_platform_window_to_touch(p, 528, 192, 300, 10, &x, &y),
+                0);
+    /* A fullscreen-sized output: the picture fills the width (1920 x 698,
+     * 528x192 scaled by 1920/528), centred vertically at y 191.            */
+    BW_CHECK_EQ("letterboxed: bottom-left pixel",
+                eidos_platform_window_to_touch(p, 1920, 1080, 0, 191, &x, &y),
+                1);
+    BW_CHECK_EQ("letterboxed: x", x, 0);
+    BW_CHECK_EQ("letterboxed: y", y, 0);
+    BW_CHECK_EQ("letterboxed: above the picture is off",
+                eidos_platform_window_to_touch(p, 1920, 1080, 100, 100, &x, &y),
+                0);
+    /* Half way along the bottom screen's width (window x 0..969 maps 0..255
+     * of the swapped-left bottom screen). */
+    BW_CHECK_EQ("letterboxed: mid screen",
+                eidos_platform_window_to_touch(p, 1920, 1080, 485, 191 + 349,
+                                               &x, &y), 1);
+    BW_CHECK_EQ("letterboxed: mid x", x == 133 || x == 132, 1);
     eidos_platform_quit(p);
 }
 

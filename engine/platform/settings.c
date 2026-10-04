@@ -1,0 +1,1235 @@
+/*
+ * engine/platform/settings.c -- the settings model, settings.ini and the
+ * apply functions.  See settings.h for the contract.
+ */
+
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <SDL.h>
+
+#include "setup.h"
+#include "settings.h"
+
+#define NBTN 12
+#define PATH_MAX_LEN BW_SETUP_PATH_MAX
+
+/* ------------------------------------------------------------------ */
+/* Tables                                                              */
+/* ------------------------------------------------------------------ */
+
+static const char *const k_modes[] = { "windowed", "fullscreen", "borderless" };
+static const char *const k_arrangements[] = { "vertical", "horizontal" };
+static const char *const k_offon[] = { "off", "on" };
+
+static const EidosOption k_options[EIDOS_OPT_COUNT] = {
+    { "Display", "mode", "Display mode", EIDOS_OPTKIND_CHOICE, 0, 2, 1,
+      EIDOS_DISPLAY_WINDOWED, k_modes, "", 0, NULL },
+    { "Display", "resolution", "Resolution", EIDOS_OPTKIND_INT, 0,
+      EIDOS_RESOLUTION_MAX, 1, 0, NULL, "x", 0, "fit" },
+    { "Display", "width", "Window width", EIDOS_OPTKIND_INT, 0, 16384, 1, 0,
+      NULL, "px", 1, NULL },
+    { "Display", "height", "Window height", EIDOS_OPTKIND_INT, 0, 16384, 1, 0,
+      NULL, "px", 1, NULL },
+    { "Layout", "arrangement", "Screen layout", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
+      EIDOS_LAYOUT_VERTICAL, k_arrangements, "", 0, NULL },
+    { "Layout", "swap_screens", "Swap screens", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
+      0, k_offon, "", 0, NULL },
+    { "Layout", "gap", "Gap between screens", EIDOS_OPTKIND_INT, 0, 128, 1, 0,
+      NULL, "px", 0, NULL },
+    { "Sound", "volume", "Master volume", EIDOS_OPTKIND_INT, 0, 100, 5, 100,
+      NULL, "%", 0, NULL },
+};
+
+static const EidosButtonInfo k_buttons[NBTN] = {
+    { EIDOS_PAD_A,      "a",      "A" },
+    { EIDOS_PAD_B,      "b",      "B" },
+    { EIDOS_PAD_X,      "x",      "X" },
+    { EIDOS_PAD_Y,      "y",      "Y" },
+    { EIDOS_PAD_L,      "l",      "L" },
+    { EIDOS_PAD_R,      "r",      "R" },
+    { EIDOS_PAD_START,  "start",  "Start" },
+    { EIDOS_PAD_SELECT, "select", "Select" },
+    { EIDOS_PAD_UP,     "up",     "D-Pad Up" },
+    { EIDOS_PAD_DOWN,   "down",   "D-Pad Down" },
+    { EIDOS_PAD_LEFT,   "left",   "D-Pad Left" },
+    { EIDOS_PAD_RIGHT,  "right",  "D-Pad Right" },
+};
+
+typedef struct PadCtl {
+    int kind;                    /* -1 empty                                  */
+    int index;
+} PadCtl;
+
+typedef struct Model {
+    int v[EIDOS_OPT_COUNT];
+    int key[NBTN][EIDOS_BIND_SLOTS];
+    PadCtl pad[NBTN][EIDOS_BIND_SLOTS];
+} Model;
+
+static Model g_cur, g_saved;
+static int g_ovr[EIDOS_OPT_COUNT];       /* set from the command line         */
+static int g_ovr_val[EIDOS_OPT_COUNT];
+static EidosPlatform *g_plat;
+static char g_path[PATH_MAX_LEN + 16];
+static int g_have_path;
+static int g_inited;
+static int g_size_pending;   /* a window resize not yet in the file */
+
+static void model_defaults(Model *m);
+
+static void ensure_init(void)
+{
+    if (!g_inited) {
+        g_inited = 1;
+        model_defaults(&g_cur);
+        g_saved = g_cur;
+    }
+}
+
+static int button_index(u32 mask)
+{
+    int i;
+
+    for (i = 0; i < NBTN; i++) {
+        if (k_buttons[i].mask == mask) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void model_defaults(Model *m)
+{
+    const EidosKeyBinding *kb;
+    const EidosPadBinding *pb;
+    u32 nk, np, i;
+    int o, b, s;
+
+    for (o = 0; o < EIDOS_OPT_COUNT; o++) {
+        m->v[o] = k_options[o].def;
+    }
+    for (b = 0; b < NBTN; b++) {
+        for (s = 0; s < EIDOS_BIND_SLOTS; s++) {
+            m->key[b][s] = 0;
+            m->pad[b][s].kind = -1;
+            m->pad[b][s].index = 0;
+        }
+    }
+    kb = eidos_default_keymap(&nk);
+    for (i = 0; i < nk; i++) {
+        b = button_index(kb[i].button);
+        for (s = 0; b >= 0 && s < EIDOS_BIND_SLOTS; s++) {
+            if (m->key[b][s] == 0) {
+                m->key[b][s] = kb[i].scancode;
+                break;
+            }
+        }
+    }
+    pb = eidos_default_padmap(&np);
+    for (i = 0; i < np; i++) {
+        b = button_index(pb[i].button);
+        for (s = 0; b >= 0 && s < EIDOS_BIND_SLOTS; s++) {
+            if (m->pad[b][s].kind < 0) {
+                m->pad[b][s].kind = pb[i].kind;
+                m->pad[b][s].index = pb[i].index;
+                break;
+            }
+        }
+    }
+}
+
+static void model_reset_bindings(Model *m)
+{
+    Model d;
+
+    model_defaults(&d);
+    memcpy(m->key, d.key, sizeof(m->key));
+    memcpy(m->pad, d.pad, sizeof(m->pad));
+}
+
+/* ------------------------------------------------------------------ */
+/* Applying to the platform                                            */
+/* ------------------------------------------------------------------ */
+
+static int apply_display(void)
+{
+    return eidos_platform_set_display(g_plat, g_cur.v[EIDOS_OPT_DISPLAY_MODE],
+                                      g_cur.v[EIDOS_OPT_DISPLAY_WIDTH],
+                                      g_cur.v[EIDOS_OPT_DISPLAY_HEIGHT]);
+}
+
+static int apply_layout(void)
+{
+    return eidos_platform_set_layout(g_plat,
+                                     g_cur.v[EIDOS_OPT_LAYOUT_ARRANGEMENT],
+                                     g_cur.v[EIDOS_OPT_LAYOUT_SWAP],
+                                     g_cur.v[EIDOS_OPT_LAYOUT_GAP]);
+}
+
+static void apply_volume(void)
+{
+    eidos_platform_set_volume(g_plat, g_cur.v[EIDOS_OPT_SOUND_VOLUME]);
+}
+
+static int apply_bindings(void)
+{
+    EidosKeyBinding *keys;
+    EidosPadBinding *pads;
+    u32 nk = 0, np = 0;
+    int b, s, rc;
+
+    keys = (EidosKeyBinding *)calloc(NBTN * EIDOS_BIND_SLOTS + 1,
+                                     sizeof(*keys));
+    pads = (EidosPadBinding *)calloc(NBTN * EIDOS_BIND_SLOTS + 1,
+                                     sizeof(*pads));
+    if (keys == NULL || pads == NULL) {
+        free(keys);
+        free(pads);
+        return -1;
+    }
+    for (b = 0; b < NBTN; b++) {
+        for (s = 0; s < EIDOS_BIND_SLOTS; s++) {
+            if (g_cur.key[b][s] > 0) {
+                keys[nk].scancode = g_cur.key[b][s];
+                keys[nk++].button = k_buttons[b].mask;
+            }
+            if (g_cur.pad[b][s].kind >= 0) {
+                pads[np].kind = g_cur.pad[b][s].kind;
+                pads[np].index = g_cur.pad[b][s].index;
+                pads[np++].button = k_buttons[b].mask;
+            }
+        }
+    }
+    rc = eidos_platform_set_bindings(g_plat, keys, nk, pads, np);
+    free(keys);
+    free(pads);
+    return rc;
+}
+
+static int apply_option_group(int id)
+{
+    if (g_plat == NULL) {
+        return 0;
+    }
+    switch (id) {
+    case EIDOS_OPT_DISPLAY_MODE:
+    case EIDOS_OPT_DISPLAY_WIDTH:
+    case EIDOS_OPT_DISPLAY_HEIGHT:
+        return apply_display();
+    case EIDOS_OPT_DISPLAY_RESOLUTION:
+        return 0;               /* the renderer polls internal_scale() */
+    case EIDOS_OPT_LAYOUT_ARRANGEMENT:
+    case EIDOS_OPT_LAYOUT_SWAP:
+    case EIDOS_OPT_LAYOUT_GAP:
+        return apply_layout();
+    case EIDOS_OPT_SOUND_VOLUME:
+        apply_volume();
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+static void apply_all(void)
+{
+    if (g_plat == NULL) {
+        return;
+    }
+    (void)apply_layout();
+    if (apply_display() != 0) {
+        g_cur.v[EIDOS_OPT_DISPLAY_MODE] = eidos_platform_display_mode(g_plat);
+    }
+    apply_volume();
+    (void)apply_bindings();
+}
+
+/* ------------------------------------------------------------------ */
+/* Options                                                             */
+/* ------------------------------------------------------------------ */
+
+int eidos_settings_option_count(void)
+{
+    return EIDOS_OPT_COUNT;
+}
+
+const EidosOption *eidos_settings_option(int id)
+{
+    return id >= 0 && id < EIDOS_OPT_COUNT ? &k_options[id] : NULL;
+}
+
+int eidos_settings_get(int id)
+{
+    ensure_init();
+    return id >= 0 && id < EIDOS_OPT_COUNT ? g_cur.v[id] : 0;
+}
+
+static int clamp_opt(int id, int v)
+{
+    return v < k_options[id].min ? k_options[id].min
+           : v > k_options[id].max ? k_options[id].max : v;
+}
+
+int eidos_settings_set(int id, int value)
+{
+    int old, rc;
+
+    ensure_init();
+    if (id < 0 || id >= EIDOS_OPT_COUNT) {
+        return -1;
+    }
+    old = g_cur.v[id];
+    g_cur.v[id] = clamp_opt(id, value);
+    g_ovr[id] = 0;                       /* the player's choice now          */
+    rc = apply_option_group(id);
+    if (rc != 0) {
+        g_cur.v[id] = old;
+        return -1;
+    }
+    return 0;
+}
+
+const char *eidos_settings_value_text(int id, char *buf, size_t n)
+{
+    int v;
+
+    if (buf == NULL || n == 0) {
+        return "";
+    }
+    buf[0] = '\0';
+    if (id < 0 || id >= EIDOS_OPT_COUNT) {
+        return buf;
+    }
+    v = eidos_settings_get(id);
+    if (k_options[id].kind == EIDOS_OPTKIND_CHOICE) {
+        snprintf(buf, n, "%s", k_options[id].choices[v]);
+    } else {
+        if (v == 0 && k_options[id].zero_name != NULL) {
+            snprintf(buf, n, "%s", k_options[id].zero_name);
+        } else {
+            snprintf(buf, n, "%d%s", v, k_options[id].unit);
+        }
+    }
+    return buf;
+}
+
+/* ------------------------------------------------------------------ */
+/* Bindings                                                            */
+/* ------------------------------------------------------------------ */
+
+int eidos_settings_button_count(void)
+{
+    return NBTN;
+}
+
+const EidosButtonInfo *eidos_settings_button(int index)
+{
+    return index >= 0 && index < NBTN ? &k_buttons[index] : NULL;
+}
+
+int eidos_settings_get_key(int button, int slot)
+{
+    ensure_init();
+    if (button < 0 || button >= NBTN || slot < 0 || slot >= EIDOS_BIND_SLOTS) {
+        return 0;
+    }
+    return g_cur.key[button][slot];
+}
+
+static int pick_slot(int button, int slot, int is_pad)
+{
+    int s;
+
+    if (slot >= 0) {
+        return slot < EIDOS_BIND_SLOTS ? slot : -1;
+    }
+    for (s = 0; s < EIDOS_BIND_SLOTS; s++) {
+        if (is_pad ? g_cur.pad[button][s].kind < 0
+                   : g_cur.key[button][s] == 0) {
+            return s;
+        }
+    }
+    return EIDOS_BIND_SLOTS - 1;
+}
+
+int eidos_settings_set_key(int button, int slot, int scancode)
+{
+    int b, s;
+
+    ensure_init();
+    if (button < 0 || button >= NBTN) {
+        return -1;
+    }
+    slot = pick_slot(button, slot, 0);
+    if (slot < 0) {
+        return -1;
+    }
+    if (scancode < 0 || scancode >= SDL_NUM_SCANCODES) {
+        return -1;
+    }
+    if (scancode == SDL_SCANCODE_ESCAPE || scancode == SDL_SCANCODE_F12) {
+        return -2;
+    }
+    if (scancode != 0) {
+        for (b = 0; b < NBTN; b++) {
+            for (s = 0; s < EIDOS_BIND_SLOTS; s++) {
+                if (g_cur.key[b][s] == scancode) {
+                    g_cur.key[b][s] = 0;
+                }
+            }
+        }
+    }
+    g_cur.key[button][slot] = scancode;
+    if (g_plat != NULL) {
+        (void)apply_bindings();
+    }
+    return 0;
+}
+
+int eidos_settings_get_pad(int button, int slot, int *kind, int *index)
+{
+    ensure_init();
+    if (button < 0 || button >= NBTN || slot < 0 || slot >= EIDOS_BIND_SLOTS) {
+        return -1;
+    }
+    if (kind != NULL) {
+        *kind = g_cur.pad[button][slot].kind;
+    }
+    if (index != NULL) {
+        *index = g_cur.pad[button][slot].index;
+    }
+    return 0;
+}
+
+int eidos_settings_set_pad(int button, int slot, int kind, int index)
+{
+    int b, s;
+
+    ensure_init();
+    if (button < 0 || button >= NBTN) {
+        return -1;
+    }
+    slot = pick_slot(button, slot, 1);
+    if (slot < 0) {
+        return -1;
+    }
+    if (kind >= 0) {
+        if (kind > EIDOS_PADBIND_AXIS_NEG || index < 0) {
+            return -1;
+        }
+        for (b = 0; b < NBTN; b++) {
+            for (s = 0; s < EIDOS_BIND_SLOTS; s++) {
+                if (g_cur.pad[b][s].kind == kind &&
+                    g_cur.pad[b][s].index == index) {
+                    g_cur.pad[b][s].kind = -1;
+                    g_cur.pad[b][s].index = 0;
+                }
+            }
+        }
+    } else {
+        index = 0;
+    }
+    g_cur.pad[button][slot].kind = kind < 0 ? -1 : kind;
+    g_cur.pad[button][slot].index = index;
+    if (g_plat != NULL) {
+        (void)apply_bindings();
+    }
+    return 0;
+}
+
+void eidos_settings_reset_bindings(void)
+{
+    ensure_init();
+    model_reset_bindings(&g_cur);
+    if (g_plat != NULL) {
+        (void)apply_bindings();
+    }
+}
+
+static int is_ascii_name(const char *s)
+{
+    if (s == NULL || s[0] == '\0') {
+        return 0;
+    }
+    for (; *s != '\0'; s++) {
+        if ((unsigned char)*s < 32u || (unsigned char)*s > 126u) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+const char *eidos_scancode_name(int scancode, char *buf, size_t n)
+{
+    const char *nm;
+
+    if (buf == NULL || n == 0) {
+        return "";
+    }
+    nm = scancode > 0 && scancode < SDL_NUM_SCANCODES
+         ? SDL_GetScancodeName((SDL_Scancode)scancode) : "";
+    if (scancode == 0) {
+        snprintf(buf, n, "None");
+    } else if (is_ascii_name(nm)) {
+        snprintf(buf, n, "%s", nm);
+    } else {
+        snprintf(buf, n, "Key %d", scancode);
+    }
+    return buf;
+}
+
+static const char *const k_pad_button_names[] = {
+    "Pad South", "Pad East", "Pad West", "Pad North", "Back", "Guide",
+    "Start", "Left Stick Click", "Right Stick Click", "Left Bumper",
+    "Right Bumper", "D-Pad Up", "D-Pad Down", "D-Pad Left", "D-Pad Right"
+};
+
+static const char *const k_pad_axis_pos[] = {
+    "Left Stick Right", "Left Stick Down", "Right Stick Right",
+    "Right Stick Down", "Left Trigger", "Right Trigger"
+};
+static const char *const k_pad_axis_neg[] = {
+    "Left Stick Left", "Left Stick Up", "Right Stick Left",
+    "Right Stick Up", "Left Trigger -", "Right Trigger -"
+};
+
+const char *eidos_pad_control_name(int kind, int index, char *buf, size_t n)
+{
+    const size_t nb = sizeof(k_pad_button_names) / sizeof(k_pad_button_names[0]);
+
+    if (buf == NULL || n == 0) {
+        return "";
+    }
+    if (kind < 0) {
+        snprintf(buf, n, "None");
+    } else if (kind == EIDOS_PADBIND_BUTTON) {
+        if (index >= 0 && (size_t)index < nb) {
+            snprintf(buf, n, "%s", k_pad_button_names[index]);
+        } else {
+            snprintf(buf, n, "Pad Button %d", index);
+        }
+    } else if (index >= 0 && index < 6) {
+        snprintf(buf, n, "%s", kind == EIDOS_PADBIND_AXIS_POS
+                                   ? k_pad_axis_pos[index]
+                                   : k_pad_axis_neg[index]);
+    } else {
+        snprintf(buf, n, "Pad Axis %d%s", index,
+                 kind == EIDOS_PADBIND_AXIS_POS ? "+" : "-");
+    }
+    return buf;
+}
+
+void eidos_settings_capture_begin(void)
+{
+    eidos_platform_capture_begin(g_plat);
+}
+
+void eidos_settings_capture_cancel(void)
+{
+    eidos_platform_capture_cancel(g_plat);
+}
+
+int eidos_settings_capture_poll(EidosCaptured *out)
+{
+    return eidos_platform_capture_poll(g_plat, out);
+}
+
+/* ------------------------------------------------------------------ */
+/* The file                                                            */
+/* ------------------------------------------------------------------ */
+
+const char *eidos_settings_path(void)
+{
+    if (!g_have_path) {
+        char home[PATH_MAX_LEN];
+        const char *env = getenv("EIDOS_SETTINGS");
+
+        g_path[0] = '\0';
+        if (env != NULL && env[0] != '\0') {
+            snprintf(g_path, sizeof(g_path), "%s", env);
+        } else if (bw_setup_home(home, sizeof(home)) == 0) {
+            snprintf(g_path, sizeof(g_path), "%s/settings.ini", home);
+        }
+        g_have_path = 1;
+    }
+    return g_path;
+}
+
+void eidos_settings_set_path(const char *path)
+{
+    g_have_path = 0;
+    g_path[0] = '\0';
+    if (path != NULL) {
+        snprintf(g_path, sizeof(g_path), "%s", path);
+        g_have_path = 1;
+    }
+}
+
+/* A key's file token: SDL's name when it is plain ASCII and reads back to the
+ * same scancode, else "sc:N". */
+static void key_token(int sc, char *buf, size_t n)
+{
+    const char *nm = sc > 0 && sc < SDL_NUM_SCANCODES
+                     ? SDL_GetScancodeName((SDL_Scancode)sc) : "";
+
+    if (is_ascii_name(nm) && strchr(nm, '|') == NULL &&
+        SDL_GetScancodeFromName(nm) == (SDL_Scancode)sc) {
+        snprintf(buf, n, "%s", nm);
+    } else {
+        snprintf(buf, n, "sc:%d", sc);
+    }
+}
+
+static void pad_token(const PadCtl *c, char *buf, size_t n)
+{
+    if (c->kind == EIDOS_PADBIND_BUTTON) {
+        const char *nm = SDL_GameControllerGetStringForButton(
+            (SDL_GameControllerButton)c->index);
+
+        if (nm != NULL) {
+            snprintf(buf, n, "%s", nm);
+        } else {
+            snprintf(buf, n, "button:%d", c->index);
+        }
+    } else {
+        const char *nm = SDL_GameControllerGetStringForAxis(
+            (SDL_GameControllerAxis)c->index);
+        char sign = c->kind == EIDOS_PADBIND_AXIS_POS ? '+' : '-';
+
+        if (nm != NULL) {
+            snprintf(buf, n, "%s%c", nm, sign);
+        } else {
+            snprintf(buf, n, "axis:%d%c", c->index, sign);
+        }
+    }
+}
+
+static int parse_pad_token(const char *t, PadCtl *out)
+{
+    size_t len = strlen(t);
+    int v;
+
+    if (len == 0) {
+        return -1;
+    }
+    if (strncmp(t, "button:", 7) == 0) {
+        out->kind = EIDOS_PADBIND_BUTTON;
+        out->index = atoi(t + 7);
+        return out->index >= 0 ? 0 : -1;
+    }
+    if (t[len - 1] == '+' || t[len - 1] == '-') {
+        char nm[64];
+        int kind = t[len - 1] == '+' ? EIDOS_PADBIND_AXIS_POS
+                                     : EIDOS_PADBIND_AXIS_NEG;
+
+        if (strncmp(t, "axis:", 5) == 0) {
+            out->kind = kind;
+            out->index = atoi(t + 5);
+            return out->index >= 0 ? 0 : -1;
+        }
+        if (len - 1 >= sizeof(nm)) {
+            return -1;
+        }
+        memcpy(nm, t, len - 1);
+        nm[len - 1] = '\0';
+        v = (int)SDL_GameControllerGetAxisFromString(nm);
+        if (v == (int)SDL_CONTROLLER_AXIS_INVALID) {
+            return -1;
+        }
+        out->kind = kind;
+        out->index = v;
+        return 0;
+    }
+    v = (int)SDL_GameControllerGetButtonFromString(t);
+    if (v == (int)SDL_CONTROLLER_BUTTON_INVALID) {
+        return -1;
+    }
+    out->kind = EIDOS_PADBIND_BUTTON;
+    out->index = v;
+    return 0;
+}
+
+static char *trim(char *s)
+{
+    char *e;
+
+    while (*s != '\0' && isspace((unsigned char)*s)) {
+        s++;
+    }
+    e = s + strlen(s);
+    while (e > s && isspace((unsigned char)e[-1])) {
+        *--e = '\0';
+    }
+    return s;
+}
+
+static void lower_into(char *dst, size_t n, const char *src)
+{
+    size_t i;
+
+    for (i = 0; i + 1 < n && src[i] != '\0'; i++) {
+        dst[i] = (char)tolower((unsigned char)src[i]);
+    }
+    dst[i] = '\0';
+}
+
+/* Parse an option's text into a value.  0 on success. */
+static int parse_value(int id, const char *text, int *out)
+{
+    const EidosOption *o = &k_options[id];
+    char low[64];
+    char *end = NULL;
+    long n;
+    int i;
+
+    lower_into(low, sizeof(low), text);
+    if (o->kind == EIDOS_OPTKIND_CHOICE) {
+        for (i = o->min; i <= o->max; i++) {
+            if (strcmp(low, o->choices[i]) == 0) {
+                *out = i;
+                return 0;
+            }
+        }
+        if (o->max == 1 && o->min == 0) {
+            if (!strcmp(low, "true") || !strcmp(low, "yes") ||
+                !strcmp(low, "1")) {
+                *out = 1;
+                return 0;
+            }
+            if (!strcmp(low, "false") || !strcmp(low, "no") ||
+                !strcmp(low, "0")) {
+                *out = 0;
+                return 0;
+            }
+        }
+        return -1;
+    }
+    if (o->zero_name != NULL && strcmp(low, o->zero_name) == 0) {
+        *out = 0;
+        return 0;
+    }
+    n = strtol(text, &end, 10);
+    if (end != text && o->unit[0] == 'x' && o->unit[1] == '\0' &&
+        (*end == 'x' || *end == 'X') && end[1] == '\0') {
+        end++;                           /* "3x" for the multiples */
+    }
+    if (end == text || *end != '\0') {
+        return -1;
+    }
+    if (n < o->min || n > o->max) {
+        return -1;
+    }
+    *out = (int)n;
+    return 0;
+}
+
+static int parse_key_token(const char *t)
+{
+    int sc;
+
+    if (strncmp(t, "sc:", 3) == 0) {
+        sc = atoi(t + 3);
+    } else {
+        sc = (int)SDL_GetScancodeFromName(t);
+    }
+    if (sc <= 0 || sc >= SDL_NUM_SCANCODES || sc == SDL_SCANCODE_ESCAPE ||
+        sc == SDL_SCANCODE_F12) {
+        return 0;
+    }
+    return sc;
+}
+
+/* Fill the bindings of one button from a '|' list. */
+static void parse_bind_list(Model *m, int b, int is_pad, char *list,
+                            int line)
+{
+    int slot = 0;
+    char *tok = list;
+
+    /* Clear first: a key listed in the file replaces the default list. */
+    for (slot = 0; slot < EIDOS_BIND_SLOTS; slot++) {
+        if (is_pad) {
+            m->pad[b][slot].kind = -1;
+            m->pad[b][slot].index = 0;
+        } else {
+            m->key[b][slot] = 0;
+        }
+    }
+    slot = 0;
+    while (tok != NULL && *trim(tok) != '\0') {
+        char *bar = strchr(tok, '|');
+        char *item;
+
+        if (bar != NULL) {
+            *bar = '\0';
+        }
+        item = trim(tok);
+        if (*item != '\0') {
+            if (slot >= EIDOS_BIND_SLOTS) {
+                fprintf(stderr, "eidos: settings.ini:%d: more than %d "
+                        "bindings for '%s'; extra ignored\n", line,
+                        EIDOS_BIND_SLOTS, k_buttons[b].key);
+                return;
+            }
+            if (is_pad) {
+                PadCtl c;
+                if (parse_pad_token(item, &c) == 0) {
+                    m->pad[b][slot++] = c;
+                } else {
+                    fprintf(stderr, "eidos: settings.ini:%d: unknown pad "
+                            "control '%s' ignored\n", line, item);
+                }
+            } else {
+                int sc = parse_key_token(item);
+                if (sc != 0) {
+                    m->key[b][slot++] = sc;
+                } else {
+                    fprintf(stderr, "eidos: settings.ini:%d: unknown or "
+                            "reserved key '%s' ignored\n", line, item);
+                }
+            }
+        }
+        tok = bar != NULL ? bar + 1 : NULL;
+    }
+}
+
+/* Remove duplicated controls, first listing wins (a hand-edited file). */
+static void model_dedupe(Model *m)
+{
+    int b, s, b2, s2;
+
+    for (b = 0; b < NBTN; b++) {
+        for (s = 0; s < EIDOS_BIND_SLOTS; s++) {
+            for (b2 = b; b2 < NBTN; b2++) {
+                for (s2 = (b2 == b ? s + 1 : 0); s2 < EIDOS_BIND_SLOTS; s2++) {
+                    if (m->key[b][s] != 0 && m->key[b][s] == m->key[b2][s2]) {
+                        m->key[b2][s2] = 0;
+                    }
+                    if (m->pad[b][s].kind >= 0 &&
+                        m->pad[b][s].kind == m->pad[b2][s2].kind &&
+                        m->pad[b][s].index == m->pad[b2][s2].index) {
+                        m->pad[b2][s2].kind = -1;
+                        m->pad[b2][s2].index = 0;
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void parse_file(FILE *fp, Model *m)
+{
+    char line[2048];
+    char section[32] = "";
+    int lineno = 0;
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        char *s = line, *eq, *key, *val;
+        int id, found;
+
+        lineno++;
+        if (lineno == 1 && (unsigned char)s[0] == 0xEF &&
+            (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) {
+            s += 3;
+        }
+        s = trim(s);
+        if (*s == '\0' || *s == '#' || *s == ';') {
+            continue;
+        }
+        if (*s == '[') {
+            char *close = strchr(s, ']');
+
+            if (close == NULL) {
+                fprintf(stderr, "eidos: settings.ini:%d: bad section line "
+                        "ignored\n", lineno);
+                section[0] = '?';
+                section[1] = '\0';
+                continue;
+            }
+            *close = '\0';
+            lower_into(section, sizeof(section), trim(s + 1));
+            continue;
+        }
+        eq = strchr(s, '=');
+        if (eq == NULL) {
+            fprintf(stderr, "eidos: settings.ini:%d: no '=' in line, "
+                    "ignored\n", lineno);
+            continue;
+        }
+        *eq = '\0';
+        key = trim(s);
+        val = trim(eq + 1);
+        lower_into(key, strlen(key) + 1, key);
+
+        if (strcmp(section, "keys") == 0 || strcmp(section, "pad") == 0) {
+            int b;
+
+            found = 0;
+            for (b = 0; b < NBTN; b++) {
+                if (strcmp(key, k_buttons[b].key) == 0) {
+                    parse_bind_list(m, b, section[0] == 'p', val, lineno);
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                fprintf(stderr, "eidos: settings.ini:%d: unknown button "
+                        "'%s' in [%s], ignored\n", lineno, key, section);
+            }
+            continue;
+        }
+        found = 0;
+        for (id = 0; id < EIDOS_OPT_COUNT; id++) {
+            char grp[32];
+
+            lower_into(grp, sizeof(grp), k_options[id].group);
+            if (strcmp(grp, section) == 0 && strcmp(k_options[id].key, key) == 0) {
+                int v;
+
+                found = 1;
+                if (parse_value(id, val, &v) == 0) {
+                    m->v[id] = v;
+                } else {
+                    fprintf(stderr, "eidos: settings.ini:%d: bad value "
+                            "'%s' for %s.%s, kept the default\n", lineno, val,
+                            grp, key);
+                }
+                break;
+            }
+        }
+        if (!found) {
+            fprintf(stderr, "eidos: settings.ini:%d: unknown key '%s' in "
+                    "[%s], ignored\n", lineno, key, section);
+        }
+    }
+    model_dedupe(m);
+}
+
+static int write_file(FILE *fp, const Model *m)
+{
+    char tok[128];
+    int id, b, s, kind, first;
+    char prev[32] = "";
+
+    fprintf(fp, "# eidos settings.  Edit by hand or from the settings screen.\n"
+                "# Lists are separated with '|'.  Unknown keys are ignored.\n");
+    for (id = 0; id < EIDOS_OPT_COUNT; id++) {
+        const EidosOption *o = &k_options[id];
+        char grp[32];
+
+        lower_into(grp, sizeof(grp), o->group);
+        if (strcmp(grp, prev) != 0) {
+            fprintf(fp, "\n[%s]\n", grp);
+            snprintf(prev, sizeof(prev), "%s", grp);
+        }
+        if (o->kind == EIDOS_OPTKIND_CHOICE) {
+            fprintf(fp, "%s = %s\n", o->key, o->choices[m->v[id]]);
+        } else {
+            fprintf(fp, "%s = %d\n", o->key, m->v[id]);
+        }
+    }
+    for (kind = 0; kind < 2; kind++) {
+        fprintf(fp, "\n[%s]\n", kind == 0 ? "keys" : "pad");
+        for (b = 0; b < NBTN; b++) {
+            fprintf(fp, "%s = ", k_buttons[b].key);
+            first = 1;
+            for (s = 0; s < EIDOS_BIND_SLOTS; s++) {
+                if (kind == 0 ? m->key[b][s] > 0 : m->pad[b][s].kind >= 0) {
+                    if (kind == 0) {
+                        key_token(m->key[b][s], tok, sizeof(tok));
+                    } else {
+                        pad_token(&m->pad[b][s], tok, sizeof(tok));
+                    }
+                    fprintf(fp, "%s%s", first ? "" : " | ", tok);
+                    first = 0;
+                }
+            }
+            fprintf(fp, "\n");
+        }
+    }
+    return ferror(fp) ? -1 : 0;
+}
+
+int eidos_settings_load(void)
+{
+    const char *path = eidos_settings_path();
+    Model m;
+    FILE *fp;
+    int i;
+
+    g_inited = 1;
+    for (i = 0; i < EIDOS_OPT_COUNT; i++) {
+        g_ovr[i] = 0;
+    }
+    model_defaults(&m);
+    g_cur = g_saved = m;
+    if (path[0] == '\0') {
+        return 1;
+    }
+    fp = bw_fopen_utf8(path, "rb");
+    if (fp == NULL) {
+        return bw_path_kind_utf8(path) == BW_PATH_NONE ? 1 : -1;
+    }
+    parse_file(fp, &m);
+    fclose(fp);
+    g_cur = g_saved = m;
+    if (g_plat != NULL) {
+        apply_all();
+    }
+    return 0;
+}
+
+static int save_model(const Model *out)
+{
+    const char *path = eidos_settings_path();
+    char tmp[PATH_MAX_LEN + 8];
+    char dir[PATH_MAX_LEN];
+    FILE *fp;
+    char *sep;
+
+    if (path[0] == '\0') {
+        fprintf(stderr, "eidos: no settings location; changes last this run\n");
+        return -1;
+    }
+    snprintf(dir, sizeof(dir), "%s", path);
+    sep = strrchr(dir, '/');
+    if (sep == NULL) {
+        sep = strrchr(dir, '\\');
+    }
+    if (sep != NULL) {
+        *sep = '\0';
+        (void)bw_mkdirs_utf8(dir);
+    }
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    fp = bw_fopen_utf8(tmp, "wb");
+    if (fp == NULL) {
+        fprintf(stderr, "eidos: cannot write %s\n", tmp);
+        return -1;
+    }
+    if (write_file(fp, out) != 0 || fflush(fp) != 0) {
+        fclose(fp);
+        remove(tmp);
+        fprintf(stderr, "eidos: write to %s failed\n", tmp);
+        return -1;
+    }
+    fclose(fp);
+    if (eidos_replace_file(tmp, path) != 0) {
+        remove(tmp);
+        fprintf(stderr, "eidos: cannot replace %s\n", path);
+        return -1;
+    }
+    return 0;
+}
+
+int eidos_settings_commit(void)
+{
+    Model out;
+    int i;
+
+    ensure_init();
+    out = g_cur;
+    for (i = 0; i < EIDOS_OPT_COUNT; i++) {
+        if (g_ovr[i]) {
+            out.v[i] = g_saved.v[i];     /* a command-line value is not saved */
+        }
+    }
+    if (save_model(&out) != 0) {
+        return -1;
+    }
+    g_size_pending = 0;
+    g_saved = out;
+    return 0;
+}
+
+int eidos_settings_dirty(void)
+{
+    Model c;
+    int i;
+
+    ensure_init();
+    c = g_cur;
+    for (i = 0; i < EIDOS_OPT_COUNT; i++) {
+        if (g_ovr[i]) {
+            c.v[i] = g_saved.v[i];
+        }
+    }
+    return memcmp(&c, &g_saved, sizeof(c)) != 0;
+}
+
+void eidos_settings_revert(void)
+{
+    int i;
+
+    ensure_init();
+    g_cur = g_saved;
+    for (i = 0; i < EIDOS_OPT_COUNT; i++) {
+        if (g_ovr[i]) {
+            g_cur.v[i] = g_ovr_val[i];
+        }
+    }
+    apply_all();
+}
+
+void eidos_settings_defaults(void)
+{
+    int i;
+
+    ensure_init();
+    model_defaults(&g_cur);
+    for (i = 0; i < EIDOS_OPT_COUNT; i++) {
+        g_ovr[i] = 0;
+    }
+    apply_all();
+}
+
+/* ------------------------------------------------------------------ */
+/* Command line, platform                                              */
+/* ------------------------------------------------------------------ */
+
+static void override_opt(int id, int v)
+{
+    ensure_init();
+    g_cur.v[id] = clamp_opt(id, v);
+    g_ovr[id] = 1;
+    g_ovr_val[id] = g_cur.v[id];
+    (void)apply_option_group(id);
+}
+
+static int bad_arg(const char *name, const char *val)
+{
+    fprintf(stderr, "eidos: bad value '%s' for %s\n", val, name);
+    return -1;
+}
+
+int eidos_settings_parse_arg(int argc, char **argv, int *i)
+{
+    const char *a = argv[*i];
+    const char *val = NULL;
+    int v, id = -1, takes = 0;
+
+    if (strcmp(a, "--fullscreen") == 0) {
+        override_opt(EIDOS_OPT_DISPLAY_MODE, EIDOS_DISPLAY_FULLSCREEN);
+        return 1;
+    }
+    if (strcmp(a, "--borderless") == 0) {
+        override_opt(EIDOS_OPT_DISPLAY_MODE, EIDOS_DISPLAY_BORDERLESS);
+        return 1;
+    }
+    if (strcmp(a, "--windowed") == 0) {
+        override_opt(EIDOS_OPT_DISPLAY_MODE, EIDOS_DISPLAY_WINDOWED);
+        return 1;
+    }
+    if (strcmp(a, "--swap-screens") == 0) {
+        override_opt(EIDOS_OPT_LAYOUT_SWAP, 1);
+        return 1;
+    }
+    if (strcmp(a, "--resolution") == 0) {
+        id = EIDOS_OPT_DISPLAY_RESOLUTION;
+    } else if (strcmp(a, "--layout") == 0) {
+        id = EIDOS_OPT_LAYOUT_ARRANGEMENT;
+    } else if (strcmp(a, "--gap") == 0) {
+        id = EIDOS_OPT_LAYOUT_GAP;
+    } else if (strcmp(a, "--volume") == 0) {
+        id = EIDOS_OPT_SOUND_VOLUME;
+    }
+    if (id < 0) {
+        return 0;
+    }
+    takes = 1;
+    if (*i + takes >= argc) {
+        fprintf(stderr, "eidos: %s needs a value\n", a);
+        return -1;
+    }
+    val = argv[*i + 1];
+    if (parse_value(id, val, &v) != 0) {
+        return bad_arg(a, val);
+    }
+    *i += takes;
+    override_opt(id, v);
+    return 1;
+}
+
+void eidos_settings_fill_config(EidosPlatformConfig *cfg)
+{
+    ensure_init();
+    cfg->win_w = g_cur.v[EIDOS_OPT_DISPLAY_WIDTH];
+    cfg->win_h = g_cur.v[EIDOS_OPT_DISPLAY_HEIGHT];
+    cfg->layout = g_cur.v[EIDOS_OPT_LAYOUT_ARRANGEMENT];
+    cfg->gap = g_cur.v[EIDOS_OPT_LAYOUT_GAP];
+    cfg->swap_screens = g_cur.v[EIDOS_OPT_LAYOUT_SWAP];
+    cfg->display_mode = g_cur.v[EIDOS_OPT_DISPLAY_MODE];
+}
+
+void eidos_settings_attach(EidosPlatform *p)
+{
+    ensure_init();
+    g_plat = p;
+    apply_all();
+}
+
+void eidos_settings_detach(void)
+{
+    g_plat = NULL;
+}
+
+int eidos_settings_on_toggle(EidosPlatform *p)
+{
+    if (p == NULL || p != g_plat) {
+        return 0;
+    }
+    if (eidos_settings_set(EIDOS_OPT_DISPLAY_MODE,
+                           g_cur.v[EIDOS_OPT_DISPLAY_MODE] ==
+                                   EIDOS_DISPLAY_BORDERLESS
+                               ? EIDOS_DISPLAY_WINDOWED
+                               : EIDOS_DISPLAY_BORDERLESS) == 0) {
+        (void)eidos_settings_commit();
+    }
+    return 1;
+}
+
+int eidos_settings_internal_scale(void)
+{
+    EidosViewport vp;
+    int r;
+
+    ensure_init();
+    r = g_cur.v[EIDOS_OPT_DISPLAY_RESOLUTION];
+    if (r > 0) {
+        return r;
+    }
+    if (g_plat == NULL) {
+        return 1;
+    }
+    eidos_platform_viewport(g_plat, &vp);
+    return eidos_resolution_fit(&vp,
+                                k_options[EIDOS_OPT_DISPLAY_RESOLUTION].max);
+}
+
+void eidos_settings_on_resize(EidosPlatform *p, int w, int h)
+{
+    if (p == NULL || p != g_plat || w <= 0 || h <= 0) {
+        return;
+    }
+    w = clamp_opt(EIDOS_OPT_DISPLAY_WIDTH, w);
+    h = clamp_opt(EIDOS_OPT_DISPLAY_HEIGHT, h);
+    if (g_saved.v[EIDOS_OPT_DISPLAY_WIDTH] != w ||
+        g_saved.v[EIDOS_OPT_DISPLAY_HEIGHT] != h) {
+        g_size_pending = 1;
+    }
+    /* Remembered in the committed state too: a resize is never "dirty". */
+    g_cur.v[EIDOS_OPT_DISPLAY_WIDTH] = g_saved.v[EIDOS_OPT_DISPLAY_WIDTH] = w;
+    g_cur.v[EIDOS_OPT_DISPLAY_HEIGHT] = g_saved.v[EIDOS_OPT_DISPLAY_HEIGHT] = h;
+}
+
+void eidos_settings_on_quit(EidosPlatform *p)
+{
+    if (p == g_plat) {
+        if (g_size_pending) {
+            g_size_pending = 0;
+            (void)save_model(&g_saved);
+        }
+        g_plat = NULL;
+    }
+}

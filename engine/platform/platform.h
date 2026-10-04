@@ -135,12 +135,61 @@ const EidosPadBinding *eidos_default_padmap(u32 *count);
 
 #define EIDOS_LAYOUT_STACKED       0   /* top screen above the bottom one */
 #define EIDOS_LAYOUT_SIDE_BY_SIDE  1
+#define EIDOS_LAYOUT_VERTICAL      EIDOS_LAYOUT_STACKED
+#define EIDOS_LAYOUT_HORIZONTAL    EIDOS_LAYOUT_SIDE_BY_SIDE
+
+#define EIDOS_DISPLAY_WINDOWED     0
+#define EIDOS_DISPLAY_FULLSCREEN   1   /* exclusive, at the desktop's mode  */
+#define EIDOS_DISPLAY_BORDERLESS   2   /* desktop-sized borderless window   */
+
+/* The largest internal resolution multiple the port offers (a data value:
+ * the Resolution option's range follows it).  A frame is 256N x 192N per
+ * screen. */
+#define EIDOS_RESOLUTION_MAX       6
+
+/*
+ * Screen geometry, as data and without SDL.  A placement says where each of
+ * the two screens (0 = top, 1 = bottom, the hardware's names) sits in DS
+ * pixels; a viewport says where they land in an output of a given size.
+ * `swap` puts the bottom screen first (above, or on the left).
+ */
+typedef struct EidosRect { int x, y, w, h; } EidosRect;
+
+typedef struct EidosScreenPlacement {
+    EidosRect screen[2];
+    int width, height;          /* the whole arrangement, DS pixels */
+} EidosScreenPlacement;
+
+typedef struct EidosViewport {
+    EidosRect content;          /* the picture in the output: fills it in
+                                   one dimension, centred in the other     */
+    EidosRect screen[2];        /* each screen's destination rectangle     */
+} EidosViewport;
+
+void eidos_layout_place(int layout, int swap, int gap,
+                        EidosScreenPlacement *out);
+/* The picture always fills the output, aspect preserved: letterboxed only
+ * by what the aspect ratio forces.  No integer-multiple rule. */
+void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
+                            int out_h, EidosViewport *vp);
+/* The "Fit" internal resolution: the smallest N whose 256N x 192N frame is
+ * at least as large as each screen's destination rectangle, in [1, max]. */
+int  eidos_resolution_fit(const EidosViewport *vp, int max);
+/* The bottom-screen pixel under output point (wx, wy); non-zero when the
+ * point is on the bottom screen; both coordinates are clamped to it either
+ * way. */
+int  eidos_viewport_to_touch(const EidosScreenPlacement *pl,
+                             const EidosViewport *vp, int wx, int wy,
+                             int *x, int *y);
 
 typedef struct EidosPlatformConfig {
     const char *title;       /* NULL: "eidos"                            */
-    int   scale;             /* integer multiple of 256x192; 0 means 2   */
+    int   win_w, win_h;      /* windowed size in pixels; 0: 3x the
+                                layout (the window is freely resizable)   */
     int   layout;            /* EIDOS_LAYOUT_*                           */
     int   gap;               /* DS pixels between the two screens        */
+    int   swap_screens;      /* bottom screen first                      */
+    int   display_mode;      /* EIDOS_DISPLAY_*; 0 windowed              */
     int   audio;             /* non-zero: open the audio device          */
     int   audio_push;        /* non-zero: the program pushes its samples
                                 from its own thread (eidos_platform_queue_
@@ -198,6 +247,55 @@ int  eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
                                     int win_h, int wx, int wy,
                                     int *x, int *y);
 
+/*
+ * Runtime changes (engine/platform/settings.h drives these).  None recreates
+ * the renderer or the textures.  Each returns 0 on success; a display mode
+ * the host refuses (a headless driver, say) returns -1 and leaves the window
+ * as it was.
+ */
+/* Windowed size win_w x win_h is applied when entering windowed mode from
+ * another mode, or when it differs from the current size and is > 0; 0 keeps
+ * the window as it is (3x the layout when coming back from fullscreen). */
+int  eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
+                                int win_h);
+int  eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap);
+/* Master volume, percent, applied to the final mixed samples with
+ * saturation, in both the callback and the push path.  Default 100. */
+void eidos_platform_set_volume(EidosPlatform *p, int percent);
+/* The gain itself, exposed for tests: v * percent / 100, rounded, saturated. */
+s16  eidos_audio_gain(s16 v, int percent);
+/* Replace both binding tables; the tables are copied. */
+int  eidos_platform_set_bindings(EidosPlatform *p, const EidosKeyBinding *keys,
+                                 u32 nkeys, const EidosPadBinding *pads,
+                                 u32 npads);
+/* Each screen's destination rectangle in the current output (0 top, 1
+ * bottom), and the output size. */
+void eidos_platform_viewport(const EidosPlatform *p, EidosViewport *vp);
+int  eidos_platform_display_mode(const EidosPlatform *p);
+
+/*
+ * Capture the next control pressed, for a key-binding screen.  begin arms
+ * it: while armed the game sees no buttons and Escape cancels instead of
+ * quitting.  poll returns EIDOS_CAPTURE_PENDING until something happens,
+ * then one of KEY / PAD / CANCELLED once (the state returns to NONE);
+ * *out holds the control.
+ */
+#define EIDOS_CAPTURE_NONE      0
+#define EIDOS_CAPTURE_PENDING   1
+#define EIDOS_CAPTURE_KEY       2
+#define EIDOS_CAPTURE_PAD       3
+#define EIDOS_CAPTURE_CANCELLED 4
+
+typedef struct EidosCaptured {
+    int scancode;               /* KEY: SDL_Scancode                       */
+    int pad_kind;               /* PAD: EIDOS_PADBIND_*                    */
+    int pad_index;              /* PAD: SDL_GameControllerButton / Axis    */
+} EidosCaptured;
+
+void eidos_platform_capture_begin(EidosPlatform *p);
+void eidos_platform_capture_cancel(EidosPlatform *p);
+int  eidos_platform_capture_poll(EidosPlatform *p, EidosCaptured *out);
+
 /* Gamepads currently open.                                                */
 int  eidos_platform_pads(const EidosPlatform *p);
 
@@ -205,18 +303,32 @@ int  eidos_platform_pads(const EidosPlatform *p);
 int  eidos_platform_take_screenshot_request(EidosPlatform *p);
 
 /*
- * Upload two 256x192 RGBA buffers (byte order R, G, B, A -- what
- * g2d_frame_compose writes) and present them.  Either may be NULL, which
- * leaves that screen showing whatever was last uploaded to it.
+ * Upload two RGBA buffers (byte order R, G, B, A -- what g2d_frame_compose
+ * writes) and present them.  Each is 256n x 192n pixels, n = 1 for
+ * eidos_platform_present; eidos_platform_present_n takes any n in
+ * [1, EIDOS_RESOLUTION_MAX or more].  The renderer should produce the n that
+ * eidos_settings_internal_scale() returned for this frame.  When n differs
+ * from the last frame the textures are recreated; a NULL buffer keeps that
+ * screen's last image (black after a size change).
+ *
+ * Filtering, per screen, from the frame size to its destination rectangle:
+ * smaller destination: linear (a downscale); an exact whole multiple:
+ * nearest; any other upscale: nearest to the next whole multiple, then
+ * linear down to the destination (sharp pixels with soft edges only where
+ * the ratio is fractional); plain linear when that intermediate would be
+ * over 8192 pixels or cannot be created.
  */
 void eidos_platform_present(EidosPlatform *p, const u8 *top, const u8 *bottom);
+void eidos_platform_present_n(EidosPlatform *p, const u8 *top,
+                              const u8 *bottom, int n);
+/* The multiple of the last presented frame (1 before the first). */
+int  eidos_platform_frame_scale(const EidosPlatform *p);
 
 /*
- * Write the last presented pair as a BMP through SDL_SaveBMP, at 1x in the
- * configured layout (256 x 384 stacked, 512 x 192 side by side, plus the
- * gap).  The window's own scale is deliberately not applied: the file is
- * meant to be checked, and an integer upscale carries no information the DS
- * resolution does not.  Returns 0 on success.
+ * Write the last presented pair as a BMP through SDL_SaveBMP at the internal
+ * resolution of that frame (256n x 192n per screen, in the configured layout
+ * with the gap scaled by n).  The window size is not applied.  Returns 0 on
+ * success.
  *
  * This works under SDL_VIDEODRIVER=dummy, which is what lets a headless test
  * check that the engine actually drew something.
