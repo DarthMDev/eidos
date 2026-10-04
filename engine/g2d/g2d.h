@@ -1028,6 +1028,13 @@ int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
                          u8 *top, u8 *bottom, u32 unsupported[2]);
 int g2d_hw_render_dsmem_scaled(u32 scale, const u8 *rgba3d, u8 *top,
                                u8 *bottom, u32 unsupported[2]);
+/* Each screen at the multiple it needs: only the main engine with the 3D
+ * layer is rendered at `scale`; the other screen is 256x192 (the presenter
+ * scales it).  screen_scale[0..1] (top, bottom) receive the multiple each
+ * buffer was written at; both buffers are sized for `scale`. */
+int g2d_hw_render_dsmem_adaptive(u32 scale, const u8 *rgba3d, u8 *top,
+                                 u8 *bottom, u32 unsupported[2],
+                                 u32 screen_scale[2]);
 
 /* ------------------------------------------------------------------ */
 /* Rig blocks (a/0/0/4 and its siblings)                               */

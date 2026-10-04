@@ -721,11 +721,20 @@ if(EIDOS_SDL_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_replace.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_gl.c
     )
     target_include_directories(eidos_platform PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
     )
     target_link_libraries(eidos_platform PUBLIC eidos eidos_setup eidos_sdl2)
+    # The GPU presenter (plat_gl.c) calls the GL 1.1 core entry points directly.
+    if(WIN32)
+        target_link_libraries(eidos_platform PUBLIC opengl32)
+    elseif(APPLE)
+        target_link_libraries(eidos_platform PUBLIC "-framework OpenGL")
+    else()
+        target_link_libraries(eidos_platform PUBLIC GL)
+    endif()
 endif()
 
 # The matched files are compiled with the port's warning set but without the
@@ -2077,3 +2086,11 @@ if(MSVC AND EIDOS_NO_CRT_DIALOGS)
         endif()
     endforeach()
 endif()
+
+# No test may touch the player's settings.ini: point every test at a file in
+# the build directory (engine/platform/settings.c reads EIDOS_SETTINGS).
+get_property(_eidos_all_tests DIRECTORY PROPERTY TESTS)
+foreach(_t IN LISTS _eidos_all_tests)
+    set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT
+        "EIDOS_SETTINGS=${CMAKE_CURRENT_BINARY_DIR}/test_${_t}.ini")
+endforeach()

@@ -333,6 +333,10 @@ int  eidos_platform_take_screenshot_request(EidosPlatform *p);
 void eidos_platform_present(EidosPlatform *p, const u8 *top, const u8 *bottom);
 void eidos_platform_present_n(EidosPlatform *p, const u8 *top,
                               const u8 *bottom, int n);
+/* As present_n with a multiple for each screen (a screen without the 3D layer
+ * can stay at 1 while the other is larger). */
+void eidos_platform_present_nn(EidosPlatform *p, const u8 *top, int n_top,
+                               const u8 *bottom, int n_bottom);
 /* The multiple of the last presented frame (1 before the first). */
 int  eidos_platform_frame_scale(const EidosPlatform *p);
 

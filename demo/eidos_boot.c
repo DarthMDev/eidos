@@ -82,6 +82,7 @@
 #endif
 
 #define BOOT_DEFAULT_FRAMES 600u
+#define BOOT_CPU_3D_MAX     2u
 
 /* --screenshot: the frames to save both screens at, and where. */
 #define BOOT_MAX_SHOTS 32
@@ -251,7 +252,8 @@ typedef struct BootRun {
 #if EIDOS_BOOT_SDL
     u8 *hi_top;        /* the window's frames, 256n x 192n               */
     u8 *hi_bottom;
-    u32 hi_n;          /* the n those buffers hold                       */
+    u32 hi_n;          /* the n those buffers are sized for              */
+    u32 hi_sn[2];      /* the n each screen was written at (top, bottom) */
     EidosPlatform *plat;
     int want_window;   /* --window: open one at the first frame          */
     int window_tried;
@@ -543,7 +545,15 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
     (void)bottom;
     /* The 3D renders at the scale set before its swap, so a change shows
      * one frame late; the 2D follows the 3D frame's own n. */
-    g3d_hw_set_scale((u32)eidos_settings_internal_scale());
+    /* The 3D is software-rasterised: its cost grows with n squared (about
+     * 360 ms a frame at 6x), so it is held at BOOT_CPU_3D_MAX until the GPU
+     * rasteriser exists.  The 2D is not affected: it stays DS-sized and the
+     * GPU presenter scales it to any window. */
+    {
+        u32 want = (u32)eidos_settings_internal_scale();
+
+        g3d_hw_set_scale(want > BOOT_CPU_3D_MAX ? BOOT_CPU_3D_MAX : want);
+    }
     rgba3d = g3d_hw_frame();
     n = g3d_hw_frame_scale();
     eidos_prof_end(EIDOS_PROF_G3D, t0);
@@ -559,8 +569,9 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
         }
         run->hi_n = n;
     }
-    (void)g2d_hw_render_dsmem_scaled(n, rgba3d, run->hi_top, run->hi_bottom,
-                                     unsupported);
+    run->hi_sn[0] = run->hi_sn[1] = 1u;
+    (void)g2d_hw_render_dsmem_adaptive(n, rgba3d, run->hi_top, run->hi_bottom,
+                                       unsupported, run->hi_sn);
     g_render_ns = eidos_prof_on ? bw_clock_ns() - t0 : 0;
 }
 
@@ -691,8 +702,9 @@ static void boot_frame(void *user)
         } else {
             run->skipped = 0;
             if (run->hi_n != 0u) {
-                eidos_platform_present_n(run->plat, run->hi_top, run->hi_bottom,
-                                         (int)run->hi_n);
+                eidos_platform_present_nn(run->plat, run->hi_top,
+                                          (int)run->hi_sn[0], run->hi_bottom,
+                                          (int)run->hi_sn[1]);
             }
         }
         eidos_prof_end(EIDOS_PROF_PRESENT, t_ph);

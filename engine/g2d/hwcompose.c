@@ -1377,8 +1377,16 @@ void g2d_hw_box_downsample(const u8 *src, u32 scale, u8 *dst)
     }
 }
 
-int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
-                         u8 *top, u8 *bottom, u32 unsupported[2])
+/*
+ * `adaptive`: each screen is rendered at the multiple it needs.  The 2D
+ * layers have DS resolution, so a screen without the 3D layer gains nothing
+ * from a larger frame (the presenter scales it on the GPU); only the main
+ * engine with BG0 as the 3D layer is rendered at `scale`.  screen_scale[0]
+ * and [1] (top, bottom) then hold the multiple each buffer was written at.
+ */
+static int render_scaled_impl(const G2dHwState *hw, u32 scale, int adaptive,
+                              const u8 *rgba3d, u8 *top, u8 *bottom,
+                              u32 unsupported[2], u32 screen_scale[2])
 {
     int main_on_top = (bw_rd16(hw->io + REG_POWCNT1) & 0x8000u) != 0;
     u32 cap = bw_rd32(hw->io + (G2D_HW_DISPCAPCNT - BW_DS_IO_BASE));
@@ -1388,9 +1396,22 @@ int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
     const u8 *cap3d = rgba3d;
     u64 t0;
     int rc = 0;
+    u32 main_scale;
+    u32 sub_scale;
 
     if (scale == 0) {
         scale = 1;
+    }
+    {
+        u32 dispcnt = bw_rd32(hw->io + REG_DISPCNT);
+        int main_3d = (dispcnt & 0x8u) && (dispcnt & 0x100u);
+
+        main_scale = (adaptive && !main_3d) ? 1u : scale;
+        sub_scale = adaptive ? 1u : scale;
+    }
+    if (screen_scale != NULL) {
+        screen_scale[main_on_top ? 0 : 1] = main_scale;
+        screen_scale[main_on_top ? 1 : 0] = sub_scale;
     }
     if (cap & 0x80000000u) {
         if (scale > 1u && rgba3d != NULL) {
@@ -1410,7 +1431,7 @@ int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
         }
     }
     t0 = eidos_prof_begin();
-    if (scale > 1u && graphics6 != NULL) {
+    if (main_scale > 1u && graphics6 != NULL) {
         /* The capture's source A is the DS-resolution graphics screen. */
         u8 *tmp = (u8 *)malloc((size_t)SCREEN_PX * 4u);
 
@@ -1421,14 +1442,14 @@ int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
         }
         free(tmp);
     }
-    if (render_engine(hw, G2D_HW_MAIN, scale, rgba3d,
+    if (render_engine(hw, G2D_HW_MAIN, main_scale, rgba3d,
                       main_on_top ? top : bottom, &flags[0],
-                      scale > 1u ? NULL : graphics6) != 0) {
+                      main_scale > 1u ? NULL : graphics6) != 0) {
         rc = -1;
     }
     eidos_prof_end(EIDOS_PROF_MAIN, t0);
     t0 = eidos_prof_begin();
-    if (render_engine(hw, G2D_HW_SUB, scale, NULL, main_on_top ? bottom : top,
+    if (render_engine(hw, G2D_HW_SUB, sub_scale, NULL, main_on_top ? bottom : top,
                       &flags[1], NULL) != 0) {
         rc = -1;
     }
@@ -1443,6 +1464,13 @@ int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
         unsupported[1] = flags[1];
     }
     return rc;
+}
+
+int g2d_hw_render_scaled(const G2dHwState *hw, u32 scale, const u8 *rgba3d,
+                         u8 *top, u8 *bottom, u32 unsupported[2])
+{
+    return render_scaled_impl(hw, scale, 0, rgba3d, top, bottom, unsupported,
+                              NULL);
 }
 
 int g2d_hw_render(const G2dHwState *hw, const u8 *rgba3d,
@@ -1515,6 +1543,27 @@ int g2d_hw_render_dsmem_scaled(u32 scale, const u8 *rgba3d, u8 *top,
     rc = g2d_hw_render_scaled(&hw, scale, rgba3d, top, bottom, unsupported);
     /* The capture has run through this frame: the hardware clears the
      * enable bit when it completes. */
+    cap = bw_io_read32(G2D_HW_DISPCAPCNT);
+    if (cap & 0x80000000u) {
+        bw_io_write32(G2D_HW_DISPCAPCNT, cap & 0x7FFFFFFFu);
+    }
+    return rc;
+}
+
+int g2d_hw_render_dsmem_adaptive(u32 scale, const u8 *rgba3d, u8 *top,
+                                 u8 *bottom, u32 unsupported[2],
+                                 u32 screen_scale[2])
+{
+    G2dHwState hw;
+    u32 cap;
+    int rc;
+
+    g2d_hw_state_from_dsmem(&hw);
+    if (hw.io == NULL || hw.pal == NULL || hw.oam == NULL) {
+        return -1;
+    }
+    rc = render_scaled_impl(&hw, scale, 1, rgba3d, top, bottom, unsupported,
+                            screen_scale);
     cap = bw_io_read32(G2D_HW_DISPCAPCNT);
     if (cap & 0x80000000u) {
         bw_io_write32(G2D_HW_DISPCAPCNT, cap & 0x7FFFFFFFu);
