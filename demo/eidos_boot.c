@@ -466,6 +466,19 @@ static void boot_dump_io(u64 n)
                 bw_io_read16(base + 0x1C), bw_io_read16(base + 0x1E), bw_io_read16(base + 0x50),
                 bw_io_read16(base + 0x6C));
     }
+    {
+        /* EIDOS_PEEK=addr:words prints DS memory beside the registers. */
+        const char *pk = getenv("EIDOS_PEEK");
+        unsigned addr = 0, words = 0, k;
+
+        if (pk != NULL && sscanf(pk, "%x:%u", &addr, &words) == 2) {
+            for (k = 0; k < words; k++) {
+                const u32 *w = (const u32 *)bw_ds_ptr(addr + k * 4u);
+
+                fprintf(stderr, "peek %08X: %08X\n", addr + k * 4u, w != NULL ? *w : 0u);
+            }
+        }
+    }
     fprintf(stderr, "io %llu DISPCAPCNT %08X\n", (unsigned long long)n, bw_io_read32(0x04000064u));
     fprintf(stderr, "io %llu POWCNT1 %04X VRAMCNT A-D %02X %02X %02X %02X\n", (unsigned long long)n,
             bw_io_read16(0x04000304u), bw_io_read16(0x04000240u) & 0xFFu,

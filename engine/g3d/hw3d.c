@@ -253,6 +253,7 @@ typedef struct Hw3d {
 } Hw3d;
 
 static Hw3d g_hw;
+static u32 g_mtx_log = 0xFFFFFFFFu;   /* matrix commands logged since the armed swap */
 static u32 g_ops_frame[256];     /* commands since the last swap (EIDOS_G3D_OPS) */
 
 /* ------------------------------------------------------------------ */
@@ -1050,6 +1051,16 @@ static void render_frame(void)
     }
 
     g3d_geom_sort(&g_hw.geom, (int)(g_hw.swap_param & 1u));
+    {
+        static u32 swaps;
+
+        if ((++swaps % 60u) == 0) {
+            if (getenv("EIDOS_G3D_MTX") != NULL) {
+                fprintf(stderr, "mtx swap %u\n", swaps);
+            }
+            g_mtx_log = 0;     /* arm the matrix log for the next frame */
+        }
+    }
     if (getenv("EIDOS_G3D_OPS") != NULL) {
         static u32 n;
 
@@ -1285,6 +1296,27 @@ static void exec(u32 op, const u32 *par)
 {
     unsigned long long t0 = eidos_prof_begin();
     g_ops_frame[op & 0xFFu]++;
+    {
+        /* EIDOS_G3D_MTX=N: the first N matrix commands after each 60th swap */
+        static int init, lim;
+
+        if (!init) {
+            const char *e = getenv("EIDOS_G3D_MTX");
+
+            init = 1;
+            lim = e != NULL ? atoi(e) : 0;
+        }
+        if (lim > 0 && g_mtx_log < (u32)lim && ((op >= 0x10u && op <= 0x1Cu) || op == 0x2Au || op == 0x29u)) {
+            u32 k, n = g3d_gx_param_count(op);
+
+            fprintf(stderr, "mtx %02X:", op);
+            for (k = 0; k < n && k < 16u; k++) {
+                fprintf(stderr, " %d", (int)par[k]);
+            }
+            fprintf(stderr, "\n");
+            g_mtx_log++;
+        }
+    }
 
     exec_cmd(op, par);
     eidos_prof_end(EIDOS_PROF_GEOM, t0);

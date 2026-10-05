@@ -542,6 +542,30 @@ int main(void)
     s = make_snap();
     check_scene("translucent over opaque and clear", &s, gl, 8, 0.04);
 
+    /* 4b. two translucent triangles of one polygon ID overlap: the second
+     * is not drawn where the first is (a third, of another ID, is).  Over
+     * an opaque backdrop, so the result does not depend on the clear alpha. */
+    scene_reset();
+    quad[0] = mkv(-3800, -3800, 2000, 4096, 0, 0, 40, 40, 40);
+    quad[1] = mkv(3800, -3800, 2000, 4096, 0, 0, 40, 40, 40);
+    quad[2] = mkv(3800, 3800, 2000, 4096, 0, 0, 40, 40, 40);
+    quad[3] = mkv(-3800, 3800, 2000, 4096, 0, 0, 40, 40, 40);
+    add_poly(quad, 4, ATTR(31, 1, 1, 1), 0, -1);
+    tri[0] = mkv(-3000, -2500, 0, 4096, 0, 0, 0, 120, 255);
+    tri[1] = mkv(1500, -2500, 0, 4096, 0, 0, 0, 120, 255);
+    tri[2] = mkv(-3000, 2000, 0, 4096, 0, 0, 0, 120, 255);
+    add_poly(tri, 3, ATTR(16, 7, 1, 1), 0, -1);
+    tri[0] = mkv(-1000, -3000, 0, 4096, 0, 0, 255, 120, 0);
+    tri[1] = mkv(3500, -1000, 0, 4096, 0, 0, 255, 120, 0);
+    tri[2] = mkv(-500, 3000, 0, 4096, 0, 0, 255, 120, 0);
+    add_poly(tri, 3, ATTR(16, 7, 1, 1), 0, -1);
+    tri[0] = mkv(-2000, 1000, 0, 4096, 0, 0, 0, 255, 0);
+    tri[1] = mkv(2000, 1000, 0, 4096, 0, 0, 0, 255, 0);
+    tri[2] = mkv(0, -3500, 0, 4096, 0, 0, 0, 255, 0);
+    add_poly(tri, 3, ATTR(16, 9, 1, 1), 0, -1);
+    s = make_snap();
+    check_scene("translucent polygons of one ID do not stack", &s, gl, 8, 0.04);
+
     /* 5. depth test, both draw orders */
     for (i = 0; i < 2u; i++) {
         scene_reset();

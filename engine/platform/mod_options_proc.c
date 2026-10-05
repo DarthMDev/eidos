@@ -182,6 +182,9 @@ extern int eidos_sui_row_count(void);
 extern void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv);
 extern int eidos_sui_cursor_row(void);
 extern int eidos_sui_row_choices(int row, int *active, char names[3][20]);
+extern int eidos_sui_row_adjustable(int row);
+extern int eidos_sui_touch(int row, int zone);
+extern int eidos_settings_touch(int *x, int *y);
 extern int eidos_sui_help_count(void);
 extern void eidos_sui_help_line(int i, char *out, int n);
 
@@ -225,6 +228,8 @@ static const LayerCfg k_layers[6] = {
  * 196. */
 static const int k_text3[3] = { 100, 148, 196 };
 static const int k_text2[2] = { 112, 184 };
+#define VALUE_X 120            /* where a value that is not a choice starts */
+#define ARROW_W 14
 
 typedef struct OptWork {
     u32 heap;
@@ -235,7 +240,18 @@ typedef struct OptWork {
     int built;
     int state_dirty;
     int ending;
+    int tick;                   /* frames, for the pulse of the selected bar */
+    int flash;                  /* frames left of the flash after a change */
+    int touch_was;              /* the stylus was down on the frame before */
 } OptWork;
+
+/* Text colours, bank 15 of both screens. */
+#define TC_TEXT   0xfu      /* white */
+#define TC_SHADOW 0xeu
+#define TC_DIM    0x2u      /* a choice that is not the active one */
+#define TC_ACTIVE 0x3u      /* the active choice of a row */
+#define TC_LIVE   0x4u      /* the same on the selected row: it pulses */
+#define TC_HEAD   0x5u      /* the section title */
 
 static OptWork *g_w;
 
@@ -281,8 +297,9 @@ static int put_text(u32 win, const char *t, int x, int right, int room, int y,
     if (right >= 0) {
         x = right - w;
     }
-    func_0201DD78(fg, shadow, 0);       /* the text colours, baked in as it prints */
-    func_0201C724(g_w->print, func_02045770(win), x, y, o, g_w->font, 0x440);
+    /* the colours go with the print: letter, shadow and back, five bits each */
+    func_0201C724(g_w->print, func_02045770(win), x, y, o, g_w->font,
+                  (u16)((fg << 10) | (shadow << 5)));
     func_02045808(o);
     return w;
 }
@@ -299,15 +316,26 @@ static void win_commit(u32 win)
     func_02041B6C(func_02045730(win));
 }
 
+/* The rows are in capitals, as the title menu's are. */
+static void upper(char *t)
+{
+    for (; *t; t++) {
+        if (*t >= 'a' && *t <= 'z') {
+            *t = (char)(*t - 'a' + 'A');
+        }
+    }
+}
+
 /* The list screen: bar i holds row i + 1 of the model (row 0 is the header). */
 static void draw_rows(void)
 {
     char label[48], value[96];
-    int i, n = eidos_sui_row_count();
+    int i, n = eidos_sui_row_count(), cr = eidos_sui_cursor_row();
 
     eidos_sui_row_text(0, label, sizeof label, value, sizeof value);
+    upper(label);
     win_clear_and_commit_begin(g_w->win_head);
-    put_text(g_w->win_head, label, 4, -1, 16 * 8 - 8, 0, 0xf, 0xe);
+    put_text(g_w->win_head, label, 4, -1, 16 * 8 - 8, 0, TC_HEAD, TC_SHADOW);
     win_commit(g_w->win_head);
 
     /* Bars 0..4 are the option rows (model rows 1..n-2); bar 5, the grey
@@ -316,27 +344,42 @@ static void draw_rows(void)
         u32 win = g_w->win_row[i];
         int mrow = i == OPT_ROWS - 1 ? n - 1 : i + 1;
         int have = i == OPT_ROWS - 1 ? 1 : mrow < n - 1;
-
+        int sel = mrow == cr;
         char names[3][20];
         int active = 0, nch = 0, c;
-        u32 fg = 0xf, sh = 0xe;   /* white, dark shadow: arc 0x17's palette */
 
         win_clear_and_commit_begin(win);
         if (have) {
             eidos_sui_row_text(mrow, label, sizeof label, value, sizeof value);
-            put_text(win, label, 8, -1, 100, 4, fg, sh);
+            upper(label);
+            put_text(win, label, 8, -1, 100, 4, TC_TEXT, TC_SHADOW);
             if (i < OPT_ROWS - 1) {
                 nch = eidos_sui_row_choices(mrow, &active, names);
             }
             if (nch > 0) {
                 for (c = 0; c < nch; c++) {
-                    /* the active choice in the bright colour, the others dim */
+                    /* the active choice in gold (it pulses on the selected
+                     * row), the others grey */
+                    upper(names[c]);
                     put_text(win, names[c], nch == 3 ? k_text3[c] : k_text2[c],
                              -1, 60, 4,
-                             c == active ? fg : 0x2, sh);   /* the other choices: light grey */
+                             c != active ? TC_DIM : sel ? TC_LIVE : TC_ACTIVE,
+                             TC_SHADOW);
                 }
             } else if (value[0] != 0) {
-                put_text(win, value, 120, -1, 240 - 120 - 8, 4, fg, sh);
+                int adj = eidos_sui_row_adjustable(mrow), x = VALUE_X, vw;
+
+                upper(value);
+                if (adj && sel) {
+                    /* left and right change it: say so on the selected row */
+                    put_text(win, "<", x, -1, 16, 4, TC_LIVE, TC_SHADOW);
+                    x += ARROW_W;
+                }
+                vw = put_text(win, value, x, -1, 240 - x - (adj && sel ? 20 : 8), 4,
+                              adj ? (sel ? TC_LIVE : TC_ACTIVE) : TC_TEXT, TC_SHADOW);
+                if (adj && sel) {
+                    put_text(win, ">", x + vw + 8, -1, 16, 4, TC_LIVE, TC_SHADOW);
+                }
             }
         }
         win_commit(win);
@@ -352,7 +395,7 @@ static void draw_help(void)
     for (i = 0; i < n && i < 2; i++) {
         eidos_sui_help_line(i, line, sizeof line);
         if (line[0] != 0) {
-            put_text(g_w->win_help, line, 4, -1, 30 * 8 - 8, 2 + 16 * i, 0xf, 0xe);
+            put_text(g_w->win_help, line, 4, -1, 30 * 8 - 8, 2 + 16 * i, TC_TEXT, TC_SHADOW);
         }
     }
     win_commit(g_w->win_help);
@@ -368,29 +411,36 @@ extern void func_020413B0(u32, u32, u32, u32, u32, u32);
 
 /*
  * The colours.  The game's Options art is purple and green; the title menu this
- * screen is reached from is near-black with light borders and a teal
- * selection.  The art keeps its shapes and the palettes are set to the title
- * menu's colours (measured on its rows: fill 24/24/24, border 238 with 98 shading,
- * selected fill 57/65/82 with a teal 8/148/139 border).  Set directly in
- * the palette memory after the game has loaded the originals.
+ * screen is reached from is near-black with white borders and a teal
+ * selection.  The art keeps its shapes and the palettes take the title menu's
+ * colours.  Set directly in the palette memory after the game has loaded the
+ * originals.
  */
 static u16 rgb8(u32 r, u32 g, u32 b)
 {
     return (u16)((r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10));
 }
 
-/* The bar palette (banks 0 and 2 of the main background): index 4 is the
+/* The bar palette (banks 0, 2 and 9 of the main background): index 4 is the
  * fill, 5 and 1 the inner lines, 3, 9 and 15 the border and its end ticks,
  * 6 and 14 the border's shading, 7, 8 and 10 the dark edge. */
-static void theme_bar(u16 *bank, u32 fill, const u32 line[3], const u32 shade[3])
+static void theme_bar(u16 *bank, const u32 fill[3], const u32 line[3], const u32 shade[3])
 {
-    bank[4] = rgb8(fill, fill + 6, fill + 18);
-    bank[5] = rgb8(fill - 14, fill - 10, fill - 2);
-    bank[1] = rgb8(fill - 6, fill, fill + 12);
-    bank[2] = rgb8(fill + 8, fill + 14, fill + 28);
-    bank[10] = rgb8(fill - 10, fill - 6, fill + 4);
-    bank[7] = rgb8(fill - 14, fill - 10, fill - 2);
-    bank[8] = rgb8(fill - 6, fill, fill + 12);
+    u32 f[3], d[3], l[3];
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        f[i] = fill[i];
+        d[i] = fill[i] > 10u ? fill[i] - 10u : 0u;
+        l[i] = fill[i] + 12u > 255u ? 255u : fill[i] + 12u;
+    }
+    bank[4] = rgb8(f[0], f[1], f[2]);
+    bank[1] = rgb8(f[0], f[1], f[2]);
+    bank[2] = rgb8(l[0], l[1], l[2]);
+    bank[5] = rgb8(d[0], d[1], d[2]);
+    bank[7] = rgb8(d[0], d[1], d[2]);
+    bank[8] = rgb8(f[0], f[1], f[2]);
+    bank[10] = rgb8(d[0], d[1], d[2]);
     bank[3] = rgb8(line[0], line[1], line[2]);
     bank[9] = rgb8(line[0], line[1], line[2]);
     bank[15] = rgb8(line[0], line[1], line[2]);
@@ -398,38 +448,84 @@ static void theme_bar(u16 *bank, u32 fill, const u32 line[3], const u32 shade[3]
     bank[14] = rgb8(shade[0], shade[1], shade[2]);
 }
 
+/* a to b, t in 0..16 */
+static void mix3(u32 out[3], const u32 a[3], const u32 b[3], u32 t)
+{
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        out[i] = (a[i] * (16u - t) + b[i] * t) / 16u;
+    }
+}
+
+static const u32 k_teal[3] = { 8, 172, 160 }, k_teal_hi[3] = { 150, 255, 244 };
+static const u32 k_sel[3] = { 10, 56, 62 }, k_sel_hi[3] = { 16, 84, 90 };
+static const u32 k_flash[3] = { 120, 230, 220 };
+static const u32 k_gold[3] = { 255, 204, 48 }, k_white[3] = { 255, 255, 255 };
+
 static void make_palettes(void)
 {
-    static const u32 white[3] = { 245, 245, 245 }, grey[3] = { 140, 150, 172 };
-    static const u32 teal[3] = { 120, 236, 226 }, deep[3] = { 30, 150, 142 };
+    static const u32 fill[3] = { 30, 31, 36 }, grey[3] = { 120, 122, 130 };
+    static const u32 line[3] = { 238, 238, 238 };
     u16 *main_pal = (u16 *)bw_ds_ptr(0x05000000u);
     u16 *sub_pal = (u16 *)bw_ds_ptr(0x05000400u);
     int i;
 
-    main_pal[0] = rgb8(58, 68, 92);                  /* what shows through: the backdrop */
+    /* what shows through: the backdrop */
+    main_pal[0] = rgb8(14, 14, 18);
     for (i = 0; i < 2; i++) {
-        sub_pal[i] = sub_pal[16 + i] = rgb8(30, 36, 52);
+        sub_pal[i] = sub_pal[16 + i] = rgb8(8, 8, 12);
     }
-    theme_bar(main_pal + 0 * 16, 104, white, grey);   /* the grey bar */
-    theme_bar(main_pal + 2 * 16, 104, white, grey);   /* the bars */
-    theme_bar(main_pal + 9 * 16, 30, teal, deep);    /* the selected bar */
-    main_pal[9 * 16 + 4] = rgb8(20, 120, 116);
+    theme_bar(main_pal + 0 * 16, fill, line, grey);     /* the grey bar */
+    theme_bar(main_pal + 2 * 16, fill, line, grey);     /* the bars */
+    theme_bar(main_pal + 9 * 16, k_sel, k_teal, k_teal);    /* the selected bar: animate() */
     /* bank 13 is for a bar with no row: all of it the backdrop's colour */
     for (i = 0; i < 16; i++) {
-        main_pal[13 * 16 + i] = rgb8(52, 60, 80);
-        main_pal[8 * 16 + i] = rgb8(52, 60, 80);
+        main_pal[13 * 16 + i] = rgb8(14, 14, 18);
+        main_pal[8 * 16 + i] = rgb8(14, 14, 18);
     }
-    /* the grid of the other screen: neutral crosses on black */
-    sub_pal[1 * 16 + 2] = rgb8(110, 120, 142);
-    sub_pal[1 * 16 + 3] = rgb8(70, 80, 100);
-    /* the text, in both screens' bank 15: 15 the text, 14 its shadow, 2 dimmer */
+    /* the grid of the other screen: faint crosses, the text goes over them */
+    sub_pal[1 * 16 + 2] = rgb8(44, 46, 54);
+    sub_pal[1 * 16 + 3] = rgb8(26, 28, 34);
     for (i = 0; i < 16; i++) {
         main_pal[15 * 16 + i] = 0;
         sub_pal[15 * 16 + i] = 0;
     }
-    main_pal[15 * 16 + 15] = sub_pal[15 * 16 + 15] = rgb8(255, 255, 255);
-    main_pal[15 * 16 + 14] = sub_pal[15 * 16 + 14] = rgb8(16, 18, 26);
-    main_pal[15 * 16 + 2] = sub_pal[15 * 16 + 2] = rgb8(200, 206, 220);
+    main_pal[15 * 16 + TC_TEXT] = sub_pal[15 * 16 + TC_TEXT] = rgb8(255, 255, 255);
+    main_pal[15 * 16 + TC_SHADOW] = sub_pal[15 * 16 + TC_SHADOW] = rgb8(0, 0, 0);
+    main_pal[15 * 16 + TC_DIM] = rgb8(124, 128, 140);
+    main_pal[15 * 16 + TC_ACTIVE] = rgb8(k_gold[0], k_gold[1], k_gold[2]);
+    main_pal[15 * 16 + TC_LIVE] = rgb8(k_gold[0], k_gold[1], k_gold[2]);
+    main_pal[15 * 16 + TC_HEAD] = rgb8(k_teal_hi[0], k_teal_hi[1], k_teal_hi[2]);
+}
+
+/*
+ * The moving parts, every frame: the selected bar's border and fill pulse
+ * (a triangle wave of 48 frames), the active choice on it pulses between
+ * gold and white, and a change of value flashes the bar for a few frames.
+ */
+static void animate(OptWork *w)
+{
+    u16 *main_pal = (u16 *)bw_ds_ptr(0x05000000u);
+    u32 ph = (u32)w->tick % 48u, t = ph < 24u ? ph : 48u - ph, c[3], f[3];
+
+    w->tick++;
+    if (!w->built) {
+        return;
+    }
+    t = t * 16u / 24u;
+    mix3(c, k_teal, k_teal_hi, t);
+    mix3(f, k_sel, k_sel_hi, t);
+    if (w->flash > 0) {
+        mix3(f, f, k_flash, (u32)w->flash * 16u / 10u);
+        mix3(c, c, k_white, (u32)w->flash * 16u / 10u);
+    }
+    theme_bar(main_pal + 9 * 16, f, c, c);
+    mix3(c, k_gold, k_white, w->flash > 0 ? 16u : t / 2u);
+    main_pal[15 * 16 + TC_LIVE] = rgb8(c[0], c[1], c[2]);
+    if (w->flash > 0) {
+        w->flash--;
+    }
 }
 
 static void highlight(OptWork *w)
@@ -567,6 +663,42 @@ static void screen_free(OptWork *w)
     func_0203F9B4();
 }
 
+/*
+ * The stylus.  A touch that starts on a bar goes to the model with the row
+ * and the place on it: one of the choices (each owns the span from its
+ * text to the next one's), the arrows of a value, or the row itself.
+ */
+static int touch_input(OptWork *w)
+{
+    int x = 0, y = 0, down = eidos_settings_touch(&x, &y);
+    int bar, mrow, n = eidos_sui_row_count(), zone = -1, nch, active;
+    char names[3][20];
+
+    if (!down || w->touch_was) {
+        w->touch_was = down;
+        return 0;
+    }
+    w->touch_was = 1;
+    if (y < 16 || y >= 16 + 24 * OPT_ROWS) {
+        return 0;
+    }
+    bar = (y - 16) / 24;
+    mrow = bar == OPT_ROWS - 1 ? n - 1 : bar + 1;
+    if (bar < OPT_ROWS - 1 && mrow >= n - 1) {
+        return 0;       /* a bar with no row */
+    }
+    nch = bar < OPT_ROWS - 1 ? eidos_sui_row_choices(mrow, &active, names) : 0;
+    if (nch == 3) {
+        zone = x < k_text3[0] - 6 ? -1 : x < k_text3[1] - 6 ? 0 : x < k_text3[2] - 6 ? 1 : 2;
+    } else if (nch == 2) {
+        zone = x < k_text2[0] - 6 ? -1 : x < k_text2[1] - 6 ? 0 : 1;
+    } else if (eidos_sui_row_adjustable(mrow) && x >= VALUE_X - 8) {
+        /* "<" is at VALUE_X; everything right of the value's start is ">" */
+        zone = x < VALUE_X + ARROW_W + 4 ? -2 : -3;
+    }
+    return eidos_sui_touch(mrow, zone);
+}
+
 /* ---- the process ---- */
 
 static u32 opt_init(void *proc, u32 *seq, u32 pwork, u32 work)
@@ -599,6 +731,7 @@ static u32 opt_main(void *proc, u32 *seq, u32 pwork, u32 work)
         break;
     case 1:
         highlight(w);               /* the palette has reached the screen by now */
+        animate(w);
         if (func_0204E804() == 0) {
             *seq = 2;
         }
@@ -606,6 +739,10 @@ static u32 opt_main(void *proc, u32 *seq, u32 pwork, u32 work)
     case 2: {
         int r = eidos_sui_input(func_020362DC(), func_0203633C());
 
+        r |= touch_input(w);
+        if (r & 0x20) {
+            w->flash = 10;
+        }
         if (r & 0x10) {
             func_020061E4(0x548);
         }
@@ -620,6 +757,7 @@ static u32 opt_main(void *proc, u32 *seq, u32 pwork, u32 work)
             draw_help();
         }
         highlight(w);
+        animate(w);
         if (r & 2) {
             func_0204E720(3, 0, 0x10, 2);
             *seq = 3;

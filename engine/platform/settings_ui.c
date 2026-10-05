@@ -400,6 +400,88 @@ int eidos_sui_cursor_row(void)
     return 1 + g.cursor - g.scroll;
 }
 
+/* 1 when left and right change the row's value (an option row). */
+int eidos_sui_row_adjustable(int row)
+{
+    if (row < 1 || row == eidos_sui_row_count() - 1
+        || g.scroll + row - 1 >= g.nrows) {
+        return 0;
+    }
+    return g.rows[g.scroll + row - 1].type == ROW_OPTION;
+}
+
+/*
+ * The stylus went down on a row (a row of eidos_sui_row_count()).  `zone`
+ * says where: 0..2 one of the choices drawn on the row, EIDOS_SUI_ZONE_DEC
+ * or _INC the arrows around a value, EIDOS_SUI_ZONE_ROW anywhere else.  The
+ * cursor goes to the row.  A choice is set at once; the arrows act when
+ * the row was already the selected one (they are only drawn there); a row
+ * without a value acts as it does for A.  Returns what eidos_sui_input does.
+ */
+int eidos_sui_touch(int row, int zone)
+{
+    const Row *r;
+    int was, res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
+
+    if (g.wait_release) {
+        return 0;
+    }
+    if (g.capturing) {
+        eidos_settings_capture_cancel();
+        g.capturing = 0;
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
+    }
+    if (row == eidos_sui_row_count() - 1) {
+        if (g.level == 0) {
+            return EIDOS_SUI_EXIT | EIDOS_SUI_SFX_SELECT;
+        }
+        leave_section();
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+    }
+    if (row < 1 || g.scroll + row - 1 >= g.nrows) {
+        return 0;
+    }
+    was = g.cursor == g.scroll + row - 1;
+    g.cursor = g.scroll + row - 1;
+    r = &g.rows[g.cursor];
+    switch (r->type) {
+    case ROW_SECTION:
+        enter_section(r->arg);
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+    case ROW_OPTION: {
+        const EidosOption *o = eidos_settings_option(r->arg);
+
+        if (o == NULL) {
+            break;
+        }
+        if (zone >= 0 && o->kind == EIDOS_OPTKIND_CHOICE && o->min + zone <= o->max) {
+            if (eidos_settings_get(r->arg) != o->min + zone
+                && eidos_settings_set(r->arg, o->min + zone) == 0) {
+                res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            }
+        } else if (was && (zone == EIDOS_SUI_ZONE_DEC || zone == EIDOS_SUI_ZONE_INC)) {
+            if (change_option(r->arg, zone == EIDOS_SUI_ZONE_INC ? 1 : -1, 0)) {
+                res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            }
+        }
+        break;
+    }
+    case ROW_BIND:
+        eidos_settings_capture_begin();
+        g.capturing = r->arg + 1;
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+    case ROW_DEFAULTS:
+        if (was) {
+            eidos_settings_defaults();
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        break;
+    default:
+        break;
+    }
+    return res;
+}
+
 int eidos_sui_capturing(void)
 {
     return g.capturing;

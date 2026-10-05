@@ -1203,6 +1203,13 @@ int eidos_settings_on_toggle(EidosPlatform *p)
     return 1;
 }
 
+/* The stylus on the touch screen, for the settings screen: non-zero while
+ * down, with the pixel of the bottom screen. */
+int eidos_settings_touch(int *x, int *y)
+{
+    return g_plat != NULL ? eidos_platform_touch(g_plat, x, y) : 0;
+}
+
 int eidos_settings_internal_scale(void)
 {
     EidosViewport vp;

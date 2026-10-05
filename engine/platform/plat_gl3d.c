@@ -203,11 +203,11 @@ static int fbo_resize(EidosGl *g, GlFb *f, int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     g->glBindRenderbuffer(GL_RENDERBUFFER, f->depth);
-    g->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+    g->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
     g->glBindFramebuffer(GL_FRAMEBUFFER, f->fbo);
     g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                               GL_TEXTURE_2D, f->color, 0);
-    g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+    g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                                  GL_RENDERBUFFER, f->depth);
     if (g->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -241,10 +241,10 @@ static int msaa_target(EidosGl *g, GlFb *f, int w, int h)
         g->glBindRenderbuffer(GL_RENDERBUFFER, f->ms_color);
         g->glRenderbufferStorageMultisample(GL_RENDERBUFFER, MSAA_SAMPLES, GL_RGBA8, w, h);
         g->glBindRenderbuffer(GL_RENDERBUFFER, f->ms_depth);
-        g->glRenderbufferStorageMultisample(GL_RENDERBUFFER, MSAA_SAMPLES, GL_DEPTH_COMPONENT24, w, h);
+        g->glRenderbufferStorageMultisample(GL_RENDERBUFFER, MSAA_SAMPLES, GL_DEPTH24_STENCIL8, w, h);
         g->glBindFramebuffer(GL_FRAMEBUFFER, f->ms_fbo);
         g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, f->ms_color);
-        g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, f->ms_depth);
+        g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, f->ms_depth);
         f->ms_w = w;
         f->ms_h = h;
     }
@@ -368,7 +368,9 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
                             : ((s->clear_depth & 0x7FFFu) == 0x7FFFu
                                ? 1.0
                                : (double)(s->clear_depth & 0x7FFFu) / 32767.0));
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glStencilMask(0xFFu);
+    glClearStencil(0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
     if (nv > 0) {
         unsigned drawn = 0, first = 0;
@@ -392,6 +394,11 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
 
         g->glUseProgram(g->p3d);
         glEnable(GL_DEPTH_TEST);
+        /* The stencil holds 0x40 | the polygon ID of the translucent pixel
+         * last drawn (0: none, or an opaque pixel since): the hardware does
+         * not draw a translucent pixel over one of the same ID. */
+        glEnable(GL_STENCIL_TEST);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
         glEnable(GL_BLEND);
         g->glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE,
                                GL_ONE_MINUS_SRC_ALPHA);
@@ -411,6 +418,7 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
             u32 verts;
             s32 slot = s->poly_tex[i];
             int deq, mask;
+            GLint xid;
 
             if (p->count < 3u || p->count > 4u) {
                 continue;
@@ -457,21 +465,29 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
             } else {
                 g->glUniform1i(g->u_tex3, 0);
             }
-            if (a5 >= 31u && !G3D_ATTR_XLU_DEPTH(attr) && slot >= 0
-                && (s->disp3dcnt & 1u) && s->tex[slot].partial) {
+            xid = (GLint)(0x40u | G3D_ATTR_ID(attr));
+            if (a5 >= 31u && slot >= 0 && (s->disp3dcnt & 1u) && s->tex[slot].partial) {
                 /* An opaque polygon whose texture has partly transparent
                  * texels: the hardware decides per pixel from the final alpha,
                  * so the opaque texels write depth and the translucent ones
-                 * do not.  One draw cannot do both: two passes can. */
+                 * do not (unless bit 11 says so).  One draw cannot do both:
+                 * two passes can. */
                 glDepthMask(GL_TRUE);
+                glStencilFunc(GL_ALWAYS, 0, 0xFFu);
                 g->glUniform1i(g->u_pass, 1);
                 glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
-                glDepthMask(GL_FALSE);
+                glDepthMask(G3D_ATTR_XLU_DEPTH(attr) ? GL_TRUE : GL_FALSE);
+                glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
                 g->glUniform1i(g->u_pass, 2);
                 glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
                 g->glUniform1i(g->u_pass, 0);
-                prev_mask = 0;
+                prev_mask = G3D_ATTR_XLU_DEPTH(attr) ? 1 : 0;
             } else {
+                if (a5 >= 31u) {
+                    glStencilFunc(GL_ALWAYS, 0, 0xFFu);
+                } else {
+                    glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
+                }
                 glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
             }
             first += verts;
@@ -481,6 +497,7 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     }
     glDepthMask(GL_TRUE);
     glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
     glDisable(GL_BLEND);
     if (use_ms) {
         /* resolve the samples into the frame's texture */

@@ -37,7 +37,6 @@ What is known to be missing or worth adding, written 2026-10-04. Items marked
   checking there (macOS stops at OpenGL 4.1, which is enough for 3.3 core).
   Everything on Windows was checked with hidden windows and pixel readback, not
   in a visible window by a person.
-- **The stylus** is not read on the settings screen.
 
 ## Graphics options other projects offer (prior art)
 
@@ -59,8 +58,7 @@ What is known to be missing or worth adding, written 2026-10-04. Items marked
 
 ## Settings screen
 
-- The Options-style screen (engine/platform/mod_options_proc.c) reads the
-  stylus, shows the cursor and markers exactly as the game's data places them,
+- The Options-style screen (engine/platform/mod_options_proc.c) shows the cursor and markers exactly as the game's data places them,
   and moves its text into a message bank that a mod can translate.
 - More sections as the port grows: audio (music and effects separately),
   controller options (dead zone), language, a reset to defaults per section.

@@ -180,6 +180,7 @@ int  eidos_settings_parse_arg(int argc, char **argv, int *i);
  * each screen in the attached platform's window, clamped to the maximum
  * (1 with no platform).  Present the frame with eidos_platform_present_n. */
 int  eidos_settings_internal_scale(void);
+int  eidos_settings_touch(int *x, int *y);   /* the stylus, 0 without a window */
 
 /* Window size, mode, layout and tables for eidos_platform_init. */
 void eidos_settings_fill_config(EidosPlatformConfig *cfg);

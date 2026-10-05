@@ -188,6 +188,35 @@ int main(void)
     eidos_settings_load();
     BW_CHECK_EQ("saved volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 95);
 
+    /* The stylus.  A section row opens its section; a choice is set where it
+     * is touched; the arrows act only on the selected row; the grey bar
+     * goes back, then leaves. */
+    eidos_sui_enter();
+    r = eidos_sui_touch(1, EIDOS_SUI_ZONE_ROW);
+    BW_CHECK_EQ("touch opens Display", eidos_sui_tab(), 0);
+    BW_CHECK_EQ("touch redraws", r & EIDOS_SUI_REDRAW, EIDOS_SUI_REDRAW);
+    eidos_settings_set(EIDOS_OPT_DISPLAY_MODE, 0);
+    eidos_sui_touch(1, 2);
+    BW_CHECK_EQ("touch sets the third choice", eidos_settings_get(EIDOS_OPT_DISPLAY_MODE), 2);
+    BW_CHECK_EQ("cursor on the touched row", eidos_sui_cursor_row(), 1);
+    eidos_sui_touch(1, 0);
+    BW_CHECK_EQ("touch sets the first choice", eidos_settings_get(EIDOS_OPT_DISPLAY_MODE), 0);
+    BW_CHECK_EQ("row 2 is adjustable", eidos_sui_row_adjustable(2), 1);
+    BW_CHECK_EQ("row 3 is not", eidos_sui_row_adjustable(3), 0);
+    eidos_settings_set(EIDOS_OPT_DISPLAY_RESOLUTION, 2);
+    eidos_sui_touch(2, EIDOS_SUI_ZONE_INC);
+    BW_CHECK_EQ("first touch only selects", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 2);
+    BW_CHECK_EQ("selected", eidos_sui_cursor_row(), 2);
+    eidos_sui_touch(2, EIDOS_SUI_ZONE_INC);
+    BW_CHECK_EQ("arrow raises", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 3);
+    eidos_sui_touch(2, EIDOS_SUI_ZONE_DEC);
+    BW_CHECK_EQ("arrow lowers", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 2);
+    r = eidos_sui_touch(eidos_sui_row_count() - 1, EIDOS_SUI_ZONE_ROW);
+    BW_CHECK_EQ("grey bar goes back", eidos_sui_level(), 0);
+    r = eidos_sui_touch(eidos_sui_row_count() - 1, EIDOS_SUI_ZONE_ROW);
+    BW_CHECK_EQ("grey bar leaves", r & EIDOS_SUI_EXIT, EIDOS_SUI_EXIT);
+    eidos_sui_leave();
+
     remove(INI);
     BW_REPORT("test_settings_ui");
 }

@@ -605,11 +605,16 @@ typedef struct G3dTarget {
      *   pid    the polygon ID of the opaque polygon last drawn there, or
      *          the clear plane's.
      *   pflag  G3D_PIX_* bits.
+     *   xid    0x40 | the polygon ID of the translucent pixel last drawn
+     *          there, 0 when none since the clear or an opaque pixel.  The
+     *          hardware does not draw a translucent pixel over one of the
+     *          same ID, so a see-through shape never blends with itself.
      *   cov    an edge pixel's 5-bit coverage (31: full).
      *   under  R,G,B,A of what was there before an edge pixel was drawn.
      */
     u8 *pid;
     u8 *pflag;
+    u8 *xid;
     u8 *cov;
     u8 *under;
 } G3dTarget;

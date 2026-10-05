@@ -75,10 +75,11 @@ int g3d_target_init(G3dTarget *t, u32 width, u32 height)
     t->depth = (s32 *)malloc((size_t)width * height * sizeof(s32));
     t->pid = (u8 *)calloc((size_t)width * height, 1);
     t->pflag = (u8 *)calloc((size_t)width * height, 1);
+    t->xid = (u8 *)calloc((size_t)width * height, 1);
     t->cov = (u8 *)calloc((size_t)width * height, 1);
     t->under = (u8 *)calloc((size_t)width * height, 4);
     if (t->rgba == NULL || t->depth == NULL || t->pid == NULL
-        || t->pflag == NULL || t->cov == NULL || t->under == NULL) {
+        || t->pflag == NULL || t->xid == NULL || t->cov == NULL || t->under == NULL) {
         g3d_target_free(t);
         return -1;
     }
@@ -97,6 +98,7 @@ void g3d_target_free(G3dTarget *t)
     free(t->depth);
     free(t->pid);
     free(t->pflag);
+    free(t->xid);
     free(t->cov);
     free(t->under);
     memset(t, 0, sizeof(*t));
@@ -116,6 +118,7 @@ void g3d_target_clear(G3dTarget *t, u8 r, u8 g, u8 b, u8 a)
     if (t->pid != NULL) {
         memset(t->pid, 0, n);
         memset(t->pflag, 0, n);
+        memset(t->xid, 0, n);
         memset(t->cov, 31, n);
     }
 }
@@ -320,6 +323,7 @@ static void put_pixel(G3dTarget *t, u32 x, u32 y, s32 depth,
              * partly covered span end, what it covers (anti-aliasing). */
             t->pid[o] = (u8)G3D_ATTR_ID(attr);
             t->pflag[o] = (u8)(G3D_PIX_OPAQUE | fog);
+            t->xid[o] = 0;
             t->cov[o] = (u8)cov5;
             if (cov5 < 31u) {
                 memcpy(t->under + o * 4u, px, 4u);
@@ -332,6 +336,17 @@ static void put_pixel(G3dTarget *t, u32 x, u32 y, s32 depth,
         px[3] = 255;
         t->depth[o] = depth;
         return;
+    }
+    /* [HW] a translucent pixel is not drawn over a translucent pixel of
+     * the same polygon ID: overlapping faces of one see-through shape (a
+     * glow made of a fan of rays, say) cover a pixel once, not once each. */
+    if (t->xid != NULL) {
+        u8 id = (u8)(0x40u | G3D_ATTR_ID(attr));
+
+        if (t->xid[o] == id) {
+            return;
+        }
+        t->xid[o] = id;
     }
     /* [HW] a translucent pixel over a pixel of alpha 0 (the clear plane
      * with a clear alpha of 0) is written as it is, its alpha included:
@@ -769,7 +784,15 @@ void g3d_geom_sort(G3dGeom *g, int manual)
         s32 ymin = 0x7FFFFFFF, xmin = 0x7FFFFFFF;
 
         k[i].index = i;
+        /* [HW] translucent: alpha 1..30, or a texture with its own alpha
+         * (A3I5 and A5I3) unless the polygon is a decal or a shadow */
+        u32 fmt = (p->teximage >> 26) & 7u, pm = G3D_ATTR_MODE(p->attr);
+
         k[i].translucent = (p->attr != 0 && a5 > 0u && a5 < 31u) ? 1u : 0u;
+        if (p->attr != 0 && a5 == 31u && (fmt == 1u || fmt == 6u)
+            && pm != G3D_POLY_MODE_DECAL && pm != G3D_POLY_MODE_SHADOW) {
+            k[i].translucent = 1u;
+        }
         any |= k[i].translucent;
         for (j = 0; k[i].translucent && j < p->count && j < 4u; j++) {
             const G3dVertex *v = &g->verts[g->idx[p->first + j]];

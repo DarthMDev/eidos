@@ -22,7 +22,7 @@
  *   VTX_16    three s16 values that *are* fx32 already (s16.12)
  *   VTX_10    three s10 values with 6 fractional bits: << 6
  *   VTX_XY/XZ/YZ  two s16.12 values, the third carried over
- *   VTX_DIFF  three s10 deltas with 9 fractional bits: << 3
+ *   VTX_DIFF  three s10 deltas in 4.12 units (a range of +-1/8): no shift
  *   NORMAL    three s10 values with 9 fractional bits: << 3
  *   TEXCOORD  two s16.4 values, kept raw, so the unit here is a
  *             sixteenth of a texel -- the same unit the OBJ the asset
@@ -466,9 +466,11 @@ u32 g3d_gx_run(G3dGx *gx, const u8 *data, u32 size, u32 start,
                 emit_vertex(gx);
                 break;
             case 0x28:  /* VTX_DIFF */
-                gx->cx += (fx32)(sx10(par[0]) << 3);
-                gx->cy += (fx32)(sx10(par[0] >> 10) << 3);
-                gx->cz += (fx32)(sx10(par[0] >> 20) << 3);
+                /* [HW] the deltas are s10 in the vertex's own 4.12 units:
+                 * at most an eighth of a unit either way, not scaled up */
+                gx->cx += (fx32)sx10(par[0]);
+                gx->cy += (fx32)sx10(par[0] >> 10);
+                gx->cz += (fx32)sx10(par[0] >> 20);
                 gx->vtx_cmd_count[5]++;
                 emit_vertex(gx);
                 break;

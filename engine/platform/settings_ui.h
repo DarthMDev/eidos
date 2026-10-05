@@ -54,6 +54,13 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv);
 int  eidos_sui_row_choices(int row, int *active, char names[3][20]);
 /* The highlighted row, 1..eidos_sui_row_count()-1. */
 int  eidos_sui_cursor_row(void);
+int  eidos_sui_row_adjustable(int row);     /* left and right change its value */
+
+/* The stylus: see eidos_sui_touch in settings_ui.c. */
+#define EIDOS_SUI_ZONE_ROW (-1)
+#define EIDOS_SUI_ZONE_DEC (-2)
+#define EIDOS_SUI_ZONE_INC (-3)
+int  eidos_sui_touch(int row, int zone);
 /* Non-zero while waiting for a key or pad control. */
 int  eidos_sui_capturing(void);
 
