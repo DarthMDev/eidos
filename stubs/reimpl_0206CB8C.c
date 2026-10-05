@@ -11,12 +11,17 @@
  * loaded at the end carried stack values.  Seen as single-frame flashes of a
  * few polygons whose vertices used the mixed matrix.
  *
- * Here the two are one struct, cleared whole.  Everything else is the
+ * Here the two are one struct, cleared whole.  This file is port code, so
+ * tools/dsaddr.py does not rewrite its register macros: they go through
+ * bw_ds_ptr by hand, which is what lets engine/g3d/hw3d.c see each store
+ * as a matrix command.  Everything else is the
  * matched function, unchanged.  cmake/boot.cmake lists the matched file as
  * replaced.  To aletheia: the same struct in the matched C would make the
  * layout explicit, if it still matches.
  */
 
+
+extern void *bw_ds_ptr(unsigned int ds_addr);
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -60,10 +65,10 @@ typedef struct RS {
     u32 isEvpCached[2];
 } RS;
 
-#define REG_MTX_MODE     (*(volatile u32 *)0x04000440)
-#define REG_MTX_STORE    (*(volatile u32 *)0x0400044C)
-#define REG_MTX_RESTORE  (*(volatile u32 *)0x04000450)
-#define REG_MTX_IDENTITY (*(volatile u32 *)0x04000454)
+#define REG_MTX_MODE     (*(volatile u32 *)bw_ds_ptr(0x04000440u))
+#define REG_MTX_STORE    (*(volatile u32 *)bw_ds_ptr(0x0400044Cu))
+#define REG_MTX_RESTORE  (*(volatile u32 *)bw_ds_ptr(0x04000450u))
+#define REG_MTX_IDENTITY (*(volatile u32 *)bw_ds_ptr(0x04000454u))
 
 extern void func_02082AC0(u32 v, void *p, u32 n);
 extern void func_0206DB80(void);
