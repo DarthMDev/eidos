@@ -102,6 +102,37 @@ static const char *k_fs3 =
     "    color = vec4(P + (1.0 - A) * b, 1.0);\n"
     "}\n";
 
+/*
+ * The display capture at the 3D's resolution.  mode 0 blends two frames,
+ * (eva A + evb B) / 16 a channel, as DISPCAPCNT does; mode 1 shows a frame
+ * with the master brightness.  A is always a GPU frame (row 0 at the
+ * bottom); B is one too unless bflip says it is an uploaded picture.
+ */
+static const char *k_fsc =
+    "#version 330 core\n"
+    "uniform sampler2D A;\n"
+    "uniform sampler2D B;\n"
+    "uniform float eva;\n"
+    "uniform float evb;\n"
+    "uniform int bflip;\n"
+    "uniform int mode;\n"
+    "uniform int bmode;\n"
+    "uniform float bfac;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    "void main() {\n"
+    "    vec2 q = vec2(uv.x, 1.0 - uv.y);\n"
+    "    vec3 a = texture(A, q).rgb;\n"
+    "    if (mode == 0) {\n"
+    "        vec3 b = texture(B, bflip != 0 ? uv : q).rgb;\n"
+    "        color = vec4(min(vec3(1.0), a * eva + b * evb), 1.0);\n"
+    "        return;\n"
+    "    }\n"
+    "    if (bmode == 1) { a = a + (1.0 - a) * bfac; }\n"
+    "    else if (bmode == 2) { a = a * (1.0 - bfac); }\n"
+    "    color = vec4(a, 1.0);\n"
+    "}\n";
+
 static GLuint compile(EidosGl *g, GLenum type, const char *src)
 {
     GLuint s = g->glCreateShader(type);
@@ -250,6 +281,7 @@ EidosGl *eidos_gl_create(SDL_Window *window)
     /* The pacer is the timebase, never the display's refresh. */
     SDL_GL_SetSwapInterval(0);
 
+    g->cap_screen = -1;
     g->prog = eidos_gl_compile_program(g, k_vs, k_fs);
     if (g->prog == 0) {
         eidos_gl_destroy(g);
@@ -293,6 +325,18 @@ EidosGl *eidos_gl_create(SDL_Window *window)
         g->u3_dil = g->glGetUniformLocation(g->prog3, "dil");
         if (eidos_gl3d_init(g) != 0) {
             g->have3d = 0;
+        }
+        g->progc = eidos_gl_compile_program(g, k_vs, k_fsc);
+        if (g->progc != 0) {
+            g->uc_rect = g->glGetUniformLocation(g->progc, "rect");
+            g->uc_a = g->glGetUniformLocation(g->progc, "A");
+            g->uc_b = g->glGetUniformLocation(g->progc, "B");
+            g->uc_eva = g->glGetUniformLocation(g->progc, "eva");
+            g->uc_evb = g->glGetUniformLocation(g->progc, "evb");
+            g->uc_bflip = g->glGetUniformLocation(g->progc, "bflip");
+            g->uc_mode = g->glGetUniformLocation(g->progc, "mode");
+            g->uc_bmode = g->glGetUniformLocation(g->progc, "bmode");
+            g->uc_bfac = g->glGetUniformLocation(g->progc, "bfac");
         }
     }
     return g;
@@ -379,6 +423,138 @@ void eidos_gl_set_3d(EidosGl *g, int screen, const unsigned char *behind,
     g->dilate = dilate;
 }
 
+static void cap_tex_setup(GLuint t, int w, int h, const unsigned char *px)
+{
+    glBindTexture(GL_TEXTURE_2D, t);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+/*
+ * One frame of the display capture, kept at the 3D's resolution.  The game
+ * captures the main screen into a VRAM bank every frame and shows that bank
+ * (a feedback blend: the title's motion trail); the DS-size capture still
+ * runs on the CPU for the game's memory, and this is the same thing on the
+ * GPU for the picture.  `a2d` is the graphics screen with the sentinel 3D
+ * layer and `behind` the same with the 3D off (both 256 x 192 RGBA);
+ * `snap` the 3D frame; blend != 0 mixes it with what was captured before,
+ * eva and evb in sixteenths.  `b1x`, when not NULL, replaces the earlier
+ * capture (the bank's content, 256 x 192 RGBA): the first frame, or after
+ * the game wrote the bank itself.
+ */
+int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
+                     const unsigned char *behind,
+                     const struct G3dSnapshot *snap, int scale, int blend,
+                     int eva, int evb, const unsigned char *b1x)
+{
+    int w = 256 * scale, h = 192 * scale, next, i;
+
+    if (g == NULL || !g->have3d || g->progc == 0 || g->prog3 == 0
+        || a2d == NULL || behind == NULL || snap == NULL || scale < 1) {
+        return -1;
+    }
+    if (eidos_gl_render3d(g, snap, w, h) != 0) {
+        return -1;
+    }
+    if (g->cap_fbo == 0) {
+        g->glGenFramebuffers(1, &g->cap_fbo);
+        glGenTextures(1, &g->capa_tex);
+        glGenTextures(2, g->cap_tex);
+        glGenTextures(3, g->cap_src);
+        for (i = 0; i < 3; i++) {
+            cap_tex_setup(g->cap_src[i], 256, 192, NULL);
+        }
+    }
+    if (g->cap_w != w || g->cap_h != h) {
+        cap_tex_setup(g->capa_tex, w, h, NULL);
+        cap_tex_setup(g->cap_tex[0], w, h, NULL);
+        cap_tex_setup(g->cap_tex[1], w, h, NULL);
+        g->cap_w = w;
+        g->cap_h = h;
+        g->cap_valid = 0;
+    }
+    if (blend && !g->cap_valid && b1x == NULL) {
+        return -1;
+    }
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glBindTexture(GL_TEXTURE_2D, g->cap_src[0]);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, a2d);
+    glBindTexture(GL_TEXTURE_2D, g->cap_src[1]);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, behind);
+    if (b1x != NULL) {
+        glBindTexture(GL_TEXTURE_2D, g->cap_src[2]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, b1x);
+    }
+
+    /* source A: the screen with the GPU's 3D layer, at the 3D's size */
+    g->glBindFramebuffer(GL_FRAMEBUFFER, g->cap_fbo);
+    g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                              g->capa_tex, 0);
+    if (g->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return -1;
+    }
+    glViewport(0, 0, w, h);
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    g->glBindVertexArray(g->vao);
+    g->glUseProgram(g->prog3);
+    g->glUniform1i(g->u3_tex, 0);
+    g->glUniform1i(g->u3_behind, 1);
+    g->glUniform1i(g->u3_g3d, 2);
+    g->glUniform4f(g->u3_rect, -1.f, -1.f, 1.f, 1.f);
+    g->glUniform2f(g->u3_texsize, 256.f, 192.f);
+    g->glUniform2f(g->u3_dstsize, (float)w, (float)h);
+    g->glUniform1i(g->u3_bmode, 0);
+    g->glUniform1f(g->u3_bfac, 0.f);
+    g->glUniform1i(g->u3_dil, 1);
+    g->glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, g->cap_src[1]);
+    g->glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, g->fb[0].color);
+    g->glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g->cap_src[0]);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    /* the capture: A alone, or mixed with the capture before it */
+    next = g->cap_cur ^ 1;
+    g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                              g->cap_tex[next], 0);
+    g->glUseProgram(g->progc);
+    g->glUniform4f(g->uc_rect, -1.f, -1.f, 1.f, 1.f);
+    g->glUniform1i(g->uc_a, 0);
+    g->glUniform1i(g->uc_b, 1);
+    g->glUniform1i(g->uc_mode, 0);
+    g->glUniform1f(g->uc_eva, blend ? (float)eva / 16.f : 1.f);
+    g->glUniform1f(g->uc_evb, blend ? (float)evb / 16.f : 0.f);
+    g->glUniform1i(g->uc_bflip, b1x != NULL ? 1 : 0);
+    g->glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, b1x != NULL ? g->cap_src[2] : g->cap_tex[g->cap_cur]);
+    g->glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g->capa_tex);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    g->cap_cur = next;
+    g->cap_valid = 1;
+    return glGetError() == GL_NO_ERROR ? 0 : -1;
+}
+
+/* The screen that shows the capture this frame (-1: none), with the master
+ * brightness (0 off, 1 up, 2 down; fac 0..1). */
+void eidos_gl_show_capture(EidosGl *g, int screen, int bmode, float bfac)
+{
+    if (g == NULL) {
+        return;
+    }
+    g->cap_screen = (screen >= 0 && g->cap_valid) ? screen : -1;
+    g->cap_bmode = bmode;
+    g->cap_bfac = bfac;
+}
+
 static void draw_frame(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
 {
     int i;
@@ -402,6 +578,18 @@ static void draw_frame(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
         x1 = 2.f * (float)(dst[i].x + dst[i].w) / (float)out_w - 1.f;
         y1 = 1.f - 2.f * (float)dst[i].y / (float)out_h;
         y0 = 1.f - 2.f * (float)(dst[i].y + dst[i].h) / (float)out_h;
+        if (i == g->cap_screen && g->cap_valid && g->progc != 0) {
+            g->glUseProgram(g->progc);
+            g->glUniform4f(g->uc_rect, x0, y0, x1, y1);
+            g->glUniform1i(g->uc_a, 0);
+            g->glUniform1i(g->uc_b, 0);
+            g->glUniform1i(g->uc_mode, 1);
+            g->glUniform1i(g->uc_bmode, g->cap_bmode);
+            g->glUniform1f(g->uc_bfac, g->cap_bfac);
+            glBindTexture(GL_TEXTURE_2D, g->cap_tex[g->cap_cur]);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            continue;
+        }
         if (is3d) {
             g->glUseProgram(g->prog3);
             g->glUniform1i(g->u3_tex, 0);

@@ -94,6 +94,16 @@ struct EidosGl {
     float bfac;                    /* 0..1                                  */
     int dilate;                    /* mask dilated by a pixel (1) or exact (0) */
 
+    /* the high-resolution display capture (eidos_gl_capture) */
+    GLuint progc;
+    GLint uc_rect, uc_a, uc_b, uc_eva, uc_evb, uc_bflip, uc_mode, uc_bmode,
+          uc_bfac;
+    GLuint cap_fbo, capa_tex, cap_tex[2], cap_src[3];
+    int cap_w, cap_h, cap_cur, cap_valid;
+    int cap_screen;                /* screen that shows the capture, -1 none */
+    int cap_bmode;
+    float cap_bfac;
+
     /* the 3D rasteriser (plat_gl3d.c) */
     int have3d;
     GLuint p3d;

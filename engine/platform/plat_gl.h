@@ -38,6 +38,13 @@ int eidos_gl_grab(EidosGl *gl, int out_w, int out_h, const SDL_Rect dst[2],
  * failed to build; then the platform keeps drawing screens only. */
 struct G3dSnapshot;
 int eidos_gl_has3d(const EidosGl *gl);
+
+/* The display capture at the 3D's resolution: see plat_gl.c. */
+int eidos_gl_capture(EidosGl *gl, const unsigned char *a2d,
+                     const unsigned char *behind,
+                     const struct G3dSnapshot *snap, int scale, int blend,
+                     int eva, int evb, const unsigned char *b1x);
+void eidos_gl_show_capture(EidosGl *gl, int screen, int bmode, float bfac);
 /* Draw the snapshot at w x h; 0 on success. */
 int eidos_gl_render3d(EidosGl *gl, const struct G3dSnapshot *snap, int w, int h);
 /* Make screen `screen` (0 top, 1 bottom) show the last rendered 3D frame over

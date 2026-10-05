@@ -85,7 +85,7 @@
 #define BOOT_CPU_3D_MAX     2u
 
 /* --screenshot: the frames to save both screens at, and where. */
-#define BOOT_MAX_SHOTS 32
+#define BOOT_MAX_SHOTS 1024
 static u64         g_shots[BOOT_MAX_SHOTS];
 static int         g_shot_count;
 static const char *g_shot_dir = ".";
@@ -259,6 +259,12 @@ typedef struct BootRun {
     int frame1x_valid; /* the GPU drew this frame's 3D (frame1x or sentinel) */
     u8 *sentinel;      /* a 3D layer of one unlikely colour, alpha 255   */
     int gpu_real;      /* this frame's 3D layer is the real read-back frame */
+    u8 *cap_a;         /* capture source A with the sentinel 3D layer, 256x192 */
+    u8 *cap_behind;    /* the same with the 3D layer off                  */
+    u8 *cap_b;         /* the captured bank as RGBA, to seed the GPU's copy */
+    int cap_ok;        /* the GPU holds the capture of bank cap_bank      */
+    int cap_bank;
+    u32 cap_hash;      /* the bank's content after the capture the GPU mirrors */
     u32 hi_sn[2];      /* the n each screen was written at (top, bottom) */
     EidosPlatform *plat;
     int want_window;   /* --window: open one at the first frame          */
@@ -745,6 +751,152 @@ static void boot_gpu3d(BootRun *run, int behind_done)
     }
 }
 
+/* The 256 x 192 BGR555 picture at the start of a VRAM bank, hashed. */
+static u32 boot_bank_hash(const u8 *bank)
+{
+    const u32 *w = (const u32 *)(const void *)bank;
+    u32 h = 2166136261u, i;
+
+    for (i = 0; i < 256u * 192u / 2u; i++) {
+        h = (h ^ w[i]) * 16777619u;
+    }
+    return h;
+}
+
+static u8 *boot_sentinel(BootRun *run)
+{
+    if (run->sentinel == NULL) {
+        u32 k;
+
+        run->sentinel = (u8 *)malloc((size_t)256 * 192 * 4);
+        for (k = 0; run->sentinel != NULL && k < 256u * 192u; k++) {
+            run->sentinel[k * 4u + 0] = 84;
+            run->sentinel[k * 4u + 1] = 168;
+            run->sentinel[k * 4u + 2] = 52;
+            run->sentinel[k * 4u + 3] = 255;
+        }
+    }
+    return run->sentinel;
+}
+
+/*
+ * The display capture at the 3D's resolution (the GPU path).  A scene that
+ * captures the main screen into a VRAM bank every frame and shows that bank
+ * (the title: a feedback blend with the frame before) is DS size by nature.
+ * The DS-size capture still runs for the game's memory; when the fields are
+ * the plain ones (the whole screen, the graphics as source A, the shown bank
+ * as source B) the presenter keeps the same capture at the chosen scale and
+ * shows that instead.  boot_capture_plan runs before the frame's capture
+ * (it needs the bank as it was), boot_capture_run after it.
+ */
+typedef struct BootCapture {
+    int plan, blend, bank, eva, evb;
+    const u8 *bankp;
+    const u8 *b1x;
+} BootCapture;
+
+static void boot_capture_plan(BootRun *run, BootCapture *c)
+{
+    u32 cap = bw_io_read32(G2D_HW_DISPCAPCNT);
+    u32 dc = bw_io_read32(0x04000000u);
+    u32 mode = (cap >> 29) & 3u;
+    const G3dSnapshot *snap;
+
+    memset(c, 0, sizeof(*c));
+    c->bank = (int)((dc >> 18) & 3u);
+    c->bankp = (const u8 *)bw_ds_try_ptr(0x06800000u + (u32)c->bank * 0x20000u);
+    if (run->plat == NULL || !eidos_platform_gpu3d(run->plat)
+        || eidos_settings_internal_scale() < 2 || c->bankp == NULL) {
+        return;
+    }
+    snap = g3d_hw_snapshot();
+    if (snap == NULL || snap->unsupported != 0u
+        || (cap & 0x80000000u) == 0u          /* no capture this frame */
+        || ((cap >> 20) & 3u) != 3u           /* not the whole screen */
+        || ((cap >> 18) & 3u) != 0u           /* a write offset */
+        || (cap & 0x01000000u) != 0u          /* source A is the 3D alone */
+        || (dc & 0x8u) == 0u || (dc & 0x100u) == 0u
+        || ((dc >> 16) & 3u) != 2u            /* the screen does not show a bank */
+        || (u32)c->bank != ((cap >> 16) & 3u)) {
+        return;
+    }
+    if (mode == 1u || (mode >= 2u && ((cap & 0x02000000u) != 0u
+                                      || ((cap >> 26) & 3u) != 0u))) {
+        return;
+    }
+    if (run->cap_a == NULL) {
+        run->cap_a = (u8 *)malloc((size_t)256 * 192 * 4);
+        run->cap_behind = (u8 *)malloc((size_t)256 * 192 * 4);
+        run->cap_b = (u8 *)malloc((size_t)256 * 192 * 4);
+    }
+    if (run->cap_a == NULL || run->cap_behind == NULL || run->cap_b == NULL
+        || boot_sentinel(run) == NULL) {
+        return;
+    }
+    c->blend = mode != 0u;
+    c->eva = (int)((cap & 0x1Fu) > 16u ? 16u : (cap & 0x1Fu));
+    c->evb = (int)(((cap >> 8) & 0x1Fu) > 16u ? 16u : ((cap >> 8) & 0x1Fu));
+    if (c->blend && !(run->cap_ok && run->cap_bank == c->bank
+                      && boot_bank_hash(c->bankp) == run->cap_hash)) {
+        /* the GPU has no copy of what the bank holds: give it the bank */
+        u32 k;
+
+        for (k = 0; k < 256u * 192u; k++) {
+            u32 v = (u32)c->bankp[k * 2u] | ((u32)c->bankp[k * 2u + 1u] << 8);
+
+            run->cap_b[k * 4u + 0] = (u8)((v & 31u) * 255u / 31u);
+            run->cap_b[k * 4u + 1] = (u8)(((v >> 5) & 31u) * 255u / 31u);
+            run->cap_b[k * 4u + 2] = (u8)(((v >> 10) & 31u) * 255u / 31u);
+            run->cap_b[k * 4u + 3] = 255;
+        }
+        c->b1x = run->cap_b;
+    }
+    if (g2d_hw_main_graphics_pair_dsmem(run->sentinel, run->cap_a,
+                                        run->cap_behind) == 0) {
+        c->plan = 1;
+    }
+}
+
+static void boot_capture_run(BootRun *run, const BootCapture *c)
+{
+    u32 dc = bw_io_read32(0x04000000u);
+    u32 bright = bw_io_read16(0x0400006Cu), bmode = (bright >> 14) & 3u;
+    u32 f = bright & 0x1Fu;
+    int main_on_top = (bw_io_read16(0x04000304u) & 0x8000u) != 0;
+    int show = 0;
+
+    if (run->plat == NULL || !eidos_platform_gpu3d(run->plat)) {
+        return;
+    }
+    if (c->plan) {
+        if (eidos_platform_capture_hires(run->plat, run->cap_a, run->cap_behind,
+                                         g3d_hw_snapshot(),
+                                         eidos_settings_internal_scale(),
+                                         c->blend, c->eva, c->evb, c->b1x) == 0) {
+            run->cap_ok = 1;
+            run->cap_bank = c->bank;
+            run->cap_hash = boot_bank_hash(c->bankp);
+            show = 1;
+        } else {
+            run->cap_ok = 0;
+        }
+    } else if (run->cap_ok && c->bankp != NULL && ((dc >> 16) & 3u) == 2u
+               && c->bank == run->cap_bank) {
+        /* no capture this frame: the copy stands while the bank is as it was */
+        if (boot_bank_hash(c->bankp) == run->cap_hash) {
+            show = 1;
+        } else {
+            run->cap_ok = 0;
+        }
+    }
+    if (f > 16u) {
+        f = 16u;
+    }
+    eidos_platform_show_capture(run->plat, show ? (main_on_top ? 0 : 1) : -1,
+                                bmode == 1u || bmode == 2u ? (int)bmode : 0,
+                                (float)f / 16.f);
+}
+
 static void boot_render(void *user, u8 *top, u8 *bottom)
 {
     u32 unsupported[2];
@@ -810,18 +962,7 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
                 /* The GPU draws the 3D layer itself; the 2D compositor only
                  * needs to know where it shows, so its 3D layer is one
                  * opaque unlikely colour. */
-                if (run->sentinel == NULL) {
-                    u32 k;
-
-                    run->sentinel = (u8 *)malloc((size_t)256 * 192 * 4);
-                    for (k = 0; run->sentinel != NULL && k < 256u * 192u; k++) {
-                        run->sentinel[k * 4u + 0] = 84;
-                        run->sentinel[k * 4u + 1] = 168;
-                        run->sentinel[k * 4u + 2] = 52;
-                        run->sentinel[k * 4u + 3] = 255;
-                    }
-                }
-                if (run->sentinel != NULL) {
+                if (boot_sentinel(run) != NULL) {
                     rgba3d = run->sentinel;
                     n = 1u;
                     run->frame1x_valid = 1;
@@ -848,7 +989,9 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
     }
     {
         int behind_done = 0;
+        BootCapture capt;
 
+        boot_capture_plan(run, &capt);
         (void)g2d_hw_render_dsmem_adaptive_ex(
             n, rgba3d, run->hi_top, run->hi_bottom, unsupported, run->hi_sn,
             run->frame1x_valid ? run->behind : NULL, &behind_done);
@@ -856,6 +999,7 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
             unsigned long long t3 = eidos_prof_begin();
 
             boot_gpu3d(run, behind_done);
+            boot_capture_run(run, &capt);
             eidos_prof_end(EIDOS_PROF_BOOT3D, t3);
         }
     }

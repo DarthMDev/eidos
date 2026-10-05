@@ -252,6 +252,7 @@ set(EIDOS_BOOT_SHIM_REPLACED
     src/matched/arm9_sdk/func_0208098C.c   # GX_ResetBankForClearImage, sdk/boot/gx.c
     src/matched/arm9/func_02085A30.c       # a thread field getter, sdk/os_thread.c
     src/matched/arm9_sdk/func_02080CA8.c   # GX_SendFifo64B, sdk/g3_fifo.c
+    src/matched/arm9_sdk/g3_multmtx33.c    # G3_MultMtx33, sdk/g3_fifo.c
     src/matched/arm9_sdk/func_02082760.c   # MI_SendGXCommandAsync, sdk/mi_gx.c
     src/matched/arm9_sdk/func_02082960.c   # MI_SendGXCommandAsyncFast, sdk/mi_gx.c
     src/matched/arm9_sdk/func_02082BA0.c   # MI_Copy64B, sdk/mi_gx.c
@@ -276,6 +277,9 @@ set(EIDOS_BOOT_SHIM_REPLACED
     src/matched/arm9/sub_0204D360.c
     # stubs/reimpl_0204D380.c: the sequence index its caller passes and it forwards in r1
     src/matched/arm9/sub_0204D380.c
+    # stubs/reimpl_0206CB8C.c: one clear over two locals, which only the DS
+    # compiler's stack layout makes adjacent
+    src/matched/arm9/func_0206CB8C.c
 )
 
 # The pointer-width switches (CMakeLists.txt, "Pointer width") put a
@@ -338,6 +342,7 @@ list(APPEND EIDOS_BOOT_PORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D340.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D360.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0206CB8C.c
 )
 if(NOT EIDOS_TCBL_MATCHED)
     # stubs/reimpl_ for the nine tcbl files (CMakeLists.txt, "Pointer

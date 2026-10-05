@@ -28,11 +28,13 @@ What is known to be missing or worth adding, written 2026-10-04. Items marked
   pixel (a mask plus the 2D colour and its blend factor) and blend in the shader.
 - **3D alpha.** Where the GPU draws a translucent pixel over a translucent one the
   alpha is "over"; the CPU rasteriser keeps the larger alpha.
-- **Capture scenes stay at DS resolution.** The display capture is read back at
-  256x192 (the title and logo scenes capture every frame). Raising them needs a
-  high-resolution shadow of the capture target, used while the game does not
-  touch that VRAM bank from the CPU. (prior art: RT64 scales framebuffer
-  effects and their region copies by the same factor)
+- **Capture scenes.** A scene that captures the main screen into a VRAM bank
+  every frame and shows that bank (the title: a feedback blend with the frame
+  before) is kept at the chosen scale on the GPU (demo/eidos_boot.c,
+  boot_capture_plan; engine/platform/plat_gl.c, eidos_gl_capture).  Only the
+  plain form is covered: the whole screen, the graphics as source A, the
+  shown bank as source B.  A capture of the 3D alone, a capture used later
+  as a texture or a background, and a partial size stay at DS size.
 - **Untested hosts.** Linux and macOS have never run; the OpenGL path needs
   checking there (macOS stops at OpenGL 4.1, which is enough for 3.3 core).
   Everything on Windows was checked with hidden windows and pixel readback, not

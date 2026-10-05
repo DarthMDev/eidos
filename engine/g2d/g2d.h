@@ -1053,6 +1053,12 @@ int g2d_hw_render_dsmem_adaptive_ex(u32 scale, const u8 *rgba3d, u8 *top,
                                     u32 screen_scale[2], u8 *behind,
                                     int *behind_done);
 
+/* The main engine's graphics screen (the capture's source A) at DS size,
+ * RGBA8, whatever the display mode; rgba3d NULL turns the 3D layer off. */
+int g2d_hw_main_graphics_dsmem(const u8 *rgba3d, u8 *out);
+/* The two at once (with rgba3d, and with the 3D off), on the worker pool. */
+int g2d_hw_main_graphics_pair_dsmem(const u8 *rgba3d, u8 *with3d, u8 *without);
+
 /* ------------------------------------------------------------------ */
 /* Rig blocks (a/0/0/4 and its siblings)                               */
 /* ------------------------------------------------------------------ */

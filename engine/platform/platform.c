@@ -1198,7 +1198,10 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
                 SDL_GetError());
     }
 
-    if (cfg->audio) {
+    /* A hidden window is a test run: it stays silent (EIDOS_NO_AUDIO does
+     * the same for a visible one). */
+    if (cfg->audio && getenv("EIDOS_WINDOW_HIDDEN") == NULL
+        && getenv("EIDOS_NO_AUDIO") == NULL) {
         p->audio_push = cfg->audio_push;
         open_audio(p);
     }
@@ -1497,6 +1500,31 @@ int eidos_platform_set_3d(EidosPlatform *p, int screen, const u8 *behind,
     eidos_gl_set_3d(p->gl, screen, behind, (int)SCREEN_W, (int)SCREEN_H, bmode,
                     bfac, dilate);
     return 0;
+}
+
+int eidos_platform_capture_hires(EidosPlatform *p, const u8 *a2d,
+                                 const u8 *behind,
+                                 const struct G3dSnapshot *snap, int n,
+                                 int blend, int eva, int evb, const u8 *b1x)
+{
+    if (!eidos_platform_gpu3d(p)) {
+        return -1;
+    }
+    if (n < 1) {
+        n = 1;
+    }
+    if (n > 20) {
+        n = 20;
+    }
+    return eidos_gl_capture(p->gl, a2d, behind, snap, n, blend, eva, evb, b1x);
+}
+
+void eidos_platform_show_capture(EidosPlatform *p, int screen, int bmode,
+                                 float bfac)
+{
+    if (p != NULL && p->gl != NULL) {
+        eidos_gl_show_capture(p->gl, screen, bmode, bfac);
+    }
 }
 
 void eidos_platform_capture_begin(EidosPlatform *p)

@@ -1638,3 +1638,68 @@ int g2d_hw_render_dsmem(const u8 *rgba3d, u8 *top, u8 *bottom,
 {
     return g2d_hw_render_dsmem_scaled(1u, rgba3d, top, bottom, unsupported);
 }
+
+/*
+ * The main engine's graphics screen (what display mode 1 would show, and what
+ * the display capture's source A reads), whatever the display mode is, at DS
+ * size in RGBA8.  `rgba3d` is the 3D layer (256 x 192 RGBA) or NULL for the
+ * screen with its 3D layer off.  No capture runs and nothing is written.
+ */
+int g2d_hw_main_graphics_dsmem(const u8 *rgba3d, u8 *out)
+{
+    G2dHwState hw;
+    u8 *tmp, *g6;
+    u32 flags = 0, i;
+    int rc;
+
+    g2d_hw_state_from_dsmem(&hw);
+    if (hw.io == NULL || hw.pal == NULL || hw.oam == NULL || out == NULL) {
+        return -1;
+    }
+    tmp = (u8 *)malloc((size_t)SCREEN_PX * 4u);
+    g6 = (u8 *)malloc((size_t)SCREEN_PX * 3u);
+    if (tmp == NULL || g6 == NULL) {
+        free(tmp);
+        free(g6);
+        return -1;
+    }
+    g2d_tables_init();
+    rc = render_engine(&hw, G2D_HW_MAIN, 1u, rgba3d, tmp, &flags, g6);
+    for (i = 0; rc == 0 && i < SCREEN_PX; i++) {
+        out[i * 4u + 0] = (u8)(g6[i * 3u + 0] * 255u / 63u);
+        out[i * 4u + 1] = (u8)(g6[i * 3u + 1] * 255u / 63u);
+        out[i * 4u + 2] = (u8)(g6[i * 3u + 2] * 255u / 63u);
+        out[i * 4u + 3] = 255;
+    }
+    free(tmp);
+    free(g6);
+    return rc;
+}
+
+typedef struct GraphicsPair {
+    const u8 *rgba3d;
+    u8 *out[2];
+    int rc[2];
+} GraphicsPair;
+
+static void graphics_pair_task(void *arg, unsigned i)
+{
+    GraphicsPair *j = (GraphicsPair *)arg;
+
+    j->rc[i] = g2d_hw_main_graphics_dsmem(i == 0 ? j->rgba3d : NULL, j->out[i]);
+}
+
+/* Both at once on the worker pool: the graphics screen with `rgba3d` as its
+ * 3D layer into `with3d`, and with the 3D layer off into `without`. */
+int g2d_hw_main_graphics_pair_dsmem(const u8 *rgba3d, u8 *with3d, u8 *without)
+{
+    GraphicsPair j;
+
+    j.rgba3d = rgba3d;
+    j.out[0] = with3d;
+    j.out[1] = without;
+    j.rc[0] = j.rc[1] = -1;
+    g2d_tables_init();
+    g2d_par_run(2u, graphics_pair_task, &j);
+    return (j.rc[0] == 0 && j.rc[1] == 0) ? 0 : -1;
+}

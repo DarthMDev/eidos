@@ -353,6 +353,22 @@ void eidos_platform_present_nn(EidosPlatform *p, const u8 *top, int n_top,
  */
 struct G3dSnapshot;
 int  eidos_platform_gpu3d(const EidosPlatform *p);
+
+/*
+ * The display capture at the 3D's resolution (GPU path only).  A scene that
+ * captures the main screen into VRAM every frame and shows that bank would
+ * otherwise stay at DS size.  _capture_hires makes this frame's capture from
+ * the graphics screen with a sentinel 3D layer (a2d), the same with the 3D
+ * off (behind) and the 3D frame, mixed (blend != 0, eva and evb in
+ * sixteenths) with the capture before it, or with b1x when that is given;
+ * _show_capture names the screen that shows it this frame (-1: none).
+ */
+int  eidos_platform_capture_hires(EidosPlatform *p, const u8 *a2d,
+                                  const u8 *behind,
+                                  const struct G3dSnapshot *snap, int n,
+                                  int blend, int eva, int evb, const u8 *b1x);
+void eidos_platform_show_capture(EidosPlatform *p, int screen, int bmode,
+                                 float bfac);
 /* The GPU's 3D frame at DS size into `out` (256x192 RGBA); 0 new, 1 unchanged,
  * -1 failure. */
 int  eidos_platform_read3d_1x(EidosPlatform *p, const struct G3dSnapshot *snap,

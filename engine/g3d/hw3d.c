@@ -253,6 +253,19 @@ typedef struct Hw3d {
 } Hw3d;
 
 static Hw3d g_hw;
+/* EIDOS_G3D_BADMTX, read once */
+static int badmtx_on(void)
+{
+    static int on = -1;
+
+    if (on < 0) {
+        on = getenv("EIDOS_G3D_BADMTX") != NULL;
+    }
+    return on;
+}
+
+static unsigned long long g_ring[64];   /* the last FIFO words (EIDOS_G3D_BADMTX) */
+static u32 g_ring_n, g_ring_src;
 static u32 g_mtx_log = 0xFFFFFFFFu;   /* matrix commands logged since the armed swap */
 static u32 g_ops_frame[256];     /* commands since the last swap (EIDOS_G3D_OPS) */
 
@@ -1054,7 +1067,7 @@ static void render_frame(void)
     {
         static u32 swaps;
 
-        if ((++swaps % 60u) == 0) {
+        if ((++swaps % 60u) == 0 || getenv("EIDOS_G3D_MTX_ALL") != NULL) {
             if (getenv("EIDOS_G3D_MTX") != NULL) {
                 fprintf(stderr, "mtx swap %u\n", swaps);
             }
@@ -1296,6 +1309,53 @@ static void exec(u32 op, const u32 *par)
 {
     unsigned long long t0 = eidos_prof_begin();
     g_ops_frame[op & 0xFFu]++;
+    if (op >= 0x16u && op <= 0x1Cu && badmtx_on()) {
+        /* a matrix command with an element far outside any real scene */
+        u32 k, n = g3d_gx_param_count(op), bad = 0;
+        static u32 swaps_seen;
+
+        for (k = 0; k < n && k < 16u; k++) {
+            s32 v = (s32)par[k];
+
+            if ((v > 300000 || v < -300000) && !((op == 0x17u || op == 0x19u) && k >= 9u) && op != 0x1Cu && op != 0x16u && op != 0x18u) {
+                bad = 1;
+            }
+        }
+        if (bad) {
+            fprintf(stderr, "badmtx op %02X after %u matrix ops:", op, g_ops_frame[0x13]);
+            for (k = 0; k < n && k < 16u; k++) {
+                fprintf(stderr, " %d", (int)par[k]);
+            }
+            fprintf(stderr, "\n");
+        }
+        if (bad && swaps_seen < 3u) {
+            /* who sent it: the return addresses up the frame chain */
+            void **fp = (void **)__builtin_frame_address(0);
+            int d;
+
+            swaps_seen++;
+            {
+                u32 r;
+
+                for (r = 0; r < 64u; r++) {
+                    unsigned long long e = g_ring[(g_ring_n + r) & 63u];
+
+                    fprintf(stderr, " %s%08X", (e >> 32) ? "*" : "", (unsigned)e);
+                }
+                fprintf(stderr, "\n");
+            }
+            fprintf(stderr, "  ref %p\n", (void *)g3d_hw_flush);
+            for (d = 0; d < 14 && fp != NULL; d++) {
+                void **up = (void **)fp[0];
+
+                fprintf(stderr, "  from %p\n", fp[1]);
+                if (up <= fp) {
+                    break;
+                }
+                fp = up;
+            }
+        }
+    }
     {
         /* EIDOS_G3D_MTX=N: the first N matrix commands after each 60th swap */
         static int init, lim;
@@ -1453,6 +1513,7 @@ static void fifo_advance(void)
 
 static void fifo_word(u32 w)
 {
+    g_ring[g_ring_n++ & 63u] = ((unsigned long long)g_ring_src << 32) | w;
     if (!g_hw.in_packet) {
         g_hw.ops[0] = (u8)(w & 0xFFu);
         g_hw.ops[1] = (u8)((w >> 8) & 0xFFu);
@@ -1534,7 +1595,9 @@ static void resolve_pending(void)
         return;
     }
     if (v != G3D_HW_SENTINEL) {
+        g_ring_src = 1;
         store(p, v);
+        g_ring_src = 0;
     }
 }
 
