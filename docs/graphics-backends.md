@@ -70,9 +70,9 @@ What comparable projects use (checked 2026-10-04):
   Tier 2, so it excludes older GPUs.
 - Ship of Harkinian (libultraship, Fast3D): Direct3D 11 (Windows default), OpenGL
   (all platforms) and Metal; a Vulkan backend is in review.
-- melonDS: a classic OpenGL renderer that needs OpenGL 3.1, and a compute shader
-  renderer that needs OpenGL 4.3 and reproduces the DS rasteriser more closely
-  with upscaling. The compute renderer cannot run on macOS, which stops at 4.1.
+- melonDS: a compute-shader renderer that needs OpenGL 4.3 and reproduces the
+  DS rasteriser more closely, but cannot run on macOS, which stops at 4.1 (see
+  "Prior art").
 - macOS: OpenGL has been deprecated since 10.14 and is frozen at the 4.1 core
   profile. It still works, including on Apple Silicon, and Apple has announced no
   removal date. Metal is the long term route there.

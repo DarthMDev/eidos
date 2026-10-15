@@ -1,16 +1,20 @@
-# Port status: done, open, and blocked on the decompilation
+# Port status: done, and what is left to port
 
 README.md's "Planned Milestones" is the detailed checklist, grouped by
-milestone. This file is the same work grouped by **dependency**, which is
-what tells a reader what can be worked on while aletheia's decompilation is
-still in progress and what has to wait for it.
+milestone. This file is the same work grouped by what it waits on. aletheia's
+decompilation is code complete: the whole game's code is matched (2,183,286
+of 2,183,302 bytes, 99.9993%), 35,520 functions with none missing and none
+doubled, 98.99% of game code and 99.20% of all code fully linked, and 181 of
+243 regions link byte-identical. 33,524 matched translation units sit under
+`src/matched/` (4,117 in `arm9`, 24,482 in `ov/`, 3,296 in `ov_sdk`), with
+matched files in 178 of the 237 overlays. The port no longer waits on
+matching; it waits on port integration, on getting that matched C to compile
+and run here.
 
 Maintained by hand: move an item when its status changes, in the same commit
-that changes it. A "blocked" item names the aletheia function or subsystem
-it needs, so the day that lands, the block is easy to revisit. Where an item
-is only partly done, it says which part.
+that changes it. Where an item is only partly done, it says which part.
 
-## Done, no decompilation involved
+## Done
 
 - **The game's own boot, to the title menu**: NitroMain and the title-path
   overlays (ov009, ov010, ov011, ov013, ov017, ov088, ov179, ov228) run
@@ -63,16 +67,20 @@ is only partly done, it says which part.
 - **Builds with no game data**, and `tools/check.py` runs GCC and Clang at
   both pointer widths, ASan+UBSan and no-SDL, warning-free.
 
-## Open, no decompilation dependency
+## Open, no aletheia dependency
 
-- **The installer front ends**: the per-platform wizard around `install/`
-  (designed in `docs/installer.md`: ROM picker, progress, data root
-  location per platform, behaviour without data), cancellation and a
-  free-space check in the core, a descriptor entry point for Android, and
-  the optional DSi BIOS input.
+- **The installer front ends**: the setup window and the core behind it are
+  in (`install/setup.c`, `engine/platform/wizard.c`, `docs/installer.md`):
+  the ROM picker per platform, the progress callback and Cancel, the
+  data-root location per platform, the behaviour without data, and the
+  free-space check (`bw_free_space_utf8`). Still open: the Android
+  descriptor entry point for content URIs, the Linux and macOS picker
+  branches (syntax-checked only; no Linux or macOS machine here), and the
+  optional DSi BIOS input.
 - **The Pokemon record layer** (`func_02017E1C`/`E40`, `func_02018598`) is
-  matched in aletheia, but its closure is 81 files with 3 open functions
-  and ARM9 rodata tables; it needs game data to test meaningfully.
+  matched in aletheia; `tools/closure.py` reports its closure as 182 files
+  with 2 open functions and 47 ARM9 data names. It needs game data to test
+  meaningfully.
 
 - **Milestone 4, 3D gaps**: the texture matrix (`TEXIMAGE_PARAM` bits 30-31)
   is unimplemented, and so are shadow polygons (no matched `POLYGON_ATTR`
@@ -98,45 +106,46 @@ is only partly done, it says which part.
   at `/W4` and pass every test with game data, MinGW at both widths too;
   CRT dialogs are off in every MSVC executable (`sdk/plat_nodialog.c`).
   Still open: GCC and Clang on a real Linux machine (and macOS), which
-  `tools/check.py` covers but nobody has run there yet; the MSVC build is
-  `-DEIDOS_SDL=OFF` until SDL2 for MSVC is wired up (vcpkg or the VC
-  devel zip, README "Building with MSVC").
+  `tools/check.py` covers but nobody has run there yet. SDL2 is wired up
+  under MSVC too, through the `vc` devel zip (README "Building with MSVC").
 - **Milestone 5, oracle breadth**: more sequences in the audio oracle is
   mechanical coverage, not accuracy.
 - **Milestone 8+**: high-resolution/widescreen rendering, the mod API,
   packaging.
 
-## Blocked on aletheia (needs decompiled game code)
+## Open, port integration
 
-- **Milestone 2, boot from the game's own lists**: the heap constructor is
-  matched and in (ILP32), and aletheia now has the boot's own init matched
-  (`sub_0200545C`: heaps, child heap 7, the archive table). What is still
-  open is its wider closure and the overlays (field, battle, title), which
-  aletheia has barely started (12 files in 4 of 237 overlays).
-- **Milestone 3, opening cinematic**: needs the cinematic's own code.
+- **Milestone 2, the wider boot closure**: the heap constructor and the
+  boot's own init (`sub_0200545C`: heaps, child heap 7, the archive table)
+  are matched and in, and the title-path overlays compile into the boot,
+  which reaches the title menu. What is left is the rest of the closure and
+  the field and battle overlays: the code is matched, it is not wired into
+  the port.
+- **Milestone 3, opening cinematic**: it runs and is drawn from the
+  hardware state the game itself writes (ov179, `docs/boot.md`). What is
+  open is a pixel comparison against a DS capture, plus the documented
+  compositor approximations.
 - **Milestone 5, audio accuracy**: the ADSR curve, the volume and pan laws,
   Tie, portamento, modulation and the pitch wheel are documented
   approximations of the hardware's; correcting them needs the DS sound
-  driver, which is not decompiled.
-- **Milestone 5, the game's own sound calls**: nothing in `src/matched/`
-  plays a sequence yet, so the demo chooses the SEQ id. Needs the matched
-  sound callers.
-- **Milestone 6, engine boots cleanly from extracted assets**: needs the
-  boot path (system init, the overlay loader, and the title and field
-  managers).
+  driver, which is ARM7 and outside aletheia's ARM9 decompilation.
+- **Milestone 5, the game's own sound calls**: the matched ARM9 code calls
+  the SND library, but the boot does not run it yet, so `eidos_view` still
+  chooses the SEQ id. Wiring those calls into `sdk/arm7/` is port work.
 - **Milestone 7, gameplay**: field system (movement, warps, script VM,
-  encounters), battle, menus, save. All game code.
+  encounters), battle, menus, save. All of it is matched; none of it is
+  wired into the port yet, which is the bulk of the remaining work.
 
-## How to use this when a decompiled piece lands
+## Where to look next
 
-An aletheia function becoming `EXACT` and reachable turns a "blocked" row
-into "open". The boot-path blockers are worth re-reading in `docs/HANDOFF.md`
-at each integration: the heap arena (`0x0202FC48`), the overlay loader, and
-the title/field managers are the ones that unblock the largest part of the
-port at once.
+The decompilation no longer gates the port; the work is integration. The
+next step past the title menu, and what each one took, is in `docs/boot.md`
+("How far it gets") and `docs/boot-handoff.md` (the state, the frames
+reached, the open items in order). `docs/overlays.md` covers compiling more
+overlays into the executable.
 
-## Blocked on the decompilation: past the title menu
+## Past the title menu
 
-- **NEW GAME**: needs ov204 (new-game intro, 60 of 123 functions unmatched
-  in aletheia) and ov194 (name entry, 78 of 148). The boot reaches the
-  menu; selecting NEW GAME loads code that is not matched yet.
+- **NEW GAME**: loads ov204 (new-game intro) and ov194 (name entry). Both
+  are matched now (123 and 148 functions); neither is compiled into the boot
+  yet, so the load has nothing to run.

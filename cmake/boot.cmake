@@ -303,6 +303,22 @@ if(NOT EIDOS_HEAP_MATCHED)
         src/matched/arm9/func_02060E94.c)
 endif()
 
+# Aletheia has since matched functions this port previously stood in for.  The
+# port's stand-in is still the one the build uses, so the matched file is
+# listed here to keep the link single-definition.  Three of these are now
+# plain C upstream (their bodies were mwcc asm when the stand-in was written),
+# so the matched file could replace the stand-in: that replacement is the
+# retirement this list records, not a decision to keep the stand-in forever.
+#   sdk/asm/func_02034F74.c                     0x02034F74  UI_SetKeepAwakeFlags
+#   sdk/asm/CTRDGi_IsTaskAvailable_02010054.c   0x02010054  GFL_NET_ERR_IsActive
+#   stubs/reimpl_0204960C.c                     0x0204960C  ARC_TOOL_SeekHandle
+#   sdk/boot/rtc.c                              0x02700000  RTCEXi_CommonCallback (still mwcc asm)
+list(APPEND EIDOS_BOOT_SHIM_REPLACED
+    src/matched/arm9/func_02034F74.c
+    src/matched/arm9_sdk/CTRDGi_IsTaskAvailable_02010054.c
+    src/matched/arm9_sdk/NHTTPi_GetConnection.c
+    src/matched/twl_sdk/func_02700000.c)
+
 # Port code compiled into the boot beside the matched closure.
 #
 # NitroMain (0x02005124) and the deferred buffer swap (0x02047990) were

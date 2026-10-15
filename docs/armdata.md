@@ -1,9 +1,10 @@
 # The ARM9 image's data on the host
 
-The boot closure (docs/boot.md, `EIDOS_BOOT=ON`) names 330 ARM9 data
-objects at 264 addresses: tables, strings, the SDK's state, linker constants. This
-document is how the port gives the matched code those objects with their DS
-initial contents, without a byte of the game in the repository.
+The boot closure (docs/boot.md, `EIDOS_BOOT=ON`) names 1138 ARM9 data
+objects at 945 addresses (aletheia commit 80f06a26): tables, strings, the
+SDK's state, linker constants. This document is how the port gives the
+matched code those objects with their DS initial contents, without a byte
+of the game in the repository.
 
 Pieces:
 
@@ -54,7 +55,7 @@ Four bindings:
   registered there (the registry is consulted first).
 - **HOST**: the address lies in an object a port source defines
   (`tools/armdata_exclusions.txt`): the port object plus the offset.
-  Needed because most port objects (the OS lane's thread tables, sdk/fs.c's
+  Needed because most port objects (sdk/os_thread.c's thread tables, sdk/fs.c's
   archive) are not registered, so `bw_ds_ptr` would not find them.
 - **CONST**: an SDK linker-defined constant such as `SDK_IRQ_STACKSIZE`
   (0x800) or an overlay id (`ov088_id`, 88). The DS symbol's *address* is
@@ -68,10 +69,10 @@ Four bindings:
   instead (untyped cells, doubled on LP64), sized by `data_objects.json` or
   up to the next address anything else starts at; the runtime fills it from
   the image copy and registers it with `bw_ds_register`, so every other way
-  of reaching the address reaches it. 8 names in the boot closure.
+  of reaching the address reaches it. 23 names in the boot closure.
 
 **Aliases need nothing.** Many addresses have several names (in the boot
-closure 330 names share 264 addresses; 0x020AA260 has eight). Each name is its own variable, bound to the same
+closure 1138 names share 945 addresses; 0x020AA260 has twelve). Each name is its own variable, bound to the same
 byte. A `#define` from one name to another would also work, but breaks
 when one translation unit declares both names with different types, and a
 second linker name for one object has no portable C spelling (GCC's
@@ -138,9 +139,8 @@ ILP32 configuration.
 
 ## Why not one host global per object
 
-The first design defined each referenced object as a host global of its
-size, filled it from the image and registered it with `bw_ds_register`.
-It does not survive the data:
+Defining each referenced object as a host global of its size, filled from the
+image and registered with `bw_ds_register`, does not survive the data:
 
 - Sizes are not known. `.bss` objects have none in the metadata, and the
   matched code indexes past declared sizes on purpose (the 235-entry archive
@@ -149,7 +149,7 @@ It does not survive the data:
   Every guess either overruns a host object or makes registrations overlap.
 - `SDK_AUTOLOAD_DTCM_START + 0x3FF8` and the stack arithmetic in
   `OS_InitThread` need the 16 KiB of DTCM to be one contiguous block, while
-  the OS lane's IRQ table lives inside it.
+  sdk/os_interrupt.c's IRQ table lives inside it.
 - Pointers inside the data reach objects no source names (the archive table
   points at 235 strings). Those need their contents too, so the image has to
   be there anyway.
@@ -160,11 +160,11 @@ per named access.
 ## The exclusions
 
 `tools/armdata_exclusions.txt` lists the data objects port sources define:
-sdk/fs.c's `d_02150DA8`; the OS lane's `OSi_ThreadInfo`,
-`OSi_LauncherThread`, `OSi_IdleThread`, `g_02FE0020` (the IRQ table),
-`g_02150F38`, `OSi_IrqThreadQueue`; the ARM7 lane's `FifoCtrlInit` and
-`FifoRecvCallbackTable`; and sdk/game_globals.c's objects. For each it gives
-the DS address and the DS range the object owns. The generator also excludes
+sdk/fs.c's `d_02150DA8`; sdk/os_thread.c's `OSi_ThreadInfo`,
+`OSi_LauncherThread`, `OSi_IdleThread`, sdk/os_interrupt.c's `g_02FE0020`
+(the IRQ table), `g_02150F38`, `OSi_IrqThreadQueue`; sdk/pxi.c's
+`FifoCtrlInit` and `FifoRecvCallbackTable`; and sdk/game_globals.c's objects.
+For each it gives the DS address and the DS range the object owns. The generator also excludes
 any name a source in the build defines, and warns when such a name is not
 in the list. Other spellings of a listed object's address are bound to it
 (HOST), pointers into it are relocated to it, and pointer words inside its
@@ -173,7 +173,7 @@ range are left to its owner.
 ## Order at reset
 
 `bw_ds_reset` clears the registry and calls `bw_game_globals_register`,
-which now calls `bw_data_reset_load` first (copy into flat main RAM while
+which calls `bw_data_reset_load` first (copy into flat main RAM while
 nothing is registered), registers its own objects, and calls
 `bw_data_reset_bind` last (bind names, relocate), so an address a port
 object owns resolves to it. Nothing happens unless a program installed an

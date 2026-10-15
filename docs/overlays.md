@@ -22,8 +22,8 @@ Pieces:
 
 ## The problem
 
-On the DS an overlay's code runs from its window, and the linker gave each
-overlay its own symbols. Overlays that share a window define the same names:
+On the DS an overlay's code runs from its window, and each overlay has its
+own symbols. Overlays that share a window define the same names:
 `func_02155244` is one function in ov009 and another in ov010, and about a
 thousand names repeat this way. A host executable has one global namespace
 and no windows, so compiling two overlays that share a window means renaming,
@@ -163,7 +163,7 @@ contents are copied back to its address and its registration dropped
 would. An object whose range a registration already covers (two names at
 one address in one overlay, ov013's `d_021B4BA0` and `g_021B4BA0`) is filled
 and left unregistered: the first owns the bytes. ovlink's report lists every
-one: the title set has 18 (14 in ov009's network library, mostly SDK state
+one: the title set has 19 (15 in ov009's network library, mostly SDK state
 such as `SOCLiConfigPtr`; 4 in ov013). The conflict test no longer counts an
 `extern struct { ... } NAME;` declaration as a use of NAME other than the
 global (it kept ov010's `d_02148BCC` from being a macro, and its 0x3C-byte
@@ -257,8 +257,8 @@ eidos_boot"):
 
 1. A first ovlink pass against the eidos library (`eidos_overlays_seeds`)
    lists the matched ARM9 files that define what the overlays call
-   (`ovl_arm9_seeds.txt`, about 690 for the title set); they join the boot's
-   seeds, so the closure carries the overlays' ARM9 callees (about 2600
+   (`ovl_arm9_seeds.txt`, about 745 for the title set); they join the boot's
+   seeds, so the closure carries the overlays' ARM9 callees (about 6078
    matched files in all).
 2. The boot is planned, then the overlays are linked against the eidos
    library plus the boot's closure, so only what nothing defines is stubbed.

@@ -1,10 +1,9 @@
 # Booting the game's own code
 
-Milestone 2's last open item and Milestone 6's third are the same piece of
-work: run the game's real start-up, not a demo's, on the host. aletheia's
-ARM9 binary is matched C end to end (every game function and every SDK
-function linked into it), so the code exists. This document is the plan for
-running it, and the contract the pieces are built against.
+eidos runs the game's real start-up, not a demo's, on the host. aletheia's
+ARM9 binary is matched C end to end: every game function and every SDK
+function linked into it. This document is the plan for running it, and the
+contract the pieces are built against.
 
 ## What runs
 
@@ -13,21 +12,22 @@ The ARM9 entry point (`crt0`) calls the game's `NitroMain` at `0x02005124`
 (`OS_InitTick`, `OS_InitAlarm`, `RTC_Init`, `GX_Init`, `FS_Init`, the DWC
 utility arena, the power manager), then enters the frame loop.
 
-`tools/closure.py` seeded at NitroMain reaches about 1340 matched
+`tools/closure.py` seeded at NitroMain reaches about 1492 matched
 translation units; "Linking the boot" below is what it takes to link them
 and "Running the boot" how far they run. Everything past the first overlay
-load
-(title screen, field, battle) lives in overlays, which are about 61% matched;
-those screens wait on aletheia, and `docs/title-closure.md` lists exactly
-which unmatched functions block the title screen.
+load (title screen, field, battle) lives in overlays. They are matched as
+well: at aletheia commit 80f06a26 the overlays' game code is fully linked
+(24,835 functions, 99.9993 percent of their instruction bytes) with all
+3,236 of their SDK functions. What those screens wait on is the port's
+wiring, not matching; `docs/title-closure.md` has the title path's detail.
 
-`NitroMain` was long not matched C in aletheia (it is reached through a
-register from `crt0`, so the disassembler carried its 180 bytes as data
-words), and the port wrote it as `stubs/reimpl_02005124.c` from the
-disassembly. aletheia matches it now (`src/matched/arm9/func_02005124.c`),
-and the deferred buffer swap it calls (`func_02047990.c`); with a checkout
-that has them the boot compiles the matched files and leaves the two
-reimplementations out (`cmake/boot.cmake`), an older checkout keeps them.
+`NitroMain` was not matched C in aletheia at first, so the port wrote it as
+`stubs/reimpl_02005124.c` from the disassembly (`docs/title-closure.md`,
+"Boot path", has the listing detail). aletheia matches it now
+(`src/matched/arm9/func_02005124.c`), and the deferred buffer swap it calls
+(`func_02047990.c`); with a checkout that has them the boot compiles the
+matched files and leaves the two reimplementations out
+(`cmake/boot.cmake`), an older checkout keeps them.
 
 ## Three layers, and where each SDK name goes
 
@@ -49,8 +49,8 @@ there.
 
 ## Fixed addresses: the build rewrites them, aletheia does not change
 
-2807 casts in the matched corpus turn an integer literal into a pointer
-(`*(vu16 *)0x04000208 = 1`): 2227 into I/O, 296 into main RAM, the rest into
+3702 pointer casts in the matched corpus turn a DS address into a pointer
+(`*(vu16 *)0x04000208 = 1`): 2887 into I/O, 655 into main RAM, the rest into
 palette, VRAM, OAM and the shared work area. On a host those are wild
 pointers.
 
@@ -219,7 +219,7 @@ the pointer named).
   function twice), and is not on the list; a shim that only forwards to the
   address's other spelling (`sdk/aliases.c`) is a second name, not a
   replacement;
-- the files whose bodies are mwcc `asm` (88 in the closure). A file
+- the files whose bodies are mwcc `asm` (150 in the closure). A file
   `sdk/asm/<same name>.c` takes the place of one automatically (or the
   eidos library already has it); until it exists, every function the file
   defines is a stub;
@@ -229,7 +229,7 @@ the pointer named).
 translation unit gets a header that renames, for that file only, each
 spelling to the defined one (`RTC_Init` to `func_02088788`, `func_02088610`
 to the shim's `PXI_SendWordByFifo`, `func_0206074C` to
-`NHTTP_CleanupAsync`), about 720 renames in all. Any name whose DS address a
+`NHTTP_CleanupAsync`), about 1647 renames in all. Any name whose DS address a
 compiled source defines resolves to it: a unit's lead function by the
 manifest's address (which wins over the SDK table, whose spelling of a
 name can sit at another address), its other functions by their address
@@ -254,7 +254,7 @@ be a source property, which belongs to the file in every target of the
 directory, and the dsaddr copies and `sdk/asm/` files are shared with tests
 that compile them against their own doubles.
 
-**Implicit declarations.** 34 callees in 22 matched files have no
+**Implicit declarations.** 205 callees in 103 matched files have no
 declaration; mwcc compiled them as `int f()` and GCC 14 rejects them. The
 header declares each as `int f()` (C99's non-prototype form, the
 declaration the DS code was compiled against), or `long long f()` when its
@@ -371,9 +371,10 @@ what the C says, so the callee reads an indeterminate value: a heap
 allocation with a random alignment that failed in some runs and not others,
 a save block getter reading NULL, an animation advanced by a garbage count.
 
-`tools/regargs.py` lists every such site in the matched corpus (2306 at
-first): for each function that calls a callee it declares with fewer
-parameters than the callee's definition takes, where the callee uses the
+`tools/regargs.py` lists every such site in the matched corpus (2306 when
+the port first ran it, 74 at aletheia commit 80f06a26): for each function
+that calls a callee it declares with fewer parameters than the callee's
+definition takes, where the callee uses the
 missing one, it reads the caller's code in the listing and says where the
 register comes from (the caller's own argument, the previous call's
 result, or something to read by hand). aletheia names the arguments in its
@@ -388,30 +389,10 @@ every argument and the result through. `tools/bootlink.py` compiles a
 generated forwarder in place of each one in the boot, with the callee's
 normalised prototype (`<build>/boot/boot_thunks.txt` lists them).
 
-## Lanes
-
-Each lane owns the files named here and nothing else, works in its own
-worktree, and is integrated by one person.
-
-| Lane | Owns |
-|---|---|
-| dsaddr | `tools/dsaddr.py`, its CMake hook, `tests/test_dsaddr.*` |
-| dsmem | `sdk/dsmem.c`, `tests/test_dsmem.c` (the header is fixed) |
-| nitromain | `stubs/reimpl_02005124.c`, `demo/eidos_boot.c` |
-| os | `sdk/os_thread.c`, `sdk/os_irq.c`, `sdk/os_alarm.c`, `tests/test_os*.c` |
-| arm7 | `sdk/pxi.c`, `sdk/arm7/*.c` (PM, RTC, CARD, CTRDG, SND replies) |
-| render | `engine/g2d/hwcompose.c`, `tests/test_hwcompose.c` |
-| fs | `sdk/fs.c` additions, `sdk/overlay.c` |
-| link | `tools/closure.py`, `tools/bootlink.py`, `cmake/boot.cmake` |
-| bootrun | `cmake/boot.cmake`, `tools/bootlink.py`, `demo/eidos_boot.c`, `sdk/boot/`, `tests/boot_run.cmake` |
-| title | `docs/title-closure.md` (analysis only) |
-| msvc | `cmake/msvc.cmake`, `tools/check.py` MSVC configurations |
-
 ## Modding is a design constraint, not a later feature
 
-eidos is meant to carry new Pokemon, moves, sprites, NPCs, maps and AI
-(Milestone 8, and the mod suite built on it). Nothing here may freeze a DS
-limit the port owns:
+eidos is meant to carry new Pokemon, moves, sprites, NPCs, maps and AI.
+Nothing here may freeze a DS limit the port owns:
 
 - Game tables are host objects registered with `bw_ds_register`, not fixed
   DS memory, so a table can be defined larger than the cartridge's copy and

@@ -3,7 +3,7 @@
 The DS is LP32: `sizeof(void *)` is 4, and every struct the game's own layout
 owns was laid out by a compiler that knew that. A host is usually LP64 or
 LLP64, where a pointer is 8 bytes and needs 8-byte alignment. This document
-settles what eidos does about that, with the measurement it is settled on.
+settles what eidos does about that, and the measurement behind the decision.
 
 Regenerate the numbers below with:
 
@@ -14,7 +14,7 @@ python tools/closure.py --aletheia-root ../aletheia --pointer-audit
 The script reads only aletheia's `layout/` manifests and the C text of the
 sources they name. It writes nothing and it does not modify aletheia.
 
-## The two configurations, and that both work
+## The two configurations
 
 `cmake/ilp32-toolchain.cmake` configures the port with 32-bit pointers. It
 looks for an i686 compiler driver (on Windows, the `i686-w64-mingw32-gcc`
@@ -35,10 +35,10 @@ ON puts the nine EXACT tcbl sources that depend on a four-byte pointer into
 the library straight out of aletheia's `src/matched/`, compiled as written,
 and leaves the `stubs/reimpl_` stand-ins out. Four of them (`sub_02030EF0`,
 `sub_02030F34`, `func_02030F04`, `sub_02030FB4`) reach a field through a DS
-byte offset; the five wave 26 added (`sub_02030F50`, `sub_02030F70`,
+byte offset; the other five (`sub_02030F50`, `sub_02030F70`,
 `sub_020311B8`, `sub_02031194`, `sub_0203115C`) declare the node's `+0x00`
 and `+0x10` as pointers where `sub_0203101C` and `sub_020310C4`, which are in
-every configuration, declare them as `u32` -- one struct on the DS and on any
+every configuration, declare them as `u32`: one struct on the DS and on any
 ILP32 target, two different ones on LP64. OFF does the reverse, which is the
 state README.md's "Why nine matched files are out of the LP64 build"
 describes. The symbols are the same either way,
@@ -68,10 +68,10 @@ LP64 target the 40 and 88 the port's own table records.
 
 ## What LP64 actually costs, measured
 
-The question is not whether the port *can* run LP64 (it does, today) but how
-much matched code has to be rewritten, and re-verified against the ROM, for
-LP64 to be the configuration the game is trusted on. So: every matched source
-the manifest names, read three ways.
+The port can run LP64 today. The cost is how much matched code has to be
+rewritten, and re-verified against the ROM, for LP64 to be the configuration
+the game is trusted on. Every matched source the manifest names, read three
+ways.
 
 ```
 matched sources audited: 1110
@@ -89,25 +89,37 @@ per signal, the number of files at least one hit came from:
   B3    1      a literal size argument to an alloc call
 ```
 
+The block above is the audit summary as this document first recorded it.
+The figures in the prose below are current, measured at aletheia revision
+`80f06a261e`: 33,541 sources audited, 14,301 of them affected (42.6 percent),
+and 4,766 with explicit padding.
+
+The same run reports 7,697 integer-typed addresses (A), 6,220 hardcoded
+struct sizes or field offsets (B), and 7,561 integer and pointer casts (C).
+Per signal, A1 is 3,936 files, A2 3,509, A3 1,294, B1 4,766, B2 1,308 and B3
+489, and the audit finds 81 game functions with a cross-file pointer against
+integer prototype conflict.
+
 Each of the three is a heuristic over C text rather than a type check, and
 the exact rule is written out in `tools/closure.py` above `INT_TYPE_NAMES`.
 The point is a defensible order of magnitude and a list of files to look at.
-Two of the signals are worth reading closely:
+Two of the signals matter most:
 
 **A2 is the strongest, because the evidence is two independent
 decompilations of the same signature.** aletheia's matched files each declare
 the externs they call with the prototype that call site needs, so the same
-game function is declared many times across the corpus. 94 game functions are
+game function is declared many times across the corpus. 81 game functions are
 declared with a pointer in one matched file and an integer in another at the
 same position. `func_02030734`, the allocation entry point with 1163 callers,
-is declared as returning a pointer by 37 matched files and as returning an
-`int` by `sub_0200F6D8.c`; `func_02012A30` returns a pointer in fourteen
-files and an `int` in one. Both spellings are EXACT on the DS, which is the
+is declared as returning a pointer by 911 matched files and as returning an
+`int` by `sub_0200F6D8.c`. The `func_02012A30` disagreement this paragraph
+used to cite is not in the current audit output. Both spellings are EXACT on
+the DS, which is the
 finding: the DS build resolves the relocation by address and the width is the
 same either way. On an LP64 host the integer spelling truncates the address
 and the two files cannot both be right.
 
-**B1 is the biggest, and it is the one that cannot be fixed by a rule.** 355
+**B1 is the biggest, and it is the one that cannot be fixed by a rule.** 4,766
 matched sources reach a field through an explicit padding array: `u8
 pad[0x14]; u32 active;` is the ordinary shape of a matched file that knows
 one field of a struct it does not otherwise understand. That padding *is* a
@@ -118,16 +130,20 @@ lay out, somebody has to know what those 0x14 bytes are, which means
 decompiling the rest of the struct. A coding rule cannot produce that
 knowledge; only more decompilation can.
 
-The four tcbl accessors this whole question started with are in the list
-under their own signals: `sub_02030EF0` under A2 (its return is a pointer in
+The four tcbl accessors appear in the list under their own signals:
+`sub_02030EF0` under A2 (its return is a pointer in
 `sub_02030FC8.c` and a `u32` in its own definition) and under B1, and
 `sub_02030F34`, `func_02030F04` and `sub_02030FB4` under B1 (`char pad[0x34]`,
 `char pad[4]`, `char pad[0x10]`).
 
-C is small (48 files) and mostly honest: the majority are hardware register
-and fixed-address accesses, `(vu32 *)0x04000000` and friends, which are LP32
+C is 7,561 files, no longer small. Part of it is hardware register and
+fixed-address accesses, `(vu32 *)0x04000000` and friends, which are LP32
 assumptions of a different kind (the address space, not the pointer width)
-and are the platform layer's business rather than a portability defect.
+and are the platform layer's business rather than a portability defect. At
+this count that class is a minority: most of C is integer-typed names cast to
+pointers and pointer casts to integer types, and 1,244 of the files are
+integer literals cast to pointers, mostly fixed addresses and hardware
+registers.
 
 ## The decision
 
@@ -144,8 +160,8 @@ natively and will for the life of this project. That is the entire cost, and
 it is deferred rather than paid: macOS and iOS are Milestone 9 (Packaging &
 platforms), which is the last milestone, and by the time the port is a
 shippable executable the matched corpus will look nothing like it does at
-18.7% coverage. Choosing ILP32 now does not choose it forever; it chooses it
-for the phase where the answer changes every wave.
+18.7% coverage. Choosing ILP32 now does not choose it forever; it chooses
+ILP32 for the phase where that choice keeps changing.
 
 **Save-file and struct-layout fidelity.** This is what ILP32 buys, and it is
 not a convenience. A DS save file, an archive record and a network packet are
@@ -157,16 +173,16 @@ and `0x38` reproduced exactly); the field, battle and save code that Milestone
 straight to disk. On LP64 every one of those needs either a full declaration
 (so the host compiler lays it out itself) or a serialiser, and until the
 struct is fully decompiled neither is available. ILP32 makes the whole class
-of question not arise, which is worth more than it sounds while the corpus is
-half explicit padding.
+of question not arise, which matters while the corpus is half explicit
+padding.
 
-**The amount of aletheia work implied.** LP64 as the reference means 642 of
-1110 matched sources (57.8%) carry at least one assumption that has to be
-re-examined, and 355 of them carry explicit padding, which as argued above is
+**The amount of aletheia work implied.** LP64 as the reference means 14,301 of
+33,541 matched sources (42.6%) carry at least one assumption that has to be
+re-examined, and 4,766 of them carry explicit padding, which as argued above is
 not a rule violation to be corrected but missing knowledge to be acquired.
 Every change to a matched source costs a full DS re-verify in the same commit
 (README.md, portability rule 1), so this is not a mechanical sweep; it is
-hundreds of re-verifies on files that are already EXACT and already correct.
+thousands of re-verifies on files that are already EXACT and already correct.
 ILP32 as the reference implies zero aletheia work, and it retires the one
 concession the port has already made: the four accessors come back into the
 build as matched code, and `EIDOS_TCBL_HEADER_BIAS`, the port's one piece of
@@ -183,17 +199,23 @@ padding *is* the current state of knowledge. Their conclusion is the right
 one to arrive at, from the state they were in; it is not the right one to
 start from.
 
-**What would change this.** The B1 count is the metric to watch. As waves
-replace padding with real fields the number falls, and when it is small
-enough that the remaining files can be re-verified in a wave or two, LP64
-becomes the reference and ILP32 becomes the fidelity cross-check. Re-run
-`--pointer-audit` at the end of each wave; it is a coverage number for
-portability the same way the matched-byte percentage is one for accuracy.
-That is the exit condition, and it has to be met before Milestone 9 in any
-case, because macOS is not optional for a released port.
+**What would change this.** The B1 count is the metric to watch. This
+paragraph expected B1 to fall as the corpus replaces padding with real
+fields. It did not fall. At aletheia revision 80f06a261e B1 is 4,766 files,
+against 355 when this document was written, while the affected share fell
+from 57.8 percent to 42.6 percent. The two readings point in opposite
+directions: on the absolute B1 count the exit condition is further away, on
+the affected share it is closer. Which reading governs is left as an open
+decision rather than settled here. When B1 is small enough that the remaining
+files can be re-verified in a pass or two, LP64 becomes the reference and
+ILP32 becomes the fidelity cross-check. Re-run `--pointer-audit` as the
+corpus grows; it is a coverage number for portability the same way the
+matched-byte percentage is one for accuracy. The exit condition has to be met
+before Milestone 9 in any case, because macOS is not optional for a released
+port.
 
 **If the LP64 route is taken instead**, the aletheia-side rule to add to
-`docs/AGENT-BRIEF.md` would be, exactly:
+aletheia's `docs/AGENT-BRIEF.md` would be, exactly:
 
 > A struct field that holds an address is declared as a pointer type (`void
 > *`, or the pointed-to type when it is known), never as `u32`, `int` or
@@ -207,7 +229,7 @@ case, because macOS is not optional for a released port.
 > is recorded in `docs/pointer-width.md` rather than changed.
 
 This rule is not being added, because it addresses signals A1, A2 and A3
-(410 files) and leaves B1 (355 files) untouched, and B1 is the half that
+(7,697 files) and leaves B1 (4,766 files) untouched, and B1 is the half that
 decides whether a struct image is byte-identical to the DS's.
 
 ## The file lists

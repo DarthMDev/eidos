@@ -12,26 +12,26 @@ and its limits are in the script's header and under [How to read this](#how-to-r
 
 | # | screen | overlays loaded | overlay functions reached | unmatched: static / pointer / table | unmatched bytes, static + pointer |
 |---|---|---|---|---|---|
-| 0 | boot: NitroMain and its ARM9 closure | ov010, ov011, ov228, ov009, ov013, ov017 | 1450 | 0 / 0 / 83 | 0 |
+| 0 | boot: NitroMain and its ARM9 closure | ov010, ov011, ov228, ov009, ov013, ov017 | 1499 | 0 / 0 / 8 | 0 |
 | 1 | root step 1: ov088 proc 0x021BD8E8 (save_control_intr.c, startmenu.c) | ov010, ov011, ov088 | 3 | 0 / 0 / 0 | 0 |
-| 2 | root step 2: ov179 proc 0x021B68D8 (cdemo_main.c) | ov010, ov011, ov179 | 43 | 0 / 0 / 0 | 0 |
-| 3 | root step 3: ov088 proc 0x021BD574 (save_control_intr.c, startmenu.c) | ov010, ov011, ov088 | 409 | 0 / 0 / 143 | 0 |
+| 2 | root step 2: ov179 proc 0x021B68D8 (cdemo_main.c) | ov010, ov011, ov179 | 45 | 0 / 1 / 0 | 26 |
+| 3 | root step 3: ov088 proc 0x021BD574 (save_control_intr.c, startmenu.c) | ov010, ov011, ov088 | 416 | 0 / 0 / 8 | 0 |
 
 Distinct unmatched overlay functions between power-on and the title menu:
 
 | part | what | functions | instruction bytes | with a draft in aletheia `src/pending` |
 |---|---|---|---|---|
-| A | called, or reached through a code pointer the code itself loads (static and pointer tiers) | 0 | 0 | 0 |
-| B | reached only through a data table, in an overlay the screen has loaded | 85 | 15380 | 7 |
-| C | reached only through a data table, in an overlay the screen never loads from static or pointer code | 141 | 13746 | 2 |
+| A | called, or reached through a code pointer the code itself loads (static and pointer tiers) | 1 | 26 | 0 |
+| B | reached only through a data table, in an overlay the screen has loaded | 10 | 46 | 0 |
+| C | reached only through a data table, in an overlay the screen never loads from static or pointer code | 6 | 46 | 0 |
 
 Part A is the floor: those functions run. Part B is what the screens can reach
 through their state and command tables, an over-approximation; in the boot it is
 the rest of the net library's interface table (`func_0215536C` returns it, the boot
-calls entry 0 only). Part C sits in ov194 (namein_data.c, namein_graphic.c, nsbtx_to_clwk.c, prof_word.c), ov204 (intro_cmd.c, intro_g3d.c, intro_graphic.c, intro_mcss.c and 2 more), ov228 (save_outside.c), overlays the title menu loads only from
+calls entry 0 only). Part C sits in ov194 (namein_data.c, namein_graphic.c, nsbtx_to_clwk.c, prof_word.c), ov204 (intro_cmd.c, intro_g3d.c, intro_graphic.c, intro_mcss.c and 2 more), overlays the title menu loads only from
 table code next to the procs it starts as exits: it is past the title menu and is
 listed for completeness. ARM9 has nothing open
-(`layout/worklist.json`: 4499 of 5660 functions matched, 0 open) except `NitroMain`, which
+(`layout/worklist.json`: 5326 of 6732 functions matched, 1 open) except `NitroMain`, which
 the port supplies as `stubs/reimpl_02005124.c`. The [priority order](#priority-order) at
 the end is the list to match from.
 
@@ -106,7 +106,7 @@ their other selectors swap in other communication modes, which only a menu start
 
 ARM9 functions on the static boot path with no shard entry of their own: 2 SDK or
 runtime symbols (`_ll_divmod_entry_flag0`, `_div_by_zero_check`), which the port provides from `sdk/` or links as matched SDK
-code, and 5 game addresses (0x0203ABC0, 0x0203ACAC, 0x0203AD80, 0x02045CAC, 0x02048CEC). The game ones are covered inside a matched
+code, and 69 game addresses (0x0200566C, 0x020056C8, 0x020056D0, 0x020056EC, 0x020057AC, 0x020057E8, 0x02005834, 0x02005888, 0x020058D0, 0x0200590C, 0x0200597C, 0x020059A0, 0x020059C8, 0x02005D14, 0x02005F5C, 0x02005F90, 0x02006118, 0x02006300, 0x020065FC, 0x020067A4, 0x020067D0, 0x020070A4, 0x0200864C, 0x02008650, 0x0200873C, 0x02008754, 0x02008784, 0x020087D4, 0x0200A5F8, 0x0200A7EC, 0x0200C0F0, 0x0200C1C4, 0x0200C1DC, 0x0200F16C, 0x0201C41C, 0x0201DE18, 0x0201F344, 0x020272EC, 0x0202FBD0, 0x0202FBF8, 0x0202FC20, 0x02033BF8, 0x02035D98, 0x02035DC8, 0x02035DD8, 0x02035E08, 0x02035E18, 0x0203630C, 0x02039CB4, 0x0203ABC0, 0x0203ACAC, 0x0203AD80, 0x02045CAC, 0x02048CEC, 0x02048E34, 0x02049B68, 0x0206062C, 0x02060640, 0x02072F48, 0x020742FC, 0x02074324, 0x02074388, 0x020743EC, 0x02074450, 0x020744B4, 0x02074518, 0x020749C4, 0x020749F8, 0x02074A34). The game ones are covered inside a matched
 neighbour's extent or a unit, so aletheia counts them, but no matched file defines a
 symbol with their own name; `tools/closure.py` reports them as `open` when a seed
 reaches them.
@@ -168,16 +168,16 @@ Overlays loaded: ov010 (calender.c, comm_player.c, delivery_beacon.c, delivery_i
 
 | region | reached: static / pointer / table | matched | unmatched: static / pointer / table | overlay functions | overlay matched |
 |---|---|---|---|---|---|
-| arm9 | 1221 / 341 / 364 | all | - | - | - |
-| ov009 | 10 / 2 / 1323 | 1290 | 0 / 0 / 45 | 1626 | 1586 |
-| ov013 | 0 / 0 / 106 | 68 | 0 / 0 / 38 | 113 | 73 |
+| arm9 | 1233 / 399 / 378 | all | - | - | - |
+| ov009 | 10 / 2 / 1372 | 1376 | 0 / 0 / 8 | 1660 | 1660 |
+| ov013 | 0 / 0 / 106 | 106 | 0 / 0 / 0 | 115 | 115 |
 | ov017 | 5 / 0 / 0 | 5 | 0 / 0 / 0 | 5 | 5 |
-| ov228 | 4 / 0 / 0 | 4 | 0 / 0 / 0 | 9 | 8 |
+| ov228 | 4 / 0 / 0 | 4 | 0 / 0 / 0 | 9 | 9 |
 
-Open sites in overlay code: 0 in static or pointer functions, 201 in table-only
+Open sites in overlay code: 0 in static or pointer functions, 210 in table-only
 functions.
 
-Open sites in ARM9 code walked by the boot: 253 (ARM9 is matched; they matter only
+Open sites in ARM9 code walked by the boot: 243 (ARM9 is matched; they matter only
 for overlay code they might reach, which is not listed).
 
 Calls to an address no overlay resident at that point holds (4):
@@ -196,7 +196,7 @@ Overlays loaded: ov010 (calender.c, comm_player.c, delivery_beacon.c, delivery_i
 | region | reached: static / pointer / table | matched | unmatched: static / pointer / table | overlay functions | overlay matched |
 |---|---|---|---|---|---|
 | arm9 | 23 / 0 / 0 | all | - | - | - |
-| ov088 | 3 / 0 / 0 | 3 | 0 / 0 / 0 | 131 | 125 |
+| ov088 | 3 / 0 / 0 | 3 | 0 / 0 / 0 | 141 | 140 |
 
 ### 2. root step 2: ov179 proc 0x021B68D8 (cdemo_main.c)
 
@@ -206,8 +206,8 @@ Overlays loaded: ov010 (calender.c, comm_player.c, delivery_beacon.c, delivery_i
 
 | region | reached: static / pointer / table | matched | unmatched: static / pointer / table | overlay functions | overlay matched |
 |---|---|---|---|---|---|
-| arm9 | 8 / 31 / 1 | all | - | - | - |
-| ov179 | 4 / 30 / 9 | 43 | 0 / 0 / 0 | 32 | 32 |
+| arm9 | 8 / 32 / 0 | all | - | - | - |
+| ov179 | 4 / 41 / 0 | 44 | 0 / 1 / 0 | 45 | 44 |
 
 ### 3. root step 3: ov088 proc 0x021BD574 (save_control_intr.c, startmenu.c)
 
@@ -218,21 +218,14 @@ Overlays loaded: ov010 (calender.c, comm_player.c, delivery_beacon.c, delivery_i
 | region | reached: static / pointer / table | matched | unmatched: static / pointer / table | overlay functions | overlay matched |
 |---|---|---|---|---|---|
 | arm9 | 108 / 1 / 298 | all | - | - | - |
-| ov010 | 0 / 0 / 4 | 4 | 0 / 0 / 0 | 1468 | 1057 |
-| ov088 | 22 / 1 / 104 | 125 | 0 / 0 / 2 | 131 | 125 |
-| ov194 | 0 / 0 / 147 | 69 | 0 / 0 / 78 | 146 | 68 |
-| ov204 | 0 / 0 / 126 | 64 | 0 / 0 / 62 | 123 | 63 |
-| ov228 | 0 / 0 / 5 | 4 | 0 / 0 / 1 | 9 | 8 |
+| ov010 | 0 / 0 / 4 | 4 | 0 / 0 / 0 | 1736 | 1735 |
+| ov088 | 22 / 1 / 106 | 127 | 0 / 0 / 2 | 141 | 140 |
+| ov194 | 0 / 0 / 149 | 148 | 0 / 0 / 1 | 149 | 148 |
+| ov204 | 0 / 0 / 129 | 124 | 0 / 0 / 5 | 130 | 124 |
+| ov228 | 0 / 0 / 5 | 5 | 0 / 0 / 0 | 9 | 9 |
 
-Open sites in overlay code: 0 in static or pointer functions, 11 in table-only
+Open sites in overlay code: 0 in static or pointer functions, 8 in table-only
 functions.
-
-Calls to an address no overlay resident at that point holds (4):
-
-- ov194 `0x021F4AA8` (table) calls 0x021BD368; overlays at that address: ov016, ov021, ov088, ov091, ov093, ov099, ov110, ov114, ov172, ov208, ov209, ov210, ov216, ov217
-- ov194 `0x021F4AA8` (table) calls 0x021BD380; overlays at that address: ov016, ov021, ov088, ov091, ov093, ov099, ov110, ov114, ov172, ov208, ov209, ov210, ov216, ov217
-- ov204 `0x021BE6B4` (table) calls 0x021BD368; overlays at that address: ov016, ov021, ov088, ov091, ov093, ov099, ov110, ov114, ov172, ov208, ov209, ov210, ov216, ov217
-- ov204 `0x021BE6B4` (table) calls 0x021BD380; overlays at that address: ov016, ov021, ov088, ov091, ov093, ov099, ov110, ov114, ov172, ov208, ov209, ov210, ov216, ov217
 
 Overlay loads in the closure: ov194 at 0x021BC190 (table), ov204 at 0x021BC1B4 (table), ov228 at 0x021BC35A (table), ov228 at 0x021BCEC0 (table), ov067 at 0x021BDA4A (table).
 
@@ -255,16 +248,16 @@ the unmatched column.
 
 | overlay | source files | loaded by | functions | matched | unmatched | unmatched on the path: A / B / C |
 |---|---|---|---|---|---|---|
-| ov009 | dwc_rap.c, dwc_rapcommon.c, net_devwifi.c | screen 0 | 1626 | 1586 | 40 | 0 / 45 / 0 |
-| ov010 | calender.c, comm_player.c, delivery_beacon.c, delivery_irc.c and 30 more | boot, resident | 1468 | 1057 | 411 | 0 / 0 / 0 |
-| ov011 | intrude_comm.c | boot, resident | 190 | 97 | 93 | 0 / 0 / 0 |
-| ov013 | no __FILE__ anchor | screen 0 | 113 | 73 | 40 | 0 / 38 / 0 |
+| ov009 | dwc_rap.c, dwc_rapcommon.c, net_devwifi.c | screen 0 | 1660 | 1660 | 0 | 0 / 8 / 0 |
+| ov010 | calender.c, comm_player.c, delivery_beacon.c, delivery_irc.c and 30 more | boot, resident | 1736 | 1735 | 1 | 0 / 0 / 0 |
+| ov011 | intrude_comm.c | boot, resident | 225 | 224 | 1 | 0 / 0 / 0 |
+| ov013 | no __FILE__ anchor | screen 0 | 115 | 115 | 0 | 0 / 0 / 0 |
 | ov017 | no __FILE__ anchor | screen 0 | 5 | 5 | 0 | 0 / 0 / 0 |
-| ov088 | save_control_intr.c, startmenu.c | screen 1 | 131 | 125 | 6 | 0 / 2 / 0 |
-| ov179 | cdemo_main.c | screen 2 | 32 | 32 | 0 | 0 / 0 / 0 |
-| ov194 | namein_data.c, namein_graphic.c, nsbtx_to_clwk.c, prof_word.c | table code in screen 3 | 146 | 68 | 78 | 0 / 0 / 78 |
-| ov204 | intro_cmd.c, intro_g3d.c, intro_graphic.c, intro_mcss.c and 2 more | table code in screen 3 | 123 | 63 | 60 | 0 / 0 / 62 |
-| ov228 | save_outside.c | screen 0 | 9 | 8 | 1 | 0 / 0 / 1 |
+| ov088 | save_control_intr.c, startmenu.c | screen 1 | 141 | 140 | 1 | 0 / 2 / 0 |
+| ov179 | cdemo_main.c | screen 2 | 45 | 44 | 1 | 1 / 0 / 0 |
+| ov194 | namein_data.c, namein_graphic.c, nsbtx_to_clwk.c, prof_word.c | table code in screen 3 | 149 | 148 | 1 | 0 / 0 / 1 |
+| ov204 | intro_cmd.c, intro_g3d.c, intro_graphic.c, intro_mcss.c and 2 more | table code in screen 3 | 130 | 124 | 6 | 0 / 0 / 5 |
+| ov228 | save_outside.c | screen 0 | 9 | 9 | 0 | 0 / 0 / 0 |
 
 ## Unmatched functions by overlay
 
@@ -274,271 +267,55 @@ its best tier.
 
 ### ov009 (dwc_rap.c, dwc_rapcommon.c, net_devwifi.c)
 
-Overlay: 1626 functions, 1586 matched, 40 unmatched. Unmatched on the path: 45 (part A 0, part B 45, part C 0).
+Overlay: 1660 functions, 1660 matched, 0 unmatched. Unmatched on the path: 8 (part A 0, part B 8, part C 0).
 
 | address | bytes | tier | screen | draft in aletheia src/pending |
 |---|---|---|---|---|
-| 0x021551B0 | 36 | table | 0 | no |
 | 0x021551D4 | 4 | table, unlabelled | 0 | no |
-| 0x02155234 | 8 | table, unlabelled | 0 | no |
-| 0x0215523C | 4 | table, unlabelled | 0 | no |
-| 0x02155264 | 28 | table | 0 | no |
-| 0x0215528C | 4 | table, unlabelled | 0 | no |
-| 0x021552AC | 24 | table | 0 | no |
 | 0x021552C4 | 4 | table, unlabelled | 0 | no |
 | 0x021552CC | 4 | table, unlabelled | 0 | no |
 | 0x021552D4 | 4 | table, unlabelled | 0 | no |
-| 0x02155330 | 4 | table, unlabelled | 0 | no |
-| 0x02155338 | 18 | table | 0 | no |
 | 0x0215534C | 4 | table, unlabelled | 0 | no |
 | 0x02155354 | 4 | table, unlabelled | 0 | no |
 | 0x0215535C | 4 | table, unlabelled | 0 | no |
 | 0x02155364 | 4 | table, unlabelled | 0 | no |
-| 0x021554A0 | 34 | table | 0 | no |
-| 0x021554C8 | 318 | table | 0 | no |
-| 0x02155648 | 22 | table | 0 | `src/pending/ov/ov009_func_02155648.c` (MATCH) |
-| 0x02155B68 | 40 | table | 0 | no |
-| 0x02155BDC | 40 | table | 0 | no |
-| 0x02155C24 | 2 | table, unlabelled | 0 | no |
-| 0x02155C28 | 62 | table | 0 | `src/pending/ov/ov009_func_02155C28.c` (MATCH) |
-| 0x02155C6C | 2 | table, unlabelled | 0 | no |
-| 0x02155DA4 | 36 | table | 0 | no |
-| 0x02155F58 | 352 | table | 0 | no |
-| 0x0215631C | 12 | table, unlabelled | 0 | no |
-| 0x02156344 | 94 | table | 0 | `src/pending/ov/ov009_func_02156344.c` (MATCH) |
-| 0x02156400 | 34 | table | 0 | no |
-| 0x0215677C | 52 | table | 0 | no |
-| 0x02156B18 | 28 | table | 0 | no |
-| 0x02156B3C | 34 | table | 0 | no |
-| 0x02156BD8 | 34 | table | 0 | no |
-| 0x02156CAC | 28 | table, unlabelled | 0 | no |
-| 0x02156D70 | 10 | table, unlabelled | 0 | no |
-| 0x02156DB0 | 10 | table, unlabelled | 0 | no |
-| 0x0215FA90 | 8 | table, unlabelled | 0 | no |
-| 0x02160A80 | 540 | table | 0 | no |
-| 0x02161C80 | 736 | table | 0 | `src/pending/ov_sdk/ov009_func_02161C80.c` (DIFF) |
-| 0x0216CA04 | 276 | table | 0 | `src/pending/ov_sdk/ov009_func_0216CA04.c` (DIFF) |
-| 0x021702A0 | 4324 | table | 0 | `src/pending/ov_sdk/ov009_func_021702A0.c` (DIFF) |
-| 0x02194758 | 100 | table | 0 | no |
-| 0x021947C4 | 108 | table | 0 | no |
-| 0x021990A0 | 48 | table | 0 | `src/pending/ov_sdk/ov009_func_021990A0.c` (DIFF) |
-| 0x0219F63C | 56 | table | 0 | no |
-
-### ov013 (no __FILE__ anchor)
-
-Overlay: 113 functions, 73 matched, 40 unmatched. Unmatched on the path: 38 (part A 0, part B 38, part C 0).
-
-| address | bytes | tier | screen | draft in aletheia src/pending |
-|---|---|---|---|---|
-| 0x021AEC74 | 70 | table | 0 | no |
-| 0x021AED08 | 40 | table | 0 | no |
-| 0x021AEDEC | 30 | table | 0 | no |
-| 0x021AEF44 | 34 | table | 0 | no |
-| 0x021AF124 | 12 | table | 0 | no |
-| 0x021AF18C | 10 | table, unlabelled | 0 | no |
-| 0x021AF494 | 396 | table | 0 | no |
-| 0x021AF628 | 1156 | table | 0 | no |
-| 0x021AFABC | 1312 | table | 0 | no |
-| 0x021B01FC | 568 | table | 0 | no |
-| 0x021B0508 | 164 | table | 0 | no |
-| 0x021B0600 | 16 | table | 0 | no |
-| 0x021B0614 | 72 | table | 0 | no |
-| 0x021B074C | 160 | table | 0 | no |
-| 0x021B07F8 | 60 | table | 0 | no |
-| 0x021B0CD8 | 40 | table | 0 | no |
-| 0x021B0D18 | 516 | table | 0 | no |
-| 0x021B1498 | 12 | table | 0 | no |
-| 0x021B1588 | 164 | table | 0 | no |
-| 0x021B190C | 52 | table | 0 | no |
-| 0x021B19AC | 12 | table | 0 | no |
-| 0x021B1F2C | 36 | table | 0 | no |
-| 0x021B20B0 | 32 | table | 0 | no |
-| 0x021B2180 | 32 | table | 0 | no |
-| 0x021B25FC | 32 | table | 0 | no |
-| 0x021B2724 | 52 | table | 0 | no |
-| 0x021B2848 | 68 | table | 0 | no |
-| 0x021B29A4 | 112 | table | 0 | no |
-| 0x021B2BE0 | 356 | table | 0 | no |
-| 0x021B2ED8 | 180 | table | 0 | no |
-| 0x021B2FB0 | 48 | table | 0 | no |
-| 0x021B2FE4 | 48 | table | 0 | no |
-| 0x021B3018 | 64 | table | 0 | no |
-| 0x021B3084 | 440 | table | 0 | no |
-| 0x021B3250 | 32 | table | 0 | no |
-| 0x021B33F8 | 500 | table | 0 | no |
-| 0x021B3604 | 28 | table | 0 | no |
-| 0x021B3924 | 212 | table | 0 | no |
 
 ### ov088 (save_control_intr.c, startmenu.c)
 
-Overlay: 131 functions, 125 matched, 6 unmatched. Unmatched on the path: 2 (part A 0, part B 2, part C 0).
+Overlay: 141 functions, 140 matched, 1 unmatched. Unmatched on the path: 2 (part A 0, part B 2, part C 0).
 
 | address | bytes | tier | screen | draft in aletheia src/pending |
 |---|---|---|---|---|
-| 0x021BB890 | 326 | table | 3 | no |
-| 0x021BBA64 | 288 | table | 3 | no |
+| 0x021BA984 | 6 | table, unlabelled | 3 | no |
+| 0x021BBE3C | 8 | table | 3 | no |
+
+### ov179 (cdemo_main.c)
+
+Overlay: 45 functions, 44 matched, 1 unmatched. Unmatched on the path: 1 (part A 1, part B 0, part C 0).
+
+| address | bytes | tier | screen | draft in aletheia src/pending |
+|---|---|---|---|---|
+| 0x021B6710 | 26 | pointer | 2 | no |
 
 ### ov194 (namein_data.c, namein_graphic.c, nsbtx_to_clwk.c, prof_word.c)
 
-Overlay: 146 functions, 68 matched, 78 unmatched. Unmatched on the path: 78 (part A 0, part B 0, part C 78).
+Overlay: 149 functions, 148 matched, 1 unmatched. Unmatched on the path: 1 (part A 0, part B 0, part C 1).
 
 | address | bytes | tier | screen | draft in aletheia src/pending |
 |---|---|---|---|---|
-| 0x021F1440 | 582 | table | 3 | no |
-| 0x021F1744 | 58 | table | 3 | no |
-| 0x021F1780 | 246 | table | 3 | no |
-| 0x021F1888 | 224 | table | 3 | no |
-| 0x021F1968 | 46 | table | 3 | no |
-| 0x021F1998 | 8 | table | 3 | no |
-| 0x021F1A10 | 8 | table | 3 | no |
-| 0x021F1A1C | 478 | table | 3 | no |
-| 0x021F1BFC | 340 | table | 3 | no |
-| 0x021F1D58 | 204 | table | 3 | no |
-| 0x021F1E28 | 338 | table | 3 | no |
-| 0x021F1F7C | 56 | table | 3 | no |
-| 0x021F1FB4 | 360 | table | 3 | no |
-| 0x021F22AC | 60 | table | 3 | no |
-| 0x021F235C | 54 | table | 3 | no |
-| 0x021F2394 | 36 | table | 3 | no |
-| 0x021F23B8 | 42 | table | 3 | no |
-| 0x021F23F4 | 4 | table | 3 | no |
-| 0x021F23F8 | 4 | table | 3 | no |
-| 0x021F23FC | 308 | table | 3 | no |
-| 0x021F253C | 46 | table | 3 | no |
-| 0x021F2608 | 8 | table | 3 | no |
-| 0x021F26F0 | 294 | table | 3 | no |
-| 0x021F2884 | 112 | table | 3 | no |
-| 0x021F299C | 206 | table | 3 | no |
-| 0x021F2A88 | 274 | table | 3 | no |
-| 0x021F2F60 | 4 | table | 3 | no |
-| 0x021F3008 | 430 | table | 3 | no |
-| 0x021F31B8 | 58 | table | 3 | no |
-| 0x021F31F4 | 228 | table | 3 | no |
-| 0x021F32FC | 8 | table | 3 | no |
-| 0x021F3350 | 8 | table | 3 | no |
-| 0x021F3358 | 12 | table | 3 | no |
-| 0x021F33C0 | 466 | table | 3 | no |
-| 0x021F36E8 | 254 | table | 3 | no |
-| 0x021F37EC | 220 | table | 3 | no |
-| 0x021F391C | 206 | table | 3 | no |
-| 0x021F3A0C | 262 | table | 3 | no |
-| 0x021F3DE0 | 54 | table | 3 | no |
-| 0x021F3E78 | 54 | table | 3 | no |
-| 0x021F3ED0 | 32 | table | 3 | no |
-| 0x021F3EF0 | 200 | table | 3 | no |
-| 0x021F3FBC | 710 | table | 3 | no |
-| 0x021F436C | 34 | table | 3 | no |
-| 0x021F4390 | 4 | table | 3 | no |
-| 0x021F4394 | 10 | table | 3 | no |
-| 0x021F4450 | 48 | table | 3 | no |
-| 0x021F4608 | 8 | table | 3 | no |
-| 0x021F4628 | 4 | table | 3 | no |
-| 0x021F462C | 8 | table | 3 | no |
-| 0x021F4634 | 6 | table | 3 | no |
-| 0x021F463C | 50 | table | 3 | no |
-| 0x021F47B4 | 630 | table | 3 | no |
-| 0x021F4AA8 | 60 | table | 3 | no |
-| 0x021F4BEC | 6 | table | 3 | no |
-| 0x021F4C6C | 50 | table | 3 | no |
-| 0x021F4CA4 | 2 | table | 3 | no |
-| 0x021F4CA8 | 4 | table | 3 | no |
-| 0x021F4D0C | 4 | table | 3 | no |
-| 0x021F4D14 | 4 | table | 3 | no |
-| 0x021F4D34 | 4 | table | 3 | no |
-| 0x021F4D3C | 56 | table | 3 | no |
-| 0x021F4D94 | 6 | table | 3 | no |
-| 0x021F4D9C | 4 | table | 3 | no |
-| 0x021F4DA0 | 4 | table | 3 | no |
-| 0x021F4DD0 | 4 | table | 3 | no |
-| 0x021F4DD8 | 4 | table | 3 | no |
-| 0x021F4DDC | 38 | table | 3 | no |
-| 0x021F4ED8 | 52 | table | 3 | no |
-| 0x021F4F60 | 4 | table | 3 | no |
-| 0x021F4F68 | 4 | table | 3 | no |
-| 0x021F5004 | 128 | table | 3 | no |
-| 0x021F513C | 102 | table | 3 | no |
-| 0x021F51E4 | 278 | table | 3 | no |
-| 0x021F5370 | 240 | table | 3 | no |
-| 0x021F546C | 40 | table | 3 | no |
-| 0x021F5494 | 56 | table | 3 | no |
-| 0x021F54CC | 84 | table | 3 | `src/pending/ov/ov194_func_021F54CC.c` (DIFF) |
+| 0x021F4D1C | 4 | table | 3 | no |
 
 ### ov204 (intro_cmd.c, intro_g3d.c, intro_graphic.c, intro_mcss.c and 2 more)
 
-Overlay: 123 functions, 63 matched, 60 unmatched. Unmatched on the path: 62 (part A 0, part B 0, part C 62).
+Overlay: 130 functions, 124 matched, 6 unmatched. Unmatched on the path: 5 (part A 0, part B 0, part C 5).
 
 | address | bytes | tier | screen | draft in aletheia src/pending |
 |---|---|---|---|---|
-| 0x021BDC18 | 184 | table | 3 | no |
-| 0x021BDD60 | 6 | table | 3 | no |
-| 0x021BDD6C | 6 | table | 3 | no |
-| 0x021BDD78 | 6 | table | 3 | no |
-| 0x021BDE28 | 4 | table | 3 | no |
-| 0x021BDE30 | 236 | table | 3 | no |
-| 0x021BDF90 | 4 | table | 3 | no |
-| 0x021BDF98 | 4 | table | 3 | no |
-| 0x021BDFA4 | 118 | table | 3 | no |
-| 0x021BE03C | 118 | table | 3 | no |
-| 0x021BE0EC | 18 | table | 3 | no |
-| 0x021BE100 | 4 | table, unlabelled | 3 | no |
-| 0x021BE108 | 4 | table, unlabelled | 3 | no |
-| 0x021BE23C | 204 | table | 3 | no |
-| 0x021BE328 | 54 | table | 3 | no |
-| 0x021BE398 | 12 | table | 3 | no |
-| 0x021BE3EC | 50 | table | 3 | no |
-| 0x021BE44C | 18 | table | 3 | no |
-| 0x021BE460 | 18 | table | 3 | no |
-| 0x021BE478 | 50 | table | 3 | no |
-| 0x021BE4AC | 12 | table | 3 | no |
-| 0x021BE510 | 20 | table | 3 | no |
-| 0x021BE524 | 24 | table | 3 | no |
-| 0x021BE54C | 18 | table | 3 | no |
-| 0x021BE560 | 22 | table | 3 | no |
-| 0x021BE6B4 | 52 | table | 3 | no |
-| 0x021BE770 | 26 | table | 3 | no |
-| 0x021BE78C | 26 | table | 3 | no |
-| 0x021BE838 | 38 | table | 3 | no |
-| 0x021BE884 | 20 | table | 3 | no |
-| 0x021BE898 | 198 | table | 3 | no |
-| 0x021BE970 | 20 | table | 3 | no |
-| 0x021BE984 | 364 | table | 3 | no |
-| 0x021BEB00 | 224 | table | 3 | no |
-| 0x021BEBEC | 370 | table | 3 | no |
-| 0x021BEEF0 | 22 | table | 3 | no |
-| 0x021BEF08 | 24 | table | 3 | no |
-| 0x021BEF74 | 18 | table | 3 | no |
-| 0x021BF094 | 8 | table | 3 | no |
-| 0x021BF0A0 | 254 | table | 3 | no |
-| 0x021BF228 | 18 | table | 3 | no |
-| 0x021BF2D4 | 8 | table | 3 | no |
-| 0x021BF2E0 | 18 | table | 3 | no |
-| 0x021BF384 | 342 | table | 3 | no |
-| 0x021BF528 | 16 | table | 3 | no |
-| 0x021BF538 | 34 | table | 3 | no |
-| 0x021BF55C | 4 | table | 3 | no |
-| 0x021BF560 | 30 | table | 3 | no |
-| 0x021BF580 | 20 | table | 3 | no |
-| 0x021BF594 | 72 | table | 3 | `src/pending/ov/ov204_func_021BF594.c` (MATCH) |
-| 0x021BF5E0 | 46 | table | 3 | no |
-| 0x021BF610 | 18 | table | 3 | no |
-| 0x021BF720 | 34 | table | 3 | no |
-| 0x021BF788 | 12 | table | 3 | no |
-| 0x021BF794 | 50 | table | 3 | no |
-| 0x021BF7CC | 34 | table | 3 | no |
-| 0x021BF7F0 | 20 | table | 3 | no |
-| 0x021BF864 | 50 | table | 3 | no |
-| 0x021BF8DC | 216 | table | 3 | no |
-| 0x021BF9D0 | 38 | table | 3 | no |
-| 0x021BFBA0 | 38 | table | 3 | no |
-| 0x021BFCE0 | 4 | table | 3 | no |
-
-### ov228 (save_outside.c)
-
-Overlay: 9 functions, 8 matched, 1 unmatched. Unmatched on the path: 1 (part A 0, part B 0, part C 1).
-
-| address | bytes | tier | screen | draft in aletheia src/pending |
-|---|---|---|---|---|
-| 0x021DFEB0 | 104 | table | 3 | no |
+| 0x021BDFA0 | 4 | table | 3 | no |
+| 0x021BE100 | 4 | table | 3 | no |
+| 0x021BE108 | 4 | table | 3 | no |
+| 0x021BE308 | 10 | table | 3 | no |
+| 0x021BE314 | 20 | table | 3 | no |
 
 ## Priority order
 
@@ -551,243 +328,34 @@ through their data tables; it shrinks as part A's sources show which entries are
 used. Part C is table-only code in overlays the screen only loads from table code,
 which is past the title menu.
 
-### Part A: static and pointer (0 functions, 0 bytes)
+### Part A: static and pointer (1 functions, 26 bytes)
 
 | # | screen | overlay | address | bytes | tier | draft |
 |---|---|---|---|---|---|---|
+| 1 | 2 | ov179 | 0x021B6710 | 26 | pointer | no |
 
-### Part B: table only, loaded overlays (85 functions, 15380 bytes)
-
-| # | screen | overlay | address | bytes | tier | draft |
-|---|---|---|---|---|---|---|
-| 1 | 0 | ov009 | 0x021551B0 | 36 | table | no |
-| 2 | 0 | ov009 | 0x021551D4 | 4 | table, unlabelled | no |
-| 3 | 0 | ov009 | 0x02155234 | 8 | table, unlabelled | no |
-| 4 | 0 | ov009 | 0x0215523C | 4 | table, unlabelled | no |
-| 5 | 0 | ov009 | 0x02155264 | 28 | table | no |
-| 6 | 0 | ov009 | 0x0215528C | 4 | table, unlabelled | no |
-| 7 | 0 | ov009 | 0x021552AC | 24 | table | no |
-| 8 | 0 | ov009 | 0x021552C4 | 4 | table, unlabelled | no |
-| 9 | 0 | ov009 | 0x021552CC | 4 | table, unlabelled | no |
-| 10 | 0 | ov009 | 0x021552D4 | 4 | table, unlabelled | no |
-| 11 | 0 | ov009 | 0x02155330 | 4 | table, unlabelled | no |
-| 12 | 0 | ov009 | 0x02155338 | 18 | table | no |
-| 13 | 0 | ov009 | 0x0215534C | 4 | table, unlabelled | no |
-| 14 | 0 | ov009 | 0x02155354 | 4 | table, unlabelled | no |
-| 15 | 0 | ov009 | 0x0215535C | 4 | table, unlabelled | no |
-| 16 | 0 | ov009 | 0x02155364 | 4 | table, unlabelled | no |
-| 17 | 0 | ov009 | 0x021554A0 | 34 | table | no |
-| 18 | 0 | ov009 | 0x021554C8 | 318 | table | no |
-| 19 | 0 | ov009 | 0x02155648 | 22 | table | `src/pending/ov/ov009_func_02155648.c` |
-| 20 | 0 | ov009 | 0x02155B68 | 40 | table | no |
-| 21 | 0 | ov009 | 0x02155BDC | 40 | table | no |
-| 22 | 0 | ov009 | 0x02155C24 | 2 | table, unlabelled | no |
-| 23 | 0 | ov009 | 0x02155C28 | 62 | table | `src/pending/ov/ov009_func_02155C28.c` |
-| 24 | 0 | ov009 | 0x02155C6C | 2 | table, unlabelled | no |
-| 25 | 0 | ov009 | 0x02155DA4 | 36 | table | no |
-| 26 | 0 | ov009 | 0x02155F58 | 352 | table | no |
-| 27 | 0 | ov009 | 0x0215631C | 12 | table, unlabelled | no |
-| 28 | 0 | ov009 | 0x02156344 | 94 | table | `src/pending/ov/ov009_func_02156344.c` |
-| 29 | 0 | ov009 | 0x02156400 | 34 | table | no |
-| 30 | 0 | ov009 | 0x0215677C | 52 | table | no |
-| 31 | 0 | ov009 | 0x02156B18 | 28 | table | no |
-| 32 | 0 | ov009 | 0x02156B3C | 34 | table | no |
-| 33 | 0 | ov009 | 0x02156BD8 | 34 | table | no |
-| 34 | 0 | ov009 | 0x02156CAC | 28 | table, unlabelled | no |
-| 35 | 0 | ov009 | 0x02156D70 | 10 | table, unlabelled | no |
-| 36 | 0 | ov009 | 0x02156DB0 | 10 | table, unlabelled | no |
-| 37 | 0 | ov009 | 0x0215FA90 | 8 | table, unlabelled | no |
-| 38 | 0 | ov009 | 0x02160A80 | 540 | table | no |
-| 39 | 0 | ov009 | 0x02161C80 | 736 | table | `src/pending/ov_sdk/ov009_func_02161C80.c` |
-| 40 | 0 | ov009 | 0x0216CA04 | 276 | table | `src/pending/ov_sdk/ov009_func_0216CA04.c` |
-| 41 | 0 | ov009 | 0x021702A0 | 4324 | table | `src/pending/ov_sdk/ov009_func_021702A0.c` |
-| 42 | 0 | ov009 | 0x02194758 | 100 | table | no |
-| 43 | 0 | ov009 | 0x021947C4 | 108 | table | no |
-| 44 | 0 | ov009 | 0x021990A0 | 48 | table | `src/pending/ov_sdk/ov009_func_021990A0.c` |
-| 45 | 0 | ov009 | 0x0219F63C | 56 | table | no |
-| 46 | 0 | ov013 | 0x021AEC74 | 70 | table | no |
-| 47 | 0 | ov013 | 0x021AED08 | 40 | table | no |
-| 48 | 0 | ov013 | 0x021AEDEC | 30 | table | no |
-| 49 | 0 | ov013 | 0x021AEF44 | 34 | table | no |
-| 50 | 0 | ov013 | 0x021AF124 | 12 | table | no |
-| 51 | 0 | ov013 | 0x021AF18C | 10 | table, unlabelled | no |
-| 52 | 0 | ov013 | 0x021AF494 | 396 | table | no |
-| 53 | 0 | ov013 | 0x021AF628 | 1156 | table | no |
-| 54 | 0 | ov013 | 0x021AFABC | 1312 | table | no |
-| 55 | 0 | ov013 | 0x021B01FC | 568 | table | no |
-| 56 | 0 | ov013 | 0x021B0508 | 164 | table | no |
-| 57 | 0 | ov013 | 0x021B0600 | 16 | table | no |
-| 58 | 0 | ov013 | 0x021B0614 | 72 | table | no |
-| 59 | 0 | ov013 | 0x021B074C | 160 | table | no |
-| 60 | 0 | ov013 | 0x021B07F8 | 60 | table | no |
-| 61 | 0 | ov013 | 0x021B0CD8 | 40 | table | no |
-| 62 | 0 | ov013 | 0x021B0D18 | 516 | table | no |
-| 63 | 0 | ov013 | 0x021B1498 | 12 | table | no |
-| 64 | 0 | ov013 | 0x021B1588 | 164 | table | no |
-| 65 | 0 | ov013 | 0x021B190C | 52 | table | no |
-| 66 | 0 | ov013 | 0x021B19AC | 12 | table | no |
-| 67 | 0 | ov013 | 0x021B1F2C | 36 | table | no |
-| 68 | 0 | ov013 | 0x021B20B0 | 32 | table | no |
-| 69 | 0 | ov013 | 0x021B2180 | 32 | table | no |
-| 70 | 0 | ov013 | 0x021B25FC | 32 | table | no |
-| 71 | 0 | ov013 | 0x021B2724 | 52 | table | no |
-| 72 | 0 | ov013 | 0x021B2848 | 68 | table | no |
-| 73 | 0 | ov013 | 0x021B29A4 | 112 | table | no |
-| 74 | 0 | ov013 | 0x021B2BE0 | 356 | table | no |
-| 75 | 0 | ov013 | 0x021B2ED8 | 180 | table | no |
-| 76 | 0 | ov013 | 0x021B2FB0 | 48 | table | no |
-| 77 | 0 | ov013 | 0x021B2FE4 | 48 | table | no |
-| 78 | 0 | ov013 | 0x021B3018 | 64 | table | no |
-| 79 | 0 | ov013 | 0x021B3084 | 440 | table | no |
-| 80 | 0 | ov013 | 0x021B3250 | 32 | table | no |
-| 81 | 0 | ov013 | 0x021B33F8 | 500 | table | no |
-| 82 | 0 | ov013 | 0x021B3604 | 28 | table | no |
-| 83 | 0 | ov013 | 0x021B3924 | 212 | table | no |
-| 84 | 3 | ov088 | 0x021BB890 | 326 | table | no |
-| 85 | 3 | ov088 | 0x021BBA64 | 288 | table | no |
-
-### Part C: table only, overlays loaded only from table code (141 functions, 13746 bytes)
+### Part B: table only, loaded overlays (10 functions, 46 bytes)
 
 | # | screen | overlay | address | bytes | tier | draft |
 |---|---|---|---|---|---|---|
-| 1 | 3 | ov194 | 0x021F1440 | 582 | table | no |
-| 2 | 3 | ov194 | 0x021F1744 | 58 | table | no |
-| 3 | 3 | ov194 | 0x021F1780 | 246 | table | no |
-| 4 | 3 | ov194 | 0x021F1888 | 224 | table | no |
-| 5 | 3 | ov194 | 0x021F1968 | 46 | table | no |
-| 6 | 3 | ov194 | 0x021F1998 | 8 | table | no |
-| 7 | 3 | ov194 | 0x021F1A10 | 8 | table | no |
-| 8 | 3 | ov194 | 0x021F1A1C | 478 | table | no |
-| 9 | 3 | ov194 | 0x021F1BFC | 340 | table | no |
-| 10 | 3 | ov194 | 0x021F1D58 | 204 | table | no |
-| 11 | 3 | ov194 | 0x021F1E28 | 338 | table | no |
-| 12 | 3 | ov194 | 0x021F1F7C | 56 | table | no |
-| 13 | 3 | ov194 | 0x021F1FB4 | 360 | table | no |
-| 14 | 3 | ov194 | 0x021F22AC | 60 | table | no |
-| 15 | 3 | ov194 | 0x021F235C | 54 | table | no |
-| 16 | 3 | ov194 | 0x021F2394 | 36 | table | no |
-| 17 | 3 | ov194 | 0x021F23B8 | 42 | table | no |
-| 18 | 3 | ov194 | 0x021F23F4 | 4 | table | no |
-| 19 | 3 | ov194 | 0x021F23F8 | 4 | table | no |
-| 20 | 3 | ov194 | 0x021F23FC | 308 | table | no |
-| 21 | 3 | ov194 | 0x021F253C | 46 | table | no |
-| 22 | 3 | ov194 | 0x021F2608 | 8 | table | no |
-| 23 | 3 | ov194 | 0x021F26F0 | 294 | table | no |
-| 24 | 3 | ov194 | 0x021F2884 | 112 | table | no |
-| 25 | 3 | ov194 | 0x021F299C | 206 | table | no |
-| 26 | 3 | ov194 | 0x021F2A88 | 274 | table | no |
-| 27 | 3 | ov194 | 0x021F2F60 | 4 | table | no |
-| 28 | 3 | ov194 | 0x021F3008 | 430 | table | no |
-| 29 | 3 | ov194 | 0x021F31B8 | 58 | table | no |
-| 30 | 3 | ov194 | 0x021F31F4 | 228 | table | no |
-| 31 | 3 | ov194 | 0x021F32FC | 8 | table | no |
-| 32 | 3 | ov194 | 0x021F3350 | 8 | table | no |
-| 33 | 3 | ov194 | 0x021F3358 | 12 | table | no |
-| 34 | 3 | ov194 | 0x021F33C0 | 466 | table | no |
-| 35 | 3 | ov194 | 0x021F36E8 | 254 | table | no |
-| 36 | 3 | ov194 | 0x021F37EC | 220 | table | no |
-| 37 | 3 | ov194 | 0x021F391C | 206 | table | no |
-| 38 | 3 | ov194 | 0x021F3A0C | 262 | table | no |
-| 39 | 3 | ov194 | 0x021F3DE0 | 54 | table | no |
-| 40 | 3 | ov194 | 0x021F3E78 | 54 | table | no |
-| 41 | 3 | ov194 | 0x021F3ED0 | 32 | table | no |
-| 42 | 3 | ov194 | 0x021F3EF0 | 200 | table | no |
-| 43 | 3 | ov194 | 0x021F3FBC | 710 | table | no |
-| 44 | 3 | ov194 | 0x021F436C | 34 | table | no |
-| 45 | 3 | ov194 | 0x021F4390 | 4 | table | no |
-| 46 | 3 | ov194 | 0x021F4394 | 10 | table | no |
-| 47 | 3 | ov194 | 0x021F4450 | 48 | table | no |
-| 48 | 3 | ov194 | 0x021F4608 | 8 | table | no |
-| 49 | 3 | ov194 | 0x021F4628 | 4 | table | no |
-| 50 | 3 | ov194 | 0x021F462C | 8 | table | no |
-| 51 | 3 | ov194 | 0x021F4634 | 6 | table | no |
-| 52 | 3 | ov194 | 0x021F463C | 50 | table | no |
-| 53 | 3 | ov194 | 0x021F47B4 | 630 | table | no |
-| 54 | 3 | ov194 | 0x021F4AA8 | 60 | table | no |
-| 55 | 3 | ov194 | 0x021F4BEC | 6 | table | no |
-| 56 | 3 | ov194 | 0x021F4C6C | 50 | table | no |
-| 57 | 3 | ov194 | 0x021F4CA4 | 2 | table | no |
-| 58 | 3 | ov194 | 0x021F4CA8 | 4 | table | no |
-| 59 | 3 | ov194 | 0x021F4D0C | 4 | table | no |
-| 60 | 3 | ov194 | 0x021F4D14 | 4 | table | no |
-| 61 | 3 | ov194 | 0x021F4D34 | 4 | table | no |
-| 62 | 3 | ov194 | 0x021F4D3C | 56 | table | no |
-| 63 | 3 | ov194 | 0x021F4D94 | 6 | table | no |
-| 64 | 3 | ov194 | 0x021F4D9C | 4 | table | no |
-| 65 | 3 | ov194 | 0x021F4DA0 | 4 | table | no |
-| 66 | 3 | ov194 | 0x021F4DD0 | 4 | table | no |
-| 67 | 3 | ov194 | 0x021F4DD8 | 4 | table | no |
-| 68 | 3 | ov194 | 0x021F4DDC | 38 | table | no |
-| 69 | 3 | ov194 | 0x021F4ED8 | 52 | table | no |
-| 70 | 3 | ov194 | 0x021F4F60 | 4 | table | no |
-| 71 | 3 | ov194 | 0x021F4F68 | 4 | table | no |
-| 72 | 3 | ov194 | 0x021F5004 | 128 | table | no |
-| 73 | 3 | ov194 | 0x021F513C | 102 | table | no |
-| 74 | 3 | ov194 | 0x021F51E4 | 278 | table | no |
-| 75 | 3 | ov194 | 0x021F5370 | 240 | table | no |
-| 76 | 3 | ov194 | 0x021F546C | 40 | table | no |
-| 77 | 3 | ov194 | 0x021F5494 | 56 | table | no |
-| 78 | 3 | ov194 | 0x021F54CC | 84 | table | `src/pending/ov/ov194_func_021F54CC.c` |
-| 79 | 3 | ov204 | 0x021BDC18 | 184 | table | no |
-| 80 | 3 | ov204 | 0x021BDD60 | 6 | table | no |
-| 81 | 3 | ov204 | 0x021BDD6C | 6 | table | no |
-| 82 | 3 | ov204 | 0x021BDD78 | 6 | table | no |
-| 83 | 3 | ov204 | 0x021BDE28 | 4 | table | no |
-| 84 | 3 | ov204 | 0x021BDE30 | 236 | table | no |
-| 85 | 3 | ov204 | 0x021BDF90 | 4 | table | no |
-| 86 | 3 | ov204 | 0x021BDF98 | 4 | table | no |
-| 87 | 3 | ov204 | 0x021BDFA4 | 118 | table | no |
-| 88 | 3 | ov204 | 0x021BE03C | 118 | table | no |
-| 89 | 3 | ov204 | 0x021BE0EC | 18 | table | no |
-| 90 | 3 | ov204 | 0x021BE100 | 4 | table, unlabelled | no |
-| 91 | 3 | ov204 | 0x021BE108 | 4 | table, unlabelled | no |
-| 92 | 3 | ov204 | 0x021BE23C | 204 | table | no |
-| 93 | 3 | ov204 | 0x021BE328 | 54 | table | no |
-| 94 | 3 | ov204 | 0x021BE398 | 12 | table | no |
-| 95 | 3 | ov204 | 0x021BE3EC | 50 | table | no |
-| 96 | 3 | ov204 | 0x021BE44C | 18 | table | no |
-| 97 | 3 | ov204 | 0x021BE460 | 18 | table | no |
-| 98 | 3 | ov204 | 0x021BE478 | 50 | table | no |
-| 99 | 3 | ov204 | 0x021BE4AC | 12 | table | no |
-| 100 | 3 | ov204 | 0x021BE510 | 20 | table | no |
-| 101 | 3 | ov204 | 0x021BE524 | 24 | table | no |
-| 102 | 3 | ov204 | 0x021BE54C | 18 | table | no |
-| 103 | 3 | ov204 | 0x021BE560 | 22 | table | no |
-| 104 | 3 | ov204 | 0x021BE6B4 | 52 | table | no |
-| 105 | 3 | ov204 | 0x021BE770 | 26 | table | no |
-| 106 | 3 | ov204 | 0x021BE78C | 26 | table | no |
-| 107 | 3 | ov204 | 0x021BE838 | 38 | table | no |
-| 108 | 3 | ov204 | 0x021BE884 | 20 | table | no |
-| 109 | 3 | ov204 | 0x021BE898 | 198 | table | no |
-| 110 | 3 | ov204 | 0x021BE970 | 20 | table | no |
-| 111 | 3 | ov204 | 0x021BE984 | 364 | table | no |
-| 112 | 3 | ov204 | 0x021BEB00 | 224 | table | no |
-| 113 | 3 | ov204 | 0x021BEBEC | 370 | table | no |
-| 114 | 3 | ov204 | 0x021BEEF0 | 22 | table | no |
-| 115 | 3 | ov204 | 0x021BEF08 | 24 | table | no |
-| 116 | 3 | ov204 | 0x021BEF74 | 18 | table | no |
-| 117 | 3 | ov204 | 0x021BF094 | 8 | table | no |
-| 118 | 3 | ov204 | 0x021BF0A0 | 254 | table | no |
-| 119 | 3 | ov204 | 0x021BF228 | 18 | table | no |
-| 120 | 3 | ov204 | 0x021BF2D4 | 8 | table | no |
-| 121 | 3 | ov204 | 0x021BF2E0 | 18 | table | no |
-| 122 | 3 | ov204 | 0x021BF384 | 342 | table | no |
-| 123 | 3 | ov204 | 0x021BF528 | 16 | table | no |
-| 124 | 3 | ov204 | 0x021BF538 | 34 | table | no |
-| 125 | 3 | ov204 | 0x021BF55C | 4 | table | no |
-| 126 | 3 | ov204 | 0x021BF560 | 30 | table | no |
-| 127 | 3 | ov204 | 0x021BF580 | 20 | table | no |
-| 128 | 3 | ov204 | 0x021BF594 | 72 | table | `src/pending/ov/ov204_func_021BF594.c` |
-| 129 | 3 | ov204 | 0x021BF5E0 | 46 | table | no |
-| 130 | 3 | ov204 | 0x021BF610 | 18 | table | no |
-| 131 | 3 | ov204 | 0x021BF720 | 34 | table | no |
-| 132 | 3 | ov204 | 0x021BF788 | 12 | table | no |
-| 133 | 3 | ov204 | 0x021BF794 | 50 | table | no |
-| 134 | 3 | ov204 | 0x021BF7CC | 34 | table | no |
-| 135 | 3 | ov204 | 0x021BF7F0 | 20 | table | no |
-| 136 | 3 | ov204 | 0x021BF864 | 50 | table | no |
-| 137 | 3 | ov204 | 0x021BF8DC | 216 | table | no |
-| 138 | 3 | ov204 | 0x021BF9D0 | 38 | table | no |
-| 139 | 3 | ov204 | 0x021BFBA0 | 38 | table | no |
-| 140 | 3 | ov204 | 0x021BFCE0 | 4 | table | no |
-| 141 | 3 | ov228 | 0x021DFEB0 | 104 | table | no |
+| 1 | 0 | ov009 | 0x021551D4 | 4 | table, unlabelled | no |
+| 2 | 0 | ov009 | 0x021552C4 | 4 | table, unlabelled | no |
+| 3 | 0 | ov009 | 0x021552CC | 4 | table, unlabelled | no |
+| 4 | 0 | ov009 | 0x021552D4 | 4 | table, unlabelled | no |
+| 5 | 0 | ov009 | 0x0215534C | 4 | table, unlabelled | no |
+| 6 | 0 | ov009 | 0x02155354 | 4 | table, unlabelled | no |
+| 7 | 0 | ov009 | 0x0215535C | 4 | table, unlabelled | no |
+| 8 | 0 | ov009 | 0x02155364 | 4 | table, unlabelled | no |
+| 9 | 3 | ov088 | 0x021BA984 | 6 | table, unlabelled | no |
+| 10 | 3 | ov088 | 0x021BBE3C | 8 | table | no |
+
+### Part C: table only, overlays loaded only from table code (6 functions, 46 bytes)
+
+| # | screen | overlay | address | bytes | tier | draft |
+|---|---|---|---|---|---|---|
+| 1 | 3 | ov194 | 0x021F4D1C | 4 | table | no |
+| 2 | 3 | ov204 | 0x021BDFA0 | 4 | table | no |
+| 3 | 3 | ov204 | 0x021BE100 | 4 | table | no |
+| 4 | 3 | ov204 | 0x021BE108 | 4 | table | no |
+| 5 | 3 | ov204 | 0x021BE308 | 10 | table | no |
+| 6 | 3 | ov204 | 0x021BE314 | 20 | table | no |

@@ -1,6 +1,6 @@
 # eidos
 
-A native PC port of Pokémon Black (and eventually White), powered by the [aletheia](https://github.com/Project-Holon/aletheia) decompilation project.
+A native PC port of Pokémon Black (and eventually White), powered by the aletheia decompilation project.
 
 ## Goal
 
@@ -8,13 +8,14 @@ Run Pokémon Black (and eventually White) natively on modern platforms (PC, macO
 
 ## Relationship with aletheia
 
-`eidos` is the native platform and runtime engine companion to [aletheia](https://github.com/Project-Holon/aletheia).
+`eidos` is the native platform and runtime engine companion to aletheia.
 
-- **[aletheia](https://github.com/Project-Holon/aletheia)**: Focuses on clean-room reverse engineering, decompilation, and byte-matching accuracy against the original Nintendo DS ARM9 binary.
-- **[eidos](https://github.com/Project-Holon/eidos)**: Consumes the matched C source code from aletheia, providing host platform abstraction (SDL2), 2D/3D hardware shims, native audio mixing, and file I/O.
+- **aletheia**: Focuses on clean-room reverse engineering, decompilation, and byte-matching accuracy against the original Nintendo DS ARM9 binary.
+- **eidos**: Consumes the matched C source code from aletheia, providing host platform abstraction (SDL2), 2D/3D hardware shims, native audio mixing, and file I/O.
 
 `eidos` does not vendor any of aletheia's source: `ALETHEIA_ROOT` (see
-"Building" below) points at a sibling checkout, and every matched source,
+"Building" below) points at a sibling checkout of the decompilation project
+(it has no public repository URL to link here), and every matched source,
 manifest and asset tool this repository uses is read from there at configure
 or build time. The declared end state is an open-source native port of
 Pokemon Black: one executable, cross-platform, moddable, with every asset
@@ -23,8 +24,8 @@ game's own code boots natively from power-on to the title menu: the logos,
 the copyright screen, the opening cinematic, the title screen and its menu,
 drawn and played from the hardware state the game itself writes, with no
 emulator (`eidos_boot --window`, see "Running the game's boot"). Going past
-the menu waits on aletheia matching the next overlays (the new-game intro and
-name entry).
+the menu is port work: the next overlays (the new-game intro and name entry)
+are already matched, and are not compiled into the boot yet.
 
 Nothing here is a rewrite of the game. The only game code eidos builds is
 the byte-verified C aletheia keeps under `src/matched/`, compiled unchanged.
@@ -88,7 +89,7 @@ stay buildable by somebody who has their own ROM and nothing else.
 **3. Stubs**, under `stubs/`, one symbol per file, in two shapes:
 
 - `stub_ADDRESS.c` aborts naming the DS address. This is the honest shape for
-  a game function that is not decompiled yet and whose behaviour is not
+  a game function that is not in the build yet and whose behaviour is not
   attested anywhere. If a test reaches one, the test was wrong about its
   closure and says so loudly.
 - `reimpl_ADDRESS.c` is a hand-written reimplementation whose header cites
@@ -598,8 +599,8 @@ its rasteriser. Pure C99, no SDL, no third-party code, and not even
 header repeats it: aletheia's asset lane (`tools/assets/nsbmd.py` cracked
 the container, the resource dictionary, the TEX0 records and the MDL0
 shape dictionary; `tools/assets/map_shapes.py` cracked the render-command
-bytecode and the material-to-texture link, and `docs/ASSETS.md` records
-both with their gaps); aletheia's matched sources
+bytecode and the material-to-texture link, and aletheia's `docs/ASSETS.md`
+records both with their gaps); aletheia's matched sources
 (`src/matched/unit_02048AD0.c` and `unit_02048BC4.c` are g3d_light.c's
 accessor run and light-set builder, and are what says the game's 3D
 vectors are three `fx32` in the 1.19.12 format `sdk/types.h` defines --
@@ -2107,8 +2108,8 @@ set (C4701, `engine/g3d/nsbmd.c`).
 LP64 keeps building and keeps passing every test.** `docs/pointer-width.md`
 is the measurement this is decided on and states the trade-offs; the short
 form is that on a 32-bit target every struct the game's layout owns has the
-DS's own bytes, and that 642 of the 1110 matched sources aletheia's manifest
-names (57.8%) carry at least one assumption that a pointer is four bytes.
+DS's own bytes, and that 14,301 of the 33,541 matched sources (42.6%) carry
+at least one assumption that a pointer is four bytes.
 
 ```
 cmake -S . -B build32 -G Ninja \
@@ -2155,7 +2156,7 @@ that exists only to pay for pointer width.
 **The exit condition is a number, and it is tracked.** `python
 tools/closure.py --pointer-audit` counts the matched sources that hold an
 address in an integer, hardcode a struct size or field offset, or cast
-between an integer and a pointer. The largest category, 355 files, is
+between an integer and a pointer. The largest category, 4,766 files, is
 explicit padding (`u8 pad[0x14]; u32 active;`), which is not a rule violation
 to be corrected but a field offset frozen into a source that does not yet
 know what those bytes are. It falls as waves decompile the structs around it,
@@ -2546,7 +2547,7 @@ initialisers.
   whether aletheia has matched it, and the overlay's coverage:
   `overlay 9 (0x02155160..0x021A8260) is not in this build: first missing
   function func_02155168 at 0x02155168 (matched in aletheia, not compiled
-  into this build); 0 of 1621 known functions present, 1604 matched`.
+  into this build); 0 of 1675 known functions present, 1675 matched`.
 - Loading a present overlay calls the image hook
   (`bw_overlay_set_image_hook`), which must put the overlay's data and .bss
   back to load-time state, then runs its static initialisers, then marks it
@@ -2559,8 +2560,9 @@ and the `symbols:` blocks and externs of the matched overlay sources, plus the
 build's own source list (which decides "present"). Addresses, sizes and names
 only. It is generated rather than committed because its coverage columns move
 with every aletheia wave and every source the build adds; `python
-tools/overlay_table.py --summary` prints it (237 overlays, about 23,000 known
-functions, 18,500 of them matched, none present yet).
+tools/overlay_table.py --summary` prints it (237 overlays, 29,374 known
+functions, 28,458 of them matched in aletheia; `present` comes from the
+build's own source list).
 
 Two limits, stated so nobody relies on more. The function list is a **lower
 bound**: aletheia commits no per-overlay list of function starts, only the
@@ -2872,8 +2874,9 @@ opens the real Windows dialog and answers it from a helper thread when
         side follows public driver documentation and has not been compared
         with the DS's own output; `engine/audio` keeps the asset lane's
         model for the oracle comparison)
-  - [ ] The game's own sound calls reach it: nothing in `src/matched/` plays
-        a sequence yet, so the SEQ id is still chosen by the demo
+  - [ ] The game's own sound calls reach it: the matched ARM9 code calls
+        the SND library, but the boot does not run it yet, so the SEQ id is
+        still chosen by the demo
 - [ ] **Milestone 6**: Data pipeline & asset extraction
   - [x] First-run asset extractor from legally dumped ROM: `install/`
         identifies the dump, refuses a wrong game or a bad dump with a
@@ -2907,9 +2910,9 @@ opens the real Windows dialog and answers it from a helper thread when
   - [x] Engine boots cleanly from extracted assets: the game's own boot
         reaches the title menu from the player's extract (main RAM is the
         player's `arm9_dec.bin`, overlays come from `overlays_dec/`). Past
-        the menu, NEW GAME needs ov204 (new-game intro) and ov194 (name
-        entry), which aletheia has not finished matching (60 of 123 and 78
-        of 148 functions open)
+        the menu, NEW GAME loads ov204 (new-game intro) and ov194 (name
+        entry); both are matched now (123 and 148 functions), and neither
+        is compiled into the boot yet
 - [ ] **Milestone 7**: Gameplay integration
   - [ ] Field system: player movement, warps, script VM, encounters
   - [ ] Battle system

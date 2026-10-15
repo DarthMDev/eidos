@@ -1,0 +1,27 @@
+{
+  "asm_bodies": 150,
+  "boot_matched": 6078,
+  "clashes": 0,
+  "compile_errors": 0,
+  "compiled_for_host": 5726,
+  "configure": "pass",
+  "errors_conflicting": 0,
+  "errors_implicit": 0,
+  "errors_other": 0,
+  "failed_targets": 30,
+  "host_surface_pct": 17.07,
+  "implicit_decls": 202,
+  "link_failed_targets": 30,
+  "matched_total": 33541,
+  "note": "compile errors cleared (Class B); build now compiles everything and fails at link on 163 renamed symbols",
+  "shim_replaced": 122,
+  "stubbed_asm": 39,
+  "stubbed_open": 150,
+  "tests": {
+    "failed": 0,
+    "passed": 0
+  },
+  "undefined_refs": 564,
+  "undefined_symbols": 163,
+  "wave": 1
+}

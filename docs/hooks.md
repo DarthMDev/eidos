@@ -44,7 +44,7 @@ which is how a renamed or deleted aletheia file shows up).
 - A hook is compiled in, so a player-side mod cannot add one at run time. A
   mod that wants to change data does it through the VFS (member overrides,
   `sdk/vfs.h`); hooks are for logic. A later step is a data-driven row table
-  (docs/settings-design.md, "What the UI lane needs") so most menu changes
+  (docs/settings-design.md, "What is left") so most menu changes
   need no hook.
 - A hook replaces a whole function. Two hooks cannot patch the same one.
 - When aletheia renames or re-splits the file, ovlink reports it and the hook

@@ -1,0 +1,35 @@
+{
+  "claims": {
+    "W16": {
+      "note": "wave 2: make the build link (renamed symbols + test link graphs)",
+      "paths": [
+        "CMakeLists.txt",
+        "sdk/aliases.c",
+        "sdk/tcbl.c",
+        "stubs/reimpl_02060888.c",
+        "stubs/reimpl_02060E30.c",
+        "tests"
+      ],
+      "started": "2026-10-15"
+    },
+    "W18": {
+      "note": "measure the seam's cost and coverage",
+      "paths": [
+        "progress/SEAM_COST.md"
+      ],
+      "started": "2026-10-15"
+    },
+    "W19": {
+      "note": "wave 7b: label the remaining cross-repo references",
+      "paths": [
+        "engine/g2d/compose.c",
+        "engine/g2d/resources.c",
+        "engine/g3d/g3d.h",
+        "engine/g3d/nsbmd.c",
+        "engine/g3d/raster.c",
+        "sdk/game_globals.c"
+      ],
+      "started": "2026-10-15"
+    }
+  }
+}

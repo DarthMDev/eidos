@@ -39,9 +39,8 @@ file by file (size and SHA-1) with aletheia's own `extract/` (written by
   four listed under "Intended differences".
 - Time on this machine (Windows 11, MinGW-w64 GCC 14, warm file cache): about
   3 s to identify (hash) and 3 s to extract with an optimised build, 8 s in
-  total unoptimised. The hash is half the time; a front end that has already
-  identified the image passes its hash in and the extraction does not hash it
-  again.
+  total unoptimised. A front end that has already identified the image passes
+  its hash in, so the extraction does not hash it again.
 
 `test_extract_rom` repeats this on every `ctest` run where the environment
 variable `BW_ROM` names the ROM: it runs `eidos_extract` into a folder named
@@ -304,7 +303,7 @@ a message, never a dead end.
 
 | Platform | Picker | State |
 |---|---|---|
-| Windows | `IFileOpenDialog` (COM), falling back to `GetOpenFileNameW`; a UTF-16 path converted to UTF-8 | built; `test_picker` opens it for real and answers it (below) |
+| Windows | `IFileOpenDialog` (COM), falling back to `GetOpenFileNameW`; a UTF-16 path converted to UTF-8 | built; `test_picker` opens it and answers it (below) |
 | macOS | `NSOpenPanel` in `install/picker_mac.m`, compiled only on Apple (`enable_language(OBJC)`), not restricted to `.nds`; a sandboxed app keeps read access to the chosen file for the life of the process | written, not compiled here (no macOS SDK on this machine) |
 | Linux | the XDG desktop portal's `FileChooser.OpenFile` over D-Bus, through `libdbus-1` loaded with `dlopen` (neither the build nor a machine without D-Bus needs it; the request path is predicted from the bus name and a handle token so the Response match is in place before the call), then `zenity`, then `kdialog` | written; syntax-checked against stand-in headers, not run |
 | Android | Storage Access Framework, `ACTION_OPEN_DOCUMENT` | deferred: `bw_pick_rom` says unavailable. The plan: the Java side starts the intent, takes the `content://` URI, opens it with `ContentResolver.openFileDescriptor`, and hands the detached fd to a core entry point that reads from an open `FILE *` (`fdopen`), which is the one core change it needs |

@@ -2,7 +2,7 @@
 
 Pinned aletheia 71f6d529b. Addresses are DS addresses; file names are
 `src/matched/ov/ov088_func_<addr>.c` unless noted. The screen has four tabs:
-Display, Layout, Controls and Sound (Sound holds one item for now: master
+Display, Layout, Controls and Sound (Sound holds one item: master
 volume).
 
 ## (a) The title menu (overlay 88)
@@ -30,7 +30,7 @@ the menu). The menu's main function runs a state machine; the state table is
 State 11 is not a code entry in the boot: `func_021BC0AC(p, 11)` (the
 leave path of MYSTERY GIFT, WFC, MIC TEST) crashes with "execute of host
 address 0x021BA985". The hook's A handler uses `func_021BC080(p, 1)` (state
-2, as kind 1 does) instead. Forward to aletheia/the overlay lane.
+2, as kind 1 does) instead.
 
 **Rows.** There are eight row kinds, not an item table. Work area: `+0x120`
 an 8 byte list of kinds in display order (8 = end), `+0x128` the cursor
@@ -72,7 +72,7 @@ cursor bound, the buffers (8 at `+0xF8`), the window manager (8) and the
 6 ov168, 7 ov107 (MIC TEST), default (B) the title screen `d_021BD574`.
 
 **Graphics.** Arc id N is NitroFS `a/(N/100)/((N/10)%10)/(N%10)` of the id
-table at 0x020A6C58 (docs/ASSETS.md). The menu uses arc 0x23 (`a/0/3/5`:
+table at 0x020A6C58 (aletheia's `docs/ASSETS.md`). The menu uses arc 0x23 (`a/0/3/5`:
 members 0..3, 6..8, 12 LZ77 tile and screen data; 4, 5, 9, 13 palettes;
 10/11, 14/15 cell and animation banks) and arc 0x1F (`a/0/3/1`, sprites).
 The row bar is 26x3 tiles on bg layers 1 and 2; the cyan frame is the same
@@ -100,7 +100,7 @@ members 0 (char), 1 (palette), 2 (screen), 7/8/9 and 13/14 for the other
 screen. `func_021B9E28` builds the sprites from members 4..6 and 11..12
 (bank of 11 at positions `d_021BB704`, a cursor pair at (0x80, 0x60)).
 
-Reference renders (scratch only, never committed): `ref/opt_bg_top.png`
+Reference renders (not in the repository): `ref/opt_bg_top.png`
 (members 0/1/2), `opt_bg_b.png` (7/8/9), `opt_tiles0.png`, `opt_tiles7.png`.
 
 - Main screen: six full-width rows, 24 px pitch (3 tile rows, from tile row
@@ -157,7 +157,7 @@ Steps for (1):
   file into a cache mod root (`bw_add_mod_root`), opened with
   `func_02045B38`, so mods can translate it.
 
-### What the screen does now
+### What the screen does
 
 The screen is built, in the shape the title menu already has: the menu proc
 of overlay 88 started again in "settings mode" (design 1, through the game's
@@ -197,7 +197,7 @@ same bar as the rows (the grey variant of the Options screen is not used); a
 capture binds only slot 0 (the other slots stay as they are and can be
 edited in settings.ini).
 
-### What the proof did (the first step)
+### The title_settings hook
 
 `title_settings` (docs/hooks.md) adds SETTINGS after MIC TEST. Kind 7 has a
 window, buffer and text slot, but the game uses it only when
@@ -216,14 +216,14 @@ Defaults to on; `EIDOS_HOOKS_OFF=title_settings` or
 - Replace the menu's row model with an eidos row table (kind, text source,
   action) so rows can be added without a spare kind, and move the UI text
   to a message member mods can replace.
-- To aletheia: `ov068 func_021B9980` unmatched; `0x021BA984` is not a
-  listed code entry.
+- `ov068 func_021B9980` is unmatched; `0x021BA984` is not a listed code
+  entry in aletheia.
 
 ## The Options-style screen (engine/platform/mod_options_proc.c)
 
-The first settings screen reused the title menu's process with its black bars.
-It now has a process of its own that follows the game's Options screen
-(overlay 68) closely, so it looks like part of the game.
+Rather than reuse the title menu's process with its black bars, the screen
+has a process of its own that follows the game's Options screen (overlay 68)
+closely, so it looks like part of the game.
 
 What it reproduces, all from the player's own data at run time:
 
@@ -253,6 +253,6 @@ from the title menu's exit function and handing back to the title with the
 overlay id and table noted by `bw_mod_title_set_return`. The model (rows, input,
 help text) stays in `engine/platform/settings_ui.c`; this file only draws.
 
-Open: the exact sprite and cursor art positions are taken from the tables and
-checked only against the game's data, not against a running original; the
+The exact sprite and cursor art positions are taken from the tables and
+checked only against the game's data, not against a running original. The
 stylus is not read.

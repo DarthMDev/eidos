@@ -6,8 +6,8 @@ and the validation numbers. Everything here is derived from the ROM's own
 bytes through this repository's code, plus the public NDS 3D hardware
 documentation already cited by `engine/g3d/g3d.h`. **No other
 decompilation, disassembly, emulator, NSBMD tool or format library was
-consulted**, and aletheia's asset lane does not decode nodes at all, so
-there is no independent node oracle anywhere in either project. Every
+consulted**, and aletheia does not decode nodes at all, so
+there is no independent node oracle in either project. Every
 claim below is either byte-evidence (a record field read straight off the
 bytes) or a structural self-consistency check; the exact set of nodes
 used and the exact numbers are reproducible from the scans described.
@@ -57,10 +57,9 @@ order:
 | 2 | scale | 24 bytes | yes |
 | 3 | selects the rotation form | | |
 
-so a record is one of 4, 8, 16, 20, 28, 32, 40, 44 or 56 bytes. This was
-**not** guessed: every model scanned decodes its record lengths so that
-the last one ends exactly on `+0x04` (740/740 models), and the observed
-`(flags, size)` pairs are
+so a record is one of 4, 8, 16, 20, 28, 32, 40, 44 or 56 bytes. Every model
+scanned decodes its record lengths so that the last one ends exactly on
+`+0x04` (740/740 models), and the observed `(flags, size)` pairs are
 
 ```
 0x07 ->  4     0x06 -> 16     0x0d ->  8     0x0c -> 20     0x2c -> 20
@@ -70,9 +69,8 @@ the last one ends exactly on `+0x04` (740/740 models), and the observed
 ```
 
 `bit 1` clear and `bit 3` clear means a 16-byte rotation; `bit 1` clear
-and `bit 3` set means a 4-byte one. That split is why an earlier pass,
-which assumed three components of 12/4/24 bytes, mis-sized the `0x00`
-and `0x04` records by 12 bytes.
+and `bit 3` set means a 4-byte one. A three-component model of 12/4/24
+bytes mis-sizes the `0x00` and `0x04` records by 12 bytes.
 
 ## 3. The rotation
 
@@ -108,7 +106,7 @@ data. The engine reads them as the third row's y and z and completes the
 matrix as the x-turn that takes z there (`row0 = (1,0,0)`,
 `row1 = (0, z, -y)`, `row2 = (0, y, z)`), so `(0, 4096)` is the
 identity. **This completion is an assumption, not a verified decode.**
-Two searches were run and neither supports it:
+Neither of two searches supports it:
 
 - across all 740 models scanned, **0** joints are packed in one model and
   full in another (rotation form is fixed per joint), so there is no twin
@@ -127,8 +125,7 @@ consistent matrix (**1163 / 1163 orthonormal over the whole corpus,
 packed form: the completion above is orthonormal by construction, so
 orthonormality cannot test it.
 
-Readings that were tried and falsified as the reading of the 4-byte
-field, with why:
+Falsified readings of the 4-byte field, with why:
 
 - **three s10 in the GX `NORMAL` packing**: the unpacked vectors have
   magnitudes 60..620, not a fixed scale, and one exceeds the s10 maximum

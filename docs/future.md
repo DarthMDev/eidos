@@ -56,7 +56,7 @@ What is known to be missing or worth adding, written 2026-10-04. Items marked
 - A **performance overlay** (frame time per phase) built on the existing
   `--profile` counters.
 - **Texture replacement and mods** that supply their own textures and meshes
-  (aletheia and eidos are built for modding; docs/eidos-modding.md).
+  (aletheia and eidos are built for modding; docs/modding.md).
 
 ## Settings screen
 

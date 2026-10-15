@@ -1,7 +1,7 @@
-# Boot run: hand-off (wave 4, bootrun2)
+# Boot run: state
 
-Where the native boot stands at the end of this lane, how to see it, and
-what is left. docs/boot.md is the design; this is the state.
+Where the native boot stands, how to see it, and what is left. docs/boot.md
+is the design; this is the state.
 
 ## Furthest point
 
@@ -26,8 +26,7 @@ main checkout as it was before commit a359b6488 broke it (about 46% of
 1542 files stopped compiling, among them `func_02039ACC.c`'s duplicate
 parameter name). A rebuild against the pin 71f6d529b (a detached aletheia
 worktree with junctions for its untracked `extract/`, `asm/` and
-`tools/gcc-host/`) was configuring when the lane stopped; its result is not
-known.
+`tools/gcc-host/`) was still configuring; its result is not known.
 
 ## Reproducing it
 
@@ -61,7 +60,7 @@ resident overlays with the report.
   code-pointer scan) gained checks.
 - LP64 MinGW default build (no boot): 54/54 tests pass, warning-free.
 
-## Open items, in order
+## Remaining work
 
 1. Verification left unfinished: the ILP32 full ctest against the pin
    (`EIDOS_BOOT=ON`), an LP64 build with `EIDOS_BOOT=ON` (it must link
@@ -71,8 +70,8 @@ resident overlays with the report.
    `-Wno-int-conversion` for; the new `sdk/asm` files and
    `engine/platform` push mode have not been compiled under MSVC).
 2. Past the title menu: choose NEW GAME (`--press A@<frame>`) and run into
-   the next screens (the overlays the integrator named, ov204 and ov194),
-   fixing each stop the same way.
+   the next screens (the overlays ov204 and ov194), fixing each stop the same
+   way.
 3. aletheia items still stood in by the port (next section).
 4. Known approximations, each documented where it lives:
    - identity mapping: VRAM mirrors past each engine window's period are
@@ -97,12 +96,12 @@ resident overlays with the report.
 |---|---|---|
 | `stubs/reimpl_0206434C.c` | 0x0206434C (`env_setresourceset.c`, SDK name ENV_SetResourceSet) | its callers pass (animation, sequence); the C names one parameter and the sequence travels in r1 to func_02062FF0. Defined as `func_0206434C` because `sub_0204968C.c` uses the ENV_SetResourceSet spelling for 0x020307B0 |
 | `stubs/reimpl_0204D340.c`, `reimpl_0204D360.c`, `reimpl_0204D380.c` | 0x0204D340, 0x0204D360, 0x0204D380 | each forwards its incoming r1 (the sequence index) to func_020627D8(bank, idx) |
-| `stubs/reimpl_0203064C.c`, `reimpl_02030678.c`, `reimpl_02030608.c` | 0x0203064C, 0x02030678, 0x02030608 | earlier lanes: a heap argument forwarded in r2 |
+| `stubs/reimpl_0203064C.c`, `reimpl_02030678.c`, `reimpl_02030608.c` | 0x0203064C, 0x02030678, 0x02030608 | a heap argument forwarded in r2 |
 | `stubs/reimpl_02036FD8.c` | 0x02036FD8 | an ARM9 table's DS address passed as an integer (harmless under identity mapping; the reimplementation still serves the fallback) |
 | generated forwarders (`<build>/boot/thunk/*.c`, listed in `boot_thunks.txt`) | 44 thunks | `void f(void) { g(); }` tail calls that pass every argument and the result through; aletheia's C could say `T f(args) { return g(args); }` if mwcc keeps the bytes |
 
 The port C for mwcc asm bodies (`sdk/asm/`) is not something aletheia
-replaces; it is the port's answer to an `asm` file. This lane added:
+replaces; it is the port's answer to an `asm` file. The set includes:
 MTX_RotX33_, MTX_RotY33_, MTX_RotZ33_, MTX_Scale43_, func_0207AD58
 (MTX_Scale22_), func_0207ADC4 (MTX_Identity33_), func_0207B598
 (MTX_Identity43_), func_0207BDB4 (MTX_Identity44_), func_0207B5C0,
@@ -113,7 +112,7 @@ CARD_SetPulledOutCallback, CTRDGi_CallbackForSetPhi, func_02066E10,
 GX_SetBankForLCDC, GX_BeginLoadClearImage, DWCi_IsFold, OS_ReferentSize,
 func_02087EA0 (CLZ).
 
-Every hidden or unmatched function this lane met (the save block callbacks,
+Every hidden or unmatched function the port met (the save block callbacks,
 the heap allocator's vtable functions, the G3D joint-scale function at
 0x02070CD8, ov009 0x02157138, ov010 0x02161D98 and 0x0216E474/C, ov011
 0x021763BC) has been matched in aletheia since, and the stand-ins are gone.
@@ -127,5 +126,4 @@ which is the signal to delete the port file; ovlink does the same for
 - `tools/regargs.py` classifies register-argument sites from the listing
   by a backward scan in straight-line code; aletheia now has its own
   flow-following version. The eidos copy stays for checking a build.
-- `docs/title-closure.md` still describes the older blockers; it was not
-  rewritten.
+- `docs/title-closure.md` still describes the older blockers.

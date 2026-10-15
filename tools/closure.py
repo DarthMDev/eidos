@@ -81,6 +81,12 @@ TAG_BODY = re.compile(r"\b(struct|union|enum)\b(\s+[A-Za-z_]\w*)?\s*\{")
 TAG_NAME = re.compile(r"\b(struct|union|enum)\s+(?!_tag\b)[A-Za-z_]\w*")
 LOCAL_DECL = re.compile(r"\b([A-Za-z_]\w*)\s+\**\s*([A-Za-z_]\w*)\s*(?=[=;,\[)])")
 FUNC_PTR_DECL = re.compile(r"\(\s*\*+\s*(?:const\s+|volatile\s+)*([A-Za-z_]\w*)\s*[\)\[]")
+# `T (*name(params))[6]` / `T (*name(params))(void)`: a function returning a
+# pointer, whose declarator the object form above does not match (the name is
+# followed by `(`, a parameter list, not `)` or `[`).
+RET_PTR_DECL = re.compile(r"\(\s*\*+\s*(?:const\s+|volatile\s+)*([A-Za-z_]\w*)\s*\(")
+# A quoted `#include`, the form a matched file uses for aletheia's headers.
+INCLUDE_QUOTED = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.M)
 
 # C's reserved words plus the spellings matched files use for mwcc
 # extensions; none of them can name a symbol.
@@ -219,6 +225,53 @@ def is_link_constant(name, addr, kind):
     return kind == "data" and addr is not None and addr < 0x02000000
 
 
+def _include_candidates(cur, inc, include_dirs):
+    """Where a quoted `#include` is looked for: the including file's own
+    directory first (the compiler's first search for `"..."`), then the
+    build's include directories."""
+    if os.path.isabs(inc):
+        return [inc]
+    out = [os.path.normpath(os.path.join(os.path.dirname(cur), inc))]
+    out += [os.path.normpath(os.path.join(d, inc)) for d in include_dirs]
+    return out
+
+
+def included_declarations(path, include_dirs=()):
+    """Names the quoted headers a source #includes declare, transitively.
+
+    The generated forced-include header (tools/bootlink.py, tools/ovlink.py)
+    is compiled before the file's own `#include`s, so it cannot see them.  A
+    name the file both calls and gets from a header must therefore not get a
+    non-prototype declaration of its own: the header's declaration would
+    conflict with it.  Resolve the quoted includes here and return the union
+    of the included headers' declared names, so the generator can leave them
+    alone.
+    """
+    start = os.path.abspath(path)
+    seen = set()
+    out = set()
+    stack = [start]
+    while stack:
+        cur = stack.pop()
+        key = os.path.normcase(os.path.abspath(cur))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            with open(cur, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        if os.path.abspath(cur) != start:
+            out |= SourceScan(text).declared
+        for inc in INCLUDE_QUOTED.findall(text):
+            for cand in _include_candidates(cur, inc, include_dirs):
+                if os.path.exists(cand):
+                    stack.append(cand)
+                    break
+    return out
+
+
 class SourceScan:
     """What one matched source defines, declares, uses and calls."""
 
@@ -308,9 +361,13 @@ class SourceScan:
         if m and head.find("(") == m.start():
             name = m.group(1)
         else:
-            words = IDENT.findall(head.split("(")[0])
-            if words:
-                name = words[-1]
+            rp = RET_PTR_DECL.search(head)
+            if rp and head.find("(") == rp.start():
+                name = rp.group(1)
+            else:
+                words = IDENT.findall(head.split("(")[0])
+                if words:
+                    name = words[-1]
         if name:
             self.defined.add(name)
             self.heads[name] = head
@@ -366,7 +423,13 @@ class SourceScan:
             m = FUNC_PTR_DECL.search(declarator)
             if m and m.start() != declarator.find("("):
                 m = None
-            if m:
+            rp = RET_PTR_DECL.search(declarator)
+            if rp and rp.start() != declarator.find("("):
+                rp = None
+            if rp:
+                # `T (*name(params))[6]`: a function returning a pointer.
+                name, is_func = rp.group(1), True
+            elif m:
                 name, is_func = m.group(1), False
             elif "(" in declarator:
                 idents = IDENT.findall(declarator.split("(")[0])
@@ -397,8 +460,13 @@ class SourceScan:
         """(every name this file needs from elsewhere, the implicit calls)."""
         local = self.defined | self.statics | self.macros | self.typedefs | C_RESERVED
         refs = (self.declared & self.used) - local
+        # A name the file's own `symbols:` block carries is a real reference
+        # even when the manifest's canonical spelling for that address differs
+        # (a caller keeps a descriptive name while the definition keeps the
+        # address name).  The DS resolves it by address; classify() turns it
+        # into an alias the port renames, and bootlink.py declares the callee.
         implicit = {name for name in self.called - self.declared - local - self.locals
-                    if universe(name)}
+                    if universe(name) or name in self.symbols}
         return sorted(refs | implicit), sorted(implicit)
 
 

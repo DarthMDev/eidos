@@ -18,9 +18,9 @@ per line), which decides which functions are PRESENT.  Writes a C file
 defining `bw_overlay_table_generated` (sdk/overlay.h).  Addresses, sizes and
 names only: no game bytes are read and none are written.
 
-    python tools/overlay_table.py --aletheia-root ../aletheia --out overlay_table.c \\
+    python tools/overlay_table.py --aletheia-root ../bw_decomp --out overlay_table.c \\
         [--sources build_sources.txt]
-    python tools/overlay_table.py --aletheia-root ../aletheia --summary
+    python tools/overlay_table.py --aletheia-root ../bw_decomp --summary
 
 Why generated at build time and not committed: the table's interesting
 column (matched and present coverage) moves with every aletheia wave and
@@ -35,6 +35,9 @@ import json
 import os
 import re
 import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_ALETHEIA = os.path.normpath(os.path.join(ROOT, "..", "bw_decomp"))
 
 ADDR_NAME = re.compile(r"^(?:[A-Za-z0-9]+_)?(?:func|sub|unit)_([0-9A-Fa-f]{8})$")
 SYMBOL_ROW = re.compile(
@@ -51,8 +54,8 @@ OPEN, MATCHED, PRESENT = 0, 1, 2
 # range and length; the entries themselves are words inside the overlay
 # image, which this script does not read.  236 of the 237 lists hold only
 # the NULL terminator.  The one that does not is ov230's, whose five entries
-# aletheia records by address in docs/MATCHING.md, "The one exception,
-# ov230".  A list of any other length is an error here, not a guess.
+# are recorded in docs/overlays.md, "Static initialisers".  A list of any
+# other length is an error here, not a guess.
 KNOWN_SINIT = {
     230: [0x02188408, 0x021889B0, 0x02188CB0, 0x02189448, 0x02189908],
 }
@@ -111,7 +114,11 @@ def extern_calls(text):
 
 
 def build(root, sources):
-    with open(os.path.join(root, "layout", "layout.json"), encoding="utf-8") as fp:
+    layout_json = os.path.join(root, "layout", "layout.json")
+    if not os.path.exists(layout_json):
+        raise SystemExit("overlay_table: %s not found (pass --aletheia-root)"
+                         % layout_json)
+    with open(layout_json, encoding="utf-8") as fp:
         layout = json.load(fp)
     overlays = layout["overlays"]
     for i, o in enumerate(overlays):
@@ -153,7 +160,9 @@ def build(root, sources):
             status = PRESENT if src in present_sources else MATCHED
             region_sources.setdefault(region, set()).add(src)
             names = e.get("functions") or [e["name"]]
-            covers = e.get("covers")
+            # The per-function addresses: newer shards spell them `addresses`,
+            # older ones `covers`.
+            covers = e.get("covers") or e.get("addresses")
             base = int(e["address"], 16)
             for k, n in enumerate(names):
                 m = ADDR_NAME.match(n)
@@ -333,7 +342,7 @@ def summary(overlays, funcs, sinits):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--aletheia-root", default="../aletheia")
+    ap.add_argument("--aletheia-root", default=DEFAULT_ALETHEIA)
     ap.add_argument("--out", help="C file to write (rewritten only if it changes)")
     ap.add_argument("--sources", help="file listing the build's sources, one per line")
     ap.add_argument("--summary", action="store_true", help="print the table")

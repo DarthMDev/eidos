@@ -21,7 +21,8 @@
  * TwlSDK GX_GetBankForLCDC.  That cannot be what the message decoder calls,
  * and the entry is not flagged `?`, so either libmatch.py has a false
  * positive at this address or the game overrules the SDK symbol here (the
- * same situation docs/HANDOFF.md records for 0x020749B4 / FATFS_FormatDrive).
+ * same situation aletheia's `docs/HANDOFF.md` records for 0x020749B4 /
+ * FATFS_FormatDrive).
  * Worth one look from the matching lane; it does not change the port.
  */
 

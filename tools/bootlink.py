@@ -863,8 +863,17 @@ def generate(args):
     for unit in units:
         if not unit.rel:
             continue
+        # A name the file's own `#include` header declares must not get a
+        # generated non-prototype declaration: the header's declaration,
+        # parsed after the forced include, would conflict with it.  The
+        # generated header cannot see the file's includes; this scan can.
+        inc_decls = closure.included_declarations(unit.path)
         for name in idx.implicit_calls(unit.rel):
+            if name in inc_decls:
+                continue
             target = unit.renames.get(name, name)
+            if target in inc_decls:
+                continue
             if target in unit.scan.declared or target in unit.scan.defined:
                 continue
             head = heads.get(target)

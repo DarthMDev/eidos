@@ -1481,7 +1481,13 @@ def write_unit_header(link, u, ov_header, path):
         lines.append(" * functions (tools/ovlink.py, step 6). */")
         lines.append("void *%s(unsigned int addr);" % fn)
         lines.append("#define bw_ds_ptr %s" % fn)
+    inc_decls = closure.included_declarations(u.path)
     for n in sorted(u.protos):
+        if n in inc_decls:
+            # The file's own `#include` header declares this name; the
+            # prototype here would conflict with that declaration.  Same
+            # reading tools/bootlink.py does for the boot's units.
+            continue
         rt = u.protos[n]
         lines.append("%s %s();" % (rt, n))
     write_if_changed(path, "\n".join(lines) + "\n")
