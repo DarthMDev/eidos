@@ -11,13 +11,6 @@
         "tests"
       ],
       "started": "2026-10-15"
-    },
-    "W18": {
-      "note": "measure the seam's cost and coverage",
-      "paths": [
-        "progress/SEAM_COST.md"
-      ],
-      "started": "2026-10-15"
     }
   }
 }

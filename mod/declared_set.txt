@@ -1,0 +1,68 @@
+# mod/declared_set.txt -- the hookable set docs/mod-interface.md section 1
+# declares: the DS addresses the port generates an indirection (a slot) for.
+# This file is the single source of truth the generators read; section 1 is
+# the prose account.
+#
+# One row per address, tab separated:
+#   address   the even function start, as aletheia's `address:` line spells it
+#   function  the aletheia function name
+#   region    arm9, or the overlay id the address lives in
+#   mods      the example mods that need the address, comma separated:
+#             nuzlocke, soullink, nuzlocke-soullink, multiplayer
+#
+# A reader splits each line on tabs; `#` starts a comment.  tools/bootlink.py
+# takes the arm9 rows and tools/ovlink.py takes the overlay rows; both emit
+# the slot of section 2.
+#
+# Every row was checked against aletheia's per-packet manifests under
+# layout/matched/ (pkt_*.json), revision 80f06a261e8731f2db94c1a66627bb351ad47673,
+# not copied from the section 1 table.  All 44 rows match a manifest function
+# name and region.  One address is shared by two overlays that occupy the same
+# RAM window: 0x021C5200 is BTL_SERVER_FLOW_ProcFaintRewards in ov093 and
+# ZUKAN_DETAIL_FORM_SignalAnimDone in ov208.  The declared row is the ov093
+# function; the overlay id disambiguates, the bare address does not.
+#
+0x0216E818	EVENT_BATTLE_CreateEncounterTask	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x0216EAB0	EVENT_BATTLE_CreateEncounterTaskWithMon	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x021AA5CC	FIELD_ENCOUNT_SetupTrainerBattle	ov021	nuzlocke,soullink,nuzlocke-soullink
+0x02013090	BTL_SETUP_Create	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
+0x0201347C	BTL_SETUP_SetupWild	arm9	nuzlocke,soullink,nuzlocke-soullink
+0x0216EE20	EVENT_BATTLE_DispatchBattleKindNotify	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x02188CE8	FIELDMAP_GetEncount	ov021	nuzlocke
+0x021CBA40	BTL_SERVER_FLOW_TryThrowBall	ov093	nuzlocke,soullink,nuzlocke-soullink
+0x021CBD48	BTL_SERVER_FLOW_GetBallCatchRate	ov093	nuzlocke,soullink,nuzlocke-soullink
+0x021D5B68	BTL_POKEPARAM_IsFainted	ov093	nuzlocke,soullink,nuzlocke-soullink
+0x021C5200	BTL_SERVER_FLOW_ProcFaintRewards	ov093	nuzlocke,soullink,nuzlocke-soullink
+0x021D1960	BTL_CLIENT_StepShowBlackoutMessages	ov093	nuzlocke,soullink,nuzlocke-soullink
+0x02158A20	SCRIPT_SYS_RunRecoverScript	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x02158AD4	SCRIPT_SYS_RunFieldRecoverScript	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x0215B5A8	SCRCMD_PROC_HealParty	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x02018198	POKE_TOOL_RecoverAllPP	arm9	nuzlocke,soullink,nuzlocke-soullink
+0x021643E8	FIELD_MAP_CHANGE_SetupZone	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x021643AC	FIELD_MAP_CHANGE_ApplyZoneHeader	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x021841C0	EVENT_MAPCHANGE_ChangeFieldEvent	ov020	nuzlocke,soullink,nuzlocke-soullink
+0x02007150	SAVE_CONTROL_StartSave	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
+0x02007168	SAVE_CONTROL_MainSave	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
+0x02012C18	GAME_DATA_LoadFromSave	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
+0x02012BF8	GAME_DATA_CheckSaveFlag	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
+0x0215CD24	SOCL_LinkIsOn	ov009	soullink,nuzlocke-soullink,multiplayer
+0x021666C8	WCM_GetLinkLevel	ov009	soullink,nuzlocke-soullink,multiplayer
+0x02166710	WCM_CalcLinkLevel	ov009	soullink,nuzlocke-soullink,multiplayer
+0x0208E010	WM_Init	arm9	multiplayer
+0x0208F224	WM_Enable	arm9	multiplayer
+0x0208F84C	WM_StartConnectEx	arm9	multiplayer
+0x0208FC4C	WM_StartMP	arm9	multiplayer
+0x0208FCB4	WM_SetMPDataToPortEx	arm9	multiplayer
+0x0209004C	WM_StartDataSharing	arm9	multiplayer
+0x02090B18	WM_GetSharedDataAddress	arm9	multiplayer
+0x020909C8	WmDataSharingSendDataSet	arm9	multiplayer
+0x020908F8	WmDataSharingReceiveData	arm9	multiplayer
+0x0208E5BC	WmReceiveFifo	arm9	multiplayer
+0x0208EB0C	WM_SetPortCallback	arm9	multiplayer
+0x02059FA8	DWCi_Init	arm9	multiplayer
+0x02059F6C	DWC_InitForProduction	arm9	multiplayer
+0x0202627C	GAME_COMM_Update	arm9	multiplayer
+0x02026388	GAME_COMM_CallHandler	arm9	multiplayer
+0x020263B0	GAME_COMM_CallKindNotify	arm9	multiplayer
+0x02078EB0	FS_LoadOverlayImage	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
+0x0207902C	FS_StartOverlay	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer

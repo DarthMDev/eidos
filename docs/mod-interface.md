@@ -27,9 +27,9 @@ The port exposes a declared set of DS addresses. For each address in the set
 it generates an indirection, a slot (section 2). An address outside the set
 is called directly, as the build calls it today, and no mod can reach it.
 
-The candidate set is derived from aletheia's own vocabulary: the `function:`
+The declared set is derived from aletheia's own vocabulary: the `function:`
 and `address:` header of each matched source under `src/matched/`, and the
-SDK symbol table `layout/symbols_sdk.txt`. The table lists the candidates the
+SDK symbol table `layout/symbols_sdk.txt`. The table lists the addresses the
 four example mods need. Nuzlocke abbreviates to N, Soullink to S, Nuzlocke
 plus Soullink to NS, Multiplayer to MP. A mod in the S or NS column needs
 every N address too, because both are Nuzlocke supersets (`docs/modding.md`,
@@ -110,9 +110,29 @@ hand). A uniform set is that cost for every cross-unit call in the corpus,
 which `tools/bootlink.py` measures at about 1400 boot translation units before
 the overlays.
 
-The table is a superset, and the port fixes which rows are declared
-(still-to-build item 1). The evidence for each row is the mod's need in
-`docs/modding.md`; the evidence against a row is only its maintenance cost.
+The table above is the prose account. The set is published as a machine
+readable artifact, `mod/declared_set.txt`, so the generators have one source
+of truth to read rather than a table in a document. It has one row per
+address with four tab separated columns: the address (the even function
+start), the aletheia function name, the region (`arm9` or the overlay id),
+and the example mods that need it (`nuzlocke`, `soullink`,
+`nuzlocke-soullink`, `multiplayer`). `#` starts a comment. The artifact is
+what `tools/bootlink.py` and `tools/ovlink.py` will read: the `arm9` rows go
+to the boot link and the overlay rows to the overlay links, each building the
+slot of section 2 (still-to-build item 1). The table is kept in step with the
+artifact by hand until a tool generates the table.
+
+Every row was checked against aletheia's per-packet manifests under
+`layout/matched/` (`pkt_*.json`), at revision
+`80f06a261e8731f2db94c1a66627bb351ad47673`, not copied from this table. All
+44 rows match a manifest function name and region. One address is shared by
+two overlays that occupy the same RAM window: `0x021C5200` is
+`BTL_SERVER_FLOW_ProcFaintRewards` in ov093 and
+`ZUKAN_DETAIL_FORM_SignalAnimDone` in ov208. The declared row is the ov093
+function; the overlay id disambiguates and the bare address does not.
+
+The evidence for each row is the mod's need in `docs/modding.md`; the
+evidence against a row is only its maintenance cost.
 
 ## 2. How a slot is generated and reached
 
@@ -126,7 +146,7 @@ a slot for every external name. It is the widest reach and the largest cost,
 and it makes every address a maintenance item on the next aletheia wave. Not
 chosen.
 
-**A slot for the declared set only.** The set is item 1. Only the declared
+**A slot for the declared set only.** The set is section 1. Only the declared
 addresses change, so the cost is proportional to the set and the rest of the
 link is untouched. The machinery already exists: both generators resolve a
 name to its address (`tools/bootlink.py`, `defined_addr`; `tools/ovlink.py`,
@@ -228,8 +248,9 @@ The manifest is `<mod>/eidos_mod.txt`. `read_manifest` parses `#` comments,
 on purpose so a later version can add keys (`sdk/vfs.h`, "The per-mod
 manifest"; `sdk/vfs.c`, `read_manifest`). Today it reads two keys, `name` and
 `order`. The schema below adds keys within that forward-compatible rule. The
-consumer is two-sided: `sdk/vfs.c` reads the data keys, and the code loader
-and override registry read the code keys.
+consumer is three-sided: `sdk/vfs.c` reads the data keys, the code loader and
+override registry read the code keys, and the rule interpreter reads the
+`rule` key.
 
 | Key | Value | Default | Meaning |
 |---|---|---|---|
@@ -239,6 +260,7 @@ and override registry read the code keys.
 | `code` | relative path | none | the mod's native library for this host |
 | `state` | identifier | derived from `name` | the per-mod state namespace |
 | `override` | a grammar line, repeatable | none | one address override |
+| `rule` | a grammar line, repeatable | none | one rule bound to one event |
 | `subscribe` | an event name, repeatable | none | a bound event, declarative only |
 | `settings` | relative path | none | the mod's settings declaration (still-to-build item 11) |
 
@@ -295,7 +317,27 @@ subscribe = encounter.start
 subscribe = catch.attempt
 subscribe = battle.faint
 subscribe = save.begin
+
+# A rule, code in the small language of "The rule surface" (section 4), bound
+# to one event.  This one subtracts 1000 from the player money on a faint.
+rule = battle.faint rules/faint_penalty.rule
 ```
+
+The `rule` value grammar is:
+
+```
+<event> <path>
+```
+
+- `<event>` is one of the event names in section 4.
+- `<path>` is a relative path to a rule source in the mod, read the way every
+  other mod file is.
+
+A rule is code in a small predetermined language, not data: a rule file is a
+sequence of statements over the named state fields of section 4 and the event
+payload. `sub money 1000` is the worked example. The port runs a mod's rules
+at the event slot that fires them, the point section 4 fixes. The exact
+grammar is still-to-build item 14.
 
 The state namespace names one file or folder under the save directory. The
 port hands the mod a path and the mod owns the bytes; the write discipline is
@@ -304,10 +346,28 @@ the existing one, whole and atomic (`sdk/save.h`, `bw_save_path`,
 persistence"). The layout under the save directory is still-to-build
 item 10.
 
-A packed single-file mod (one archive with the same tree and manifest inside)
-is not a thing the current layer reads: `bw_data_path` joins a root and a
-relative path, so the root is a directory (`sdk/vfs.c`, `bw_data_path`). A
-packed form is still-to-build item 13.
+A packed single-file mod is a player-facing thing: one `.bw` container with
+the same tree and manifest inside. The current layer reads a directory root,
+because `bw_data_path` joins a root and a relative path (`sdk/vfs.c`,
+`bw_data_path`), so no `.bw` is read anywhere in the tree. Two options carry
+the evidence for where a container would be read:
+
+- The port reads the container directly. The file layer is the one resolver
+  every reader goes through, and it already serves a merged NARC from memory
+  through a handle (`sdk/vfs.h`, `bw_vfs_acquire`, `bw_vfs_release`), so a
+  container member could be served the same way and every reader (the FS
+  shim, the matched readers, `sdk/narc.c`) would see it. The cost is a
+  container parser and a change to `bw_data_path`, which today returns a
+  filesystem path that `fopen` opens, not memory.
+- A launcher unpacks the container. The roots are directories
+  (`bw_set_mod_root`, `bw_add_mod_root`), and the installer already unpacks
+  the extraction into the eidos home, the place a `mods/` overlay sits beside
+  (`install/setup.c`, `bw_setup_install`; `docs/installer.md`, "Where the
+  data goes"). The cost is a step before the port starts; the port itself
+  stays directory-only.
+
+Neither is built, so the port must fix which one it is (still-to-build item
+13).
 
 ## 4. The event and state API
 
@@ -424,6 +484,89 @@ from, or through the override's return, not as a write the game recomputes. A
 "block an action" is the return of a block on a slot that defines one, not a
 state write (`docs/modding.md`, "What block an action means").
 
+### The rule surface
+
+The C API above is one way to act on an event. The port also offers a
+constrained surface over the same capabilities, so a mod that does not write
+C can express a rule like "on a faint, subtract 1000 from the player money".
+The manifest declares it under the `rule` key (section 3), and the port runs
+it at the event slot.
+
+A rule is code in a small predetermined language, not data. A rule file is a
+sequence of statements over the named state fields below and the event
+payload; `sub money 1000` is the worked example. The port runs the rules a
+mod declared for an event at the slot that fires the event, in the same place
+it runs the mod's C handlers, so a rule and a handler see the same typed
+payload. The exact grammar is still-to-build item 14.
+
+The game already carries a bytecode VM the port could use as the substrate
+rather than write a second interpreter. `VM_Create` (0x0201121C),
+`VM_Control` (0x02011298) and `VM_Delete` (0x02011264) are the VM core
+(`src/matched/arm9/unit_020111EC.c`, `unit_0201126C.c`). The field script VM
+drives it through `SCRIPT_SYS_CreateVm` (0x02158BFC) and `SCRIPT_SYS_Main`
+(0x0215882C, `src/matched/ov/func_0215882C.c`), and the battle effect VM
+through `BTLV_EFFVM_Create` (0x021F93F4, ov094). A rule compiled to that VM
+would run on the game's own command set; the alternative is a small
+interpreter in the port. Whether the port reuses the VM or writes its own is
+still-to-build item 14.
+
+### State fields a rule may name
+
+A rule names state fields. A field is a named slot the port reads and writes;
+the port resolves it to the game's bytes. The worked example is the player
+money.
+
+| Field | Where | Size | Read | Write |
+|---|---|---|---|---|
+| `money` | save block id 0x34, offset +0x00 | u32 | `BEACON_GetPoints` 0x0200C274 | `BEACON_AddPoints` 0x0200C278, `BEACON_SubPoints` 0x0200C29C |
+
+The money is the save block with id 0x34. `SAVE_CONTROL_GetBlock`
+(0x020071CC) returns `BACKUP_SYSTEM_GetRecordWork(ctrl->unk10, id)` plus a
+base (`src/matched/arm9/unit_020071CC.c`,
+`src/matched/arm9/func_020319A4.c`), so the block is at a run-time address,
+not a fixed DS address. The port reaches it through `GAME_DATA_GetMiscSave`
+(0x02012F08), which is `BEACON_GetBlock` (`SAVE_CONTROL_GetBlock(sys,
+0x34)`). The accessor family is `BEACON_*` (`src/matched/arm9/unit_0200C0E8.c`):
+`BEACON_GetPoints` returns `p->unk00`, `BEACON_AddPoints` and
+`BEACON_SubPoints` change it, and both cap it at 9,999,999. The game's own
+money displays read the same field: the bag (`ITEMMENU_PrintMoney`
+0x021BAFC4), the field money window (`SCRCMD_PROC_FLD_PrintMoneyWindow`
+0x021B40D4), and the shop (`EVENT_COMM_COMMON_ItemPurchaseEventMain`
+0x0218261C), which compares the price against `BEACON_GetPoints` and
+subtracts with `BEACON_SubPoints`. A mod reads the field through
+`BEACON_GetPoints` and writes it through `BEACON_AddPoints` or
+`BEACON_SubPoints`; a rule names `money` and the port makes the same call.
+The money accessors are not in the declared set (section 1): they are state
+accessors, not override points, and a mod reaches them the way section 4
+lets a mod reach any matched accessor.
+
+The other state a mod plausibly needs, in the same form:
+
+| Field | Address | Where | Read | Write |
+|---|---|---|---|---|
+| game data object | 0x020120F4 | `GAMESYSTEM_GetGameData` | same | - |
+| party | 0x02012934 | `GAME_DATA_GetMyParty` | `POKEPARTY_GetMember` 0x0201AB28, `POKEPARTY_GetCount` 0x0201AA18 | `POKEPARTY_Add` 0x0201A98C |
+| box | 0x0201293C | `GAME_DATA_GetBoxManager` | `POKE_TOOL_GetBoxValueRaw` 0x02018E34 | `POKE_TOOL_SetBoxValueRaw` 0x02019388 |
+| status | 0x02012944 | `GAME_DATA_GetMyStatus`, a 0x20-byte record (`MYSTATUS_GetSize` 0x02008468) | the record | the record |
+| map | 0x02012AC8, 0x0201210C | `GAME_DATA_GetPlayerZoneId`, `GAMESYSTEM_GetFieldMap` | same | `GAME_DATA_SetPlayerZoneId` 0x02012AC4 |
+| save flags | 0x0201296C, 0x02012FE4 | `GAME_DATA_GetEventWork`, `GAME_DATA_GetEventWorkFromSave` (save block 0x2d) | `GAME_DATA_CheckSaveFlag` 0x02012BF8 | `SAVE_EVENT_Write` 0x0202F190 |
+| a party mon field | 0x02017E1C, 0x02017E40 | `POKE_TOOL_GetPartyValue`, `POKE_TOOL_SetPartyValue` | by field id | by field id |
+
+The party and box records are the 0xDC-byte record
+`src/matched/arm9/sub_02018E34.c` maps: a seed word at +0x00, three flag bits
+and a checksum at +0x04, an 0x80-byte masked block area at +0x08, and a
+0x54-byte masked party area at +0x88. `POKE_TOOL_GetPartyValue` takes a field
+id: 0x05 is species, 0x06 the held item, 0x08 experience, and 0x9E the level
+(the party record's +0x8C byte; the box value for 0x9E is derived from
+experience). The party area's other ids, 0x9D and 0x9F to 0xA6, map to record
+offsets +0x88 to +0x9A, but aletheia does not name which is HP or a stat, so
+that mapping is still-to-build item 15.
+
+The save flags and the event work are a save block, id 0x2d
+(`GAME_DATA_GetEventWorkFromSave`), reached the same way as the money block.
+The dex is a separate block (`ZUKAN_SAVE_GetFromGameData` 0x0200CA1C,
+`ZUKAN_SAVE_IsCaught` 0x0200CED4).
+
 State and lifecycle. A mod's state lives under its `state` namespace, written
 whole and atomically (`sdk/save.h`). The load and unload points are the code
 entry points of the mod and the overlay lifecycle events of section 1. The
@@ -458,11 +601,13 @@ build of the port's own code by another author, trusted to the same degree.
 
 ## Still to build
 
-1. **Fix the declared set.** The table in section 1 is a superset, and the
-   port must fix which rows it declares. The evidence for each row is the
-   mod's need in `docs/modding.md`; the evidence against a row is its cost,
-   one rename site and one maintenance item per aletheia wave (`docs/hooks.md`,
-   "Limits").
+1. **Read the declared set in the generators.** The set is fixed and published
+   at `mod/declared_set.txt` (section 1). The work is to make
+   `tools/bootlink.py` and `tools/ovlink.py` read it and emit the slot of
+   section 2 per row, so the artifact drives the indirection rather than a
+   hand-kept list. The evidence for each row is the mod's need in
+   `docs/modding.md`; the cost of a row is one rename site and one maintenance
+   item per aletheia wave (`docs/hooks.md`, "Limits").
 2. **Fix the address form.** The overlay tables key on the value a code
    pointer holds, with the Thumb bit (`sdk/overlay_image.h`,
    `bw_ovl_code_entry`); aletheia's `address:` line is the even start. The
@@ -506,9 +651,22 @@ build of the port's own code by another author, trusted to the same degree.
     `bw_ovl_code_entry` and the ARM9 data relocation both consult the
     registry, so a stored code pointer resolves to an override
     (`docs/armdata.md`; `docs/mod-overrides.md`, "still to build" item 5).
-13. **Build a packed single-file mod.** The current layer reads a directory
-    root (`sdk/vfs.c`, `bw_data_path`). Whether a mod may also be one archive
-    with the tree and manifest inside needs a reader that does not exist.
+13. **Build the packed form, and fix where it is read.** A `.bw` container is
+    a player-facing thing and no reader exists. The port must fix whether it
+    reads the container directly (a parser in the file layer, which already
+    serves a merged NARC from memory through a handle) or a launcher unpacks
+    it to a directory before the port starts (`install/setup.c`,
+    `bw_setup_install`). Section 3 carries the evidence on each side.
+14. **Build the rule surface.** The `rule` key (section 3) and the entry
+    point (section 4) are fixed, and the language is not. The port must fix
+    the rule grammar, whether the port reuses the game's bytecode VM
+    (`VM_Create` 0x0201121C, `VM_Control` 0x02011298) or runs its own
+    interpreter, and how a rule names the state fields of section 4.
+15. **Name the party-area fields.** The party record's ids 0x9D and 0x9F to
+    0xA6 map to record offsets +0x88 to +0x9A, but aletheia does not name
+    which is HP or a stat (`src/matched/arm9/sub_02018E34.c`,
+    `sub_02018DB4.c`). The port must fix the id-to-name mapping before a rule
+    can name them.
 
 ## Related documents
 

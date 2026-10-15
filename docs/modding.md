@@ -218,7 +218,8 @@ or write it. A mod that is only data and assets cannot call it at all.
 | Hook on/off switch | works | `sdk/mod_hooks.c`, `sdk/mod_hooks.h`; `docs/hooks.md` |
 | Run-time function override by a dropped-in mod | missing | `docs/hooks.md`, "Limits"; `docs/mod-overrides.md` (design only) |
 | Observe gameplay events from a mod | missing | no event API; only a compiled hook can |
-| Read and write game state from a mod | missing | no mod API; only a compiled hook can |
+| Read and write game state from a mod | missing | no mod API; only a compiled hook can. The field addresses are named in `docs/mod-interface.md`, "State fields a rule may name": the player money is save block id 0x34, offset +0x00, read by `BEACON_GetPoints` 0x0200C274 |
+| A constrained rule surface over the event and state API | missing | `docs/mod-interface.md`, "The rule surface"; the `rule` key and the event slot are fixed, the language is not |
 | Block or allow a game action | partial | a compiled hook can (`docs/hooks.md`); not run time |
 | Per-mod state across sessions | partial | `sdk/save.h`, `sdk/save.c`, `sdk/plat_save.c`; no mod API or namespace |
 | Show the player a mod-supplied screen or text | partial | `engine/platform/settings_ui.c`, `engine/platform/mod_options_proc.c`, `sdk/mod_title.c`; message member append planned (`docs/settings-design.md`) |
@@ -251,6 +252,12 @@ or write it. A mod that is only data and assets cannot call it at all.
 7. **A function override keyed on a DS address.** The design exists
    (`docs/mod-overrides.md`); it depends on items 1 and 6 to be a player-side
    feature rather than a patch build.
+8. **A constrained rule surface.** The C API is the only way to act on an
+   event. A mod that does not write C needs a surface over the same
+   capabilities, so a rule like "on a faint, subtract 1000 from the player
+   money" needs no C. The `rule` manifest key and the event slot are fixed
+   (`docs/mod-interface.md`, "The rule surface" and "The manifest and pack
+   schema"); the language is not.
 
 The single biggest gap is item 1. Because a dropped-in mod cannot run code or
 observe events, data and assets are the only thing a player can add today, and
