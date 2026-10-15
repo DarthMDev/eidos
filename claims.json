@@ -11,6 +11,22 @@
         "tests"
       ],
       "started": "2026-10-15"
+    },
+    "W27": {
+      "note": "grow the event catalogue from the game's own command tables",
+      "paths": [
+        "docs/mod-events.md",
+        "docs/mod-interface.md",
+        "mod/declared_set.txt"
+      ],
+      "started": "2026-10-16"
+    },
+    "W28": {
+      "note": "survey every mechanic a mod might hook, community mods included",
+      "paths": [
+        "progress/EVENT_SURVEY.md"
+      ],
+      "started": "2026-10-16"
     }
   }
 }
