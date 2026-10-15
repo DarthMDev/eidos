@@ -24,7 +24,7 @@
  *      The MDL0 node dictionary, its rotation/scale components, the
  *      node hierarchy and the shape -> node binding are this engine's own
  *      decode, from the ROM's bytes: neither aletheia's tools nor
- *      docs/ASSETS.md decode nodes, so that decode is recorded in
+ *      aletheia's docs/ASSETS.md decode nodes, so that decode is recorded in
  *      docs/g3d-nodes.md with its evidence and is validated by
  *      self-consistency (orthonormal rotations, acyclic in-range parents,
  *      in-range draws), not by an oracle comparison.

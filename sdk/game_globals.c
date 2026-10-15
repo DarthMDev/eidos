@@ -74,10 +74,10 @@ struct BwSink g_Sink = { 0, 0, 0, sink_handler };
  * 0x020A7F18 for func_02049578, 0x020A78xx for func_0204944C), and the
  * matched files declare them as externs pinned by address because a
  * `__FILE__` literal has no attestable witness of its own
- * (docs/idioms/file-string-is-an-abs32-into-the-string-area.md).  Their
- * contents never affect behaviour: they are arguments to an assert that only
- * fires on an out-of-range member.  The port supplies its own text, which is
- * why no ROM string is reproduced here.
+ * (aletheia's docs/idioms/file-string-is-an-abs32-into-the-string-area.md).
+ * Their contents never affect behaviour: they are arguments to an assert
+ * that only fires on an out-of-range member.  The port supplies its own
+ * text, which is why no ROM string is reproduced here.
  */
 const char func_02049578_File[] = "arc_tool.c";
 const char func_02049578_Msg[]  = "member index out of range";

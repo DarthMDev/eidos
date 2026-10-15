@@ -18,18 +18,6 @@
         "progress/SEAM_COST.md"
       ],
       "started": "2026-10-15"
-    },
-    "W19": {
-      "note": "wave 7b: label the remaining cross-repo references",
-      "paths": [
-        "engine/g2d/compose.c",
-        "engine/g2d/resources.c",
-        "engine/g3d/g3d.h",
-        "engine/g3d/nsbmd.c",
-        "engine/g3d/raster.c",
-        "sdk/game_globals.c"
-      ],
-      "started": "2026-10-15"
     }
   }
 }

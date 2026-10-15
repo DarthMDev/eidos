@@ -3,8 +3,8 @@
  * TEX0 texture and palette records, and the MDL0 shape dictionary.
  *
  * Provenance: every structure below is one aletheia's asset lane cracked
- * and recorded in docs/ASSETS.md, and this is an independent C reader of
- * the same bytes, not a translation of the Python:
+ * and recorded in aletheia's docs/ASSETS.md, and this is an independent
+ * C reader of the same bytes, not a translation of the Python:
  *
  *   - the outer G3D container (magic, BOM, version, file size, header
  *     size, block count, then one u32 offset per block);
@@ -51,7 +51,7 @@
  * dictionary is the material dictionary (scored by how many of its
  * names, with any trailing _<digits> stripped, are real texture names in
  * a/0/1/4).  Both are cross-checks against real data rather than
- * guesses, and both are documented in docs/ASSETS.md.
+ * guesses, and both are documented in aletheia's docs/ASSETS.md.
  */
 
 #include <stdlib.h>

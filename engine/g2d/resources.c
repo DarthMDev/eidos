@@ -4,7 +4,7 @@
  * multi-cell node tables.
  *
  * Every layout here is the one aletheia recovered and attests in
- * docs/ASSETS.md and in the matched sources named in g2d.h; the field
+ * aletheia's docs/ASSETS.md and in the matched sources named in g2d.h; the field
  * offsets below are those readings, not a second, independent guess.
  * Each resource is a 16-byte common file header (magic, BOM, version,
  * file size, header size, block count) followed by size-chained blocks

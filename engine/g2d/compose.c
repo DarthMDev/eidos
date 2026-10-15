@@ -137,7 +137,7 @@ static u8 *render_oam(const G2dNcgr *ncgr, const G2dOam *oam, u32 n_pal_colors)
  * path resamples: the NNS cell animation carries one SRT per node, about
  * the cell origin, so the whole cell is transformed as one picture rather
  * than each OAM as its own rigid rectangle (aletheia's
- * src/matched/unit_020640B0.c and docs/ASSETS.md's per-pixel SRT pass).
+ * src/matched/unit_020640B0.c and aletheia's docs/ASSETS.md's per-pixel SRT pass).
  *
  * The paint order inside the cell is the same rule as the pose's: emitted
  * forward, so a plain painter runs the reverse, with attr2's priority
