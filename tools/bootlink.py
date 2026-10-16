@@ -912,6 +912,13 @@ def generate(args):
             stub_name[key] = sorted(names)[0]
         name = stub_name[key]
         addr = None if isinstance(key, str) else key
+        if name in defined:
+            # The chosen stub name is already a definition in this link (a
+            # compiled unit or a shim): the asm file's spelling is that
+            # definition under another name, so rename the reference onto it
+            # and emit no stub.  MYSTATUS_NameToStrbuf (0x02008500) is the
+            # case: the asm file names it and unit_020084BC.c defines it as C.
+            continue
         if name in asm_pending:
             why = "asm body, %s" % asm_pending[name]
         elif addr is not None and overlays_at(idx, addr):

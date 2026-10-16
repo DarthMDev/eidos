@@ -1,9 +1,9 @@
 {
   "asm_bodies": 150,
-  "boot_matched": 6078,
+  "boot_matched": 6077,
   "clashes": 0,
   "compile_errors": 0,
-  "compiled_for_host": 5726,
+  "compiled_for_host": 5725,
   "configure": "pass",
   "errors_conflicting": 0,
   "errors_implicit": 0,
@@ -13,15 +13,15 @@
   "implicit_decls": 202,
   "link_failed_targets": 0,
   "matched_total": 33544,
-  "note": "the mod seam: slots in the generators and the registry in sdk",
+  "note": "the runtime made healthy: the name-collision segfaults, the duplicate stub, the map file and the boot",
   "shim_replaced": 122,
-  "stubbed_asm": 39,
-  "stubbed_open": 150,
+  "stubbed_asm": 38,
+  "stubbed_open": 154,
   "tests": {
     "failed": 0,
     "passed": 0
   },
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 9
+  "wave": 10
 }

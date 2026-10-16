@@ -8,7 +8,7 @@
  * the whole chain on real code:
  *
  *   - the archive name table at 0x020A6C58: bound by its matched name
- *     (sub_0200545C.c's d_020A6C58), its pointer words rewritten to host
+ *     (sub_0200545C.c's _ArcPathTable), its pointer words rewritten to host
  *     pointers (ILP32), entry 0 reaching "a/0/0/0" and entry 234 "a/2/3/4"
  *     (aletheia's docs/ASSETS.md: entry N is N's three digits);
  *   - the proc table at 0x020A0480: its three Thumb words rewritten to the
@@ -145,7 +145,7 @@ int main(int argc, char **argv)
     bw_ds_reset();
 
     /* --- the archive name table ------------------------------------- */
-    CHECK_PTR("d_020A6C58 bound", bound("d_020A6C58"), bw_ds_ptr(0x020A6C58u));
+    CHECK_PTR("_ArcPathTable bound", bound("_ArcPathTable"), bw_ds_ptr(0x020A6C58u));
     for (i = 0; i < 235u; i++) {
         BW_REQUIRE("archive table word listed", reloc_at(0x020A6C58u + 4u * i) != NULL);
     }

@@ -100,6 +100,9 @@ C_KEYWORDS = {
 # *address* is the value, and the matched code only ever casts them.
 CONST_LIMIT = 0x01000000
 MAIN_RAM_BASE = 0x02000000
+# The DSi's extended RAM.  This NITRO port backs no region for it, so a name
+# there is its address as a value, like the SDK constants below CONST_LIMIT.
+TWL_EXT_RAM_BASE = 0x0D000000
 
 
 def hx(v: int) -> str:
@@ -613,13 +616,23 @@ def read_symbol_txt(path: str):
     return by_addr
 
 
-def load_function_names(root: str, sources):
+def load_function_names(root: str, sources, region: str = None):
     """address -> [names]: the SDK's symbols by address, and every function a
     source of the build says it defines (its `function:`/`address:` header,
     its `symbols:` rows for code).  The manifest shards say the same about
     matched files but are thousands of small files; the build's own headers
-    are what decides which names exist here anyway."""
+    are what decides which names exist here anyway.
+
+    A file that defines several functions gives ONE `address:` line, so its
+    later functions (a descriptive name, no address in the header) never
+    reach this map, and a data word pointing at one is left unrelocated by
+    the runtime scan (sdk/armdata.c, scan_code_pointers).  aletheia's
+    per-packet manifest (layout/matched/<region>/*.json) pairs each unit's
+    `functions` with its `addresses`; reading that pair completes the map.
+    The pair is exact, so the scan keeps keying on exact function entries
+    (Thumb bit included) and no code-range heuristic is introduced."""
     by_addr = {}
+    isa_by_addr = {}
     for fname in ("symbols_sdk.txt", "runtime_arm9.txt"):
         for addr, names in read_symbol_txt(os.path.join(root, "layout", fname)).items():
             by_addr.setdefault(addr, []).extend(names)
@@ -629,7 +642,27 @@ def load_function_names(root: str, sources):
         for name, (addr, kind, _r, _a) in sf.symbols.items():
             if kind in ("arm", "thumb"):
                 by_addr.setdefault(addr, []).append(name)
-    return by_addr
+    if region:
+        for shard in sorted(glob.glob(os.path.join(
+                root, "layout", "matched", region, "*.json"))):
+            try:
+                with open(shard, encoding="utf-8") as fh:
+                    d = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            for entry in d.get("functions") or []:
+                isa = entry.get("isa")
+                names = entry.get("functions") or []
+                addrs = entry.get("addresses") or []
+                if not names or not addrs:
+                    names = [entry["name"]] if entry.get("name") else []
+                    addrs = [entry["address"]] if entry.get("address") else []
+                for name, addr in zip(names, addrs):
+                    a = int(addr, 16)
+                    by_addr.setdefault(a, []).append(name)
+                    if isa in ("arm", "thumb"):
+                        isa_by_addr.setdefault(a, isa)
+    return by_addr, isa_by_addr
 
 
 # --------------------------------------------------------------------------
@@ -692,7 +725,8 @@ class Model:
                 continue
             text = read_text(path)
             self.sources.append(SourceFile(path, text, self._is_matched(path, text)))
-        self.func_names = load_function_names(self.root, self.sources)
+        self.func_names, self.isa_by_addr = load_function_names(
+            self.root, self.sources, self.region)
         self._collect_definitions()
         self._collect_names()
         self._collect_relocations(args)
@@ -861,7 +895,14 @@ class Model:
             # autoload copied to 0x01FF8000), which matched files name only
             # for its address (`&OS_IrqHandler` as a sentinel).  The name is
             # that address as a value, as for a linker constant.
-            itcm = sec != "const" and addr < MAIN_RAM_BASE and port is None
+            #
+            # The DSi's extended RAM (0x0D000000) is the same: this NITRO port
+            # backs no region for it, and a matched file names it only in a
+            # dead TWL branch (OS_GetInitArenaLo case 2 behind OS_IsRunOnTwl).
+            # Binding it to a DS pointer would panic at reset (sdk/armdata.c,
+            # bw_data_bind), so the name is its address as a value too.
+            itcm = sec != "const" and (addr < MAIN_RAM_BASE
+                                       or addr >= TWL_EXT_RAM_BASE) and port is None
             if e["object"] and sec != "const" and not itcm and port is None:
                 e["bind"] = "OBJECT"
                 continue
@@ -1031,8 +1072,11 @@ class Model:
 
     def _isa_of(self, name: str, addr: int):
         """'arm' or 'thumb' for the function the build defines as `name` at
-        `addr`: the defining file's header when it lists the function, else
-        any symbols-block row in the build for a spelling of that address."""
+        `addr`: aletheia's manifest when it names the address, else the
+        defining file's header when it lists the function, else any
+        symbols-block row in the build for a spelling of that address."""
+        if addr in self.isa_by_addr:
+            return self.isa_by_addr[addr]
         sf = self.by_path.get(self.defined_functions.get(name))
         if sf is not None and sf.header_isa:
             if any(a == addr for _n, a in sf.header_functions):

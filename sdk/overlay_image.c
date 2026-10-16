@@ -304,6 +304,13 @@ int bw_ovl_resident_at(u32 addr)
 BwDataFn bw_ovl_code_entry(u32 value)
 {
     BwDataFn found = NULL;
+    /* The DS entry is the function's even address; the low bit is the
+     * instruction-set tag.  A data word carries the tag the game gave it and
+     * the entry table carries the tag the listing gave the function, and the
+     * two disagree for a few (FLDMMDL_GetMovedPosSaveSize is Thumb in its
+     * source header and ARM in the listing), so the lookup keys on the
+     * address alone: the host function is the same either way. */
+    u32 key = value & ~1u;
     u32 i;
 
     if (g_set == NULL) {
@@ -319,14 +326,14 @@ BwDataFn bw_ovl_code_entry(u32 value)
         hi = o->entry_count;
         while (lo < hi) {
             u32 mid = lo + (hi - lo) / 2u;
-            if (o->entries[mid].addr < value) {
+            if ((o->entries[mid].addr & ~1u) < key) {
                 lo = mid + 1u;
             } else {
                 hi = mid;
             }
         }
-        if (lo < o->entry_count && o->entries[lo].addr == value) {
-            void *h = bw_mod_slot_lookup(o->id, value & ~1u);
+        if (lo < o->entry_count && (o->entries[lo].addr & ~1u) == key) {
+            void *h = bw_mod_slot_lookup(o->id, key);
 
             if (h != NULL) {
                 /* A mod installed an override for this (region, address)

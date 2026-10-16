@@ -874,10 +874,17 @@ endif()
 # src/matched/arm9_sdk/func_02045A98.c, which defines STRBUF_GetEosChar, while
 # the port still compiles stubs/reimpl_02045A98.c under the address name, so
 # func_02045E3C.c's call is renamed onto the port's definition.
+#
+# FS_OpenFile is the same shape for a function: aletheia renamed the archive
+# reader's open call in unit_02048DDC.c to FS_OpenFile, but the port's
+# FS_OpenFile (sdk/fs.c) takes a host path while that call passes a DS address
+# from the archive name table.  The port's DS-address reader is
+# CRYPTOi__BN_lshift1 (sdk/fs.c), so the matched call is renamed onto it and
+# the host-path FS_OpenFile is left alone.
 foreach(_eidos_data_alias
     "arm9/func_02049578.c|arc_tool_file=func_02049578_File,arc_tool_msg_member_bounds=func_02049578_Msg"
     "arm9/func_0204944C.c|arc_tool_file=func_0204944C_File,arc_tool_msg_member_bounds=func_0204944C_Msg"
-    "arm9/unit_02048DDC.c|ARC_TOOL_gArchiveTable=g_02146A68,arc_tool_msg_member_range=func_02048DDC_Msg,arc_tool_file=func_02048DDC_File"
+    "arm9/unit_02048DDC.c|ARC_TOOL_gArchiveTable=g_02146A68,arc_tool_msg_member_range=func_02048DDC_Msg,arc_tool_file=func_02048DDC_File,FS_OpenFile=CRYPTOi__BN_lshift1"
     "arm9/unit_0201AFD4.c|_pPersonalArc=g_0214652C"
     "arm9/unit_0201ADA4.c|_pPersonalArc=g_0214652C"
     "arm9/unit_02019C54.c|gPersonalCache=g_02146270"
@@ -1874,7 +1881,7 @@ add_test(NAME test_ovlink_real COMMAND test_ovlink_real ${BW_DATA_ROOT_ABS})
 set_tests_properties(test_ovlink_real PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 add_test(NAME test_ovlink_real_stub COMMAND ${CMAKE_COMMAND}
     -DCMD=$<TARGET_FILE:test_ovlink_real> -DARG1=${BW_DATA_ROOT_ABS} -DARG2=--arm9
-    "-DEXPECT=PANIC in overlay ARM9 stub at 0x0202F0B0: func_0202F0B0: ARM9 function an overlay calls"
+    "-DEXPECT=PANIC in overlay ARM9 stub at 0x0202F0B0: TIME_ICON_Update: ARM9 function an overlay calls"
     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_panic.cmake)
 if(NOT EIDOS_DATA_TESTS)
     set_tests_properties(test_ovlink_real_stub PROPERTIES DISABLED TRUE)
@@ -1912,7 +1919,7 @@ set(BW_ARMDATA_REAL_MATCHED
 )
 eidos_dsaddr(BW_ARMDATA_REAL_COPIES ${BW_ARMDATA_REAL_MATCHED})
 set(BW_ARMDATA_REAL_NAMED                               # names only, not compiled
-    ${ALETHEIA_ROOT}/src/matched/arm9/sub_0200545C.c     # d_020A6C58
+    ${ALETHEIA_ROOT}/src/matched/arm9/sub_0200545C.c     # _ArcPathTable 0x020A6C58
     ${ALETHEIA_ROOT}/src/matched/arm9/unit_0200560C.c    # sub_02005610_Sys  } one address
     ${ALETHEIA_ROOT}/src/matched/arm9/unit_020056A0.c    # sub_020056A0_Sys  }
     ${ALETHEIA_ROOT}/src/matched/arm9_sdk/func_0208459C.c   # SDK_AUTOLOAD_DTCM_START
@@ -2134,6 +2141,19 @@ target_link_libraries(eidos_boot PRIVATE eidos)
 target_compile_definitions(eidos_boot PRIVATE
     EIDOS_DEFAULT_DATA_ROOT="${BW_DATA_ROOT_ABS}")
 
+# A linker map, so a crash report's `exe+0x...` names its function.  The
+# boot's crash filter (sdk/plat_crash.c) reports the executable offset; the
+# map is what turns it into a symbol (a crash log without one names no
+# function).  GNU ld writes it with -Wl,-Map,<file>, MSVC with /MAP:<file>.
+# It lands at <build>/eidos_boot.map.
+if(MSVC)
+    target_link_options(eidos_boot PRIVATE
+        "/MAP:${CMAKE_BINARY_DIR}/eidos_boot.map")
+else()
+    target_link_options(eidos_boot PRIVATE
+        "-Wl,-Map,${CMAKE_BINARY_DIR}/eidos_boot.map")
+endif()
+
 # --- Overlays compiled into eidos_boot (docs/overlays.md) --------------------
 #
 # EIDOS_OVERLAYS names the overlays tools/ovlink.py compiles into eidos_boot:
@@ -2173,21 +2193,35 @@ endif()
 if(EIDOS_BOOT)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boot.cmake)
 
-    # tools/bootlink.py generates one panic stub per mwcc `asm` body it cannot
-    # compile (boot/boot_asm.txt).  When a *unit* source also defines one of
-    # those functions the stub and the unit's real C collide: the DS linker
-    # resolved the two by address, a host linker sees two strong definitions.
-    # Here that is MYSTATUS_NameToStrbuf (0x02008500), which
-    # src/matched/arm9/unit_020084BC.c defines as C and the asm file
-    # MYSTATUS_NameToStrbuf.c as a veneer.  The unit's C is the real
-    # definition, so the spurious stub is renamed out of the way.  The durable
-    # fix is in tools/bootlink.py (drop an asm-pending function a compiled unit
-    # already defines) or cmake/boot.cmake (list the asm file in
-    # EIDOS_BOOT_SHIM_REPLACED); both are outside this lane, so this is the
-    # port-side workaround.  bootlink.py's `spurious stubs` check in the plan
-    # report is where the next one would be named.
-    set_source_files_properties(${EIDOS_BOOT_GEN}/boot_link.c PROPERTIES
-        COMPILE_DEFINITIONS "MYSTATUS_NameToStrbuf=MYSTATUS_NameToStrbuf_bootstub")
+    # A unit source and an mwcc `asm` body that name one function used to
+    # collide here: the asm file named MYSTATUS_NameToStrbuf (0x02008500) and
+    # src/matched/arm9/unit_020084BC.c defines it as C, so bootlink.py emitted
+    # a panic stub with that name beside the unit's definition.  tools/bootlink.py
+    # now drops the stub when a compiled unit already defines the name and
+    # renames the reference onto the definition, so no per-file workaround is
+    # needed here.
+
+    # The game's own C library defines the same names as the host's.  aletheia
+    # splits the MSL into src/matched/arm9/func_*.c: the strtod/strtol family
+    # (strtod, atof, strtoul, strtol, strtoll, atoi, atoll), the stdio it kept
+    # (fclose, fread, fseek, ftell, rewind, sprintf, vsnprintf), the string
+    # routines (strlen, strcpy, strcmp, strchr, strstr, strncpy, strcat,
+    # strncmp, strcspn, memmove, memchr), qsort, srand and the maths
+    # (fabs, pow, sin, frexp, ldexp).  The game's strtoul reads __ctype_map, a
+    # DS address the port binds only when it installs the ARM9 image
+    # (tools/armdata.py), the game's rewind/fseek lock a DS mutex, and the
+    # game's fclose expects the game's own FILE: a port caller that mixes the
+    # host's fopen with the game's fclose, or the host's fseek with the game's
+    # rewind (sdk/fs.c), or calls strtoul before run_boot installs the image
+    # (demo/eidos_boot.c for --watchdog), faults.  One name, two definitions:
+    # the game's spellings are renamed for the boot's matched units only, so
+    # the game's code keeps its own library and the port's code (demo/, sdk/,
+    # engine/) gets the host's.  The wrappers are the boot's alone
+    # (cmake/boot.cmake), so nothing else sees the rename.  `abs` is left out:
+    # no boot unit defines it, so the game's callers already reach the host's.
+    set_source_files_properties(${EIDOS_BOOT_MATCHED_WRAPPERS} PROPERTIES
+        COMPILE_DEFINITIONS
+        "atof=MSL_atof;atoi=MSL_atoi;atoll=MSL_atoll;fabs=MSL_fabs;fclose=MSL_fclose;fread=MSL_fread;frexp=MSL_frexp;fseek=MSL_fseek;ftell=MSL_ftell;ldexp=MSL_ldexp;memchr=MSL_memchr;memmove=MSL_memmove;pow=MSL_pow;qsort=MSL_qsort;rewind=MSL_rewind;sin=MSL_sin;sprintf=MSL_sprintf;srand=MSL_srand;strcat=MSL_strcat;strchr=MSL_strchr;strcmp=MSL_strcmp;strcpy=MSL_strcpy;strcspn=MSL_strcspn;strlen=MSL_strlen;strncmp=MSL_strncmp;strncpy=MSL_strncpy;strstr=MSL_strstr;strtod=MSL_strtod;strtol=MSL_strtol;strtoll=MSL_strtoll;strtoul=MSL_strtoul;vsnprintf=MSL_vsnprintf")
 endif()
 
 if(NOT _eidos_ovls STREQUAL "")
