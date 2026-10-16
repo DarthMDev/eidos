@@ -1,3 +1,25 @@
 {
-  "claims": {}
+  "claims": {
+    "W30": {
+      "note": "wave 9: the seam, slots in the generators and the registry in sdk",
+      "paths": [
+        "CMakeLists.txt",
+        "sdk/mod_slot.c",
+        "sdk/mod_slot.h",
+        "sdk/overlay_image.c",
+        "tools/bootlink.py",
+        "tools/ovlink.py"
+      ],
+      "started": "2026-10-16"
+    },
+    "W32": {
+      "note": "merge the survey in, split multi-address events, add the missing state, and test the challenge runs",
+      "paths": [
+        "docs/mod-events.md",
+        "docs/mod-interface.md",
+        "mod/declared_set.txt"
+      ],
+      "started": "2026-10-16"
+    }
+  }
 }
