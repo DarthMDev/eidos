@@ -1,3 +1,15 @@
 {
-  "claims": {}
+  "claims": {
+    "W39": {
+      "note": "wave 10: the six test failures, the map file, and the boot fault",
+      "paths": [
+        "CMakeLists.txt",
+        "sdk",
+        "tests",
+        "tools/armdata.py",
+        "tools/bootlink.py"
+      ],
+      "started": "2026-10-16"
+    }
+  }
 }

@@ -1,5 +1,17 @@
-build/
+# configure directories: build, build32, build-msvc32, b32 (docs/boot-handoff.md)
+build*/
+b32/
+
+# fetched by tools/fetch_sdl.py, not source of truth
 third_party/
-build32/
+
+# Python bytecode
 __pycache__/
 *.pyc
+
+# a run's leftovers: sdk/plat_crash.c writes eidos_crash.log next to the
+# working directory and a redirected build leaves build*.log, so every log a
+# run drops in the tree is ignored; eidos_extract writes extract/ when it is
+# asked for an output here
+*.log
+extract/

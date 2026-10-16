@@ -46,6 +46,19 @@
 # ZUKAN_DETAIL_FORM_SignalAnimDone in ov208.  The declared row is the ov093
 # function; the overlay id disambiguates, the bare address does not.
 #
+# That check proves a row exists, not that the function does what the entry
+# says.  A later pass reads each row's matched source and asks that second
+# question; it found two rows that the address, name and region check passes
+# and the semantics fail.  flag.write was bound to SAVE_EVENT_Write
+# (0x0202F190), which forwards to SAVE_EVENT_WriteMode, a box-record writer,
+# and is now bound to ZONEDATA_SetEventFlag (0x02014314), the event-flag
+# bitmap writer.  encounter.start was bound to EVENT_BATTLE_CreateEncounterTask
+# (0x0216E818), the trainer battle task, and is now bound to
+# EVENT_BATTLE_CreateScriptedBattle (0x0216E7C8), the wild or scripted
+# battle task the wild encounter step returns.
+# docs/mod-events.md, section 1, "Corrections and the class of error",
+# records both and the class.
+#
 # The rows below are sorted by region, then by address.  The 44 original rows
 # are kept unchanged; the rest are new.  State accessors that a mod
 # reads and writes through an accessor, and that no event or override binds,
@@ -64,6 +77,7 @@
 0x02012F08	GAME_DATA_GetMiscSave	arm9	
 0x02013090	BTL_SETUP_Create	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
 0x0201347C	BTL_SETUP_SetupWild	arm9	nuzlocke,soullink,nuzlocke-soullink
+0x02014314	ZONEDATA_SetEventFlag	arm9	nuzlocke,soullink,nuzlocke-soullink
 0x020180F4	POKE_TOOL_PushMove	arm9	
 0x02018198	POKE_TOOL_RecoverAllPP	arm9	nuzlocke,soullink,nuzlocke-soullink
 0x020181F4	POKE_TOOL_SetMoveSlot	arm9	
@@ -71,7 +85,6 @@
 0x0202627C	GAME_COMM_Update	arm9	multiplayer
 0x02026388	GAME_COMM_CallHandler	arm9	multiplayer
 0x020263B0	GAME_COMM_CallKindNotify	arm9	multiplayer
-0x0202F190	SAVE_EVENT_Write	arm9	nuzlocke,soullink,nuzlocke-soullink
 0x02059F6C	DWC_InitForProduction	arm9	multiplayer
 0x02059FA8	DWCi_Init	arm9	multiplayer
 0x02078EB0	FS_LoadOverlayImage	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
@@ -136,7 +149,7 @@
 0x0216B538	SCRCMD_RESEARCH_CmdRaiseResearchRank	ov010	
 0x0216B63C	SCRCMD_RESEARCH_CmdStartMission	ov010	
 0x0216B6DC	SCRCMD_RESEARCH_CmdClearMission	ov010	
-0x0216E818	EVENT_BATTLE_CreateEncounterTask	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x0216E7C8	EVENT_BATTLE_CreateScriptedBattle	ov010	nuzlocke,soullink,nuzlocke-soullink
 0x0216EAB0	EVENT_BATTLE_CreateEncounterTaskWithMon	ov010	nuzlocke,soullink,nuzlocke-soullink
 0x0216EE20	EVENT_BATTLE_DispatchBattleKindNotify	ov010	nuzlocke,soullink,nuzlocke-soullink
 0x0216EE7C	EVENT_BATTLE_NotifyBattleEnd	ov010	nuzlocke,soullink,nuzlocke-soullink

@@ -66,3 +66,10 @@ function(eidos_dsaddr out_var)
     endforeach()
     set(${out_var} ${outs} PARENT_SCOPE)
 endfunction()
+
+# The matched sources come out of a checkout aletheia is still editing, so
+# the port's build is pinned to one revision of it.  Report at configure time
+# when the checkout has moved off that revision (docs/aletheia-pin.md); a warning,
+# never an error.  dsaddr.cmake is included unconditionally, which is why the
+# check hangs off it rather than off a target.
+include(${CMAKE_CURRENT_LIST_DIR}/aletheia_pin.cmake)

@@ -56,6 +56,16 @@ address, function name and region, revision
 `80f06a261e8731f2db94c1a66627bb351ad47673`; `mod/declared_set.txt` carries the
 same check.
 
+That check proves a row exists, not that the function at the address does what
+the entry claims. A second pass reads each row's matched source, at
+`src/matched`, found through the packet manifests, and asks that question: an
+event entry must be a call site a mod can bind, a state entry must be a
+readable value, and an override point must be a function whose replacement
+makes sense. The pass found rows the address, name and region check passes and
+the semantics fail; section 1, "Corrections and the class of error", records
+each one, the function read, and the class. The encounter lane is settled
+there too.
+
 The catalogue also folds in `progress/EVENT_SURVEY.md`, the mechanics view of
 the same ground. The survey lists 373 moments across 19 areas. The moments the
 command tables do not carry are added here in the kind the survey gives them: a
@@ -127,7 +137,7 @@ it and the owner asked for it.
 
 | Event | Address(es) | Region | Kind | Fires, and what the game has done | Mods |
 |---|---|---|---|---|---|
-| `encounter.start` | 0x0216E818 | ov010 | event (block) | `EVENT_BATTLE_CreateEncounterTask` entered; the task exists, the species is not yet chosen | N S NS |
+| `encounter.start` | 0x0216E7C8 | ov010 | event (block) | `EVENT_BATTLE_CreateScriptedBattle` entered; the wild or scripted battle task is created with the setup the wild step built | N S NS |
 | `encounter.start.mon` | 0x0216EAB0 | ov010 | event | `EVENT_BATTLE_CreateEncounterTaskWithMon` entered; the task exists with a given mon | N S NS |
 | `encounter.trainer` | 0x021AA5CC | ov021 | event | `FIELD_ENCOUNT_SetupTrainerBattle` entered; the encounter exists | N S NS |
 | `encounter.rate` | 0x02188CE8 | ov021 | state | `FIELDMAP_GetEncount` reads a zone's encounter table | N |
@@ -301,8 +311,8 @@ catalogued here. Naming the rest is "Still to build" item 14.
 | `item.heal.party` | 0x0201BA34 | arm9 | event | `POKE_TOOL_HealParty` heals the party; reached by `SCRCMD_PROC_HealParty` and by item use | N S NS |
 | `shop.start` | 0x021B2FD8 | ov021 | event | `SCRCMD_SHOP_StartShop` starts a shop | none |
 | `shop.pay` | 0x021B3568 | ov021 | event | `SCRCMD_PROC_FLD_PayPrice` pays a shop price | none |
-| `money.set` | 0x0215C558 | ov010 | event | `SCRCMD_PROC_SetMiscValue` sets the money | none |
-| `money.add` | 0x0215C584 | ov010 | event | `SCRCMD_PROC_AddMiscValue` adds to the money | none |
+| `money.set` | 0x0215C558 | ov010 | event | `SCRCMD_PROC_SetMiscValue` adds to the money; the name says set and the code calls `BEACON_AddPoints` | none |
+| `money.add` | 0x0215C584 | ov010 | event | `SCRCMD_PROC_AddMiscValue` subtracts from the money; the name says add and the code calls `BEACON_SubPoints` | none |
 | `money.check` | 0x0215C5B0 | ov010 | state | `SCRCMD_PROC_CheckMiscValueReached` tests the money against a value | none |
 | `money.print` | 0x021BAFC4 | ov070 | override | `ITEMMENU_PrintMoney` prints the money in the bag | none |
 
@@ -349,7 +359,7 @@ catalogued here. Naming the rest is "Still to build" item 14.
 | `flag.set.offset` | 0x0215B328 | ov010 | event | `SCRCMD_WORK_CmdSetEventFlagOffset` sets one at an offset | N S NS |
 | `flag.reset.offset` | 0x0215B350 | ov010 | event | `SCRCMD_WORK_CmdResetEventFlagOffset` resets one at an offset | N S NS |
 | `flag.check.offset` | 0x0215B378 | ov010 | state | `SCRCMD_WORK_CmdCheckEventFlagOffset` tests one at an offset | N S NS |
-| `flag.write` | 0x0202F190 | arm9 | override | `SAVE_EVENT_Write` writes an event flag to the save block | N S NS |
+| `flag.write` | 0x02014314 | arm9 | override | `ZONEDATA_SetEventFlag` sets one bit of the event-flag bitmap; `SAVE_EVENT_Write` is a box-record writer, not this | N S NS |
 | `flag.misc.set` | 0x0215AC68 | ov010 | event | `SCRCMD_WORK_CmdSetMiscFlag` sets a misc flag; it calls `BEACON_SetFlag` and stamps the badge date | none |
 | `flag.misc.check` | 0x0215AC3C | ov010 | state | `SCRCMD_WORK_CmdCheckMiscFlag` tests a misc flag | none |
 | `flag.fixed.set` | 0x0215B068 | ov010 | event | `SCRCMD_WORK_CmdSetFixedEventFlag` sets a fixed event flag | none |
@@ -378,7 +388,7 @@ catalogued here. Naming the rest is "Still to build" item 14.
 | `save.begin` | 0x02007150 | arm9 | event | `SAVE_CONTROL_StartSave` entered, before the game writes | N S NS MP |
 | `save.done` | 0x02007168 | arm9 | event | `SAVE_CONTROL_MainSave` reached | N S NS MP |
 | `save.load` | 0x02012C18 | arm9 | event | `GAME_DATA_LoadFromSave` entered | N S NS MP |
-| `save.flag` | 0x02012BF8 | arm9 | state | `GAME_DATA_CheckSaveFlag` reads a save flag | N S NS MP |
+| `save.flag` | 0x02012BF8 | arm9 | state | `GAME_DATA_CheckSaveFlag` tests the recent-id list in save block 0x36, not a save flag | N S NS MP |
 | `save.block` | 0x020071CC | arm9 | override | `SAVE_CONTROL_GetBlock` returns a save block by id | none |
 | `save.misc` | 0x02012F08 | arm9 | override | `GAME_DATA_GetMiscSave` returns the misc block (id 0x34), which holds the money and the badge flags | none |
 | `config.battle_style` | 0x020083C8 | arm9 | state | `CONFIG_GetBattleStyle` reads the shift or set setting | none |
@@ -690,12 +700,102 @@ per-packet manifests.
 | 0x0200CFA0 | ZUKAN_SAVE_RegisterSeen | arm9 | none | `zukan.seen` |
 | 0x020180F4 | POKE_TOOL_PushMove | arm9 | none | `move.push` (override) |
 | 0x020181F4 | POKE_TOOL_SetMoveSlot | arm9 | none | `move.slot` (override) |
-| 0x0202F190 | SAVE_EVENT_Write | arm9 | N S NS | `flag.write` (override) |
+| 0x02014314 | ZONEDATA_SetEventFlag | arm9 | N S NS | `flag.write` (override) |
 
 The rows come from `mod/declared_set.txt`. The "Bound to" column is this
 document's reading. A state accessor is not in the declared set because an
 accessor needs no slot (`docs/mod-interface.md`, section 4); it appears in
 section 4 below instead.
+
+## 1c. Corrections and the class of error
+
+The address, name and region check proves a row exists. It does not read the
+function, so it cannot see a row whose name is trusted and whose body does
+something else. This pass read every entry's function. It found five wrong
+entries. The class is the same in all five: the entry was chosen by the
+function's name, and the name does not match the body.
+
+- **`flag.write`.** The catalogue bound it to `SAVE_EVENT_Write`
+  (0x0202F190). The function forwards to `SAVE_EVENT_WriteMode`
+  (`src/matched/arm9/func_0202F190.c:29-31`), a seven-way writer over a box
+  record, and its first argument is a record handle, not a flag id. It is not
+  the event-flag writer. The flag bitmap write is `ZONEDATA_SetEventFlag`
+  (0x02014314, arm9), which sets one bit through `ZONEDATA_GetEventFlagAddress`
+  (`src/matched/arm9/func_02014314.c:18-24`). The catalogue now binds
+  `flag.write` there.
+- **`encounter.start`.** The catalogue bound it to
+  `EVENT_BATTLE_CreateEncounterTask` (0x0216E818). The function calls
+  `FIELD_ENCOUNT_SetupTrainerBattle` and `ENCEFF_SelectEffectAndBgmForTrainer`
+  (`src/matched/ov/ov010_func_0216E818.c:66,76`), and every caller is a trainer
+  script command (`SCRCMD_StartTrainerBattle`,
+  `SCRCMD_StartMultiTrainerBattle`; `src/matched/ov/ov021_func_021AEABC.c:53`,
+  `src/matched/ov/ov021_func_021AEB3C.c:46`). It is the trainer battle task, not
+  a wild encounter. The wild encounter step is `FIELD_ENCOUNT_CheckWildEncount`
+  (0x021A9F40, ov021), which rolls and picks the species and returns
+  `EVENT_BATTLE_CreateScriptedBattle`
+  (`src/matched/ov/ov021_func_021A9F40.c:96-151`), the function that creates the
+  wild or scripted battle task. The catalogue now binds `encounter.start` to
+  `EVENT_BATTLE_CreateScriptedBattle` (0x0216E7C8, ov010), which matches the
+  event's own wording in `docs/mod-interface.md`, section 4 ("a wild or
+  scripted battle task is created").
+- **`money.set` and `money.add`.** The names are inverted against the bodies.
+  `SCRCMD_PROC_SetMiscValue` (0x0215C558) calls `BEACON_AddPoints`
+  (`src/matched/ov/ov010_func_0215C558.c:33`), so it adds.
+  `SCRCMD_PROC_AddMiscValue` (0x0215C584) calls `BEACON_SubPoints`
+  (`src/matched/ov/ov010_func_0215C584.c:33`), so it subtracts. The event names
+  stay, because they are the permanent binding keys, and the descriptions now
+  say what the code does.
+- **`save.flag`.** The catalogue said `GAME_DATA_CheckSaveFlag` (0x02012BF8)
+  reads a save flag. The function tests `RECENT_ID_LIST_SAVEDATA_ContainsId`
+  over save block 0x36, a list of 25 recent ids
+  (`src/matched/arm9/func_02012BF8.c:18`;
+  `src/matched/arm9/unit_0200C3F4.c:78-86,112-122`). It answers whether an id
+  is in the recent list, not whether a flag is set. Its twin
+  `GAME_DATA_SetSaveFlag` (0x02012BE0) adds or removes an id in the same list
+  (`src/matched/arm9/unit_02012BE0.c:51-54`). The description is corrected. The
+  event-work flags a mod reads are `GAME_DATA_GetEventWork` and
+  `GAME_DATA_GetEventWorkFromSave`, which the catalogue already carries.
+
+One claim in the catalogue's own prose was checked against the same sources and
+did not hold:
+
+- **`BEACON_GetPoints` is matched.** The money row uses `BEACON_GetPoints`
+  (0x0200C274). `progress/PAYLOADS_ITEMS.md` says it has no matched source. It
+  does: `BEACON_GetPoints` returns `p->unk00` in
+  `src/matched/arm9/unit_0200C0E8.c:261-264`, and the disassembly at that
+  address is a load then a return (`asm/arm9/src/004_0200C1C8.s:228-230`). The
+  unit is matched as one byte range and the port compiles it, so the read is
+  callable. The money row stays; the read is save block 0x34, offset +0x00,
+  which is what the accessor returns. The claim is stale, not the row.
+
+## 1d. The encounter lane, resolved
+
+A conflict was recorded: the encounter lane is +0x14 in the code
+(`FIELD_ENCOUNT_ST_LoadEncountData`) but +0x1a, low ten bits, in aletheia's
+`docs/ASSETS.md`. The wild encounter step settles it.
+
+`FIELDMAP_UpdateZoneChange` loads a zone's encounter record when the player
+enters the zone, through `EVENTDATA_SYSTEM_LoadEncountData`
+(`src/matched/ov/ov021_func_021892CC.c:49-52`), which calls
+`FIELD_ENCOUNT_ST_LoadEncountData` with the zone id
+(`src/matched/ov/func_02162438.c:24-36`). That function takes the archive member
+index from `ZONEDATA_GetEncountId`
+(`src/matched/ov/ov010_func_0215E2B8.c:41`). `ZONEDATA_GetEncountId` returns
+the zone record's `u16` at +0x14 (`src/matched/arm9/unit_02013EC0.c:39-43`), and
+the disassembly loads `[r0, #0x14]` (`asm/arm9/src/005_02012A24.s:3496`). The
+member size the loader divides by is 0xE8, which is `a/1/2/6`'s 232-byte block,
+so the index selects that archive. The loader treats 0xFFFF as no table
+(`src/matched/ov/ov010_func_0215E2B8.c:42-44`).
+
+The data agrees with the code. In the zone table (`a/0/1/2`, sub-file 0, 427
+records of 48 bytes), the `u16` at +0x14 is a bijection onto 0..111 for exactly
+112 zones and 0xFFFF for the other 315, and `a/1/2/6` has exactly 112 sub-files.
+So +0x14 is right. `packed_1a & 0x3ff` at +0x1a is a different lane: it is
+bounded under 112 on 406 of 427 zones, with 111 distinct values and values up
+to 116, which is too many zones for 112 tables and does not carry the 0xFFFF
+sentinel. `docs/ASSETS.md` picked it by correlation, not by a code path; its own
+text says no code path for that lane was traced. The zone record's +0x14 is the
+encounter lane.
 
 ## 2. The event contract
 
@@ -876,8 +976,8 @@ belong to. The table below is the consolidated list.
 | `map` | `GAME_DATA_SetPlayerZoneId` | 0x02012AC4 | u32 zone id | write |
 | `save_flags` | `GAME_DATA_GetEventWork` | 0x0201296C | event work block | read |
 | `save_flags` | `GAME_DATA_GetEventWorkFromSave` | 0x02012FE4 | save block 0x2d | read |
-| `save_flags` | `GAME_DATA_CheckSaveFlag` | 0x02012BF8 | boolean by flag id | read |
-| `save_flags` | `SAVE_EVENT_Write` | 0x0202F190 | flag id | write |
+| `save_flags` | `GAME_DATA_CheckSaveFlag` | 0x02012BF8 | boolean by recent-id-list id | read |
+| `save_flags` | `ZONEDATA_SetEventFlag` | 0x02014314 | flag id | write |
 | `party_mon_field` | `POKE_TOOL_GetPartyValue` | 0x02017E1C | u32 by field id | read |
 | `party_mon_field` | `POKE_TOOL_SetPartyValue` | 0x02017E40 | u32 by field id | write |
 | `level` | `POKE_TOOL_GetPartyValue` id 0x9E | 0x02017E1C | u32 | read |
@@ -1272,6 +1372,49 @@ The work they name is in "Still to build" below.
     tables to be replaceable. `progress/STORY_HACKS.md` covers what a story
     hack needs. The catalogue has `route.change` and `field.map.event` but no
     map generator.
+19. **Re-read the payloads of the corrected events.** The corrected rows
+    (`docs/mod-events.md`, section 1c) change the function behind `flag.write`
+    (`ZONEDATA_SetEventFlag`, 0x02014314) and `encounter.start`
+    (`EVENT_BATTLE_CreateScriptedBattle`, 0x0216E7C8), and correct the
+    `money.set`, `money.add` and `save.flag` descriptions.
+    `docs/mod-payloads.md` still describes the old bindings and the old
+    `SAVE_EVENT_Write` payload. The work is to re-read each corrected function
+    and rewrite its payload table. The evidence for the new bindings is
+    section 1c.
+20. **Re-read the remaining name-and-body rows.** The same pass flagged rows
+    whose description the body does not clearly support but which are not yet
+    changed: `zukan.flag.a` (`SCRCMD_WORK_CmdSetZukanFlagA` calls
+    `ZUKAN_SAVE_EnableNationalDex`, `src/matched/ov/func_0215AFE0.c:37`),
+    `zukan.flag.b` (`SCRCMD_WORK_CmdSetZukanFlagB` calls
+    `ZUKAN_SAVE_SetDexObtained`, `src/matched/ov/func_0215B014.c:37`),
+    `misc.byte.set` (`SCRCMD_WORK_CmdSetMiscByte` calls `BEACON_SetSlotState`,
+    `src/matched/ov/func_0215B138.c:36`), `field.move.dive`
+    (`MOVE_POKEMON_CreateDiveEvent` calls `SWEET_SCENT_CreateEvent`,
+    `src/matched/ov/ov010_func_0215EC2C.c:25-27`), and the two forwarders
+    `battle.result` (`BTL_SERVER_FLOW_GetBattleResult` is one call to
+    `BTL_SERVER_FLOW_CheckBattleOutcome`, `src/matched/ov/func_021C84D8.c:28-31`)
+    and `link.up`/`link.down` (`SOCL_LinkIsOn` is a predicate,
+    `src/matched/ov_sdk/ov009_func_0215CD24.c:20-23`). The work is to fix each
+    description to the body, or to state that the body is aletheia's name and
+    keep the name. The evidence is the function read at each line.
+21. **Fix the state table's read and write column.** Several rows name a
+    getter as read and write (`config.battle_style` and the other config rows,
+    `src/matched/arm9/func_020083C8.c:27`), and one names a write as read and
+    write (`daycare.steps`, `DAYCARE_AddSteps`,
+    `src/matched/arm9/func_0200BD48.c:26-38`). The work is to name the setter
+    beside each getter, or to correct the column. The evidence is the function
+    read at each line.
+22. **Correct aletheia's encounter-lane note.** Section 1d settles the lane as
+    the zone record's +0x14. `docs/ASSETS.md`, "Wild encounter tables located",
+    still states `packed_1a`, low ten bits, at +0x1a. The work is aletheia's,
+    not the port's, and is recorded here so the conflict does not reappear.
+23. **Read the data tables against the read beside them.** The pass read every
+    address-bearing entry: the 193 declared rows and the 69 state accessors,
+    249 addresses in all. The 91 data tables have no address and no function,
+    so the pass could not read them. The work is to read each data table
+    against the state entry the catalogue places beside it (section 4, "State
+    reads of the data tables"), so a rule that names a value reads the same
+    value the table holds.
 
 ## Related documents
 
