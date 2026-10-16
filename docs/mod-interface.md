@@ -125,13 +125,23 @@ artifact by hand until a tool generates the table.
 Every row was checked against aletheia's per-packet manifests under
 `layout/matched/` (`pkt_*.json`), at revision
 `80f06a261e8731f2db94c1a66627bb351ad47673`, not copied from this table. All
-44 rows match a manifest function name and region. One address is shared by
+180 rows match a manifest function name and region. One address is shared by
 two overlays that occupy the same RAM window: `0x021C5200` is
 `BTL_SERVER_FLOW_ProcFaintRewards` in ov093 and
 `ZUKAN_DETAIL_FORM_SignalAnimDone` in ov208. The declared row is the ov093
 function; the overlay id disambiguates and the bare address does not.
 
-The evidence for each row is the mod's need in `docs/modding.md`; the
+The table above is the original 44 rows, the addresses the four example mods
+need. The artifact has grown to 180 rows, because the event catalogue of
+`docs/mod-events.md`, section 1, was rebuilt from the game's own command
+tables: the field script VM's 609-entry table at `d_0217062C` and the battle
+effect VM's 78-entry table at `0x02209E88`. 136 rows are new. A row with an
+empty fourth column is one no example mod names; the owner asked for its
+concept to be coverable. A state accessor that a mod reads and writes through
+an accessor, and that no event or override binds, is not declared here;
+`docs/mod-events.md`, section 4, lists it.
+
+The evidence for each original row is the mod's need in `docs/modding.md`; the
 evidence against a row is only its maintenance cost.
 
 ## 2. How a slot is generated and reached
@@ -150,8 +160,11 @@ chosen.
 addresses change, so the cost is proportional to the set and the rest of the
 link is untouched. The machinery already exists: both generators resolve a
 name to its address (`tools/bootlink.py`, `defined_addr`; `tools/ovlink.py`,
-`Aletheia`) and both already write a forced-include header per translation
-unit. Chosen.
+`Aletheia`) and both already write a per-unit header. The header is a forced
+include for an overlay (`-include`/`/FI`, `cmake/overlays.cmake`) and an
+`#include` by a generated wrapper for the boot (`cmake/boot.cmake`, "one
+wrapper per translation unit"); the earlier text called both forced, which the
+boot's wrapper does not. Chosen.
 
 **Load-time patching of the loaded image.** This cannot work in the port.
 `sdk/overlay_image.c` copies the DS bytes to a window as *data*
@@ -172,37 +185,139 @@ and ARM9-internal calls bind directly. Not chosen alone, reused where it
 exists.
 
 The chosen mechanism is the declared set, layered on the existing dispatch
-seam. For a declared address:
+seam. The rest of this section is the plan: what the generator emits per row,
+what the slot is, how a mod names it, what changes in each file, and how the
+seam is verified without a full build.
 
-1. The port holds the set as a generated list of DS addresses.
-2. `tools/bootlink.py`, in `generate`, resolves the address to its defining
-   name and unit (it already computes `func_at` and `defined_addr`) and emits
-   a slot function `bw_slot_<addr>` in the generated link C (`boot_link.c` or
-   a new generated file). The slot asks the registry and calls either the
-   override or the real name. The generator adds
-   `#define <spelling> bw_slot_<addr>` to the forced-include header of every
-   unit that references the address and does not define it. The defining unit
-   keeps the real name.
-3. `tools/ovlink.py` does the same inside an overlay: a slot for the declared
-   address, and the per-overlay rename already turns every external spelling
-   into `ovNNN_<name>` (`docs/overlays.md`, "Names: a namespace per overlay"),
-   so a reference outside the owning unit is redirected to the slot. For a
-   caller outside the window, `write_dispatch` makes the trampoline ask the
-   registry before it forwards.
-4. A new registry keeps address to override function. `sdk/overlay_image.c`'s
-   `bw_ovl_code_entry` consults it, so a code pointer in data resolves to the
-   override. The typed check reuses the trampoline normaliser that already
-   panics with `BW_OVL_WHY_SIGNATURE` on a prototype mismatch
-   (`tools/ovlink.py`, `signature`; `sdk/overlay_image.c`,
-   `bw_ovl_dispatch_fail`).
-5. The on/off switch reuses `sdk/mod_hooks.h`. The slot asks
-   `bw_hook_enabled("<name>")`; with the hook off the slot calls the original.
-   This is exactly the rule `docs/hooks.md` step 4 gives a compiled hook, so a
-   slot and a compiled hook answer one mechanism, not two.
+### What the generator emits per declared address
 
-The slot keeps the original callable under its real name, so a `wrap` mode
-calls it. This answers the first "still to build" item in
+`mod/declared_set.txt` is the input. A reader splits a line on tabs, drops a
+`#` comment, and takes four columns: the address (the even function start), the
+aletheia function name, the region (`arm9` or an overlay id such as `ov093`),
+and the mods that need it. The generator builds two things per row.
+
+For an `arm9` row, the generator adds one line to the per-unit header of every
+unit that references the address and does not define it (`tools/bootlink.py`,
+the `unit.renames` loop in `generate`, line 897):
+
+    #define <spelling> bw_slot_arm9_<addr>
+
+The call site then compiles to a call to the slot. For `0x02007150`
+(`SAVE_CONTROL_StartSave`, arm9) the caller is
+`src/matched/arm9/func_02012DAC.c` (`GAME_DATA_SaveStart`), which calls
+`SAVE_CONTROL_StartSave` at line 21. Today the caller's spelling matches the
+definition in `src/matched/arm9/func_02007150.c`, so the generator emits no
+line and the call binds by name. Before:
+
+    /* build32/boot/gen/include/src_matched_arm9_func_02012DAC.h: no line */
+    t3 = SAVE_CONTROL_StartSave((int)*(int *)&...);
+
+After, the header gains:
+
+    #define SAVE_CONTROL_StartSave bw_slot_arm9_02007150
+
+and the call compiles to:
+
+    t3 = bw_slot_arm9_02007150((int)*(int *)&...);
+
+The defining unit `src/matched/arm9/func_02007150.c` defines the name and gets
+no `#define`, so its own body still calls and defines
+`SAVE_CONTROL_StartSave`.
+
+For an overlay row, `tools/ovlink.py` already renames every external spelling
+to `ovNNN_<name>` in the overlay's header (`st.renames`, written by
+`write_overlay_header`; `docs/overlays.md`, "Names: a namespace per overlay").
+A declared row sends a non-owning unit to the slot instead:
+
+    #define <spelling> bw_slot_<region>_<addr>
+
+For `0x021C5200` (`BTL_SERVER_FLOW_ProcFaintRewards`, ov093) a caller inside
+ov093 that is not the defining unit gets:
+
+    #define BTL_SERVER_FLOW_ProcFaintRewards bw_slot_ov093_021C5200
+
+and its call compiles to `bw_slot_ov093_021C5200(...)`. The defining unit keeps
+`ov093_BTL_SERVER_FLOW_ProcFaintRewards`. A caller outside the window does not
+use this rename: it goes through a trampoline, which `write_dispatch` makes
+consult the registry before it forwards.
+
+A row whose definition the link does not carry has no slot. The generator
+reports the row by name and skips it, the way `tools/bootlink.py` already
+reports an unbound data name. The boot link defines an arm9 name through a
+matched unit, a shim (`sdk/overlay.c` stands in for `FS_LoadOverlayImage` and
+`FS_StartOverlay`), or an ARM9 stub; a name nothing defines and nothing calls
+is absent. The overlay link defines an overlay row through the owning unit or
+its stub. `progress/SEAM_COST.md` section 7 records the fixed coverage this
+produces.
+
+### What the slot is
+
+The slot is a generated function, not a table entry. It is emitted into the
+generated link C of its region: `boot_link.c` for an arm9 row
+(`tools/bootlink.py`, `write_link_c`), and `ovNNN_link.c` for an overlay row
+(`tools/ovlink.py`, `write_overlay_c`).
+
+The generator takes the definition's prototype from the defining unit's `heads`
+and normalises it with `tools/ovlink.py`'s `signature`, the call
+`tools/bootlink.py`'s `write_thunk` already makes (line 364). A prototype that
+does not normalise is refused at generation with the address and the name, the
+rule the trampoline states with `BW_OVL_WHY_SIGNATURE` (`sdk/overlay_image.c`,
+`bw_ovl_dispatch_fail`). For `0x02007150` the normalised signature is
+`int (int)`. The emitted slot:
+
+    int bw_slot_arm9_02007150(int a0)
+    {
+        void *h = bw_mod_slot_lookup(BW_MOD_REGION_ARM9, 0x02007150u);
+        if (h != NULL && bw_hook_enabled("SAVE_CONTROL_StartSave"))
+            return ((int (*)(int))h)(a0);
+        return SAVE_CONTROL_StartSave(a0);
+    }
+
+Its initial value, with no mod installed or with the hook switched off, is the
+original function: the last line calls the real name. The original stays
+reachable because the defining unit is never renamed. The generated slot C
+calls the real name, and the port publishes that name's address to the registry
+so a `wrap` override can call it. The arm9 publication goes in
+`bw_boot_link_init` (`tools/bootlink.py`, `write_link_c`; the start-up caller is
+`demo/eidos_boot.c`). The overlay publication goes in `provider_load`
+(`sdk/overlay_image.c`) from a per-overlay table in `ovNNN_link.c`. A wrap
+calls `bw_mod_slot_original(region, addr)` and casts the result to the
+prototype. This answers the first "still to build" item in
 `docs/mod-overrides.md` ("Wrapping, and how the original stays callable").
+
+The on/off switch reuses `sdk/mod_hooks.h`. The slot asks
+`bw_hook_enabled("<name>")`, the row's function name, and with the hook off the
+slot calls the original. This is exactly the rule `docs/hooks.md` step 4 gives
+a compiled hook, so a slot and a compiled hook answer one mechanism, not two.
+
+### The (region, address) key
+
+The key is the pair `(region, address)`, never the address alone. Two overlays
+share one RAM window: `0x021C5200` is `BTL_SERVER_FLOW_ProcFaintRewards` in
+ov093 and `ZUKAN_DETAIL_FORM_SignalAnimDone` in ov208 (section 1;
+`mod/declared_set.txt`). The overlay id disambiguates; the bare address does
+not.
+
+A mod names a hook by the pair, spelled `<region>:<address>` with the region
+spelling `mod/declared_set.txt` uses: `arm9:0x02007150`, `ov093:0x021C5200`.
+The `override` grammar of section 3 carries the region token for this reason,
+and the reader that consumes it is section 3's work (still-to-build item 6). A
+bare address that is a declared overlay address is refused. The slot name
+encodes the pair too, `bw_slot_<region>_<addr>`, so the generated code and the
+manifest cannot disagree about which overlay a slot is for.
+
+At call time the generated slot embeds the region constant and the address and
+calls `bw_mod_slot_lookup(region, addr)`. The registry is a small fixed table
+in a new `sdk/` file with one entry per installed hook: `{ region, address,
+override, original, owner }`. A later install of one pair wins and the earlier
+is reported shadowed, the rule `docs/mod-overrides.md` ("Two mods on one
+address") fixes.
+
+`sdk/overlay_image.c`'s `bw_ovl_code_entry` consults the same lookup, so a code
+pointer in data resolves to the override for a declared `(region, address)`.
+The typed check reuses the trampoline normaliser that panics with
+`BW_OVL_WHY_SIGNATURE` on a prototype mismatch (`tools/ovlink.py`, `signature`;
+`sdk/overlay_image.c`, `bw_ovl_dispatch_fail`).
 
 Two limits are inherent to the chosen mechanism and must be stated to modders.
 
@@ -225,16 +340,76 @@ address the generator's per-unit renames do the same job, and the address, not
 the name, is the durable key (`docs/mod-overrides.md`, "Override by DS
 address, never by name").
 
-What changes in each generator:
+### What changes in each file
 
-| Generator | Change |
+| File | Change |
 |---|---|
-| `tools/bootlink.py` | read the declared-address list; emit one slot per ARM9 address in the generated link C; add the reference rename to each non-owning unit's forced-include header |
-| `tools/ovlink.py` | read the same list; emit a slot per overlay address; rename references in non-owning units; make `write_dispatch`'s trampolines consult the registry |
-| `sdk/overlay_image.c` | the provider, `bw_ovl_resident_at` and `bw_ovl_code_entry` consult the registry |
-| `sdk/overlay.h` | the provider or a registry field the provider reads |
+| `tools/bootlink.py` | in `generate`, read `mod/declared_set.txt` and, for each arm9 row, set `unit.renames[spelling] = "bw_slot_arm9_<addr>"` for a non-owning unit (the loop at line 897); in `write_link_c`, emit the slot and the originals publication in `bw_boot_link_init` |
+| `tools/ovlink.py` | in `_resolve`, read the same file and set `st.renames[spelling] = "bw_slot_<region>_<addr>"` for a non-owning unit; in `write_overlay_c`, emit the slot and the per-overlay originals table; in `write_dispatch`, make each declared trampoline call `bw_mod_slot_lookup` before it forwards |
+| `sdk/mod_slot.h`, `sdk/mod_slot.c` (new) | the registry and its region constants: `bw_mod_slot_lookup`, `bw_mod_slot_original`, `bw_mod_slot_install`, `bw_mod_slot_publish` |
+| `sdk/overlay_image.c` | `provider_load` publishes the overlay's declared originals; `bw_ovl_code_entry` consults `bw_mod_slot_lookup` before its table lookup |
+| `CMakeLists.txt` | add `sdk/mod_slot.c` to `BW_SDK_SOURCES`, beside `sdk/mod_hooks.c` (line 330) |
 | `sdk/mod_hooks.h` | unchanged; the slot reuses `bw_hook_enabled` |
 | `sdk/aliases.c` | unchanged for a declared address; the generator's rename is the seam |
+| `sdk/overlay.h` | unchanged; the registry is a module `provider_load` calls, not a provider field |
+
+### The verification path
+
+The generators are standalone tools, so the seam is proved without a full
+build. The plan the configure step wrote is read, and the generated files go to
+a scratch out-dir. The boot:
+
+    python tools/bootlink.py generate --aletheia-root ../bw_decomp --plan-dir build32/boot --shim-sources build32/boot/shim_sources_gen.txt --port-sources build32/boot/port_sources.txt --armdata-header build32/armdata/bw_arm9_data.h --define EIDOS_HEAP_MATCHED=0 --out-dir %TEMP%\seam_check\boot
+
+Look for:
+
+- `%TEMP%\seam_check\boot\boot_link.c` holds one `bw_slot_arm9_02007150`, and
+  one `bw_slot_arm9_` per arm9 row the boot link carries (35 rows; section 1;
+  `mod/declared_set.txt`):
+  `findstr /C:"bw_slot_arm9_" %TEMP%\seam_check\boot\boot_link.c`. The report
+  names any row the link does not define and the generator skipped.
+- `%TEMP%\seam_check\boot\include\src_matched_arm9_func_02012DAC.h` holds
+  `#define SAVE_CONTROL_StartSave bw_slot_arm9_02007150`.
+- `%TEMP%\seam_check\boot\include\src_matched_arm9_func_02007150.h` does not
+  hold that line.
+
+The overlays:
+
+    python tools/ovlink.py --aletheia-root ../bw_decomp --overlays "9;10;88" --link-sources build32/ovl/boot/link_sources.txt --set-name check --out-dir %TEMP%\seam_check\ovl --summary
+
+Look for:
+
+- `%TEMP%\seam_check\ovl\ov010_link.c` holds one `bw_slot_ov010_` per declared
+  ov010 row.
+- `%TEMP%\seam_check\ovl\include\ov010.h` holds the renamed spelling.
+- `%TEMP%\seam_check\ovl\ovl_dispatch.c` holds a `bw_mod_slot_lookup` in each
+  trampoline whose address is declared.
+
+A declared row whose overlay is not in the run (`ov093`, `ov020`) yields no
+slot in this output. That is the fixed coverage `progress/SEAM_COST.md`
+section 7 records, not a failure. Both commands write only their out-dirs and
+read only aletheia's metadata and the port's sources, so neither needs a
+compiler or a game byte.
+
+### What stays out
+
+The plan is the seam only. Five pieces are later, and none blocks it.
+
+- The loader (still-to-build item 4). A dropped-in mod is a native shared
+  library loaded at run time, and no loader exists (the only `dlopen` calls are
+  the extraction tool's D-Bus portal, `install/picker.c`; the only
+  `LoadLibrary` call is a diagnostic, `tools/lp64/lowmem_probe.c`). The seam
+  does not need it: the slot and the registry are host code the build produces,
+  and a mod's object installs into the registry by the same call a test would.
+- The ABI and the interface version policy (still-to-build items 4 and 5). Both
+  are checks on a loaded mod and its manifest, not on the call path.
+- The events and the typed wrappers (section 4; still-to-build items 7, 8, 9).
+  An event name is a binding on top of a slot; the slot fires with or without
+  one.
+- The per-mod state (still-to-build item 10). It is the `state` namespace of
+  section 3, not the call path.
+- The `.bw` container (still-to-build item 13). It is a packaging question for
+  the file layer, not the seam.
 
 ## 3. The manifest and pack schema
 
@@ -259,7 +434,7 @@ override registry read the code keys, and the rule interpreter reads the
 | `api` | integer | 1 | the interface version the mod is built against |
 | `code` | relative path | none | the mod's native library for this host |
 | `state` | identifier | derived from `name` | the per-mod state namespace |
-| `override` | a grammar line, repeatable | none | one address override |
+| `override` | a grammar line, repeatable | none | one (region, address) override |
 | `rule` | a grammar line, repeatable | none | one rule bound to one event |
 | `subscribe` | an event name, repeatable | none | a bound event, declarative only |
 | `settings` | relative path | none | the mod's settings declaration (still-to-build item 11) |
@@ -272,12 +447,15 @@ manifest").
 The `override` value grammar is:
 
 ```
-<address> <mode> <symbol> [sig="<prototype>"] [switch=<name>]
+<region>:<address> <mode> <symbol> [sig="<prototype>"] [switch=<name>]
 ```
 
-- `<address>` is a `0x` prefixed DS address. Both the even start and the
-  value a code pointer holds (the Thumb low bit) are accepted (still-to-build
-  item 2).
+- `<region>:<address>` is the pair `(region, address)` of section 2. `<region>`
+  is `arm9` or an overlay id, the spelling `mod/declared_set.txt` uses, and
+  `<address>` is a `0x` prefixed DS address. Both the even start and the value
+  a code pointer holds (the Thumb low bit) are accepted (still-to-build
+  item 2). The bare address is not a key: two overlays share one RAM window,
+  so `0x021C5200` alone names two functions (section 1).
 - `<mode>` is `replace` or `wrap` (`docs/mod-overrides.md`, "What an override
   declares"). `wrap` calls the original, which the slot keeps callable.
 - `<symbol>` is the C symbol the mod exports for this address.
@@ -290,10 +468,10 @@ The `override` value grammar is:
   name derived from the address (`sdk/mod_hooks.h`).
 
 A repeated `override` line is the mechanism for the conflict rule the data
-layer already has: mods load in ascending `order`, and for one address the
-later mod wins and the earlier is reported as shadowed (`docs/mod-overrides.md`,
-"Two mods on one address"). The manifest is where that report gets the mod
-name and the address.
+layer already has: mods load in ascending `order`, and for one `(region,
+address)` pair the later mod wins and the earlier is reported as shadowed
+(`docs/mod-overrides.md`, "Two mods on one address"). The manifest is where
+that report gets the mod name and the pair.
 
 A complete example manifest:
 
@@ -305,12 +483,12 @@ api   = 1
 code  = nuzlocke_soullink.dll
 state = nuzlocke-soullink
 
-# One line per address.  The address is the key tools/closure.py and the
-# overlay tables already use.
-override = 0x0216E818 wrap    sl_encounter_start sig="int f(int,int,int,int,int,int,int)" switch=encounter
-override = 0x021CBA40 replace sl_try_ball        switch=catch
-override = 0x021C5200 wrap    sl_faint           switch=faint
-override = 0x02007150 wrap    sl_save_begin      switch=save
+# One line per declared pair.  The region:address pair is the key; the bare
+# address is not, because two overlays share one RAM window (section 2).
+override = ov010:0x0216E818 wrap    sl_encounter_start sig="int f(int,int,int,int,int,int,int)" switch=encounter
+override = ov093:0x021CBA40 replace sl_try_ball        switch=catch
+override = ov093:0x021C5200 wrap    sl_faint           switch=faint
+override = arm9:0x02007150  wrap    sl_save_begin      switch=save
 
 # Declarative; the mod binds its handlers in code (still-to-build item 7).
 subscribe = encounter.start
@@ -397,6 +575,12 @@ address moves in aletheia.
 | `link.down` | 0x0215CD24 | the link becomes off | S NS MP |
 | `net.send` | the Wm and DWC send points | bytes leave the process | MP |
 | `net.receive` | the Wm and DWC receive points | bytes arrive | MP |
+
+These sixteen names are the catalogue of this section and stay unchanged.
+`docs/mod-events.md`, section 1, extends it to 216 entries (152 events, 17
+override points and 47 state entries), derived from the game's own command
+tables, and binds each to a declared address or an accessor. The names here are
+the subset the four example mods name.
 
 Exact semantics and the accepted writes:
 
