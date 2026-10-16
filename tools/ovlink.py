@@ -544,6 +544,30 @@ def hx(v):
     return "0x%08X" % v
 
 
+# The declared hookable set: mod/declared_set.txt (docs/mod-interface.md,
+# section 1).  The overlay rows get a slot here; the arm9 rows are
+# tools/bootlink.py's.
+DECLARED_SET = os.path.join(EIDOS_ROOT, "mod", "declared_set.txt")
+
+
+def read_declared_set():
+    """Rows of mod/declared_set.txt: (address, name, region).  `#` starts a
+    comment; a line is tab separated."""
+    rows = []
+    if not os.path.exists(DECLARED_SET):
+        return rows
+    with open(DECLARED_SET, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.split("#", 1)[0]
+            if not line.strip():
+                continue
+            parts = [p.strip() for p in line.rstrip("\n").split("\t")]
+            if len(parts) < 3 or not parts[0].startswith("0x"):
+                continue
+            rows.append((int(parts[0], 16), parts[1], parts[2]))
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Signatures for the trampolines
 # ---------------------------------------------------------------------------
@@ -664,6 +688,31 @@ def proto_decl(ret, name, params):
     plist = ", ".join(params) or "void"
     sep = "" if ret.endswith("*") else " "
     return "%s%s%s(%s);" % (ret, sep, name, plist)
+
+
+def slot_function(region_expr, slot):
+    """The generated slot for one declared address: the indirection at the
+    call site (docs/mod-interface.md, section 2).  Its default is the
+    original, so with no mod installed it behaves as the direct call did."""
+    ret, params = slot["sig"]
+    name = slot["name"]
+    args = ", ".join("a%d" % k for k in range(len(params)))
+    cast = "%s (*)(%s)" % (ret, ", ".join(params) or "void")
+    out = [proto(ret, name, params), "{"]
+    out.append("    void *h = bw_mod_slot_lookup(%s, 0x%08Xu);" % (region_expr, slot["addr"]))
+    out.append('    if (h != NULL && bw_hook_enabled("%s")) {' % slot["declared"])
+    if ret == "void":
+        out.append("        ((%s)h)(%s);" % (cast, args))
+        out.append("        return;")
+        out.append("    }")
+        out.append("    %s(%s);" % (slot["original"], args))
+    else:
+        out.append("        return ((%s)h)(%s);" % (cast, args))
+        out.append("    }")
+        out.append("    return %s(%s);" % (slot["original"], args))
+    out.append("}")
+    out.append("")
+    return "\n".join(out)
 
 
 def implicit_return(head, name):
@@ -885,6 +934,8 @@ class OvState:
         self.code_literals = {}    # value -> symbol expression
         self.sinits = []           # symbol names
         self.unresolved = {}
+        self.slot_names = {}       # declared name -> the slot it goes through
+        self.mod_slots = []        # declared rows: {addr, declared, original, sig}
 
 
 class Link:
@@ -894,6 +945,17 @@ class Link:
         self.al = Aletheia(self.root)
         self.notes = []
         self.ids = self._parse_ids(args.overlays)
+        # The declared overlay rows (docs/mod-interface.md, section 1): the
+        # (region, address) pairs a mod may override.
+        self.declared = {}          # overlay tag -> {addr: declared name}
+        self.declared_by_addr = {}  # addr -> (overlay id, declared name)
+        for addr, dname, region in read_declared_set():
+            if region == "arm9":
+                continue
+            self.declared.setdefault(region, {})[addr] = dname
+            m = re.match(r"^ov0*(\d+)$", region)
+            if m:
+                self.declared_by_addr.setdefault(addr, (int(m.group(1)), dname))
         self.exclusions = armdata.load_exclusions(args.exclusions)
         self.ov_excl = {}
         for line in read_list(args.ov_exclusions):
@@ -911,6 +973,7 @@ class Link:
         for oid in self.ids:
             self._data(self.state[oid])
         self._finish_stubs()
+        self._mod_slots()
 
     # -- inputs ------------------------------------------------------------
 
@@ -1186,7 +1249,15 @@ class Link:
                         u.builtins.add(n)
                     continue
                 if n in st.defs:
-                    st.renames[n] = self.own(st, n)
+                    addr = self.declared_addr(st, n, sc)
+                    if addr is not None and st.defs[n] is not u and n in sc.called:
+                        # A declared overlay address: a non-owning caller
+                        # inside the window goes through the slot
+                        # (docs/mod-interface.md, section 2).  The defining
+                        # unit keeps the overlay's own name.
+                        st.slot_names[n] = self.slot_name(st, addr)
+                    else:
+                        st.renames[n] = self.own(st, n)
                     if n in implicit:
                         d = st.defs[n].scan
                         u.protos[n] = implicit_return(d.heads.get(n), n)
@@ -1259,6 +1330,61 @@ class Link:
                 if sym is not None:
                     st.code_literals[v] = sym
                     u.literal_table = True
+        # The declared addresses a non-owning caller goes through a slot for:
+        # the overlay header renames the spelling to the slot.
+        st.renames.update(st.slot_names)
+
+    def declared_addr(self, st, name, sc):
+        """The declared overlay address of `name`, or None.  The key is the
+        (region, address) pair, never the bare address."""
+        decl = self.declared.get(st.ov.tag)
+        if not decl:
+            return None
+        addr = self.address(name, sc, st)
+        if addr is None:
+            return None
+        addr &= ~1
+        return addr if addr in decl else None
+
+    def slot_name(self, st, addr):
+        return "bw_slot_%s_%08X" % (st.ov.tag, addr)
+
+    def _mod_slots(self):
+        """The declared overlay rows and the slot each one gets: the
+        indirection at the call site (docs/mod-interface.md, section 2).  A
+        row whose definition the link does not carry has no slot; it is
+        reported and skipped."""
+        for oid in self.ids:
+            st = self.state[oid]
+            decl = self.declared.get(st.ov.tag, {})
+            for addr in sorted(decl):
+                dname = decl[addr]
+                dn, sig = self.target_signature(st, addr)
+                if dn is not None:
+                    if sig is None:
+                        # The definition's prototype does not normalise: a
+                        # slot cannot forward, so the row is refused
+                        # (docs/mod-interface.md, section 2).
+                        self.notes.append(
+                            "%s: declared 0x%08X (%s): the prototype of %s does "
+                            "not normalise" % (st.ov.tag, addr, dname, dn))
+                        continue
+                    original = self.own(st, dn)
+                elif addr in st.stubs or addr in st.known:
+                    # A stub: the slot calls it with no arguments.
+                    original = self.own_code(st, addr)
+                    sig = ("void", ())
+                else:
+                    self.notes.append("%s: declared 0x%08X (%s) is not in the link"
+                                      % (st.ov.tag, addr, dname))
+                    continue
+                st.mod_slots.append({
+                    "name": self.slot_name(st, addr),
+                    "addr": addr,
+                    "declared": dname,
+                    "original": original,
+                    "sig": sig,
+                })
 
     def arm9_canonical(self, addr):
         """The name the ARM9's own matched files define at `addr` (an
@@ -1394,6 +1520,24 @@ class Link:
         for a in overlay_table.KNOWN_SINIT.get(ov.id, [])[:ov.sinit_count]:
             st.sinits.append(self.own_code(st, a & ~1))
 
+    def declared_signature(self, rid, addr, dname):
+        """The normalised prototype of a declared row whose overlay is not
+        compiled, read from its matched source (aletheia's metadata), so a
+        trampoline over the address can call an override with the right
+        arguments."""
+        for rel in self.al.ov_sources.get(rid, []):
+            rows = self.al.src_names.get(rel)
+            if not rows or (dname, addr) not in rows:
+                continue
+            path = os.path.join(self.root, rel)
+            if not os.path.exists(path):
+                continue
+            sc = Scan(path, read_text(path))
+            head = sc.heads.get(dname)
+            if head is not None:
+                return signature(head, dname, sc.typedefs)
+        return None
+
     def _finish_stubs(self):
         """Every known function of a compiled overlay that nothing defines is a
         stub; and every trampoline's target in a compiled overlay exists."""
@@ -1471,6 +1615,15 @@ def write_unit_header(link, u, ov_header, path):
         lines.append("#undef %s" % n)
         lines.append("#define %s %s   /* another file of the overlay owns %s */"
                      % (n, u.private[n], n))
+    for n in sorted(st.slot_names):
+        if st.defs.get(n) is u:
+            # The overlay header renames a declared name to its slot for a
+            # non-owning caller; the defining unit keeps the overlay's own
+            # name, so its definition is not renamed away
+            # (docs/mod-interface.md, section 2).
+            lines.append("#undef %s" % n)
+            lines.append("#define %s %s   /* the defining unit keeps its own name */"
+                         % (n, link.own(st, n)))
     for n in sorted(u.builtins):
         port, decl = MWCC_BUILTINS[n]
         lines.append(decl)
@@ -1514,6 +1667,8 @@ def write_overlay_c(link, st, path):
     w('#include "armdata.h"')
     w('#include "dsmem.h"')
     w('#include "overlay_image.h"')
+    w('#include "mod_slot.h"')
+    w('#include "mod_hooks.h"')
     w("")
     # Stubs.
     if st.stubs:
@@ -1530,13 +1685,38 @@ def write_overlay_c(link, st, path):
         if r["kind"] == "CODE":
             funcs[r["target"]] = r.get("fn")
     stub_names = {link.own(st, n) for n in st.stubs.values()}
+    slot_orig = {s["original"]: s for s in st.mod_slots if s["original"] not in stub_names}
     externs = sorted({n for n in list(funcs.values()) + list(st.code_literals.values()) + st.sinits
-                      if n and n not in stub_names})
+                      if n and n not in stub_names and n not in slot_orig})
     if externs:
         w("/* Functions defined elsewhere in the build that the data, the literals")
         w(" * or the initialisers point at.  Only the address is taken. */")
         for n in externs:
             w("extern void %s(void);" % n)
+        w("")
+    if slot_orig:
+        w("/* The declared originals: normalised prototypes of their")
+        w(" * definitions, so a slot can forward its arguments. */")
+        for n in sorted(slot_orig):
+            ret, params = slot_orig[n]["sig"]
+            w("%s" % proto_decl(ret, n, params))
+        w("")
+
+    def fnref(n):
+        """A function name as a BwDataFn value.  A declared original is
+        declared with its real prototype (so the slot can call it), which is
+        not BwDataFn; the cast here is the one the table needs.  Every other
+        name is declared void(void) already."""
+        return "(BwDataFn)%s" % n if n in slot_orig else n
+    # The declared slots: the indirection a non-owning caller goes through.
+    if st.mod_slots:
+        w("/* The declared slots of this overlay (docs/mod-interface.md,")
+        w(" * section 2).  A caller inside the window that is not the defining")
+        w(" * unit compiles to a call to one of these; its default is the")
+        w(" * original, so with no mod installed it behaves as the direct call")
+        w(" * did. */")
+        for s in st.mod_slots:
+            w("%s" % slot_function("BW_MOD_REGION_OVL(%d)" % ov.id, s))
         w("")
     traps = sorted({t & ~1 for t, n in funcs.items() if not n})
     for t in traps:
@@ -1597,7 +1777,7 @@ def write_overlay_c(link, st, path):
         fn_index[t] = i
         n = funcs[t]
         if n:
-            w("    { 0x%08Xu, %s, %s }," % (t, n, c_str(n)))
+            w("    { 0x%08Xu, %s, %s }," % (t, fnref(n), c_str(n)))
         else:
             w("    { 0x%08Xu, bw_trap_%08X, NULL }," % (t, t & ~1))
     if not funcs:
@@ -1651,7 +1831,7 @@ def write_overlay_c(link, st, path):
     # Static initialisers.
     w("static const BwDataFn k_sinits[] = {")
     for n in st.sinits:
-        w("    %s," % n)
+        w("    %s," % fnref(n))
     if not st.sinits:
         w("    NULL")
     w("};")
@@ -1679,7 +1859,7 @@ def write_overlay_c(link, st, path):
         entries[a | (1 if a in st.thumb else 0)] = link.own(st, n)
     for a, n in st.stubs.items():
         entries.setdefault(a | (1 if a in st.thumb else 0), link.own(st, n))
-    declared = set(stub_names) | set(externs)
+    declared = set(stub_names) | set(externs) | set(slot_orig)
     fresh = sorted(set(entries.values()) - declared)
     if fresh:
         w("/* The overlay's functions, for bw_ovl_code_entry; only the address is")
@@ -1689,11 +1869,27 @@ def write_overlay_c(link, st, path):
         w("")
     w("static const BwDataFunc k_entries[] = {")
     for v in sorted(entries):
-        w("    { 0x%08Xu, %s, %s }," % (v, entries[v], c_str(entries[v])))
+        w("    { 0x%08Xu, %s, %s }," % (v, fnref(entries[v]), c_str(entries[v])))
     if not entries:
         w("    { 0, NULL, NULL }")
     w("};")
     w("")
+    # The declared originals, published when this window loads
+    # (sdk/overlay_image.c, provider_load), so a wrap override can call them.
+    if st.mod_slots:
+        w("/* The declared originals of this overlay, published when its window")
+        w(" * loads (sdk/overlay_image.c, provider_load).  ovl_dispatch.c's")
+        w(" * bw_ovl_mod_publish picks the table by overlay id. */")
+        w("static const BwModSlotOriginal k_mod_originals[] = {")
+        for s in st.mod_slots:
+            w("    { %du, 0x%08Xu, (void *)%s }," % (ov.id, s["addr"], s["original"]))
+        w("};")
+        w("")
+        w("void bw_ovl_mod_publish_%s(void)" % ov.tag)
+        w("{")
+        w("    bw_mod_slot_publish_table(k_mod_originals, %du);" % len(st.mod_slots))
+        w("}")
+        w("")
     w("const BwOvlImage bw_ovl_%s = {" % ov.tag)
     w("    %du, &k_image, k_sinits, %du, %du, %du," % (
         ov.id, len(st.sinits), len(st.at), len(st.stubs)))
@@ -1719,6 +1915,8 @@ def write_dispatch(link, path, set_name):
     w(" */")
     w("")
     w('#include "overlay_image.h"')
+    w('#include "mod_slot.h"')
+    w('#include "mod_hooks.h"')
     w("")
     declared = {}
     body = []
@@ -1736,19 +1934,42 @@ def write_dispatch(link, path, set_name):
             targets.append((c, link.own_code(st, addr) if dn else None, s))
             if s is not None and sig is None:
                 sig = s
+        decl = link.declared_by_addr.get(addr)
+        if decl is not None:
+            # A declared address: the declared function's prototype is the
+            # contract, from aletheia's metadata when the overlay is not
+            # compiled into this build.
+            dsig = link.declared_signature(decl[0], addr, decl[1])
+            if dsig is not None:
+                sig = dsig
         if sig is None:
             sig = ("void", ())
             forward = False
         else:
             forward = True
         ret, params = sig
+        args = ", ".join("a%d" % k for k in range(len(params)))
         body.append("/* %s at 0x%08X: %s */" % (
             name, addr, ", ".join("ov%03d" % c for c in cands) or "no overlay"))
         body.append("%s;" % proto(ret, name, params))
         body.append(proto(ret, name, params))
         body.append("{")
+        if forward and decl is not None:
+            # A declared address: an installed override wins over whichever
+            # overlay is resident (docs/mod-interface.md, section 2).
+            rid, dname = decl
+            body.append("    void *h = bw_mod_slot_lookup(BW_MOD_REGION_OVL(%d), 0x%08Xu);"
+                        % (rid, addr))
+            body.append('    if (h != NULL && bw_hook_enabled("%s")) {' % dname)
+            if ret == "void":
+                body.append("        ((void (*)(%s))h)(%s);"
+                            % (", ".join(params) or "void", args))
+                body.append("        return;")
+            else:
+                body.append("        return ((%s (*)(%s))h)(%s);"
+                            % (ret, ", ".join(params) or "void", args))
+            body.append("    }")
         body.append("    int ov = bw_ovl_resident_at(0x%08Xu);" % addr)
-        args = ", ".join("a%d" % k for k in range(len(params)))
         for c, sym, s in targets:
             if c not in link.state:
                 continue
@@ -1801,6 +2022,47 @@ def write_dispatch(link, path, set_name):
     w("/* The overlays of set %s: install with bw_ovl_install. */" % set_name)
     w("const BwOvlImageSet bw_ovl_set_%s = { k_images, %du };" % (set_name, len(link.ids)))
     w("")
+    # Publish each compiled overlay's declared originals when it loads
+    # (sdk/overlay_image.c, provider_load).  The per-overlay table lives in
+    # ovNNN_link.c; this dispatches by id.  The dispatcher is registered at
+    # start-up, so sdk/mod_slot.c's bw_ovl_mod_publish reaches it without a
+    # link-time reference to the generated code (a link with no overlay has
+    # none, and its registry stays empty).
+    publishing = [oid for oid in link.ids if link.state[oid].mod_slots]
+    if publishing:
+        w("/* Publish the declared originals of a compiled overlay when its")
+        w(" * window loads (sdk/overlay_image.c, provider_load). */")
+        for oid in publishing:
+            w("void bw_ovl_mod_publish_ov%03d(void);" % oid)
+        w("")
+        w("static void bw_ovl_mod_publish_dispatch(unsigned int id)")
+        w("{")
+        w("    switch (id) {")
+        for oid in publishing:
+            w("    case %du: bw_ovl_mod_publish_ov%03d(); break;" % (oid, oid))
+        w("    default: break;")
+        w("    }")
+        w("}")
+        w("")
+        w("#if defined(_MSC_VER) && !defined(__clang__)")
+        w("/* cl.exe: a start-up initialiser in the C run-time's constructor")
+        w(" * section. */")
+        w("typedef void (*BwModCtor)(void);")
+        w("static void bw_ovl_mod_register(void);")
+        w("#pragma section(\".CRT$XCU\", read)")
+        w("__declspec(allocate(\".CRT$XCU\")) BwModCtor bw_ovl_mod_ctor =")
+        w("    bw_ovl_mod_register;")
+        w("static void bw_ovl_mod_register(void)")
+        w("{")
+        w("    bw_mod_slot_set_overlay_publish(bw_ovl_mod_publish_dispatch);")
+        w("}")
+        w("#else")
+        w("__attribute__((constructor)) static void bw_ovl_mod_register(void)")
+        w("{")
+        w("    bw_mod_slot_set_overlay_publish(bw_ovl_mod_publish_dispatch);")
+        w("}")
+        w("#endif")
+        w("")
     write_if_changed(path, "\n".join(out))
 
 
@@ -1829,9 +2091,13 @@ def write_report(link, path):
     p = r.append
     tot_units = sum(len(st.units) for st in link.state.values())
     p("ovlink: %d overlays, %d translation units, %d trampolines, %d ARM9 names "
-      "(%d not in the link)" % (
+      "(%d not in the link), %d declared slots, %d declared rows not in the link" % (
           len(link.ids), tot_units, len(link.tramps), len(link.arm9_needs),
-          sum(1 for v in link.arm9_needs.values() if not v[1])))
+          sum(1 for v in link.arm9_needs.values() if not v[1]),
+          sum(len(st.mod_slots) for st in link.state.values()),
+          sum(1 for oid in link.ids
+              for a in link.declared.get(link.state[oid].ov.tag, {})
+              if a not in [s["addr"] for s in link.state[oid].mod_slots])))
     for oid in link.ids:
         st = link.state[oid]
         kinds = {}
@@ -1841,12 +2107,12 @@ def write_report(link, path):
         for x in st.relocs:
             rk[x["kind"]] = rk.get(x["kind"], 0) + 1
         p("%s  0x%08X..0x%08X  units %d  excluded %d  defined %d  stubs %d  data %s  "
-          "relocs %s  code literals %d  implicit decls %d  private copies %d" % (
+          "relocs %s  code literals %d  implicit decls %d  private copies %d  slots %d" % (
               st.ov.tag, st.ov.lo, st.ov.hi, len(st.units), len(st.excluded), len(st.at),
               len(st.stubs), " ".join("%s=%d" % kv for kv in sorted(kinds.items())) or "0",
               " ".join("%s=%d" % kv for kv in sorted(rk.items())) or "0",
               len(st.code_literals), sum(len(u.protos) for u in st.units),
-              sum(len(u.private) for u in st.units)))
+              sum(len(u.private) for u in st.units), len(st.mod_slots)))
     for oid in link.ids:
         st = link.state[oid]
         for rel, why in st.excluded:
@@ -1871,6 +2137,11 @@ def write_report(link, path):
     for n in sorted(link.tramps):
         p("  trampoline %s 0x%08X (%s)" % (n, link.tramps[n], ", ".join(
             "ov%03d" % c for c in link.al.windows(link.tramps[n]))))
+    for oid in link.ids:
+        st = link.state[oid]
+        for s in st.mod_slots:
+            p("  %s slot %s 0x%08X (%s -> %s)" % (
+                st.ov.tag, s["name"], s["addr"], s["declared"], s["original"]))
     for line in link.notes:
         p("  note: " + line)
     write_if_changed(path, "\n".join(r) + "\n")

@@ -328,6 +328,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs.c           # data root, mod list, path resolution
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs_narc.c      # member-level NARC overrides, the merged archive
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_hooks.c     # on/off switch for port-side code hooks (docs/hooks.md)
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_slot.c      # the mod seam's slot registry (docs/mod-interface.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_title.c     # title menu hook state (docs/hooks.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_dir.c      # path kind and directory listing, Win32 and POSIX
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_save.c     # save folder, mkdir, sync, replace: Win32 and POSIX

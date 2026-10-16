@@ -36,6 +36,7 @@
 #include "armdata.h"
 #include "overlay.h"
 #include "overlay_image.h"
+#include "mod_slot.h"
 
 #define OVL_MAX 1024u
 
@@ -224,6 +225,9 @@ static void provider_load(const BwOverlayDesc *d)
     if (rc != BW_DATA_OK) {
         load_panic(d, "copying the image");
     }
+    /* The overlay's declared slots are installed with its window: publish
+     * each original so a wrap override can call it (mod_slot.h). */
+    bw_ovl_mod_publish(d->id);
     rc = bw_data_bind(img->data);
     if (rc != BW_DATA_OK) {
         load_panic(d, "binding its names");
@@ -322,6 +326,13 @@ BwDataFn bw_ovl_code_entry(u32 value)
             }
         }
         if (lo < o->entry_count && o->entries[lo].addr == value) {
+            void *h = bw_mod_slot_lookup(o->id, value & ~1u);
+
+            if (h != NULL) {
+                /* A mod installed an override for this (region, address)
+                 * pair (mod_slot.h): it wins over the table entry. */
+                return (BwDataFn)h;
+            }
             if (found != NULL) {
                 return NULL;        /* two overlays: needs a trampoline */
             }

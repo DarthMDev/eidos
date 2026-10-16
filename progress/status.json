@@ -12,8 +12,8 @@
   "host_surface_pct": 17.07,
   "implicit_decls": 202,
   "link_failed_targets": 0,
-  "matched_total": 33541,
-  "note": "build links: renamed symbols resynced and test link graphs fixed",
+  "matched_total": 33544,
+  "note": "the mod seam: slots in the generators and the registry in sdk",
   "shim_replaced": 122,
   "stubbed_asm": 39,
   "stubbed_open": 150,
@@ -23,5 +23,5 @@
   },
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 2
+  "wave": 9
 }

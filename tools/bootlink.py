@@ -84,6 +84,7 @@ import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import closure  # noqa: E402
+import ovlink    # noqa: E402  (the prototype normaliser, tools/ovlink.py)
 
 DATA_ADDR_NAME = re.compile(r"^[A-Za-z]+_([0-9A-Fa-f]{8})$")
 BW_REG = re.compile(r"\bBW_REG\(\s*(0x[0-9A-Fa-f]+)u?\s*,\s*([A-Za-z_]\w*)")
@@ -628,6 +629,71 @@ class Unit:
         self.private = {}           # name -> this file's own copy's name
 
 
+# The declared hookable set: mod/declared_set.txt (docs/mod-interface.md,
+# section 1).  The arm9 rows get a slot here; the overlay rows are
+# tools/ovlink.py's.
+DECLARED_SET = os.path.join(closure.EIDOS_ROOT, "mod", "declared_set.txt")
+
+
+def read_declared_set(region=None):
+    """Rows of mod/declared_set.txt: (address, name, region), the rows of
+    `region` only when it is given.  `#` starts a comment; a line is tab
+    separated."""
+    rows = []
+    if not os.path.exists(DECLARED_SET):
+        return rows
+    with open(DECLARED_SET, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.split("#", 1)[0]
+            if not line.strip():
+                continue
+            parts = [p.strip() for p in line.rstrip("\n").split("\t")]
+            if len(parts) < 3 or not parts[0].startswith("0x"):
+                continue
+            if region is not None and parts[2] != region:
+                continue
+            rows.append((int(parts[0], 16), parts[1], parts[2]))
+    return rows
+
+
+def definition_signature(path, name):
+    """(return type, [param types]) of `name` as the file at `path` defines
+    it, normalised by tools/ovlink.py's signature (the call write_thunk
+    makes), or None when it does not normalise."""
+    if not path or not os.path.exists(path):
+        return None
+    sc = ovlink.Scan(path, ovlink.read_text(path))
+    head = sc.heads.get(name)
+    if head is None:
+        return None
+    return ovlink.signature(head, name, sc.typedefs)
+
+
+def slot_function(region_expr, addr, slot):
+    """The generated slot for one declared address: the indirection at the
+    call site (docs/mod-interface.md, section 2).  Its default is the
+    original, so with no mod installed it behaves as the direct call did."""
+    ret, params = slot["sig"]
+    name = slot["name"]
+    args = ", ".join("a%d" % k for k in range(len(params)))
+    cast = "%s (*)(%s)" % (ret, ", ".join(params) or "void")
+    out = [ovlink.proto(ret, name, params), "{"]
+    out.append("    void *h = bw_mod_slot_lookup(%s, 0x%08Xu);" % (region_expr, addr))
+    out.append('    if (h != NULL && bw_hook_enabled("%s")) {' % slot["declared"])
+    if ret == "void":
+        out.append("        ((%s)h)(%s);" % (cast, args))
+        out.append("        return;")
+        out.append("    }")
+        out.append("    %s(%s);" % (slot["original"], args))
+    else:
+        out.append("        return ((%s)h)(%s);" % (cast, args))
+        out.append("    }")
+        out.append("    return %s(%s);" % (slot["original"], args))
+    out.append("}")
+    out.append("")
+    return "\n".join(out)
+
+
 def generate(args):
     idx = closure.Index()
     pdir = args.plan_dir
@@ -694,6 +760,34 @@ def generate(args):
         if m and not closure.ADDR_NAME.match(name):
             data_at.setdefault(int(m.group(1), 16), name)
 
+    # The declared ARM9 rows and the slot each one gets (docs/mod-interface.md,
+    # section 2).  The definition's prototype comes from the defining unit and
+    # is normalised by tools/ovlink.py's signature.  A row whose definition the
+    # link does not carry is reported and skipped, like an unbound data name.
+    arm9_slots = {}            # address -> slot dict
+    slot_skipped = []          # (declared name, address, why)
+    for addr, dname, _region in read_declared_set("arm9"):
+        oname = func_at.get(addr)
+        if oname is None and dname in defined:
+            # A unit's member whose spelling is not func_/sub_ and not in the
+            # SDK table (BEACON_SetFlag in unit_0200C0E8.c): the declared row
+            # carries the address, and the unit defines the name.
+            oname = dname
+        if oname is None:
+            slot_skipped.append((dname, addr, "nothing in the link defines it"))
+            continue
+        sig = definition_signature(defined.get(oname), oname)
+        if sig is None:
+            slot_skipped.append((dname, addr,
+                                 "%s: its prototype does not normalise" % oname))
+            continue
+        arm9_slots[addr] = {
+            "name": "bw_slot_arm9_%08X" % addr,
+            "declared": dname,
+            "original": oname,
+            "sig": sig,
+        }
+
     # Every data spelling the boot uses, by address, so one object stands
     # for one DS address.
     data_names = {}            # address -> set of spellings
@@ -756,6 +850,13 @@ def generate(args):
                 continue
             if addr is None and name in known_addr:
                 addr = known_addr[name]
+            if addr is not None and addr in arm9_slots \
+                    and name in unit.scan.called \
+                    and defined.get(arm9_slots[addr]["original"]) != unit.path:
+                # A declared ARM9 address: the caller goes through the slot.
+                # The defining unit keeps its own name and gets no rename.
+                unit.renames[name] = arm9_slots[addr]["name"]
+                continue
             if closure.is_link_constant(name, addr, kind):
                 if addr is None:
                     raise SystemExit("bootlink.py: link constant %s has no value in %s"
@@ -919,7 +1020,8 @@ def generate(args):
             lines.append("%s%s%s();" % (rtype, sep, name))
         write_if_changed(os.path.join(incdir, header_name(unit.path)), "\n".join(lines) + "\n")
 
-    write_link_c(os.path.join(out, "boot_link.c"), consts, pinned, views, missing_funcs)
+    write_link_c(os.path.join(out, "boot_link.c"), consts, pinned, views, missing_funcs,
+                 arm9_slots)
     # Data the data header does not bind and nothing defines has no
     # storage: the link would fail on it, so the generator does, by name.
     unbound = sorted((canonical[a], a) for a in data_names
@@ -935,9 +1037,18 @@ def generate(args):
               "data objects with no storage: %d" % len(unbound),
               "functions stubbed: %d open, %d asm-pending"
               % (sum(1 for v in missing_funcs.values() if v[1].startswith("open")),
-                 sum(1 for v in missing_funcs.values() if not v[1].startswith("open")))]
+                 sum(1 for v in missing_funcs.values() if not v[1].startswith("open"))),
+              "mod slots: %d arm9 emitted, %d declared rows skipped"
+              % (len(arm9_slots), len(slot_skipped))]
     for name, a, b in dups:
         report.append("DUPLICATE %s: %s and %s" % (name, a, b))
+    report.append("")
+    report.append("mod slots (a generated indirection per declared ARM9 address):")
+    for addr in sorted(arm9_slots):
+        report.append("  %-36s 0x%08X -> %s" % (
+            arm9_slots[addr]["declared"], addr, arm9_slots[addr]["original"]))
+    for dname, addr, why in slot_skipped:
+        report.append("  SKIPPED %-28s 0x%08X %s" % (dname, addr, why))
     report.append("")
     report.append("implicit declarations:")
     for unit in units:
@@ -957,6 +1068,9 @@ def generate(args):
     for name, addr in unbound:
         print("bootlink.py: no storage for data %s (%s)"
               % (name, "0x%08X" % addr if addr is not None else "no address"), file=sys.stderr)
+    for dname, addr, why in slot_skipped:
+        print("bootlink.py: no slot for %s (0x%08X): %s" % (dname, addr, why),
+              file=sys.stderr)
     return 1 if dups or unbound else 0
 
 
@@ -1019,12 +1133,15 @@ LINK_C_HEAD = """\
 
 #include "dsmem.h"
 #include "port.h"
+#include "mod_slot.h"
+#include "mod_hooks.h"
 
 void bw_boot_link_init(void);
 """
 
 
-def write_link_c(path, consts, pinned, views, missing_funcs):
+def write_link_c(path, consts, pinned, views, missing_funcs, slots=None):
+    slots = slots or {}
     lines = [LINK_C_HEAD]
     lines.append("/* ---- link-time constants ---- */\n")
     runtime = []               # (name, initial value), set at start-up
@@ -1046,11 +1163,25 @@ def write_link_c(path, consts, pinned, views, missing_funcs):
             lines.append("extern char %s[];" % target)
             lines.append("void *bw_lc_%s = (void *)%s;" % (name, target))
     lines.append("")
+    if slots:
+        lines.append("/* ---- mod slots: the originals the slots call ---- */\n")
+        for addr in sorted(slots):
+            ret, params = slots[addr]["sig"]
+            lines.append(ovlink.proto_decl(ret, slots[addr]["original"], params))
+        lines.append("")
     lines.append("void bw_boot_link_init(void)\n{")
     # Addresses first: a second view of a pinned object copies its pointer.
     for name, value in sorted(runtime, key=lambda r: r[1].startswith("bw_lc_")):
         lines.append("    bw_lc_%s = %s;" % (name, value))
+    # Publish each declared original so a wrap override can call it.
+    for addr in sorted(slots):
+        lines.append("    bw_mod_slot_publish(BW_MOD_REGION_ARM9, 0x%08Xu, (void *)%s);"
+                     % (addr, slots[addr]["original"]))
     lines.append("}\n")
+    if slots:
+        lines.append("/* ---- mod slots: one indirection per declared ARM9 address ---- */\n")
+        for addr in sorted(slots):
+            lines.append(slot_function("BW_MOD_REGION_ARM9", addr, slots[addr]))
     lines.append("/* ---- STUBS: functions nothing defines yet ---- */\n")
     for name in sorted(missing_funcs):
         addr, why = missing_funcs[name]
