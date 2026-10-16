@@ -13,7 +13,7 @@
  *     which is the shape of the game's own table at 0x020A6C58.
  *
  * Then it drives the matched readers: src/matched/unit_02048DDC.c (open by
- * id, resolve a member), func_02048D00.c and func_02048F4C.c (read a member
+ * id, resolve a member), ARC_TOOL_ReadMemberRangeImpl.c and ARC_TOOL_ReadMember.c (read a member
  * by id), and checks every byte against what it wrote and, independently,
  * against the port's own NARC reader in sdk/narc.c, which shares no code
  * with the matched one.  What is checked:
@@ -50,11 +50,11 @@ struct ArcHandle {
     u8 raw[BW_FSFILE_SIZE];
 };
 
-extern void func_02048DDC(struct ArcHandle *arc, u32 id);
-extern u32  func_02048E34(struct ArcHandle *arc, u32 member, u32 base, u32 size);
-extern void func_02048D00(void *dst, u32 archive_id, u32 member, u32 mode,
+extern void ARC_TOOL_OpenArchive(struct ArcHandle *arc, u32 id);
+extern u32  ARC_TOOL_SeekMember(struct ArcHandle *arc, u32 member, u32 base, u32 size);
+extern void ARC_TOOL_ReadMemberRangeImpl(void *dst, u32 archive_id, u32 member, u32 mode,
                           u32 *size_out);
-extern void func_02048F4C(void *dst, u32 archive_id, u32 member);
+extern void ARC_TOOL_ReadMember(void *dst, u32 archive_id, u32 member);
 extern s32  FS_ReadFile(void *file, void *dst, s32 len);
 extern s32  FS_CloseFile(void *file);
 extern u32  CRYPTOi__BN_lshift1(void *file, u32 path_address);
@@ -267,8 +267,8 @@ int main(void)
             const struct Member *m = &ARCS[id][mem];
 
             /* 1. the two matched halves by hand */
-            func_02048DDC(&h, id);
-            size = func_02048E34(&h, mem, 0, 0);
+            ARC_TOOL_OpenArchive(&h, id);
+            size = ARC_TOOL_SeekMember(&h, mem, 0, 0);
             BW_CHECK_EQ("the resolved size is the member's", size, m->len);
             memset(buf, 0xEE, sizeof(buf));
             BW_CHECK_EQ("the whole member reads",
@@ -278,8 +278,8 @@ int main(void)
 
             /* 2. the game's own read-by-id entry point */
             memset(buf, 0xEE, sizeof(buf));
-            func_02048F4C(buf, id, mem);
-            BW_CHECK_EQ("func_02048F4C reads the same bytes",
+            ARC_TOOL_ReadMember(buf, id, mem);
+            BW_CHECK_EQ("ARC_TOOL_ReadMember reads the same bytes",
                         member_matches(buf, m, 0), 1);
             BW_CHECK_EQ("and stops at the member's end", buf[m->len], 0xEE);
 
@@ -296,7 +296,7 @@ int main(void)
 
     /* D00's mode is a byte offset from the member's start. */
     memset(buf, 0xEE, sizeof(buf));
-    func_02048D00(buf, 0, 3, 5, NULL);
+    ARC_TOOL_ReadMemberRangeImpl(buf, 0, 3, 5, NULL);
     {
         struct Member tail = { ARC0[3].len - 5, ARC0[3].seed };
         BW_CHECK_EQ("mode 5 starts five bytes in", member_matches(buf, &tail, 5), 1);
@@ -308,14 +308,14 @@ int main(void)
         void (*saved)(void) = g_Sink.handler;
         g_Sink.handler = count_assert;
         g_asserts = 0;
-        func_02048DDC(&h, 1);
-        (void)func_02048E34(&h, 2, 0, 0);
+        ARC_TOOL_OpenArchive(&h, 1);
+        (void)ARC_TOOL_SeekMember(&h, 2, 0, 0);
         FS_CloseFile(&h);
         g_Sink.handler = saved;
         BW_CHECK_EQ("member 2 of a 2-member archive asserts", g_asserts, 1);
         g_asserts = 0;
-        func_02048DDC(&h, 1);
-        (void)func_02048E34(&h, 1, 0, 0);
+        ARC_TOOL_OpenArchive(&h, 1);
+        (void)ARC_TOOL_SeekMember(&h, 1, 0, 0);
         FS_CloseFile(&h);
         BW_CHECK_EQ("member 1 does not", g_asserts, 0);
     }
@@ -324,20 +324,20 @@ int main(void)
     bw_set_mod_root(MOD);
     for (mem = 0; mem < 3; mem++) {
         memset(buf, 0xEE, sizeof(buf));
-        func_02048DDC(&h, 1);
-        size = func_02048E34(&h, mem, 0, 0);
+        ARC_TOOL_OpenArchive(&h, 1);
+        size = ARC_TOOL_SeekMember(&h, mem, 0, 0);
         BW_CHECK_EQ("the mod's member size", size, MOD1[mem].len);
         FS_ReadFile(&h, buf, (s32)size);
         FS_CloseFile(&h);
         BW_CHECK_EQ("the mod's bytes", member_matches(buf, &MOD1[mem], 0), 1);
     }
     memset(buf, 0xEE, sizeof(buf));
-    func_02048F4C(buf, 2, 0);
+    ARC_TOOL_ReadMember(buf, 2, 0);
     BW_CHECK_EQ("an archive the mod lacks falls through",
                 member_matches(buf, &ARC2[0], 0), 1);
     bw_set_mod_root(NULL);
     memset(buf, 0xEE, sizeof(buf));
-    func_02048F4C(buf, 1, 1);
+    ARC_TOOL_ReadMember(buf, 1, 1);
     BW_CHECK_EQ("clearing the mod root restores the base",
                 member_matches(buf, &ARC1[1], 0), 1);
 

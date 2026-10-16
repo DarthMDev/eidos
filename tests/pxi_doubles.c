@@ -53,39 +53,18 @@ unsigned long RTCEXi_CommonCallback(void) { return 4; }
 int OS_IsRunOnTwl(void) { return 0; }
 void CTRDGi_InitCommon(void) { }
 
-extern void func_02088498(void);
-void PXI_Init(void) { func_02088498(); }
-
-extern BOOL func_020885EC(int fifotag, int proc);
-BOOL PXI_IsCallbackReady(int fifotag, int proc)
-{
-    return func_020885EC(fifotag, proc);
-}
+/* PXI_Init, PXI_IsCallbackReady, OSi_CommonCallback, PMi_CommonCallback,
+ * PMi_DummyCallback and CTRDGi_SendtoPxi are the matched files' own names now
+ * (func_02088498.c, func_020885EC.c, func_02084A38.c, func_0208B950.c,
+ * func_0208B840.c, func_02091150.c), so the forwarders that stood in for them
+ * are gone; only PXI_Init's other callee still needs its spelling.         */
+extern void func_020884A4(void);                    /* PXI_InitFifo, sdk/pxi.c */
+void PXI_InitFifo(void) { func_020884A4(); }
 
 extern int PXI_SendWordByFifo(int fifotag, unsigned long data, BOOL err);
 int func_02088610(int fifotag, unsigned long data, BOOL err)
 {
     return PXI_SendWordByFifo(fifotag, data, err);
-}
-
-extern void func_02084A38(int tag, unsigned long data, BOOL err);
-void OSi_CommonCallback(int tag, unsigned long data, BOOL err)
-{
-    func_02084A38(tag, data, err);
-}
-
-#if BW_TEST_PM_MATCHED
-extern void func_0208B950(int tag, unsigned long data, BOOL err);
-void PMi_CommonCallback(int tag, unsigned long data, BOOL err)
-{
-    func_0208B950(tag, data, err);
-}
-#endif
-
-extern void func_0208B840(unsigned int result, unsigned int *arg);
-void PMi_DummyCallback(unsigned int result, unsigned int *arg)
-{
-    func_0208B840(result, arg);
 }
 
 extern BOOL func_02088F2C(unsigned long command);
@@ -101,16 +80,13 @@ BOOL RTCi_ReadRawDateTimeAsync(void)
     return func_02088F2C(0x10);
 }
 
-extern void func_02091150(unsigned long data);
-void CTRDGi_SendtoPxi(unsigned long data) { func_02091150(data); }
-
-extern void func_020911D4(void);
+extern void MSL_C_LIB_EmptyStub(void);
 void CTRDGi_DummyCallback(int tag, unsigned long data, BOOL err)
 {
     (void)tag;
     (void)data;
     (void)err;
-    func_020911D4();
+    MSL_C_LIB_EmptyStub();
 }
 
 /* Addresses of the objects above, for the test's checks.                   */

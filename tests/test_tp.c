@@ -17,7 +17,7 @@
  *  - The round trip, on a 32-bit target: TP_Init, single sampling
  *    (TP_RequestSamplingAsync, TP_WaitRawResult), automatic sampling and
  *    its errors, through the matched TPi_TpCallback, and the game's own
- *    per-frame touch pass (src/matched/arm9/func_020358A0.c) reading the
+ *    per-frame touch pass (src/matched/arm9/TOUCHPANEL_MainSys.c) reading the
  *    pixel back.  Those files view tp.o's .bss through layouts that agree
  *    with each other only with 4-byte pointers (TP_WaitBusy and
  *    TP_CheckError address it at fixed byte offsets 0x3a and 0x38), as
@@ -73,7 +73,7 @@ typedef struct TPCalibrateParam {
 
 typedef void (*TPRecvCallback)(int command, int result, u16 index);
 
-/* tp.o's .bss as the full-layout files see it (func_0208A924.c).          */
+/* tp.o's .bss as the full-layout files see it (TP_Init.c).          */
 typedef struct TpBss {
     u16 initial;
     TPRecvCallback callback;
@@ -98,30 +98,25 @@ TpBss g_02152FA4;
 /* ------------------------------------------------------------------ */
 
 typedef void (*Arm9Cb)(int tag, unsigned long data, BOOL err);
-extern void func_02088498(void);                    /* PXI_Init           */
-extern BOOL func_020885EC(int fifotag, int proc);   /* PXI_IsCallbackReady */
+extern void PXI_Init(void);
+extern BOOL PXI_IsCallbackReady(int fifotag, int proc);
+extern void func_020884A4(void);                    /* PXI_InitFifo, sdk/pxi.c */
 extern int  PXI_SendWordByFifo(int fifotag, unsigned long data, BOOL err);
 extern void PXI_SetFifoRecvCallback(int fifotag, Arm9Cb callback);
 
-void PXI_Init(void);
-BOOL PXI_IsCallbackReady(int fifotag, int proc);
-
-void PXI_Init(void)
+/* PXI_Init's matched callee, which sdk/pxi.c defines under its address name. */
+void PXI_InitFifo(void);
+void PXI_InitFifo(void)
 {
-    func_02088498();
+    func_020884A4();
 }
 
-BOOL PXI_IsCallbackReady(int fifotag, int proc)
-{
-    return func_020885EC(fifotag, proc);
-}
-
-extern BOOL func_0208A998(TPCalibrateParam *calibrate);   /* GetUserInfo  */
-extern void func_0208AA2C(const TPCalibrateParam *param); /* SetCalibrate */
+extern BOOL TP_GetUserInfo(TPCalibrateParam *calibrate);   /* TP_GetUserInfo */
+extern void TP_SetCalibrateParam(const TPCalibrateParam *param); /* 0208AA2C */
 extern unsigned long func_0208AF18(TPCalibrateParam *calibrate,
                                    u16 x1, u16 y1, u16 dx1, u16 dy1,
                                    u16 x2, u16 y2, u16 dx2, u16 dy2);
-extern void func_0208B104(TPData *disp, const TPData *raw);
+extern void TP_GetCalibratedPoint(TPData *disp, const TPData *raw);
 
 int TP_CalcCalibrateParam(TPCalibrateParam *calibrate, u16 x1, u16 y1,
                           u16 dx1, u16 dy1, u16 x2, u16 y2, u16 dx2, u16 dy2);
@@ -133,26 +128,19 @@ int TP_CalcCalibrateParam(TPCalibrateParam *calibrate, u16 x1, u16 y1,
 }
 
 #if BW_TEST_TP_MATCHED
-extern void func_0208A924(void);                    /* TP_Init            */
+extern void TP_Init(void);                          /* TP_Init      */
 extern void func_0208AB1C(void);                    /* RequestSampling    */
 extern unsigned long func_0208ABB8(TPData *result); /* WaitRawResult      */
-extern void func_0208AC0C(u16 vcount, u16 frequence, TPData bufs[],
-                          u16 bufSize);             /* AutoSamplingStart  */
-extern void func_0208AD14(void);                    /* AutoSamplingStop   */
+extern void TP_RequestAutoSamplingStartAsync(u16 vcount, u16 frequence,
+                          TPData bufs[], u16 bufSize); /* TP_RequestAutoSamplingStartAsync   */
+extern void TP_RequestAutoSamplingStopAsync(void);  /* TP_RequestAutoSamplingStopAsync      */
 extern void func_0208ADB4(TPData *result);          /* LatestRawPointInAuto */
-extern u16  func_0208AF08(void);                    /* LatestIndexInAuto  */
-extern void func_0208B220(unsigned int command_flgs);   /* TP_WaitBusy    */
-extern unsigned int func_0208B238(unsigned int command_flgs); /* CheckError */
+extern u16  TP_GetLatestIndexInAuto(void);          /* TP_GetLatestIndexInAuto      */
+extern void TP_WaitBusy(unsigned int command_flgs); /* TP_WaitBusy      */
+extern unsigned int TP_CheckError(unsigned int command_flgs); /* 0208B238  */
 extern void TPi_TpCallback(int tag, unsigned long data, BOOL err);
 
-void TP_WaitBusy(unsigned long command_flgs);
-
-void TP_WaitBusy(unsigned long command_flgs)
-{
-    func_0208B220((unsigned int)command_flgs);
-}
-
-/* The game's touch pass and its two callees' doubles.                      */
+/* The game's touch pass and its work-object resolver's double.             */
 struct TouchCtx {
     u8 pad00[0x3e];
     u8 f3e;
@@ -167,13 +155,12 @@ struct TouchWork {
 
 static struct TouchWork g_work;
 
-void *func_02035750(void *p);
-extern void func_020358A0(struct TouchCtx *ctx);
+int TOUCHPANEL_GetWork(void);                       /* func_02035750      */
+extern void TOUCHPANEL_MainSys(struct TouchCtx *ctx); /* TOUCHPANEL_MainSys   */
 
-void *func_02035750(void *p)
+int TOUCHPANEL_GetWork(void)
 {
-    (void)p;
-    return &g_work;
+    return (int)(uintptr_t)&g_work;
 }
 #endif
 
@@ -345,12 +332,12 @@ static void calibrate_from_user_info(void)
     TPCalibrateParam param;
 
     memset(&param, 0x55, sizeof param);
-    BW_CHECK_EQ("cal: TP_GetUserInfo", func_0208A998(&param), 1);
+    BW_CHECK_EQ("cal: TP_GetUserInfo", TP_GetUserInfo(&param), 1);
     BW_CHECK_EQ("cal: x0", param.x0, 768);
     BW_CHECK_EQ("cal: y0", param.y0, 896);
     BW_CHECK_EQ("cal: xDotSize", param.xDotSize, 3584);
     BW_CHECK_EQ("cal: yDotSize", param.yDotSize, 4608);
-    func_0208AA2C(&param);
+    TP_SetCalibrateParam(&param);
     BW_CHECK_EQ("cal: flag", g_02152FA4.calibrate_flg, 1);
     BW_CHECK_EQ("cal: xDotSizeInv", g_02152FA4.calibrate.xDotSizeInv, 74898);
     BW_CHECK_EQ("cal: yDotSizeInv", g_02152FA4.calibrate.yDotSizeInv, 58254);
@@ -367,7 +354,7 @@ static void point(const char *label, int x, int y, int want_x, int want_y)
     raw.y = (u16)ry;
     raw.touch = 1;
     raw.validity = 0;
-    func_0208B104(&disp, &raw);
+    TP_GetCalibratedPoint(&disp, &raw);
     sprintf(l, "%s x", label);
     BW_CHECK_EQ(l, disp.x, want_x);
     sprintf(l, "%s y", label);
@@ -413,7 +400,7 @@ static void test_calibration(void)
             raw.y = (u16)ry;
             raw.touch = 1;
             raw.validity = 0;
-            func_0208B104(&disp, &raw);
+            TP_GetCalibratedPoint(&disp, &raw);
             if (disp.x != x || disp.y != y)
                 wrong++;
         }
@@ -422,7 +409,7 @@ static void test_calibration(void)
 
     /* No touch: TP_GetCalibratedPoint reports (0, 0).                      */
     raw.touch = 0;
-    func_0208B104(&disp, &raw);
+    TP_GetCalibratedPoint(&disp, &raw);
     BW_CHECK_EQ("cal: untouched x", disp.x, 0);
 
     /* Another panel: points taken the other way round, scales that are not
@@ -448,9 +435,9 @@ static void test_calibration(void)
             TPCalibrateParam param;
             int worst = 0;
 
-            BW_CHECK_EQ("custom: TP_GetUserInfo", func_0208A998(&param), 1);
+            BW_CHECK_EQ("custom: TP_GetUserInfo", TP_GetUserInfo(&param), 1);
             BW_CHECK_EQ("custom: xDotSize", param.xDotSize, 3866);
-            func_0208AA2C(&param);
+            TP_SetCalibrateParam(&param);
             for (y = 0; y < BW_TOUCH_HEIGHT; y++) {
                 for (x = 0; x < BW_TOUCH_WIDTH; x++) {
                     int dx, dy;
@@ -460,7 +447,7 @@ static void test_calibration(void)
                     raw.y = (u16)ry;
                     raw.touch = 1;
                     raw.validity = 0;
-                    func_0208B104(&disp, &raw);
+                    TP_GetCalibratedPoint(&disp, &raw);
                     dx = (int)disp.x - x;
                     dy = (int)disp.y - y;
                     if (dx < 0) dx = -dx;
@@ -486,7 +473,7 @@ static void test_round_trip(void)
     struct TouchCtx ctx;
 
     boot();
-    func_0208A924();                                /* TP_Init            */
+    TP_Init();                                /* TP_Init            */
     BW_CHECK_EQ("tp: initialised", g_02152FA4.initial, 1);
     BW_CHECK_EQ("tp: callback installed", PXI_IsCallbackReady(TP_TAG, 0), 1);
     calibrate_from_user_info();
@@ -501,7 +488,7 @@ static void test_round_trip(void)
     BW_CHECK_EQ("tp: raw y", raw.y, 1133);
     BW_CHECK_EQ("tp: raw touch", raw.touch, 1);
     BW_CHECK_EQ("tp: raw validity", raw.validity, 0);
-    func_0208B104(&disp, &raw);
+    TP_GetCalibratedPoint(&disp, &raw);
     BW_CHECK_EQ("tp: screen x", disp.x, 100);
     BW_CHECK_EQ("tp: screen y", disp.y, 50);
     touch_host(0, 0, 0);
@@ -513,18 +500,18 @@ static void test_round_trip(void)
     memset(&ctx, 0, sizeof ctx);
     memset(&g_work, 0, sizeof g_work);
     touch_host(1, 37, 150);
-    func_020358A0(&ctx);
+    TOUCHPANEL_MainSys(&ctx);
     BW_CHECK_EQ("game: x", g_work.f5c, 37);
     BW_CHECK_EQ("game: y", g_work.f5e, 150);
     BW_CHECK_EQ("game: held", g_work.f62, 1);
     BW_CHECK_EQ("game: trigger", g_work.f60, 1);
     touch_host(1, 200, 9);
-    func_020358A0(&ctx);
+    TOUCHPANEL_MainSys(&ctx);
     BW_CHECK_EQ("game: drag x", g_work.f5c, 200);
     BW_CHECK_EQ("game: drag y", g_work.f5e, 9);
     BW_CHECK_EQ("game: no second trigger", g_work.f60, 0);
     touch_host(0, 0, 0);
-    func_020358A0(&ctx);
+    TOUCHPANEL_MainSys(&ctx);
     BW_CHECK_EQ("game: released", g_work.f62, 0);
     {
         BwInputState s;
@@ -538,54 +525,54 @@ static void test_round_trip(void)
         bw_input_publish();
     }
     g_work.f5c = 77;
-    func_020358A0(&ctx);
+    TOUCHPANEL_MainSys(&ctx);
     BW_CHECK_EQ("game: lid closed clears the work", g_work.f5c, 0);
 
     /* Automatic sampling, as unit_02035D5C.c starts it: line 0, 4 a frame,
      * a ring of 9.                                                         */
     touch_host(1, 200, 100);
-    func_0208AC0C(0, 4, bufs, 9);
-    func_0208B220(2);
-    BW_CHECK_EQ("auto: started", func_0208B238(2), 0);
+    TP_RequestAutoSamplingStartAsync(0, 4, bufs, 9);
+    TP_WaitBusy(2);
+    BW_CHECK_EQ("auto: started", TP_CheckError(2), 0);
     BW_CHECK_EQ("auto: ARM9 state", g_02152FA4.state, 2);
     BW_CHECK_EQ("auto: ARM7 on", bw_arm7_tp_state()->auto_on, 1);
     bw_input_frame();
     safe_point();
-    BW_CHECK_EQ("auto: four samples", func_0208AF08(), 4);
+    BW_CHECK_EQ("auto: four samples", TP_GetLatestIndexInAuto(), 4);
     BW_CHECK_EQ("auto: ring slot 4 x", bufs[4].x, 2999);  /* 192+14*200+7 */
     memset(&raw, 0, sizeof raw);
     func_0208ADB4(&raw);
-    func_0208B104(&disp, &raw);
+    TP_GetCalibratedPoint(&disp, &raw);
     BW_CHECK_EQ("auto: latest touch", raw.touch, 1);
     BW_CHECK_EQ("auto: latest x", disp.x, 200);
     BW_CHECK_EQ("auto: latest y", disp.y, 100);
     bw_input_frame();
     bw_input_frame();
     safe_point();
-    BW_CHECK_EQ("auto: ring wraps at 9", func_0208AF08(), 12 % 9);
+    BW_CHECK_EQ("auto: ring wraps at 9", TP_GetLatestIndexInAuto(), 12 % 9);
 
     /* The game's pass in automatic mode.                                   */
     memset(&g_work, 0, sizeof g_work);
     g_work.f74 = 1;
-    func_020358A0(&ctx);
+    TOUCHPANEL_MainSys(&ctx);
     BW_CHECK_EQ("game auto: x", g_work.f5c, 200);
     BW_CHECK_EQ("game auto: y", g_work.f5e, 100);
 
     /* Errors come back through TPi_TpCallback into err_flg.                */
-    func_0208AC0C(0, 4, bufs, 9);
-    func_0208B220(2);
-    BW_CHECK_EQ("auto: start twice is an error", func_0208B238(2), 2);
-    func_0208AD14();
-    func_0208B220(4);
-    BW_CHECK_EQ("auto: stopped", func_0208B238(4), 0);
+    TP_RequestAutoSamplingStartAsync(0, 4, bufs, 9);
+    TP_WaitBusy(2);
+    BW_CHECK_EQ("auto: start twice is an error", TP_CheckError(2), 2);
+    TP_RequestAutoSamplingStopAsync();
+    TP_WaitBusy(4);
+    BW_CHECK_EQ("auto: stopped", TP_CheckError(4), 0);
     BW_CHECK_EQ("auto: ARM9 state ready", g_02152FA4.state, 0);
     BW_CHECK_EQ("auto: ARM7 off", bw_arm7_tp_state()->auto_on, 0);
-    func_0208AD14();
-    func_0208B220(4);
-    BW_CHECK_EQ("auto: stop twice is an error", func_0208B238(4), 4);
-    func_0208AC0C(0, 5, bufs, 9);
-    func_0208B220(2);
-    BW_CHECK_EQ("auto: frequency 5 is an error", func_0208B238(2), 2);
+    TP_RequestAutoSamplingStopAsync();
+    TP_WaitBusy(4);
+    BW_CHECK_EQ("auto: stop twice is an error", TP_CheckError(4), 4);
+    TP_RequestAutoSamplingStartAsync(0, 5, bufs, 9);
+    TP_WaitBusy(2);
+    BW_CHECK_EQ("auto: frequency 5 is an error", TP_CheckError(2), 2);
     BW_CHECK_EQ("auto: still off", bw_arm7_tp_state()->auto_on, 0);
 }
 #endif

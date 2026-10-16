@@ -28,16 +28,28 @@ struct ExpHeap {
     u16               feature;
 };
 
-extern void           func_02060764(int *out, struct MBlock *blk);
-extern struct MBlock *func_02060790(struct MBlockList *list, struct MBlock *node);
-extern int            func_02060B6C(struct MBlockList *list, int *info);
+extern void           NNSi_FndGetMBlockRegion(int *out, struct MBlock *blk);
+extern struct MBlock *NNSi_FndRemoveMBlock(struct MBlockList *list,
+                                           struct MBlock *node);
+extern int            NNSi_FndRecycleRegion(struct MBlockList *list, int *info);
 
-void func_02060E30(struct ExpHeap *heap, void *block)
+void NNS_FndFreeToExpHeap(struct ExpHeap *heap, void *block)
 {
     struct MBlock *hdr = (struct MBlock *)((u8 *)block - 0x10);
     int            region[2];
 
-    func_02060764(region, hdr);
-    func_02060790(&heap->usedList, hdr);
-    func_02060B6C(&heap->freeList, region);
+    NNSi_FndGetMBlockRegion(region, hdr);
+    NNSi_FndRemoveMBlock(&heap->usedList, hdr);
+    NNSi_FndRecycleRegion(&heap->freeList, region);
+}
+
+/*
+ * The manifest's own name for 0x02060E30 (the file name).  tools/armdata.py
+ * relocates the ARM9 image's code pointers by the manifest name, so the boot's
+ * generated data table names func_02060E30 even though the build compiles this
+ * transcription instead of the matched source.
+ */
+void func_02060E30(struct ExpHeap *heap, void *block)
+{
+    NNS_FndFreeToExpHeap(heap, block);
 }

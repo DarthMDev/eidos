@@ -58,20 +58,24 @@ extern union { u8 b[2048]; void *p; u32 w; u64 d; } cardi_common;
 extern union { u8 b[0x60]; u64 align; } cardi_arg;
 extern u8 CARDi_backup_cache_page_buf[256];
 extern u32 nvramTemp[8];
-extern void func_020760B4(void);                        /* CARDi_InitCommand  */
-extern BOOL func_02076B2C(int type);                    /* CARD_IdentifyBackup */
-extern BOOL func_02076AC0(unsigned long src, unsigned long dst,
+/* The 0x02150EA0 section base, which aletheia now spells as a struct whose
+ * nvramTemp member is at +0x20; the ARM7's temp buffer is that member. */
+struct NvramBss { u32 nvramInitialized; u8 pad_4[0x1C]; u32 nvramTemp[8]; };
+extern struct NvramBss nvramBss;
+extern void CARDi_InitCommand(void);                        /* CARDi_InitCommand  */
+extern BOOL CARD_IdentifyBackup(int type);                    /* CARD_IdentifyBackup */
+extern BOOL CARDi_RequestStreamCommand(unsigned long src, unsigned long dst,
                           unsigned long len, void (*cb)(void *), void *arg,
                           BOOL async, int req_type, int req_retry,
                           int req_mode);        /* CARDi_RequestStreamCommand */
 typedef void (*NvCb)(int result, void *arg);
-extern void func_02083644(void);                        /* NVRAMi_Init        */
+extern void NVRAMi_Init(void);                        /* NVRAMi_Init        */
 extern int  NVRAMi_IsInitialized(void);                 /* backup_doubles.c   */
-extern int  func_02083704(unsigned long a, unsigned long n, void *p, NvCb cb,
+extern int  NVRAMi_ReadAsync(unsigned long a, unsigned long n, void *p, NvCb cb,
                           void *arg);                   /* NVRAMi_ReadAsync   */
-extern int  func_02083934(unsigned long a, unsigned long n, void *p, NvCb cb,
+extern int  NVRAMi_WriteAsync(unsigned long a, unsigned long n, void *p, NvCb cb,
                           void *arg);                   /* NVRAMi_WriteAsync  */
-extern int  func_02083EB8(unsigned long a, unsigned long n, void *p, NvCb cb,
+extern int  NVRAMi_VerifyAsync(unsigned long a, unsigned long n, void *p, NvCb cb,
                           void *arg);                   /* NVRAMi_VerifyAsync */
 typedef struct {
     int type;
@@ -86,7 +90,7 @@ extern void func_0208B24C(void);                        /* MIC_Init           */
 extern int  func_0208B2BC(const MicAutoParam *param,
                           void (*cb)(int result, void *arg), void *arg);
 extern int  func_0208B424(void (*cb)(int result, void *arg), void *arg);
-extern int  func_0208E038(void *buf, u16 dma, unsigned long size); /* WmInitCore */
+extern int  WmInitCore(void *buf, u16 dma, unsigned long size); /* WmInitCore */
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -476,10 +480,10 @@ static void test_card_matched(void)
     bw_arm7_backup_set_path(NULL);      /* the next IDENTIFY loads afresh   */
     bw_arm7_backup_set_flush_delay(0);
 
-    func_020760B4();                    /* CARDi_InitCommand                */
+    CARDi_InitCommand();                    /* CARDi_InitCommand                */
     BW_CHECK_EQ("matched: command block bound",
                 *(void **)cardi_common.b == (void *)cardi_arg.b, 1);
-    BW_CHECK_EQ("matched: identify 0x00FF1302", func_02076B2C((int)BW_TYPE), 1);
+    BW_CHECK_EQ("matched: identify 0x00FF1302", CARD_IdentifyBackup((int)BW_TYPE), 1);
     BW_CHECK_EQ("matched: ARM7 saw the type", bw_arm7_backup_type(), BW_TYPE);
     BW_CHECK_EQ("matched: init word is the block's low 26 bits",
                 bw_arm7_fs_init_word(),
@@ -492,7 +496,7 @@ static void test_card_matched(void)
     /* CARD_WriteAndVerifyBackup: request 7, mode 2 (arm9/func_020336B8.c). */
     g_card_callbacks = 0;
     BW_CHECK_EQ("matched: write and verify",
-                func_02076AC0((u32)(uintptr_t)data, 0x1F0, sizeof data,
+                CARDi_RequestStreamCommand((u32)(uintptr_t)data, 0x1F0, sizeof data,
                               card_done, NULL, 0, 7, 10, 2), 1);
     BW_CHECK_EQ("matched: callback fired", g_card_callbacks, 1);
     BW_CHECK_EQ("matched: chip has it", memcmp(img + 0x1F0, data, sizeof data), 0);
@@ -501,14 +505,14 @@ static void test_card_matched(void)
 
     /* CARD_ReadBackup: request 6, mode 0 (arm9/func_020335E8.c).            */
     memset(back, 0, sizeof back);
-    BW_CHECK_EQ("matched: read", func_02076AC0(0x1F0, (u32)(uintptr_t)back,
+    BW_CHECK_EQ("matched: read", CARDi_RequestStreamCommand(0x1F0, (u32)(uintptr_t)back,
                                                sizeof back, NULL, NULL, 0,
                                                6, 1, 0), 1);
     BW_CHECK_EQ("matched: read data", memcmp(back, data, sizeof back), 0);
 
     /* CARD_EraseBackupSector: request 11, mode 3, the sector size from the
      * spec through CARD_GetBackupSectorSize.                                */
-    BW_CHECK_EQ("matched: erase sector", func_02076AC0(0, 0, 0x10000, NULL,
+    BW_CHECK_EQ("matched: erase sector", CARDi_RequestStreamCommand(0, 0, 0x10000, NULL,
                                                        NULL, 0, 11, 1, 3), 1);
     ok = 1;
     for (i = 0; i < 0x10000; i++)
@@ -516,7 +520,7 @@ static void test_card_matched(void)
     BW_CHECK_EQ("matched: sector erased", ok, 1);
 
     /* An unsupported request reaches the caller as failure.                 */
-    BW_CHECK_EQ("matched: chip erase refused", func_02076AC0(0, 0, CHIP, NULL,
+    BW_CHECK_EQ("matched: chip erase refused", CARDi_RequestStreamCommand(0, 0, CHIP, NULL,
                                                              NULL, 0, 12, 1, 3), 0);
     BW_CHECK_EQ("matched: result unsupported", cardi_arg.b[0], 3);
 }
@@ -554,16 +558,16 @@ static void test_nvram_matched(void)
     const u8 *img;
     u32 size, i;
 
-    bw_arm7_nvram_bind(nvramTemp);
+    bw_arm7_nvram_bind(nvramBss.nvramTemp);
     bw_arm7_nvram_set_path(NULL);
     remove(SAVE_DIR "/firmware.bin");
 
-    func_02083644();                    /* NVRAMi_Init: spins on tag 4      */
+    NVRAMi_Init();                    /* NVRAMi_Init: spins on tag 4      */
     BW_CHECK_EQ("nvram matched: initialised", NVRAMi_IsInitialized(), 1);
 
     g_nv_done = 0;
     BW_CHECK_EQ("nvram matched: read issued",
-                func_02083704(0x3FE00, 0x100, buf, nv_done, NULL), 0);
+                NVRAMi_ReadAsync(0x3FE00, 0x100, buf, nv_done, NULL), 0);
     BW_CHECK_EQ("nvram matched: read done", nv_wait(), 1);
     BW_CHECK_EQ("nvram matched: read result", g_nv_result, 0);
     bw_firmware_user_block(bw_firmware_settings(), 1, block);
@@ -575,7 +579,7 @@ static void test_nvram_matched(void)
         data[i] = (u8)(0x30 + i);
     g_nv_done = 0;
     BW_CHECK_EQ("nvram matched: write issued",
-                func_02083934(0x3FA80, sizeof data, data, nv_done, NULL), 0);
+                NVRAMi_WriteAsync(0x3FA80, sizeof data, data, nv_done, NULL), 0);
     BW_CHECK_EQ("nvram matched: write done", nv_wait(), 1);
     BW_CHECK_EQ("nvram matched: write result", g_nv_result, 0);
     img = bw_arm7_nvram_image(&size);
@@ -585,12 +589,12 @@ static void test_nvram_matched(void)
                 file_equals(SAVE_DIR "/firmware.bin", img, size), 1);
 
     g_nv_done = 0;
-    (void)func_02083EB8(0x3FA80, sizeof data, data, nv_done, NULL);
+    (void)NVRAMi_VerifyAsync(0x3FA80, sizeof data, data, nv_done, NULL);
     BW_CHECK_EQ("nvram matched: verify done", nv_wait(), 1);
     BW_CHECK_EQ("nvram matched: verify result", g_nv_result, 0);
     data[200] ^= 1;
     g_nv_done = 0;
-    (void)func_02083EB8(0x3FA80, sizeof data, data, nv_done, NULL);
+    (void)NVRAMi_VerifyAsync(0x3FA80, sizeof data, data, nv_done, NULL);
     (void)nv_wait();
     BW_CHECK_EQ("nvram matched: verify mismatch", g_nv_result, 6);
 }
@@ -626,7 +630,7 @@ static void test_mic_wm_matched(void)
 
     /* WM_Init's core: no wireless component, the SDK's own answer.          */
     BW_CHECK_EQ("wm matched: WM_ERRCODE_WM_DISABLE",
-                func_0208E038((void *)(((uintptr_t)wmbuf.b + 31) & ~(uintptr_t)31),
+                WmInitCore((void *)(((uintptr_t)wmbuf.b + 31) & ~(uintptr_t)31),
                               0, 0x1000), 4);
 }
 #endif

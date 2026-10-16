@@ -19,15 +19,32 @@
 #include "tcbl.h"
 #include "port.h"
 
-extern EidosTcblList *sub_0203101C(u32 heap, u16 home_heap, u32 count,
-                                   u32 work_size);
-extern void  sub_020310C4(EidosTcblList *list);
+/*
+ * The callees' current names.  aletheia's cleanup renamed the matched
+ * definitions to descriptive names (sub_0203101C -> TCBL_Create, ...), so the
+ * address spellings this file used to call are gone.  The constructor and the
+ * runner (TCBL_Create, TCBL_Main) and the release entry point (GFL_HEAP_Free)
+ * are always the matched files; the other four are matched only under
+ * EIDOS_TCBL_MATCHED and are the stubs/reimpl_ stand-ins otherwise, which
+ * keep their address spellings.  The symbol is the same shape either way.
+ */
+extern EidosTcblList *TCBL_Create(u32 heap, u16 home_heap, u32 count,
+                                  u32 work_size);
+extern void  TCBL_Main(EidosTcblList *list);
+extern void  GFL_HEAP_Free(void *block);
+#if EIDOS_TCBL_MATCHED
+extern void *TCBL_AddTask(void *list, void (*func)(EidosTcblNode *, void *),
+                          u32 work_size, u32 key);
+extern void  TCBL_DeleteTask(void *node);
+extern void  TCBL_DeleteAllTasks(void *list);
+extern void *TCBL_GetTaskWork(void *node);
+#else
 extern void *sub_020311B8(void *list, void (*func)(EidosTcblNode *, void *),
                           u32 work_size, u32 key);
 extern void  sub_02031194(void *node);
 extern void  sub_0203115C(void *list);
-extern void  sub_020307B0(void *block);
 extern void *sub_02030FB4(void *node);
+#endif
 
 EidosTcblList *bw_tcbl_create(u32 heap, u16 home_heap, u32 count,
                               u32 work_size)
@@ -44,7 +61,7 @@ EidosTcblList *bw_tcbl_create(u32 heap, u16 home_heap, u32 count,
     if (count == 0u) {
         return NULL;
     }
-    return sub_0203101C(heap, home_heap, count, ws + EIDOS_TCBL_HEADER_BIAS);
+    return TCBL_Create(heap, home_heap, count, ws + EIDOS_TCBL_HEADER_BIAS);
 }
 
 u32 bw_tcbl_work_size(const EidosTcblList *list)
@@ -77,32 +94,48 @@ EidosTcblNode *bw_tcbl_register(EidosTcblList *list,
                  "an LP64 host: +0x10 is declared u32 by the constructor");
         return NULL;
     }
+#if EIDOS_TCBL_MATCHED
+    return (EidosTcblNode *)TCBL_AddTask(list, func, work_size, key);
+#else
     return (EidosTcblNode *)sub_020311B8(list, func, work_size, key);
+#endif
 }
 
 void *bw_tcbl_work(EidosTcblNode *node)
 {
+#if EIDOS_TCBL_MATCHED
+    return node == NULL ? NULL : TCBL_GetTaskWork(node);
+#else
     return node == NULL ? NULL : sub_02030FB4(node);
+#endif
 }
 
 void bw_tcbl_run(EidosTcblList *list)
 {
     if (list != NULL) {
-        sub_020310C4(list);
+        TCBL_Main(list);
     }
 }
 
 void bw_tcbl_destroy(EidosTcblNode *node)
 {
     if (node != NULL) {
+#if EIDOS_TCBL_MATCHED
+        TCBL_DeleteTask(node);
+#else
         sub_02031194(node);
+#endif
     }
 }
 
 void bw_tcbl_destroy_all(EidosTcblList *list)
 {
     if (list != NULL) {
+#if EIDOS_TCBL_MATCHED
+        TCBL_DeleteAllTasks(list);
+#else
         sub_0203115C(list);
+#endif
     }
 }
 
@@ -112,6 +145,6 @@ void bw_tcbl_free(EidosTcblList *list)
         return;
     }
     bw_tcbl_destroy_all(list);
-    sub_020307B0(list->table);
-    sub_020307B0(list);
+    GFL_HEAP_Free(list->table);
+    GFL_HEAP_Free(list);
 }

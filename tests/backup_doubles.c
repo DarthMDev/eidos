@@ -103,6 +103,17 @@ u32 CARD_GetBackupSectorSize(void)
  * else in the section is reached through the base.                         */
 u32 nvramInitialized;
 u32 nvramTemp[8];
+/* aletheia now names the 0x02150EA0 section base as a struct (nvramBss) whose
+ * nvramTemp member is at +0x20, and NVRAMi_WriteCallback polls the ARM7's
+ * status byte through it.  The ARM7 is bound to that member (test_backup.c);
+ * the flat nvramTemp above is the staging buffer NVRAMi_VerifyCallback and
+ * NVRAMi_WriteCallback read a status register into. */
+struct NvramBss {
+    u32 nvramInitialized;
+    u8  pad_4[0x1C];
+    u32 nvramTemp[8];
+};
+struct NvramBss nvramBss;
 TestObj nvramw;
 void *bw_test_nvram_base;
 

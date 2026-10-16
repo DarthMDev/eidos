@@ -48,7 +48,7 @@
  *   src/matched/sub_02030A00.c   block header the raw allocator wrote
  *   src/matched/sub_020304B8.c   (its heap id, read back through the
  *   src/matched/sub_020304C0.c   matched accessor), the provenance name it
- *   src/matched/sub_020308B8.c   stamped ("tcbl.c", validated by the
+ *   src/matched/GFL_HEAP_ReadAllocSiteName.c   stamped ("tcbl.c", validated by the
  *   src/matched/sub_0203046C.c   matched validator), and the live-block
  *   src/matched/unit_0202FBAC.c  count rising and falling.
  *
@@ -80,7 +80,7 @@
 /* The matched block-header accessors the provenance check reads through. */
 extern u16   sub_020304B8(void *p);
 extern void *sub_020304C0(void *p);
-extern int   sub_020308B8(u8 *dst, const char *src);
+extern int   GFL_HEAP_ReadAllocSiteName(u8 *dst, const char *src);
 
 #define HEAP_ID    3u
 #define POOL_NODES 4u
@@ -222,7 +222,7 @@ int main(void)
         BW_CHECK_EQ("block header carries the heap id",
                     sub_020304B8(list), HEAP_ID);
         BW_CHECK_EQ("provenance name validates",
-                    sub_020308B8(name, (const char *)sub_020304C0(list)), 1);
+                    GFL_HEAP_ReadAllocSiteName(name, (const char *)sub_020304C0(list)), 1);
         printf("provenance stamped by sub_02030880: \"%s\"\n",
                (const char *)name);
         BW_CHECK_EQ("provenance name is tcbl.c",

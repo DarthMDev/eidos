@@ -50,9 +50,9 @@
 #include "port_test.h"
 
 extern void *sub_02030098(u32 heapId, u32 size);
-extern void *sub_02030734(u32 heapId, u32 size, int clear, const char *site,
+extern void *GFL_HEAP_Alloc(u32 heapId, u32 size, int clear, const char *site,
                           u16 tag);
-extern void  sub_020307B0(void *p);
+extern void  GFL_HEAP_Free(void *p);
 
 #define HDR 0x1cu   /* the manager's block header, sub_02030098 */
 
@@ -67,7 +67,7 @@ static u8 *raw(u32 heap_id, u32 size)
 
 static void rel(u8 *block)
 {
-    sub_020307B0(block + HDR);
+    GFL_HEAP_Free(block + HDR);
 }
 
 /* ------------------------------------------------------------------ */
@@ -105,7 +105,7 @@ static int test_manager(void)
     BW_CHECK_EQ("... with result 2", bw_heap_error(), 2);
 
     /* One block through the entry point, cleared. */
-    p = sub_02030734(0, 100, 1, "test_heap.c", 7);
+    p = GFL_HEAP_Alloc(0, 100, 1, "test_heap.c", 7);
     BW_REQUIRE("an allocation succeeds", p != NULL);
     BW_CHECK_EQ("result 0 after it", bw_heap_error(), 0);
     BW_CHECK_EQ("the payload is word aligned", (u32)((uintptr_t)p & 3u), 0);
@@ -120,7 +120,7 @@ static int test_manager(void)
         }
         BW_CHECK_EQ("clear = 1 zeroes the payload", nz, 0);
     }
-    sub_020307B0(p);
+    GFL_HEAP_Free(p);
     BW_CHECK_EQ("the free is counted", bw_heap_live_blocks(0), 0);
 
     /* The heap id in the header is the id without its tail bit. */
@@ -144,7 +144,7 @@ static int test_manager(void)
         for (i = 0; i < 50; i++) {
             heap[i] = i % 3u;
             len[i] = 4u + lcg() % 60u;
-            blk[i] = sub_02030734(heap[i] | ((i & 1u) ? 0x8000u : 0u), len[i],
+            blk[i] = GFL_HEAP_Alloc(heap[i] | ((i & 1u) ? 0x8000u : 0u), len[i],
                                   0, "test_heap.c", (u16)i);
             BW_REQUIRE("a small block fits", blk[i] != NULL);
             memset(blk[i], (int)(0x40 + i), len[i]);
@@ -160,7 +160,7 @@ static int test_manager(void)
         BW_CHECK_EQ("no block overwrote another", bad, 0);
         for (i = 0; i < 50; i++) {
             k = (i * 17u) % 50u;   /* 17 is prime to 50: a permutation */
-            sub_020307B0(blk[k]);
+            GFL_HEAP_Free(blk[k]);
         }
         for (i = 0; i < 3; i++) {
             BW_CHECK_EQ("every heap balances", bw_heap_live_blocks(i), 0);
@@ -172,7 +172,7 @@ static int test_manager(void)
     BW_CHECK_EQ("a fourth heap now exists", bw_heap_live_blocks(3), 0);
     p = sub_02030098(3, 8);
     BW_REQUIRE("and allocates", p != NULL);
-    sub_020307B0(p);
+    GFL_HEAP_Free(p);
     BW_CHECK_EQ("and balances", bw_heap_live_blocks(3), 0);
     return 0;
 }
@@ -183,9 +183,9 @@ static int test_manager(void)
 
 #if EIDOS_HEAP_MATCHED
 
-extern int func_02060E6C(int *heap);
-extern s32 func_02060E94(void *heap, s32 align);
-extern int func_02060F90(char *p);
+extern int NNSi_FndGetListTotalSize(int *heap);
+extern s32 NNSi_FndGetListAllocatableSize(void *heap, s32 align);
+extern int NNSi_FndGetMBlockSize(char *p);
 
 struct FndList {
     void *head;
@@ -285,9 +285,9 @@ static int test_layout(void)
                 A(h0) + EXPH_HEAD);
     BW_CHECK_EQ("free block signature 'FR'", w16(h0 + EXPH_HEAD, 0), 0x4652);
     BW_CHECK_EQ("free total = region - head - one header",
-                func_02060E6C((int *)h0), 0x1000 - 0x38 - 0x10);
+                NNSi_FndGetListTotalSize((int *)h0), 0x1000 - 0x38 - 0x10);
     BW_CHECK_EQ("largest allocatable, same number",
-                func_02060E94(h2, 4), 0x800 - 0x38 - 0x10);
+                NNSi_FndGetListAllocatableSize(h2, 4), 0x800 - 0x38 - 0x10);
     BW_CHECK_EQ("three heaps on the root list", sRootList.count, 3);
     BW_CHECK_EQ("the root list's first heap", A(sRootList.head), A(h0));
     BW_CHECK_EQ("the root list's last heap", A(sRootList.tail), A(h2));
@@ -316,17 +316,17 @@ static int test_carve(void)
     BW_CHECK_EQ("... sits right after the first header", A(p), start + 0x10u);
     BW_CHECK_EQ("used block signature 'UD'", w16(p - 0x10, 0), 0x5544);
     BW_CHECK_EQ("... head flag clear", w16(p - 0x10, 2) & 0x8000u, 0);
-    BW_CHECK_EQ("... its size", func_02060F90((char *)p), 0x80);
+    BW_CHECK_EQ("... its size", NNSi_FndGetMBlockSize((char *)p), 0x80);
     BW_CHECK_EQ("the rest is one free block", free_blocks(h0), 1);
     BW_CHECK_EQ("... after the new block", w32(h0, EXPH_FREE), start + 0x10u + 0x80u);
-    BW_CHECK_EQ("free total", func_02060E6C((int *)h0), 0xFB8 - 0x80 - 0x10);
+    BW_CHECK_EQ("free total", NNSi_FndGetListTotalSize((int *)h0), 0xFB8 - 0x80 - 0x10);
 
     /* From the tail: placed at the very end of the free block. */
     q = raw(0x8000, 100);
     BW_REQUIRE("tail allocation", q != NULL);
     BW_CHECK_EQ("... ends at heapEnd", A(q) + 0x80u, end);
     BW_CHECK_EQ("... tail flag set", w16(q - 0x10, 2) & 0x8000u, 0x8000);
-    BW_CHECK_EQ("free total", func_02060E6C((int *)h0), 0xF28 - 0x80 - 0x10);
+    BW_CHECK_EQ("free total", NNSi_FndGetListTotalSize((int *)h0), 0xF28 - 0x80 - 0x10);
     BW_CHECK_EQ("two used blocks", used_blocks(h0), 2);
 
     /* Free the head block: it merges with the free block behind it. */
@@ -336,14 +336,14 @@ static int test_carve(void)
     BW_CHECK_EQ("... starting at heapStart again", w32(h0, EXPH_FREE), start);
     /* The freed block's 0x80 and its header come back, and so does the
      * header of the free block it merged with, which is now payload. */
-    BW_CHECK_EQ("free total", func_02060E6C((int *)h0),
+    BW_CHECK_EQ("free total", NNSi_FndGetListTotalSize((int *)h0),
                 0xE88 + 0x80 + 0x10 + 0x10);
 
     /* Free the tail block: merges forward too; the heap is new again. */
     rel(q);
     BW_CHECK_EQ("one free block", free_blocks(h0), 1);
     BW_CHECK_EQ("no used block", used_blocks(h0), 0);
-    BW_CHECK_EQ("the heap is whole again", func_02060E6C((int *)h0), 0xFB8);
+    BW_CHECK_EQ("the heap is whole again", NNSi_FndGetListTotalSize((int *)h0), 0xFB8);
 
     /* First fit, and the 0x14-byte remainder rule.  A, B, C from the head,
      * each 0x40 bytes with the manager header; free B, leaving a 0x40-byte
@@ -364,14 +364,14 @@ static int test_carve(void)
          * the block takes the whole hole and reports 0x40. */
         d = raw(0, 0x38 - HDR);
         BW_CHECK_EQ("first fit takes the hole", A(d), A(b));
-        BW_CHECK_EQ("... and all of it", func_02060F90((char *)d), 0x40);
+        BW_CHECK_EQ("... and all of it", NNSi_FndGetMBlockSize((char *)d), 0x40);
         BW_CHECK_EQ("the hole is gone", free_blocks(h0), 1);
         rel(d);
 
         /* 0x20 bytes into the same hole: 0x20 left, which is split off. */
         d = raw(0, 0x20 - HDR);
         BW_CHECK_EQ("first fit again", A(d), A(b));
-        BW_CHECK_EQ("... exactly its size", func_02060F90((char *)d), 0x20);
+        BW_CHECK_EQ("... exactly its size", NNSi_FndGetMBlockSize((char *)d), 0x20);
         BW_CHECK_EQ("the split-off rest is free", free_blocks(h0), 2);
         rel(d);
 
@@ -382,7 +382,7 @@ static int test_carve(void)
         rel(a);
         rel(c);
         BW_CHECK_EQ("all merged back", free_blocks(h0), 1);
-        BW_CHECK_EQ("the heap is whole", func_02060E6C((int *)h0), 0xFB8);
+        BW_CHECK_EQ("the heap is whole", NNSi_FndGetListTotalSize((int *)h0), 0xFB8);
     }
 
     /* Exhaustion, and the exact fit. */
@@ -393,11 +393,11 @@ static int test_carve(void)
     blk = raw(0, 0xFB8 - HDR);
     BW_REQUIRE("the exact fit succeeds", blk != NULL);
     BW_CHECK_EQ("no free block is left", free_blocks(h0), 0);
-    BW_CHECK_EQ("free total 0", func_02060E6C((int *)h0), 0);
+    BW_CHECK_EQ("free total 0", NNSi_FndGetListTotalSize((int *)h0), 0);
     BW_REQUIRE("a word more fails", raw(0, 4) == NULL);
     BW_CHECK_EQ("... with result 3", bw_heap_error(), 3);
     rel(blk);
-    BW_CHECK_EQ("and it all comes back", func_02060E6C((int *)h0), 0xFB8);
+    BW_CHECK_EQ("and it all comes back", NNSi_FndGetListTotalSize((int *)h0), 0xFB8);
 
     /* The constructor's own failure: a heap under 0x4c bytes is refused by
      * func_02060C5C, which the constructor does not check; the handle it
@@ -433,11 +433,11 @@ static int test_children(void)
                 A(c7), A(h1) + EXPH_HEAD + 0x10u);
     BW_CHECK_EQ("... its own heap head", w32(c7, 0), 0x45585048u);
     BW_CHECK_EQ("... with 0x400 - head - one header free",
-                func_02060E6C((int *)c7), 0x400 - 0x38 - 0x10);
+                NNSi_FndGetListTotalSize((int *)c7), 0x400 - 0x38 - 0x10);
     BW_CHECK_EQ("the parent is not counted as allocating",
                 bw_heap_live_blocks(1), 0);
     BW_CHECK_EQ("the parent lost 0x400 + a header",
-                func_02060E6C((int *)h1), 0x2000 - 0x38 - 0x10 - 0x400 - 0x10);
+                NNSi_FndGetListTotalSize((int *)h1), 0x2000 - 0x38 - 0x10 - 0x400 - 0x10);
     BW_CHECK_EQ("the child is on the parent's child list",
                 w16(h1, CHILDREN + 8), 1);
     BW_CHECK_EQ("not on the root list", sRootList.count, 2);

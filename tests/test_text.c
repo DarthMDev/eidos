@@ -4,12 +4,12 @@
  *
  * What is matched game C here, compiled unchanged out of src/matched/:
  *
- *   func_02049578   given an archive and a member index, the member's
+ *   ARC_TOOL_GetHandleMemberOffset   given an archive and a member index, the member's
  *                   absolute byte position:  imageBase + 8 + FAT[member].start
  *   func_0204944C   the same lookup plus a seek-and-read of a range inside
  *                   the member (used here to pull the whole bank)
- *   func_020495F4   the read itself, a forward to FS_ReadFile
- *   func_02045E3C   the cipher: key = (u16)((index + 3) * 0x2983), xor each
+ *   ARC_TOOL_ReadHandle   the read itself, a forward to FS_ReadFile
+ *   MSGDATA_DecryptUnits   the cipher: key = (u16)((index + 3) * 0x2983), xor each
  *                   code unit, rotate the key left 3, stop at the
  *                   end-of-string unit, return the decoded length
  *
@@ -37,10 +37,10 @@
 
 /* --- the matched game functions under test ------------------------- */
 
-extern u32  func_02049578(void *arc, u32 member);
-extern void func_020495F4(void *arc, u32 size, void *dst);
+extern u32  ARC_TOOL_GetHandleMemberOffset(void *arc, u32 member);
+extern void ARC_TOOL_ReadHandle(void *arc, u32 size, void *dst);
 extern void func_0204960C(void *arc, u32 pos);
-extern u32  func_02045E3C(u16 *str, u32 count, u32 msgIndex);
+extern u32  MSGDATA_DecryptUnits(u16 *str, u32 count, u32 msgIndex);
 
 /* --- the message-file container, as tools/assets/text.py documents it - */
 
@@ -111,9 +111,9 @@ static u8 *read_bank(BwArcFile *arc, u32 member, u32 *size_out)
     }
 
     /* matched: the member's absolute position, then the seek, then the read */
-    pos = func_02049578(arc, member);
+    pos = ARC_TOOL_GetHandleMemberOffset(arc, member);
     func_0204960C(arc, pos);
-    func_020495F4(arc, (u32)size, buf);
+    ARC_TOOL_ReadHandle(arc, (u32)size, buf);
 
     *size_out = (u32)size;
     return buf;
@@ -168,7 +168,7 @@ int main(int argc, char **argv)
             scratch[k] = bw_rd16(bank + start + k * 2);
         }
 
-        decoded = func_02045E3C(scratch, units, fx->entry);
+        decoded = MSGDATA_DecryptUnits(scratch, units, fx->entry);
 
         BW_CHECK_EQ(label, decoded, fx->length);
         if (decoded == fx->length) {

@@ -52,15 +52,17 @@ struct ExpHeap {
     u16               feature;
 };
 
-extern void           func_02060764(int *out, struct MBlock *blk);
-extern struct MBlock *func_02060790(struct MBlockList *list, struct MBlock *node);
-extern struct MBlock *func_020607B8(struct MBlockList *list, struct MBlock *node,
-                                    struct MBlock *after);
-extern struct MBlock *func_020607E8(int *pair, u16 sig);
+extern void           NNSi_FndGetMBlockRegion(int *out, struct MBlock *blk);
+extern struct MBlock *NNSi_FndRemoveMBlock(struct MBlockList *list,
+                                           struct MBlock *node);
+extern struct MBlock *NNSi_FndInsertMBlock(struct MBlockList *list,
+                                           struct MBlock *node,
+                                           struct MBlock *after);
+extern struct MBlock *NNSi_FndInitMBlock(int *pair, u16 sig);
 extern void           MIi_CpuClear32(u32 data, void *dest, u32 size);
 
-void *func_02060888(struct ExpHeap *heap, struct MBlock *block, void *ptr,
-                    u32 size, u16 fromTail)
+void *NNSi_FndAllocFromExpHeap(struct ExpHeap *heap, struct MBlock *block,
+                               void *ptr, u32 size, u16 fromTail)
 {
     int            r[2];      /* the matched source's `start`, `end` */
     int            rest[2];
@@ -69,21 +71,23 @@ void *func_02060888(struct ExpHeap *heap, struct MBlock *block, void *ptr,
     struct MBlock *node;
     u32            sz;
 
-    func_02060764(r, block);
+    NNSi_FndGetMBlockRegion(r, block);
     rest[1] = r[1];
     r[1] = (int)ptr - 0x10;
     rest[0] = (int)(size + (u32)ptr);
 
-    prev = func_02060790(&heap->freeList, block);
+    prev = NNSi_FndRemoveMBlock(&heap->freeList, block);
     if ((u32)(r[1] - r[0]) < 0x14) {
         r[1] = r[0];
     } else {
-        prev = func_020607B8(&heap->freeList, func_020607E8(r, 0x4652), prev);
+        prev = NNSi_FndInsertMBlock(&heap->freeList,
+                                    NNSi_FndInitMBlock(r, 0x4652), prev);
     }
     if ((u32)(rest[1] - rest[0]) < 0x14) {
         rest[0] = rest[1];
     } else {
-        func_020607B8(&heap->freeList, func_020607E8(rest, 0x4652), prev);
+        NNSi_FndInsertMBlock(&heap->freeList,
+                             NNSi_FndInitMBlock(rest, 0x4652), prev);
     }
 
     sz = (u32)(rest[0] - r[1]);
@@ -93,7 +97,7 @@ void *func_02060888(struct ExpHeap *heap, struct MBlock *block, void *ptr,
 
     alloc[0] = (int)ptr - 0x10;
     alloc[1] = rest[0];
-    node = func_020607E8(alloc, 0x5544);
+    node = NNSi_FndInitMBlock(alloc, 0x5544);
     node->attr = node->attr & ~0x8000;
     node->attr = node->attr | (u16)(fromTail << 15);
     sz = (u16)((u32)(uintptr_t)node - (u32)r[1]);
@@ -102,6 +106,19 @@ void *func_02060888(struct ExpHeap *heap, struct MBlock *block, void *ptr,
     sz = heap->groupId & 0xff;
     node->attr = node->attr & ~0xff;
     node->attr = node->attr | sz;
-    func_020607B8(&heap->usedList, node, heap->usedList.tail);
+    NNSi_FndInsertMBlock(&heap->usedList, node, heap->usedList.tail);
     return ptr;
+}
+
+/*
+ * The manifest's own name for 0x02060888 (the file name).  tools/armdata.py
+ * relocates the ARM9 image's code pointers by the manifest name, so the boot's
+ * generated data table names func_02060888 even though the build compiles this
+ * transcription instead of the matched source.  A forwarder keeps both
+ * spellings pointing at the one body.
+ */
+void *func_02060888(struct ExpHeap *heap, struct MBlock *block, void *ptr,
+                    u32 size, u16 fromTail)
+{
+    return NNSi_FndAllocFromExpHeap(heap, block, ptr, size, fromTail);
 }

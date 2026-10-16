@@ -7,9 +7,9 @@
  * archive the game would see three independent ways:
  *
  *   - sdk/narc.c's reader (bw_arc_open, bw_arc_member_size,
- *     bw_arc_read_member) plus the matched func_02049578 on the same handle;
- *   - the matched readers by archive id (func_02048DDC + func_02048E34, then
- *     func_02048F4C), over a synthetic ARM9 name table;
+ *     bw_arc_read_member) plus the matched ARC_TOOL_GetHandleMemberOffset on the same handle;
+ *   - the matched readers by archive id (ARC_TOOL_OpenArchive + ARC_TOOL_SeekMember, then
+ *     ARC_TOOL_ReadMember), over a synthetic ARM9 name table;
  *   - FS_OpenFile of the archive itself, whose whole byte image must equal a
  *     NARC packed from the expected member list.
  *
@@ -26,7 +26,7 @@
  * every real archive with bw_narc_pack and requires the original bytes
  * back, then overrides one member of a real archive and adds one past its
  * end, and reads both through the game's own path: the real ARM9 name
- * table, func_02048DDC/func_02048E34/func_02048F4C, by file id and by ROM
+ * table, ARC_TOOL_OpenArchive/ARC_TOOL_SeekMember/ARC_TOOL_ReadMember, by file id and by ROM
  * range.
  */
 
@@ -66,10 +66,10 @@ struct ArcHandle {
     u8 raw[BW_FSFILE_SIZE];
 };
 
-extern void func_02048DDC(struct ArcHandle *arc, u32 id);
-extern u32  func_02048E34(struct ArcHandle *arc, u32 member, u32 base, u32 size);
-extern void func_02048F4C(void *dst, u32 archive_id, u32 member);
-extern u32  func_02049578(BwArcFile *arc, u32 member);
+extern void ARC_TOOL_OpenArchive(struct ArcHandle *arc, u32 id);
+extern u32  ARC_TOOL_SeekMember(struct ArcHandle *arc, u32 member, u32 base, u32 size);
+extern void ARC_TOOL_ReadMember(void *dst, u32 archive_id, u32 member);
+extern u32  ARC_TOOL_GetHandleMemberOffset(BwArcFile *arc, u32 member);
 extern BOOL FS_OpenFile(void *file, const char *path);
 extern BOOL FS_OpenFileDirect(void *file, void *arc, u32 top, u32 bottom, u32 id);
 extern BOOL FS_SeekFile(void *file, s32 offset, u32 origin);
@@ -321,7 +321,7 @@ static void check_archive(const char *what, const char *rel, u32 id,
 
     printf("%s\n", what);
 
-    /* 1. sdk/narc.c, and func_02049578 on the same handle. */
+    /* 1. sdk/narc.c, and ARC_TOOL_GetHandleMemberOffset on the same handle. */
     if (bw_arc_open(&arc, rel) != 0) {
         BW_CHECK_EQ("bw_arc_open", -1, 0);
         return;
@@ -334,26 +334,26 @@ static void check_archive(const char *what, const char *rel, u32 id,
         BW_CHECK_EQ("bw_arc_read_member",
                     bw_arc_read_member(&arc, i, buf, sizeof(buf)), want[i].len);
         BW_CHECK_EQ("bw_arc_read_member bytes", same_mem(buf, want[i]), 1);
-        pos = func_02049578(&arc, i);
+        pos = ARC_TOOL_GetHandleMemberOffset(&arc, i);
         ok = FS_SeekFile(arc.file, (s32)pos, 0) &&
              FS_ReadFile(arc.file, buf, (s32)want[i].len) == (s32)want[i].len &&
              same_mem(buf, want[i]);
-        BW_CHECK_EQ("func_02049578 position reads the member", ok, 1);
+        BW_CHECK_EQ("ARC_TOOL_GetHandleMemberOffset position reads the member", ok, 1);
     }
     bw_arc_close(&arc);
 
     /* 2. The matched readers by archive id. */
     for (i = 0; i < n; i++) {
-        func_02048DDC(&h, id);
-        len = func_02048E34(&h, i, 0, 0);
-        BW_CHECK_EQ("func_02048E34 size", len, want[i].len);
+        ARC_TOOL_OpenArchive(&h, id);
+        len = ARC_TOOL_SeekMember(&h, i, 0, 0);
+        BW_CHECK_EQ("ARC_TOOL_SeekMember size", len, want[i].len);
         ok = FS_ReadFile(h.raw, buf, (s32)len) == (s32)len && same_mem(buf, want[i]);
-        BW_CHECK_EQ("func_02048E34 then FS_ReadFile", ok, 1);
+        BW_CHECK_EQ("ARC_TOOL_SeekMember then FS_ReadFile", ok, 1);
         FS_CloseFile(h.raw);
 
         memset(buf, 0xAA, sizeof(buf));
-        func_02048F4C(buf, id, i);
-        BW_CHECK_EQ("func_02048F4C bytes", same_mem(buf, want[i]), 1);
+        ARC_TOOL_ReadMember(buf, id, i);
+        BW_CHECK_EQ("ARC_TOOL_ReadMember bytes", same_mem(buf, want[i]), 1);
     }
 
     /* 3. The archive file itself, byte for byte. */
@@ -717,17 +717,17 @@ static void real_data(const char *root)
                 memcmp(buf, keep, (size_t)keep_len) == 0, 1);
     bw_arc_close(&arc);
 
-    func_02048DDC(&h, arc_id);
-    BW_CHECK_EQ("func_02048E34: the override's size",
-                func_02048E34(&h, REAL_OVR, 0, 0), ovr.len);
+    ARC_TOOL_OpenArchive(&h, arc_id);
+    BW_CHECK_EQ("ARC_TOOL_SeekMember: the override's size",
+                ARC_TOOL_SeekMember(&h, REAL_OVR, 0, 0), ovr.len);
     BW_CHECK_EQ("FS_ReadFile after it reads the override",
                 FS_ReadFile(h.raw, buf, (s32)ovr.len) == (s32)ovr.len && same_mem(buf, ovr), 1);
     FS_CloseFile(h.raw);
     memset(buf, 0, 0x10000);
-    func_02048F4C(buf, arc_id, base_count);
-    BW_CHECK_EQ("func_02048F4C reads the added member", same_mem(buf, add), 1);
-    func_02048F4C(buf, arc_id, REAL_OVR + 1);
-    BW_CHECK_EQ("func_02048F4C reads the neighbour",
+    ARC_TOOL_ReadMember(buf, arc_id, base_count);
+    BW_CHECK_EQ("ARC_TOOL_ReadMember reads the added member", same_mem(buf, add), 1);
+    ARC_TOOL_ReadMember(buf, arc_id, REAL_OVR + 1);
+    BW_CHECK_EQ("ARC_TOOL_ReadMember reads the neighbour",
                 memcmp(buf, keep, (size_t)keep_len), 0);
 
     /* The same archive by file id and by ROM range is the merged one. */

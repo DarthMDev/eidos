@@ -8,12 +8,12 @@
   "errors_conflicting": 0,
   "errors_implicit": 0,
   "errors_other": 0,
-  "failed_targets": 30,
+  "failed_targets": 0,
   "host_surface_pct": 17.07,
   "implicit_decls": 202,
-  "link_failed_targets": 30,
+  "link_failed_targets": 0,
   "matched_total": 33541,
-  "note": "compile errors cleared (Class B); build now compiles everything and fails at link on 163 renamed symbols",
+  "note": "build links: renamed symbols resynced and test link graphs fixed",
   "shim_replaced": 122,
   "stubbed_asm": 39,
   "stubbed_open": 150,
@@ -21,7 +21,7 @@
     "failed": 0,
     "passed": 0
   },
-  "undefined_refs": 564,
-  "undefined_symbols": 163,
-  "wave": 1
+  "undefined_refs": 0,
+  "undefined_symbols": 0,
+  "wave": 2
 }

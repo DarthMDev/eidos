@@ -3,12 +3,12 @@
  * script onto KEYINPUT and HW_BUTTON_XY_BUF, read back by the game's own
  * per-frame pad update; and the divider unit the touch calibration runs on.
  *
- * The reader is aletheia's src/matched/arm9/func_02035F38.c (key.c's pad
+ * The reader is aletheia's src/matched/arm9/KEY_MainSys.c (key.c's pad
  * update: PAD_DetectFold, PAD_Read, the d-pad cancel, trigger and repeat),
  * compiled as written through tools/dsaddr.py, so a bit in the wrong place,
  * an inverted level or a missing XY halfword shows up as the game would see
  * it.  Its two callees are doubles here: func_0203521C hands it the key
- * work, func_020360B8 (the button remapper) does nothing.  Every expected
+ * work, KEY_ApplyControlMode (the button remapper) does nothing.  Every expected
  * value is worked out by hand from the hardware rules in sdk/input.h.
  *
  * No game data; both pointer widths (the key work is all u32).
@@ -28,7 +28,7 @@
 /* The game's pad update and its doubles                               */
 /* ------------------------------------------------------------------ */
 
-struct Key {                    /* func_02035F38.c's view                  */
+struct Key {                    /* KEY_MainSys.c's view                  */
     u8  pad00[0x0c];
     u32 cont, trg, rpt;
     u32 f18, f1c, f20, f24, f28, f2c, f30, f34, f38;
@@ -44,8 +44,8 @@ static struct Key g_key;
 static struct Ctx g_ctx;
 
 struct Key *func_0203521C(struct Ctx *ctx);
-void func_020360B8(struct Key *k);
-void func_02035F38(struct Ctx *ctx);
+void KEY_ApplyControlMode(struct Key *k);
+void KEY_MainSys(struct Ctx *ctx);
 
 struct Key *func_0203521C(struct Ctx *ctx)
 {
@@ -53,7 +53,7 @@ struct Key *func_0203521C(struct Ctx *ctx)
     return &g_key;
 }
 
-void func_020360B8(struct Key *k)
+void KEY_ApplyControlMode(struct Key *k)
 {
     (void)k;
 }
@@ -72,7 +72,7 @@ static u16 xybuf(void)
 static void frame(void)
 {
     bw_input_frame();
-    func_02035F38(&g_ctx);
+    KEY_MainSys(&g_ctx);
 }
 
 static void host(u32 buttons, int lid)

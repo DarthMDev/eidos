@@ -63,28 +63,28 @@ typedef struct {
     unsigned char channel[16];
 } SndTrackInfo;
 
-void func_02089F88(void);                                   /* SND_AlarmInit      */
-void func_020898A8(void);                                   /* SND_CommandInit    */
+void SND_AlarmInit(void);                                   /* SND_AlarmInit      */
+void SND_CommandInit(void);                                   /* SND_CommandInit    */
 int  SND_FlushCommand(unsigned long flags);
-void func_0208A2BC(void *bank, int index, void *wave_arc);  /* SND_AssignWaveArc  */
-void func_02089350(int player, const void *base, unsigned long offset,
+void SND_AssignWaveArc(void *bank, int index, void *wave_arc);  /* SND_AssignWaveArc  */
+void SND_PrepareSeq(int player, const void *base, unsigned long offset,
                    void *bank);                             /* SND_PrepareSeq     */
 void func_02089804(int id, unsigned long a0, unsigned long a1, unsigned long a2,
                    unsigned long a3);                       /* PushCommand_impl   */
-void func_02089330(int player);                             /* SND_StopSeq        */
-void func_020897B4(int player, unsigned long offset, unsigned long data,
+void SND_StopSeq(int player);                             /* SND_StopSeq        */
+void SNDi_SetPlayerParam(int player, unsigned long offset, unsigned long data,
                    int size);                               /* SNDi_SetPlayerParam */
-void func_0208970C(int volume);                             /* SND_SetMasterVolume */
-void func_02089540(int alarm, unsigned long tick, unsigned long period,
+void SND_SetMasterVolume(int volume);                             /* SND_SetMasterVolume */
+void SND_SetupAlarm(int alarm, unsigned long tick, unsigned long period,
                    SndAlarmHandler handler, void *arg);     /* SND_SetupAlarm     */
-void func_020894B4(unsigned long ch, unsigned long cap, unsigned long alarm,
+void SND_StartTimer(unsigned long ch, unsigned long cap, unsigned long alarm,
                    unsigned long flags);                    /* SND_StartTimer     */
-void func_02089794(void *info);                             /* SND_ReadDriverInfo */
-int  func_0208A0A4(void *info, int player, int track,
+void SND_ReadDriverInfo(void *info);                             /* SND_ReadDriverInfo */
+int  SND_ReadTrackInfo(void *info, int player, int track,
                    SndTrackInfo *out);                      /* SND_ReadTrackInfo  */
-unsigned long func_02089D40(void);                          /* SND_GetCurrentCommandTag */
-void func_02089CD4(unsigned long tag);                      /* SND_WaitForCommandProc */
-unsigned long func_0208A07C(void);                          /* SND_GetChannelStatus */
+unsigned long SND_GetCurrentCommandTag(void);                          /* SND_GetCurrentCommandTag */
+void SND_WaitForCommandProc(unsigned long tag);                      /* SND_WaitForCommandProc */
+unsigned long SND_GetChannelStatus(void);                          /* SND_GetChannelStatus */
 void PXIi_HandlerRecvFifoNotEmpty(void);
 
 /* ------------------------------------------------------------------ */
@@ -281,8 +281,8 @@ int main(void)
     bw_arm7_boot();
 
     /* Start-up, as SND_Init does it. */
-    func_02089F88();
-    func_020898A8();
+    SND_AlarmInit();
+    SND_CommandInit();
     REQ("init: SNDi_SharedWork is sSharedWork", SNDi_SharedWork == &sSharedWork);
     BW_CHECK_EQ("init: SHARED_WORK list completed", sSharedWork.finishCommandTag, 1);
     BW_CHECK_EQ("init: transport found it in sCommandArray", bw_arm7_snd_unresolved(), 0);
@@ -291,15 +291,15 @@ int main(void)
 
     /* The bank's wave archive, as the sound archive loader links it. */
     REQ("data", make_data() == 0);
-    func_0208A2BC(g_bank, 0, g_wave);
+    SND_AssignWaveArc(g_bank, 0, g_wave);
     BW_CHECK_EQ("bank: waveArcLink[0].waveArc",
                 bw_rd32(g_bank + 0x18), (u32)(uintptr_t)g_wave);
 
     /* SND_PrepareSeq, then SND_StartPreparedSeq's command, one flush. */
-    func_02089350(4, g_seq + 0x1C, 0, g_bank);
+    SND_PrepareSeq(4, g_seq + 0x1C, 0, g_bank);
     func_02089804(BW_SND_CMD_START_PREPARED_SEQ, 4, 0, 0, 0);
     SND_FlushCommand(0);
-    func_02089CD4(func_02089D40());          /* SND_WaitForCommandProc */
+    SND_WaitForCommandProc(SND_GetCurrentCommandTag());          /* SND_WaitForCommandProc */
     BW_CHECK_EQ("seq: player 4 playing", sSharedWork.playerStatus, 1u << 4);
     bw_snd_stats(&st);
     BW_CHECK_EQ("seq: no bad addresses", st.bad_address, 0);
@@ -320,34 +320,34 @@ int main(void)
     bw_arm7_step();
     BW_CHECK_EQ("seq: tick counter (120 BPM, 1 s)", sSharedWork.player[4].tickCounter, 96);
     BW_CHECK_EQ("seq: SND_GetChannelStatus reads the driver's word",
-                func_0208A07C(), sSharedWork.channelStatus);
+                SND_GetChannelStatus(), sSharedWork.channelStatus);
 
     /* SNDi_SetPlayerParam, as SND_SetPlayerVolume sends it. */
-    func_020897B4(4, 6, (unsigned long)(u16)(s16)-240, 2);
-    func_0208970C(64);                       /* SND_SetMasterVolume */
+    SNDi_SetPlayerParam(4, 6, (unsigned long)(u16)(s16)-240, 2);
+    SND_SetMasterVolume(64);                       /* SND_SetMasterVolume */
     SND_FlushCommand(0);
     bw_snd_player_state(4, &ps);
     BW_CHECK_EQ("param: player fader", ps.player_fader, -240);
     BW_CHECK_EQ("param: master volume", bw_snd_master_volume(), 64);
 
     /* SND_ReadDriverInfo, then SND_ReadTrackInfo over it. */
-    func_02089794(info);
+    SND_ReadDriverInfo(info);
     SND_FlushCommand(0);
-    func_02089CD4(func_02089D40());
-    BW_CHECK_EQ("info: track 0 of player 4", func_0208A0A4(info, 4, 0, &ti), 1);
+    SND_WaitForCommandProc(SND_GetCurrentCommandTag());
+    BW_CHECK_EQ("info: track 0 of player 4", SND_ReadTrackInfo(info, 4, 0, &ti), 1);
     BW_CHECK_EQ("info: its volume", ti.volume, 127);
     printf("  SND_ReadTrackInfo: track 0 lists %d channel(s)\n", ti.chCount);
     BW_CHECK_EQ("info: track 0 lists at most its one note", ti.chCount <= 1, 1);
     if (ti.chCount == 1)
         BW_CHECK_EQ("info: on channel 0", ti.channel[0], 0);
-    BW_CHECK_EQ("info: track 1 of player 4", func_0208A0A4(info, 4, 1, &ti), 1);
-    BW_CHECK_EQ("info: no track 2", func_0208A0A4(info, 4, 2, &ti), 0);
-    BW_CHECK_EQ("info: player 3 has none", func_0208A0A4(info, 3, 0, &ti), 0);
+    BW_CHECK_EQ("info: track 1 of player 4", SND_ReadTrackInfo(info, 4, 1, &ti), 1);
+    BW_CHECK_EQ("info: no track 2", SND_ReadTrackInfo(info, 4, 2, &ti), 0);
+    BW_CHECK_EQ("info: player 3 has none", SND_ReadTrackInfo(info, 3, 0, &ti), 0);
 
     /* SND_SetupAlarm and SND_StartTimer: the ARM7's word comes back through
      * PxiFifoCallback to SNDi_CallAlarmHandler and the game's handler. */
-    func_02089540(3, 500, 0, on_alarm, &sSharedWork);
-    func_020894B4(0, 0, 1u << 3, 0);
+    SND_SetupAlarm(3, 500, 0, on_alarm, &sSharedWork);
+    SND_StartTimer(0, 0, 1u << 3, 0);
     SND_FlushCommand(0);
     bw_snd_render(NULL, 1024);               /* 16365 OS ticks */
     bw_arm7_step();
@@ -356,9 +356,9 @@ int main(void)
     BW_CHECK_EQ("alarm: with its argument", g_alarm_arg == (void *)&sSharedWork, 1);
 
     /* SND_StopSeq. */
-    func_02089330(4);
+    SND_StopSeq(4);
     SND_FlushCommand(0);
-    func_02089CD4(func_02089D40());
+    SND_WaitForCommandProc(SND_GetCurrentCommandTag());
     BW_CHECK_EQ("stop: status clear", sSharedWork.playerStatus, 0);
     BW_CHECK_EQ("stop: every list completed, none lost", bw_arm7_snd_unresolved(), 0);
     /* sFreeList word 8 is currentTag, one past the last list flushed. */

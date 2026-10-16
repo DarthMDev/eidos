@@ -4,10 +4,10 @@
  *
  * What is matched game C here, compiled unchanged out of src/matched/:
  *
- *   func_02018A7C   poke_tool.c's six-stat recalculation (660 bytes, the
+ *   POKE_TOOL_CalcParam   poke_tool.c's six-stat recalculation (660 bytes, the
  *                   whole formula, the nature permutation and the species
  *                   292 exception)
- *   func_02019C54   the one-entry personal-record memo
+ *   POKE_TOOL_GetPersonalData   the one-entry personal-record memo
  *   sub_0201ADA4    the record read: index, seek, 0x3C-byte read
  *   sub_0201AFD4    species + form -> archive member index
  *   func_02019B04   the nature multiplier, indexed into the 25 x 5 table
@@ -21,14 +21,14 @@
  * --------------------------------------------------------------------
  * WHAT IS SUBSTITUTED, AND WHY
  * --------------------------------------------------------------------
- * func_02018A7C reads and writes the Pokemon record only through the
- * dispatcher pair func_02017E1C (get field by id) and func_02017E40 (set
- * field by id), plus func_02018598 for the nature.  All three are matched,
+ * POKE_TOOL_CalcParam reads and writes the Pokemon record only through the
+ * dispatcher pair POKE_TOOL_GetPartyValue (get field by id) and POKE_TOOL_SetPartyValue (set
+ * field by id), plus POKE_TOOL_GetNature for the nature.  All three are matched,
  * but their closure reaches the record's encryption layer (func_02018D10
  * decrypt / func_02018D6C re-encrypt) and the two 200-case field
  * dispatchers, and building a valid encrypted party record is a milestone of
  * its own.  So this test defines those three itself, over a flat id-indexed
- * array, which is exactly the interface func_02018A7C uses.
+ * array, which is exactly the interface POKE_TOOL_CalcParam uses.
  *
  * The three definitions below displace stubs/stub_02017E1C.c,
  * stub_02017E40.c and stub_02018598.c at link time (one symbol per archive
@@ -49,8 +49,8 @@
 
 /* --- the matched game functions under test ------------------------- */
 
-extern void  func_02018A7C(void *record);
-extern void *func_02019C54(u32 species, u32 form);
+extern void  POKE_TOOL_CalcParam(void *record);
+extern void *POKE_TOOL_GetPersonalData(u32 species, u32 form);
 
 /* --- the substituted record interface ------------------------------ */
 
@@ -61,7 +61,7 @@ typedef struct FlatRecord {
     u32 nature;
 } FlatRecord;
 
-u32 func_02017E1C(void *p, u32 id, u32 v)
+u32 POKE_TOOL_GetPartyValue(void *p, u32 id, u32 v)
 {
     FlatRecord *r = (FlatRecord *)p;
 
@@ -72,7 +72,7 @@ u32 func_02017E1C(void *p, u32 id, u32 v)
     return r->field[id];
 }
 
-void func_02017E40(void *p, u32 id, u32 v)
+void POKE_TOOL_SetPartyValue(void *p, u32 id, u32 v)
 {
     FlatRecord *r = (FlatRecord *)p;
 
@@ -81,7 +81,7 @@ void func_02017E40(void *p, u32 id, u32 v)
     }
 }
 
-u32 func_02018598(void *p)
+u32 POKE_TOOL_GetNature(void *p)
 {
     return ((FlatRecord *)p)->nature;
 }
@@ -132,7 +132,7 @@ int main(int argc, char **argv)
          * running the formula, so a failure separates "the archive read is
          * wrong" from "the arithmetic is wrong".
          */
-        base = (const u8 *)func_02019C54(fx->species, 0);
+        base = (const u8 *)POKE_TOOL_GetPersonalData(fx->species, 0);
         BW_REQUIRE("personal record", base != NULL);
         for (k = 0; k < 6; k++) {
             char label[80];
@@ -141,7 +141,7 @@ int main(int argc, char **argv)
             BW_CHECK_EQ(label, base[k], fx->base[k]);
         }
 
-        func_02018A7C(&rec);
+        POKE_TOOL_CalcParam(&rec);
 
         printf("  species %u level %d nature %d\n",
                fx->species, fx->level, fx->nature);

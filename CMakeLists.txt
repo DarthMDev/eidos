@@ -633,6 +633,14 @@ if(EIDOS_HEAP_MATCHED)
 else()
     target_compile_definitions(eidos PUBLIC EIDOS_HEAP_MATCHED=0)
 endif()
+# sdk/aliases.c and sdk/tcbl.c decide a handful of callee spellings by whether
+# the nine pointer-width-dependent tcbl sources are the matched ones
+# (EIDOS_TCBL_MATCHED=1) or the stubs/reimpl_ stand-ins (0).
+if(EIDOS_TCBL_MATCHED)
+    target_compile_definitions(eidos PUBLIC EIDOS_TCBL_MATCHED=1)
+else()
+    target_compile_definitions(eidos PUBLIC EIDOS_TCBL_MATCHED=0)
+endif()
 target_include_directories(eidos PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g2d
@@ -738,6 +746,84 @@ if(EIDOS_SDL_FOUND)
     else()
         target_link_libraries(eidos_platform PUBLIC GL)
     endif()
+
+    # engine/platform/mod_options_proc.c is the port's mod-menu processor; it
+    # calls the game's UI/BG/archive functions by the address spellings the
+    # port wrote it with, and aletheia's cleanup renamed those definitions
+    # (sub_020457B0 -> STRBUF_Create, ...).  The boot is the only link that
+    # pulls the file in (the overlays' settings hooks reach it), and the boot
+    # defines the descriptive names, so each spelling is renamed at build time
+    # (the mechanism the tests use for the same problem).  A full rewrite of
+    # the file onto the new names is the durable fix; the map is keyed on the
+    # address so it is mechanical (see sdk/aliases.c's header).
+    if(TARGET eidos_platform)
+        set(_eidos_modopts_defs
+            "sub_020457B0=STRBUF_Create"
+            "func_02045994=STRBUF_SetStringN"
+            "sub_0201D304=GF_FONT_MeasureWidestLine"
+            "sub_02045808=STRBUF_Delete"
+            "sub_02045770=BMP_WIN_GetBmp"
+            "sub_0201C724=PRINTSYS_PrintQueColor"
+            "sub_02043B5C=BMP_Clear"
+            "sub_02045334=BMP_WIN_TransferChars"
+            "sub_02045374=BMP_WIN_MakeScreen"
+            "sub_02045730=BMP_WIN_GetBgLayer"
+            "sub_02041B6C=BG_SYS_SetFlagField06"
+            "func_020413B0=BG_SYS_FillTileMap"
+            "func_020419E4=BG_SYS_Update"
+            "func_0204A648=CLACT_VBlankSystem"
+            "func_0203F8F4=BG_SYS_Create"
+            "sub_02045088=BMP_WIN_Init"
+            "func_0203FC28=BG_SYS_SetGraphicsMode"
+            "func_0203FCA0=BG_SYS_InitBgLayer"
+            "func_020414C4=BG_SYS_InitSlot"
+            "func_020414EC=BG_SYS_ClearSlot"
+            "sub_02040588=BG_SYS_SetPlaneVisible"
+            "func_02040C14=BG_SYS_Init"
+            "sub_020490F4=ARC_TOOL_CreateHandle"
+            "sub_02049B68=ARC_UTIL_UploadPaletteFromHandleWhole"
+            "sub_02049658=ARC_UTIL_UploadBgCharFromHandle"
+            "sub_020498F4=ARC_UTIL_UploadBgPaletteFromHandle"
+            "func_02049238=ARC_TOOL_DeleteHandle"
+            "sub_020450F0=BMP_WIN_Create"
+            "func_0201D7EC=GF_FONT_Create"
+            "sub_0201C440=PRINTSYS_QUE_Create"
+            "sub_020409B4=BG_SYS_PushTile"
+            "func_0207D534=GXx_SetMasterBrightness_"
+            "sub_02043534=BG_SYS_SetMainVisiblePlanes"
+            "sub_020435F4=BG_SYS_SetSubVisiblePlanes"
+            "sub_0204335C=BG_SYS_ClearGraphicsMemory"
+            "func_020433E0=BG_SYS_SetVramBanks"
+            "func_0204363C=BG_SYS_SetLcdSwap"
+            "func_0204361C=BG_SYS_ResetSubDisplay"
+            "sub_020434CC=BG_SYS_ClearMainObjPlane"
+            "func_02043588=BG_SYS_ClearSubPlanes"
+            "func_0201DD60=GF_FONT_ResetTextColor"
+            "func_0201DD78=GF_FONT_SetTextColor"
+            "sub_0203101C=TCBL_Create"
+            "sub_020056A0=GFL_USE_AddMainTask"
+            "func_0204E720=FADE_Start"
+            "sub_020452E8=BMP_WIN_Delete"
+            "sub_0201C4C0=PRINTSYS_QUE_Delete"
+            "func_0201D83C=GF_FONT_Delete"
+            "sub_02030EAC=TCB_DeleteTask"
+            "sub_02031140=TCBL_Destroy"
+            "sub_020450C8=BMP_WIN_Exit"
+            "func_0203F9B4=BG_SYS_Delete"
+            "func_0203159C=PROCSYS_AllocProcWork"
+            "func_0204E804=FADE_IsActive"
+            "sub_0203633C=KEY_GetRepeat"
+            "sub_020362DC=KEY_GetTrg"
+            "sub_020061E4=GFL_USE_PlaySeDefaultVolume"
+            "sub_020310C4=TCBL_Main"
+            "func_0204A600=CLACT_DrawSystem"
+            "sub_020315D4=PROCSYS_FreeProcWork"
+            "func_020306F0=GFL_HEAP_DeleteChecked"
+            "func_020312F8=PROCSYS_ReplaceGlobal")
+        set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_options_proc.c
+            PROPERTIES COMPILE_DEFINITIONS "${_eidos_modopts_defs}")
+    endif()
 endif()
 
 # The matched files are compiled with the port's warning set but without the
@@ -772,6 +858,40 @@ if(EIDOS_HEAP_MATCHED)
     set_source_files_properties(${_src}
         PROPERTIES COMPILE_DEFINITIONS "g_02146954=g_EnvModule")
 endif()
+
+# The same "one DS object, two spellings" problem, one address further out:
+# the archive readers and the personal-data memo name ARM9 data objects that
+# sdk/game_globals.c owns under the port's own spellings, and aletheia's
+# cleanup waves renamed the matched side to the ROM's symbol names
+# (arc_tool_file, ARC_TOOL_gArchiveTable, _pPersonalArc, gPersonalCache).
+# Each matched file is compiled with its spelling defined to the port object's
+# (portability rule 1, as above).  The message strings never reach behaviour:
+# they are the arguments of an assertion that only fires on an out-of-range
+# member, which is why sdk/game_globals.c can supply its own text.
+#
+# STRBUF_GetEosChar is the same shape one step removed: aletheia matched
+# src/matched/arm9_sdk/func_02045A98.c, which defines STRBUF_GetEosChar, while
+# the port still compiles stubs/reimpl_02045A98.c under the address name, so
+# func_02045E3C.c's call is renamed onto the port's definition.
+foreach(_eidos_data_alias
+    "arm9/func_02049578.c|arc_tool_file=func_02049578_File,arc_tool_msg_member_bounds=func_02049578_Msg"
+    "arm9/func_0204944C.c|arc_tool_file=func_0204944C_File,arc_tool_msg_member_bounds=func_0204944C_Msg"
+    "arm9/unit_02048DDC.c|ARC_TOOL_gArchiveTable=g_02146A68,arc_tool_msg_member_range=func_02048DDC_Msg,arc_tool_file=func_02048DDC_File"
+    "arm9/unit_0201AFD4.c|_pPersonalArc=g_0214652C"
+    "arm9/unit_0201ADA4.c|_pPersonalArc=g_0214652C"
+    "arm9/unit_02019C54.c|gPersonalCache=g_02146270"
+    "arm9/func_02045E3C.c|STRBUF_GetEosChar=func_02045A98")
+    string(REPLACE "|" ";" _eidos_kv "${_eidos_data_alias}")
+    list(GET _eidos_kv 0 _eidos_rel)
+    list(GET _eidos_kv 1 _eidos_defs)
+    # The defines are ','-separated above: a ';' inside a list element would
+    # split the element and drop every define after the first.
+    string(REPLACE "," ";" _eidos_defs "${_eidos_defs}")
+    eidos_dsaddr_path(_eidos_src
+        ${ALETHEIA_ROOT}/src/matched/${_eidos_rel})
+    set_source_files_properties(${_eidos_src}
+        PROPERTIES COMPILE_DEFINITIONS "${_eidos_defs}")
+endforeach()
 
 # ---------------------------------------------------------------------------
 # Generated fixtures
@@ -1211,11 +1331,18 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
         set_source_files_properties(${_bw_snd_matched} PROPERTIES
             COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS}")
     endif()
-    set_source_files_properties(${_bw_snd_matched} PROPERTIES COMPILE_DEFINITIONS
-        "InitPXI=func_02089E74;SNDi_InitSharedWork=func_0208A1D0;SND_AllocCommand=func_02089A78;SND_PushCommand=func_02089B00;SND_RecvCommandReply=func_02089978;SNDi_GetFinishedCommandTag=func_0208A1AC;IsCommandAvailable=func_02089F48;AllocCommand=func_02089F00;SND_CountWaitingCommand=func_02089E34;SND_CountFreeCommand=func_02089DBC;SND_CountReservedCommand=func_02089DF8;RequestCommandProc=func_02089ED8;SND_IsFinishedCommandTag=func_02089D6C;PxiFifoCallback=func_02089E50;SNDi_CallAlarmHandler=func_0208A010;PushCommand_impl=func_02089804;SNDi_SetAlarmHandler=func_02089FE0;PXI_IsCallbackReady=func_020885EC;sCommandBss=sFreeList")
     add_executable(test_snd_matched
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_snd_matched.c
         ${_bw_snd_matched})
+    # These renames are the test's own: the same matched copies (PXI_SendWordByFifo,
+    # PXI_SetFifoRecvCallback, func_020885EC, func_02089ED8) are compiled by
+    # test_pxi, test_tp and test_backup, which want the natural names aletheia
+    # gives them.  set_source_files_properties is directory-global, so a rename
+    # there would leak into those targets (it did: test_pxi lost
+    # PXI_IsCallbackReady and RequestCommandProc).  target_compile_definitions
+    # keeps the rename inside this target.
+    target_compile_definitions(test_snd_matched PRIVATE
+        "InitPXI=func_02089E74;SNDi_InitSharedWork=func_0208A1D0;SND_AllocCommand=func_02089A78;SND_PushCommand=func_02089B00;SND_RecvCommandReply=func_02089978;SNDi_GetFinishedCommandTag=func_0208A1AC;IsCommandAvailable=func_02089F48;AllocCommand=func_02089F00;SND_CountWaitingCommand=func_02089E34;SND_CountFreeCommand=func_02089DBC;SND_CountReservedCommand=func_02089DF8;RequestCommandProc=func_02089ED8;SND_IsFinishedCommandTag=func_02089D6C;PxiFifoCallback=func_02089E50;SNDi_CallAlarmHandler=func_0208A010;PushCommand_impl=func_02089804;SNDi_SetAlarmHandler=func_02089FE0;PXI_IsCallbackReady=func_020885EC;sCommandBss=sFreeList")
     target_include_directories(test_snd_matched PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(test_snd_matched PRIVATE eidos)
     add_test(NAME test_snd_matched COMMAND test_snd_matched)
@@ -1471,6 +1598,7 @@ target_include_directories(test_backup PRIVATE
 target_compile_definitions(test_backup PRIVATE
     BW_TEST_CARD_MATCHED=${_bw_backup_card_matched}
     PXI_Init=func_02088498
+    PXI_InitFifo=func_020884A4
     PXI_IsCallbackReady=func_020885EC
     CARDi_OnFifoRecv=func_020763BC
     CARDi_Request=func_020763F0
@@ -2043,6 +2171,22 @@ endif()
 
 if(EIDOS_BOOT)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boot.cmake)
+
+    # tools/bootlink.py generates one panic stub per mwcc `asm` body it cannot
+    # compile (boot/boot_asm.txt).  When a *unit* source also defines one of
+    # those functions the stub and the unit's real C collide: the DS linker
+    # resolved the two by address, a host linker sees two strong definitions.
+    # Here that is MYSTATUS_NameToStrbuf (0x02008500), which
+    # src/matched/arm9/unit_020084BC.c defines as C and the asm file
+    # MYSTATUS_NameToStrbuf.c as a veneer.  The unit's C is the real
+    # definition, so the spurious stub is renamed out of the way.  The durable
+    # fix is in tools/bootlink.py (drop an asm-pending function a compiled unit
+    # already defines) or cmake/boot.cmake (list the asm file in
+    # EIDOS_BOOT_SHIM_REPLACED); both are outside this lane, so this is the
+    # port-side workaround.  bootlink.py's `spurious stubs` check in the plan
+    # report is where the next one would be named.
+    set_source_files_properties(${EIDOS_BOOT_GEN}/boot_link.c PROPERTIES
+        COMPILE_DEFINITIONS "MYSTATUS_NameToStrbuf=MYSTATUS_NameToStrbuf_bootstub")
 endif()
 
 if(NOT _eidos_ovls STREQUAL "")

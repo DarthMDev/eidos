@@ -48,9 +48,9 @@ typedef struct {
 } OSOwnerInfoEx;
 typedef struct { s16 x0, y0, xDotSize, yDotSize; } TPCalibrateParam;
 
-extern void func_02087C88(OSOwnerInfo *info);      /* OS_GetOwnerInfo       */
-extern void func_02087D28(OSOwnerInfoEx *info);    /* OS_GetOwnerInfoEx     */
-extern BOOL func_0208A998(TPCalibrateParam *c);    /* TP_GetUserInfo        */
+extern void OS_GetOwnerInfo(OSOwnerInfo *info);      /* OS_GetOwnerInfo       */
+extern void OS_GetOwnerInfoEx(OSOwnerInfoEx *info);    /* OS_GetOwnerInfoEx     */
+extern BOOL TP_GetUserInfo(TPCalibrateParam *c);    /* TP_GetUserInfo        */
 extern void OS_GetMacAddress(u8 *mac);             /* sdk/asm               */
 
 /* The doubles the matched readers call.                                    */
@@ -162,7 +162,7 @@ static void test_apply(void)
     bw_port_reset();
 
     memset(&info, 0xCC, sizeof info);
-    func_02087C88(&info);
+    OS_GetOwnerInfo(&info);
     BW_CHECK_EQ("owner: language", info.language, BW_FW_LANG_GERMAN);
     BW_CHECK_EQ("owner: colour", info.favoriteColor, 5);
     BW_CHECK_EQ("owner: birthday", info.birthday.month * 100 + info.birthday.day, 714);
@@ -172,13 +172,13 @@ static void test_apply(void)
     BW_CHECK_EQ("owner: comment", info.commentLength == 2 && info.comment[1] == 'i', 1);
 
     memset(&ex, 0xCC, sizeof ex);
-    func_02087D28(&ex);
+    OS_GetOwnerInfoEx(&ex);
     BW_CHECK_EQ("owner ex: language (NITRO path)", ex.language, BW_FW_LANG_GERMAN);
     BW_CHECK_EQ("owner ex: country", ex.country, 0);
     BW_CHECK_EQ("owner ex: nickname", ex.nickName[1], 'i');
 
     memset(g_tp, 0, sizeof g_tp);
-    BW_CHECK_EQ("tp: TP_GetUserInfo", func_0208A998(&cal), 1);
+    BW_CHECK_EQ("tp: TP_GetUserInfo", TP_GetUserInfo(&cal), 1);
     BW_CHECK_EQ("tp: point 1", g_tp[0] == 512 && g_tp[1] == 512 && g_tp[2] == 32
                 && g_tp[3] == 32, 1);
     BW_CHECK_EQ("tp: point 2", g_tp[4] == 3584 && g_tp[5] == 2560 && g_tp[6] == 224

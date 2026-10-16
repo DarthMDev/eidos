@@ -42,11 +42,11 @@ extern BOOL FS_LoadOverlay(u32 target, u32 id);
 extern const BwOvlImageSet bw_ovl_set_title_test;
 
 /* Renamed by tools/ovlink.py: the overlay's own definitions. */
-int   ov088_func_021BD3A0(unsigned char *p);
-void  ov088_func_021BCE70(void);
-void  ov088_func_021B95A0(void);
-void  ov088_func_021B9750(void);
-void  ov088_func_021B9874(void);
+int   ov088_SAVE_CONTROL_INTR_IsFinished(unsigned char *p);
+void  ov088_STARTMENU_SaveEraseUpdateTimeIcon(void);
+void  ov088_STARTMENU_TitleDemoInit(void);
+void  ov088_STARTMENU_TitleDemoMain(void);
+void  ov088_STARTMENU_TitleDemoExit(void);
 void  ov179_OSi_VBlankIntr(void);
 void *bw_ovl_ds_ptr_ov179(unsigned int addr);
 
@@ -78,16 +78,16 @@ int main(int argc, char **argv)
     BW_CHECK_EQ("resident at 0x021B6278", bw_ovl_resident_at(0x021B6278u), 179);
 
     if (argc > 1 && strcmp(argv[argc - 1], "--arm9") == 0) {
-        ov088_func_021BCE70();
+        ov088_STARTMENU_SaveEraseUpdateTimeIcon();
         printf("returned from an ARM9 stub\n");
         return 0;
     }
 
     /* The proc data (init, main, end) the root proc starts last. */
     if (bw_data_relocation_supported()) {
-        BW_CHECK_EQ("proc init relocated", ds_word(0x021BD574u), (u32)(uintptr_t)ov088_func_021B95A0);
-        BW_CHECK_EQ("proc main relocated", ds_word(0x021BD578u), (u32)(uintptr_t)ov088_func_021B9750);
-        BW_CHECK_EQ("proc end relocated", ds_word(0x021BD57Cu), (u32)(uintptr_t)ov088_func_021B9874);
+        BW_CHECK_EQ("proc init relocated", ds_word(0x021BD574u), (u32)(uintptr_t)ov088_STARTMENU_TitleDemoInit);
+        BW_CHECK_EQ("proc main relocated", ds_word(0x021BD578u), (u32)(uintptr_t)ov088_STARTMENU_TitleDemoMain);
+        BW_CHECK_EQ("proc end relocated", ds_word(0x021BD57Cu), (u32)(uintptr_t)ov088_STARTMENU_TitleDemoExit);
     } else {
         BW_CHECK_EQ("proc init as on the DS", ds_word(0x021BD574u), 0x021B95A1u);
         BW_CHECK_EQ("proc main as on the DS", ds_word(0x021BD578u), 0x021B9751u);
@@ -97,9 +97,9 @@ int main(int argc, char **argv)
 
     /* A matched ov088 function. */
     memset(req, 0, sizeof(req));
-    BW_CHECK_EQ("func_021BD3A0 idle", ov088_func_021BD3A0(req), 0);
+    BW_CHECK_EQ("func_021BD3A0 idle", ov088_SAVE_CONTROL_INTR_IsFinished(req), 0);
     req[4] = 3;
-    BW_CHECK_EQ("func_021BD3A0 state 3", ov088_func_021BD3A0(req), 1);
+    BW_CHECK_EQ("func_021BD3A0 state 3", ov088_SAVE_CONTROL_INTR_IsFinished(req), 1);
 
     /* A matched ov179 function on the DS address space. */
     dtcm_word = (u32 *)bw_ds_ptr(0x02FE3FF8u);

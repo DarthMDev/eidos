@@ -43,30 +43,30 @@ extern int  PXI_SendWordByFifo(int fifotag, unsigned long data, BOOL err);
 extern void PXI_SetFifoRecvCallback(int fifotag, Arm9Cb callback);
 extern BOOL PXI_IsCallbackReady(int fifotag, int proc);
 extern void PXIi_HandlerRecvFifoNotEmpty(void);
-extern void func_02087B78(void);                /* OS: PXI init + tag 12   */
+extern void OS_InitReset(void);                /* OS: PXI init + tag 12   */
 extern void OSi_SendToPxi(u16 data);
-extern void func_02084B90(void);                /* OS_InitLock             */
+extern void OS_InitLock(void);                /* OS_InitLock             */
 extern void PMi_SendPxiData(unsigned long data);
 extern unsigned long PM_SendUtilityCommandAsync(unsigned long number,
         u16 parameter, u16 *retValue,
         void (*callback)(unsigned long, void *), void *arg);
 extern void PMi_CallCallbackAndUnlock(unsigned long result);
 #if BW_TEST_PM_MATCHED
-extern void func_0208B8B0(void);                /* PM_Init                 */
+extern void PM_Init(void);                /* PM_Init                 */
 extern unsigned long PM_SendUtilityCommand(unsigned long number,
         u16 parameter, u16 *retValue);
 extern unsigned long PM_GetAmp(int *swBuf);
 #endif
-extern void func_02088788(void);                /* RTC_Init                */
+extern void RTC_Init(void);                /* RTC_Init                */
 extern int  RTCi_WriteRawStatus2Async(void);
 extern BOOL func_02088F2C(unsigned long command);
 typedef struct { unsigned long year, month, day; int week; } RTCDate;
 typedef struct { unsigned long hour, minute, second; } RTCTime;
-extern int func_02088944(RTCDate *date, RTCTime *time,
+extern int RTC_GetDateTimeAsync(RTCDate *date, RTCTime *time,
                          void (*cb)(int result, void *arg), void *arg);
-extern void func_020911A0(void);                /* CTRDG_DummyInit         */
-extern void func_020763BC(int tag, unsigned long data, BOOL err);
-extern void func_02089ED8(void);                /* SND RequestCommandProc  */
+extern void CTRDG_DummyInit(void);                /* CTRDG_DummyInit         */
+extern void CARDi_OnFifoRecv(int tag, unsigned long data, BOOL err);
+extern void RequestCommandProc(void);                /* SND RequestCommandProc  */
 
 /* A recording ARM9 callback.                                              */
 #define REC_MAX 32
@@ -142,7 +142,7 @@ static void test_init(void)
 
     BW_CHECK_EQ("init: ARM7 not ready before PXI_Init",
                 PXI_IsCallbackReady(12, 1), 0);
-    func_02087B78();
+    OS_InitReset();
 
     BW_CHECK_EQ("init: IPCFIFOCNT", bw_io_read16(BW_REG_IPCFIFOCNT),
                 BW_FIFOCNT_ENABLE | BW_FIFOCNT_RECV_IRQ |
@@ -203,7 +203,7 @@ static void test_os_sync(void)
 
     /* OSi_SyncWithOtherProc is the OS layer's shim (sdk/os_system.c): it
      * leaves the window as both sides leave it once the handshake is done. */
-    func_02084B90();
+    OS_InitLock();
     BW_CHECK_EQ("sync: tokens equal", p[0] == p[1] && p[0] != 0, 1);
     BW_CHECK_EQ("sync: p[2]", p[2], 1);
     BW_CHECK_EQ("sync: p[3]", p[3], 1);
@@ -234,7 +234,7 @@ static void test_pm(void)
     u16 value = 0;
     int sw = -1;
 
-    func_0208B8B0();
+    PM_Init();
     BW_CHECK_EQ("pm: set amp", PM_SendUtilityCommand(0x10, 1, NULL), 0);
     BW_CHECK_EQ("pm: ARM7 amp on", bw_arm7_pm_state()->amp, 1);
     BW_CHECK_EQ("pm: PM_GetAmp", PM_GetAmp(&sw), 0);
@@ -287,10 +287,10 @@ static void test_rtc(void)
     RTCTime time;
 
     bw_arm7_rtc_fix_time(&t);
-    func_02088788();
+    RTC_Init();
     memset(&date, 0, sizeof date);
     memset(&time, 0, sizeof time);
-    BW_CHECK_EQ("rtc: request", func_02088944(&date, &time, rtc_done, NULL), 0);
+    BW_CHECK_EQ("rtc: request", RTC_GetDateTimeAsync(&date, &time, rtc_done, NULL), 0);
     BW_CHECK_EQ("rtc: callback", g_rtc_calls, 1);
     BW_CHECK_EQ("rtc: result", g_rtc_result, 0);
     BW_CHECK_EQ("rtc: raw date", rd32(0x02FFFDE8u), 0x04011026u);
@@ -320,14 +320,14 @@ static void test_rtc(void)
 
 static void test_ctrdg(void)
 {
-    func_020911A0();
+    CTRDG_DummyInit();
     BW_CHECK_EQ("ctrdg: ARM7 took the init word", bw_arm7_ctrdg_words(), 1);
     BW_CHECK_EQ("ctrdg: no reply", bw_pxi_arm9_pending(), 0);
     BW_CHECK_EQ("ctrdg: ARM9 callback installed", PXI_IsCallbackReady(13, 0), 1);
 }
 
 /*
- * CARDiCommon as src/matched/arm9_sdk/func_020763BC.c declares it, for the
+ * CARDiCommon as src/matched/arm9_sdk/CARDi_OnFifoRecv.c declares it, for the
  * offset of the thread CARDi_OnFifoRecv wakes (its `u32` is unsigned long).
  */
 typedef struct {
@@ -360,7 +360,7 @@ static void test_fs(void)
     requester.state = OS_THREAD_STATE_WAITING;
     card->current_thread_9 = &requester;
 
-    PXI_SetFifoRecvCallback(BW_PXI_TAG_FS, func_020763BC);
+    PXI_SetFifoRecvCallback(BW_PXI_TAG_FS, CARDi_OnFifoRecv);
     card->flag |= 0x20;
     BW_CHECK_EQ("fs: init request", PXI_SendWordByFifo(11, 0, 1), 0);
     BW_CHECK_EQ("fs: waits for the block address", requester.state,
@@ -388,7 +388,7 @@ static void test_card_snd(void)
     bw_arm7_snd_bind(&finish);
     BW_CHECK_EQ("snd: command list", PXI_SendWordByFifo(7, 0x123456, 0), 0);
     BW_CHECK_EQ("snd: finish tag advanced", finish, 1);
-    func_02089ED8();
+    RequestCommandProc();
     BW_CHECK_EQ("snd: process request is not a list", finish, 1);
     BW_CHECK_EQ("snd: lists", bw_arm7_snd_lists(), 1);
     bw_arm7_snd_bind(NULL);

@@ -12,12 +12,12 @@
  *     pointers (ILP32), entry 0 reaching "a/0/0/0" and entry 234 "a/2/3/4"
  *     (aletheia's docs/ASSETS.md: entry N is N's three digits);
  *   - the proc table at 0x020A0480: its three Thumb words rewritten to the
- *     host functions func_0202F9F4, func_0202F9F8 and func_0202FAB0, the
+ *     host functions APP_POWER_IsSupported, OVERLAY_LAUNCH_Driver and APP_POWER_IsReady, the
  *     matched files compiled into this test, and callable through them;
- *   - matched func_0202F9F8 run as written: a linker constant (ov088_id),
+ *   - matched OVERLAY_LAUNCH_Driver run as written: a linker constant (ov088_id),
  *     an overlay address (d_021BD8E8) and one object under two names
  *     (g_02146948, g_02146948_arg) all reach the expected DS addresses;
- *   - matched func_02005440's store to g_020A9E80 lands at 0x020A9E80;
+ *   - matched GFL_USE_OnPreExit's store to g_020A9E80 lands at 0x020A9E80;
  *   - two names for 0x020AA194 (sub_02005610_Sys, sub_020056A0_Sys) bound to
  *     one byte; SDK_AUTOLOAD_DTCM_START bound to 0x02FE0000 with the DTCM
  *     contiguous behind it (+0x3FF8 is bw_ds_ptr(0x02FE3FF8)); the constant
@@ -48,10 +48,10 @@
     } while (0)
 
 /* The matched functions compiled into this test. */
-int  func_0202F9F4(void);
-int  func_0202F9F8(void *unused, u32 *state);
-int  func_0202FAB0(void);
-void func_02005440(void);
+int  APP_POWER_IsSupported(void);
+int  OVERLAY_LAUNCH_Driver(void *unused, u32 *state);
+int  APP_POWER_IsReady(void);
+void GFL_USE_OnPreExit(void);
 
 extern char g_EnvModule[];
 
@@ -59,8 +59,8 @@ extern char g_EnvModule[];
 static void *g_ovl, *g_proc, *g_arg;
 static int   g_calls;
 
-void func_020312CC(void *ovl, void *proc, void *arg);
-void func_020312CC(void *ovl, void *proc, void *arg)
+void PROCSYS_PushGlobal(void *ovl, void *proc, void *arg);
+void PROCSYS_PushGlobal(void *ovl, void *proc, void *arg)
 {
     g_ovl = ovl;
     g_proc = proc;
@@ -164,9 +164,9 @@ int main(int argc, char **argv)
     /* --- the proc table: three Thumb words to matched functions ------- */
     {
         uintptr_t want[3];
-        want[0] = (uintptr_t)func_0202F9F4;
-        want[1] = (uintptr_t)func_0202F9F8;
-        want[2] = (uintptr_t)func_0202FAB0;
+        want[0] = (uintptr_t)APP_POWER_IsSupported;
+        want[1] = (uintptr_t)OVERLAY_LAUNCH_Driver;
+        want[2] = (uintptr_t)APP_POWER_IsReady;
         for (i = 0; i < 3; i++) {
             r = reloc_at(0x020A0480u + 4u * i);
             BW_REQUIRE("proc word listed", r != NULL && r->kind == BW_DATA_RELOC_CODE);
@@ -185,24 +185,24 @@ int main(int argc, char **argv)
         }
     }
 
-    /* --- func_0202F9F8 as written ------------------------------------ */
+    /* --- OVERLAY_LAUNCH_Driver as written ------------------------------------ */
     state = 0;
-    func_0202F9F8(NULL, &state);
+    OVERLAY_LAUNCH_Driver(NULL, &state);
     BW_CHECK_EQ("state 0 -> 1", state, 1);
     BW_CHECK_EQ("one call", g_calls, 1);
     CHECK_PTR("ov088_id is the constant 88", g_ovl, (void *)(uintptr_t)88u);
     CHECK_PTR("d_021BD8E8 at its DS address", g_proc, bw_ds_ptr(0x021BD8E8u));
     CHECK_PTR("&g_02146948.f04", g_arg, (u8 *)bw_ds_ptr(0x02146948u) + 4);
-    func_0202F9F8(NULL, &state);
+    OVERLAY_LAUNCH_Driver(NULL, &state);
     BW_CHECK_EQ("state 1 -> 2", state, 2);
     CHECK_PTR("g_02146948_arg is g_02146948", g_arg, bw_ds_ptr(0x02146948u));
     CHECK_PTR("ov179_id is the constant 179", g_ovl, (void *)(uintptr_t)179u);
     BW_CHECK_EQ("g_02146948.f04 stored at 0x0214694C", word_at(0x0214694Cu), 1);
     BW_CHECK_EQ("g_02146948.f02 stored at 0x0214694A", *(u8 *)bw_ds_ptr(0x0214694Au), 1);
 
-    /* --- func_02005440's store --------------------------------------- */
+    /* --- GFL_USE_OnPreExit's store --------------------------------------- */
     *(u32 *)bw_ds_ptr(0x020A9E80u) = 0;
-    func_02005440();
+    GFL_USE_OnPreExit();
     BW_CHECK_EQ("g_020A9E80 = 1 landed at 0x020A9E80", word_at(0x020A9E80u), 1);
 
     /* --- names ---------------------------------------------------------- */
