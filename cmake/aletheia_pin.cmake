@@ -16,7 +16,9 @@
 # shows up as a deliberate update rather than a surprise.
 #
 # Moving the pin is a deliberate edit to this file: change the hash, say why
-# in docs/aletheia-pin.md, and rebuild.  Nothing else reads the pin.
+# in docs/aletheia-pin.md, and rebuild.  tools/pinned_checkout.py reads the
+# same name to export the revision into a clean copy; the pin here is the one
+# source of truth for both.
 #
 # Included from CMakeLists.txt through cmake/dsaddr.cmake, which is always
 # included; the guard below makes a second include a no-op.
@@ -28,6 +30,30 @@ if(EIDOS_ALETHEIA_PIN_CHECKED)
     return()
 endif()
 set(EIDOS_ALETHEIA_PIN_CHECKED TRUE)
+
+# tools/pinned_checkout.py exports the pin with `git archive`, so the copy is
+# a plain tree with no .git and rev-parse below cannot read it.  The tool
+# writes the exported revision to .eidos-aletheia-rev at the copy's root; read
+# that instead.  A copy is the pin by construction, so there is nothing to
+# compare but the stamp.
+if(EXISTS "${ALETHEIA_ROOT}/.eidos-aletheia-rev")
+    string(SUBSTRING "${EIDOS_ALETHEIA_PIN}" 0 10 _pin_short)
+    file(READ "${ALETHEIA_ROOT}/.eidos-aletheia-rev" _pin_export)
+    string(STRIP "${_pin_export}" _pin_export)
+    if(_pin_export STREQUAL EIDOS_ALETHEIA_PIN)
+        message(STATUS
+            "aletheia pin: ${_pin_short} at ${ALETHEIA_ROOT} "
+            "(clean export, matches docs/aletheia-pin.md)")
+    else()
+        string(SUBSTRING "${_pin_export}" 0 10 _pin_export_short)
+        message(WARNING
+            "aletheia pin: the clean export at ${ALETHEIA_ROOT} is "
+            "${_pin_export_short} (${_pin_export}), but the port is pinned to "
+            "${_pin_short} (${EIDOS_ALETHEIA_PIN}).  Re-run "
+            "tools/pinned_checkout.py to export the pin.")
+    endif()
+    return()
+endif()
 
 find_package(Git QUIET)
 if(GIT_EXECUTABLE)

@@ -37,7 +37,7 @@ every N address too, because both are Nuzlocke supersets (`docs/modding.md`,
 
 | Address | Function | Region | Mods |
 |---|---|---|---|
-| 0x0216E818 | EVENT_BATTLE_CreateEncounterTask | ov010 | N S NS |
+| 0x0216E7C8 | EVENT_BATTLE_CreateScriptedBattle | ov010 | N S NS |
 | 0x0216EAB0 | EVENT_BATTLE_CreateEncounterTaskWithMon | ov010 | N S NS |
 | 0x021AA5CC | FIELD_ENCOUNT_SetupTrainerBattle | ov021 | N S NS |
 | 0x02013090 | BTL_SETUP_Create | arm9 | N S NS MP |
@@ -107,7 +107,7 @@ address is one more name the generator resolves, one more rename at every call
 site, and one more thing aletheia's next cleanup wave can move under the
 build (`docs/hooks.md`, "Limits": a rename or re-split must be rebased by
 hand). A uniform set is that cost for every cross-unit call in the corpus,
-which `tools/bootlink.py` measures at about 1400 boot translation units before
+which `tools/bootlink.py` measures at about 5,700 boot translation units before
 the overlays.
 
 The table above is the prose account. The set is published as a machine
@@ -131,15 +131,15 @@ two overlays that occupy the same RAM window: `0x021C5200` is
 `ZUKAN_DETAIL_FORM_SignalAnimDone` in ov208. The declared row is the ov093
 function; the overlay id disambiguates and the bare address does not.
 
-The table above is the original 44 rows, the addresses the four example mods
-need. The artifact has grown to 193 rows, because the event catalogue of
+The table above is the 44 rows the four example mods need. The artifact has
+grown to 193 rows, because the event catalogue of
 `docs/mod-events.md`, section 1, was rebuilt from the game's own command
 tables: the field script VM's 609-entry table at `d_0217062C` and the battle
 effect VM's 78-entry table at `0x02209E88`. 136 rows came from that rebuild,
 and 13 more came from the merge with `progress/EVENT_SURVEY.md`: 3 events and
 10 override points (`docs/mod-events.md`, section 0). A row with an empty
-fourth column is one no example mod names; the owner asked for its concept to
-be coverable. A state accessor that a mod reads and writes through an
+fourth column is one no example mod names; it covers a concept the port must be
+able to reach. A state accessor that a mod reads and writes through an
 accessor, and that no event or override binds, is not declared here;
 `docs/mod-events.md`, section 4, lists it.
 
@@ -529,22 +529,9 @@ item 10.
 A packed single-file mod is a player-facing thing: one `.bw` container with
 the same tree and manifest inside. The current layer reads a directory root,
 because `bw_data_path` joins a root and a relative path (`sdk/vfs.c`,
-`bw_data_path`), so no `.bw` is read anywhere in the tree. Two options carry
-the evidence for where a container would be read:
-
-- The port reads the container directly. The file layer is the one resolver
-  every reader goes through, and it already serves a merged NARC from memory
-  through a handle (`sdk/vfs.h`, `bw_vfs_acquire`, `bw_vfs_release`), so a
-  container member could be served the same way and every reader (the FS
-  shim, the matched readers, `sdk/narc.c`) would see it. The cost is a
-  container parser and a change to `bw_data_path`, which today returns a
-  filesystem path that `fopen` opens, not memory.
-- A launcher unpacks the container. The roots are directories
-  (`bw_set_mod_root`, `bw_add_mod_root`), and the installer already unpacks
-  the extraction into the eidos home, the place a `mods/` overlay sits beside
-  (`install/setup.c`, `bw_setup_install`; `docs/installer.md`, "Where the
-  data goes"). The cost is a step before the port starts; the port itself
-  stays directory-only.
+`bw_data_path`), so no `.bw` is read anywhere in the tree. The container, where
+the port reads it, and what each of the two options costs are
+`docs/mod-rules.md`, section 2, which owns the decision.
 
 Neither is built, so the port must fix which one it is (still-to-build item
 13).
@@ -561,7 +548,7 @@ address moves in aletheia.
 
 | Event name | Source address(es) | When it fires | Mods |
 |---|---|---|---|
-| `encounter.start` | 0x0216E818 | a wild or scripted battle task is created | N S NS |
+| `encounter.start` | 0x0216E7C8 | a wild or scripted battle task is created | N S NS |
 | `encounter.trainer` | 0x021AA5CC | a trainer battle is set up | N S NS |
 | `battle.start` | 0x02013090 | the battle setup is created | N S NS MP |
 | `catch.attempt` | 0x021CBA40 | a ball is thrown | N S NS |
@@ -579,8 +566,8 @@ address moves in aletheia.
 | `net.send` | the Wm and DWC send points | bytes leave the process | MP |
 | `net.receive` | the Wm and DWC receive points | bytes arrive | MP |
 
-These sixteen names are the catalogue of this section and stay unchanged.
-`docs/mod-events.md`, section 1, extends it to 355 entries (156 events, 27
+These seventeen names are the catalogue of this section and stay unchanged.
+`docs/mod-events.md`, section 1, extends it to 359 entries (160 events, 27
 override points, 81 state entries and 91 data tables), derived from the game's
 own command tables and from `progress/EVENT_SURVEY.md`, and binds each to a
 declared address, an accessor or a data table. The names here are the subset
@@ -588,7 +575,7 @@ the four example mods name.
 
 Exact semantics and the accepted writes:
 
-- `encounter.start`. Fires once when `EVENT_BATTLE_CreateEncounterTask` is
+- `encounter.start`. Fires once when `EVENT_BATTLE_CreateScriptedBattle` is
   entered. The payload names the battle kind and the task. A handler may
   block, which suppresses the encounter; a `replace` changes the species the
   task builds. This is Nuzlocke's "first encounter of a route" point.
@@ -671,7 +658,7 @@ stating because they change what a mod can rely on:
 So a change that must stick is made at the event the game derives the state
 from, or through the override's return, not as a write the game recomputes. A
 "block an action" is the return of a block on a slot that defines one, not a
-state write (`docs/modding.md`, "What block an action means").
+state write (`docs/modding.md`, still-to-build item 7).
 
 ### The rule surface
 
@@ -848,10 +835,10 @@ build of the port's own code by another author, trusted to the same degree.
     it to a directory before the port starts (`install/setup.c`,
     `bw_setup_install`). Section 3 carries the evidence on each side.
 14. **Build the rule surface.** The `rule` key (section 3) and the entry
-    point (section 4) are fixed, and the language is not. The port must fix
-    the rule grammar, whether the port reuses the game's bytecode VM
-    (`VM_Create` 0x0201121C, `VM_Control` 0x02011298) or runs its own
-    interpreter, and how a rule names the state fields of section 4.
+    point (section 4) are fixed, and the language is not. `docs/mod-rules.md`,
+    section 1, fixes the substrate: a small interpreter in the port, not the
+    game's bytecode VM. The work is to fix the rule grammar and how a rule
+    names the state fields of section 4.
 15. **Name the party-area fields.** The party record's ids 0x9D and 0x9F to
     0xA6 map to record offsets +0x88 to +0x9A, but aletheia does not name
     which is HP or a stat (`src/matched/arm9/sub_02018E34.c`,

@@ -34,17 +34,60 @@ failing the build, when either holds:
 
 - HEAD is another commit. The warning names the pin and the checkout.
 - Tracked files have uncommitted changes. The pin names a clean tree, so the
-  compiled sources are not that revision even when HEAD matches it.
+  compiled sources are not that revision even when HEAD matches it. The
+  warning counts the changed tracked files. A warning that names many of them
+  means a wave is in flight: the port is compiling a tree that is not the pin,
+  so the result is not the pin's result. The clean copy below exists for
+  exactly this case. Untracked files do not warn, because the build compiles
+  only the files `CMakeLists.txt` names, and those are tracked.
 
 A build against a newer checkout is allowed. The warning is a record, not a
 gate. The check prints a `STATUS` line when the checkout is the pin and is
 clean.
 
+When `ALETHEIA_ROOT` is a clean copy made by `tools/pinned_checkout.py`, it
+has no `.git`. The check reads the revision from the copy's
+`.eidos-aletheia-rev` stamp instead, and prints a `STATUS` line when it is the
+pin.
+
+## Building against a clean copy
+
+A wave in an aletheia lane leaves uncommitted changes, and the port then
+builds something other than the pin. `tools/pinned_checkout.py` exports the
+pin to a read-only copy outside the repository and prints the path to pass as
+`ALETHEIA_ROOT`:
+
+```
+python tools/pinned_checkout.py            # make or reuse the copy
+python tools/pinned_checkout.py --where    # print the copy's path
+python tools/pinned_checkout.py --check    # report the copy, export nothing
+python tools/pinned_checkout.py --force    # rebuild the copy
+```
+
+The copy lands at `%LOCALAPPDATA%\eidos\aletheia-<short-rev>` on Windows
+(`~/Library/Caches/eidos/...` on macOS, `$XDG_CACHE_HOME/eidos/...` or
+`~/.cache/eidos/...` elsewhere). The revision is in the directory name, so a
+second run reuses a copy that is already the pin, and a moved pin makes a
+second directory. The tool reads the revision from `EIDOS_ALETHEIA_PIN` in
+`cmake/aletheia_pin.cmake` and never writes to the source checkout.
+
+The copy holds the tracked files at the pin and nothing else. `extract/data`
+is not tracked, so pass `BW_DATA_ROOT` when the extracted assets live in the
+working checkout:
+
+```
+cmake -S . -B build \
+    -DALETHEIA_ROOT=%LOCALAPPDATA%\eidos\aletheia-80f06a261e \
+    -DBW_DATA_ROOT=<working checkout>/extract/data
+```
+
 ## Updating the pin
 
 Move the pin when the port is verified against a new aletheia revision. Edit
 `EIDOS_ALETHEIA_PIN` in `cmake/aletheia_pin.cmake`, update the revision, the
-date and the subject above, and rebuild. Nothing else reads the pin.
+date and the subject above, and rebuild. `tools/pinned_checkout.py` reads the
+same name, so run it once for the new revision to make the clean copy.
+Nothing else reads the pin.
 
 This file is about the aletheia revision and the build's reproducibility.
 `docs/status.md` is the port's own status and is a separate document.

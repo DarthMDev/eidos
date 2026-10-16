@@ -76,6 +76,8 @@ Standard library only; reads aletheia, writes only under the given dirs.
 from __future__ import annotations
 
 import argparse
+import glob
+import json
 import os
 import re
 import sys
@@ -225,6 +227,49 @@ class Shims:
 # ---------------------------------------------------------------------------
 # plan
 # ---------------------------------------------------------------------------
+
+def load_member_addresses(idx):
+    """Fill in the per-member addresses aletheia's manifest lists.
+
+    closure.Index maps a unit's members by the address their own name spells
+    (func_XXXXXXXX) or the SDK table, so a member aletheia names
+    descriptively (SAVEDATA_GetTotalSize at 0x02033BF8 in unit_02033BF0.c)
+    gets none, and a caller that spells it func_02033BF8 looks like an open
+    function: bootlink.py emits a panic stub beside the unit's real
+    definition.  The manifest pairs each unit's `functions` with its
+    `addresses` (an older shard spells the same list `covers`); read that
+    pair here, where the index does not, so a reference by any member
+    address resolves to the unit that defines it.  tools/ovlink.py reads the
+    same pair, so the boot and the overlays rename a spelling together and
+    neither side loses the stub the other resolves to.
+    """
+    pattern = os.path.join(closure.ROOT, "layout", "matched", "**", "*.json")
+    for path in sorted(glob.glob(pattern, recursive=True)):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                shard = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        for e in shard.get("functions", []):
+            if e.get("status") not in ("EXACT", "EXACT*"):
+                continue
+            source = (e.get("source") or "").replace("\\", "/")
+            entry = idx.sources.get(source)
+            if entry is None:
+                continue
+            addrs = e.get("addresses") or e.get("covers") or []
+            # Overlays share address ranges, so only the static image is
+            # resolved by address (closure.Index._load_shards does the same).
+            static = not entry["region"].startswith("ov")
+            for k, name in enumerate(entry["functions"]):
+                if k >= len(addrs):
+                    break
+                addr = int(addrs[k], 16)
+                idx.member_addr[(source, name)] = addr
+                idx.member_by_addr.setdefault((source, addr), name)
+                if static:
+                    idx.by_addr.setdefault(addr, entry)
+
 
 def defined_addr(idx, rel, name):
     """The DS address of a function `rel` (a matched source, or None for
@@ -403,6 +448,7 @@ def source_of_decl(rel):
 
 def plan(args):
     idx = closure.Index()
+    load_member_addresses(idx)
     seeds = [idx.resolve_seed(s) for s in args.seed]
     # A seed file lists whole directories' worth (EIDOS_BOOT_ALL_GAME): a
     # file aletheia has added to src/matched before its manifest lists it
@@ -696,6 +742,7 @@ def slot_function(region_expr, addr, slot):
 
 def generate(args):
     idx = closure.Index()
+    load_member_addresses(idx)
     pdir = args.plan_dir
     matched = read_list(os.path.join(pdir, "boot_matched.txt"))
     port = read_list(args.port_sources) + read_list(os.path.join(pdir, "boot_asm_subst.txt"))

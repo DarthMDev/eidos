@@ -166,11 +166,13 @@ static int on_faint(void *mod_state, const BwEvent *event)
 
 ### Kinds of catalogue row
 
-The battle area of `docs/mod-events.md`, section 1, has 48 rows in three
-kinds (`docs/mod-events.md`, "The three kinds"):
+The battle area of `docs/mod-events.md`, section 1, has 72 rows in three
+kinds (`docs/mod-events.md`, "The four kinds"): 37 events, 24 state entries and
+11 override points. This document fixes a payload for the 48 a mod acts on at
+the call: 36 events, 5 state entries and 7 override points.
 
 - **36 events.** A slot fires the event and a payload struct is built. Each
-  gets a field table below.
+  gets a field table below. (The two `whiteout.begin` events share one entry.)
 - **5 state entries.** A mod reads the value through an accessor, and no slot
   fires. There is no payload struct. Each is stated as a read, with the value
   and the inputs the accessor computes from.
@@ -183,7 +185,7 @@ kinds (`docs/mod-events.md`, "The three kinds"):
 Short names used in the tables below map to these files under
 `<home>\OneDrive\Documents\bw_decomp\src\matched`:
 
-- `ov010_func_0216E818.c`, `ov010_func_0216EAB0.c`, `ov010_func_0216EE20.c`,
+- `ov010_func_0216E7C8.c`, `ov010_func_0216EAB0.c`, `ov010_func_0216EE20.c`,
   `ov010_func_0216EE7C.c`, `ov010_func_0216EFF0.c`, `ov010_func_02158A20.c`,
   `ov010_func_02158AD4.c`
 - `ov021_func_021AA5CC.c`, `ov021_func_021AEABC.c`,
@@ -261,7 +263,7 @@ Every field, what feeds it, and where it is reset:
 | Field | Fed by | Reset at | Why a mod wants it |
 |---|---|---|---|
 | `active` | `battle.start` sets it to 1 | `battle.finish` sets it to 0 | a handler tests whether a battle is in progress |
-| `battle_kind` | `encounter.start`, parameter `a4` (`ov010_func_0216E818.c:53`); `battle.kind.notify`, parameter `id` (`ov010_func_0216EE20.c:27`) | `battle.start` | tell a wild battle from a scripted or multi one |
+| `battle_kind` | `battle.kind.notify`, parameter `id` (`ov010_func_0216EE20.c:27`) | `battle.start` | tell a wild battle from a scripted or multi one |
 | `mode` | `encounter.trainer`, parameter `mode` (`ov021_func_021AA5CC.c:49`); `battle.trainer.multi`, which passes mode 1 (`ov021_func_021AEB3C.c:46`) | `battle.start` | the battle format, single to rotation |
 | `trainer_battle` | `encounter.trainer` fires only for a trainer battle (`ov021_func_021AA5CC.c:49`); `battle.trainer.begin`, `battle.trainer.multi`, `battle.trainer.withmon` | `battle.start` | a wild battle has no trainer to read |
 | `turn` | `BTL_SERVER_FLOW_GetTurnCount(BTL_SERVER_FLOW_GetTurnRecord(flow))`, a `u16` at `flow + 0x2c` (`func_021C812C.c:26`; `func_021C8138.c:27`); fed by `battle.move.start` and every event that holds the flow | `battle.start` | a rule keys a cap or a penalty on the turn number |
@@ -602,30 +604,31 @@ ring stays empty and `net.send` and `net.receive` do not fire.
 
 ## 1. Encounter
 
-### `encounter.start` (0x0216E818, ov010, block)
+### `encounter.start` (0x0216E7C8, ov010, block)
 
-Function `EVENT_BATTLE_CreateEncounterTask(int a0, int a1, int a2, int a3,
-int a4, int a5, int a6)` (`ov010_func_0216E818.c:53`). The slot fires at
-entry, before the task is created.
+Function `EVENT_BATTLE_CreateScriptedBattle(int a0, int a1, int a2, int a3,
+int a4)` (`ov010_func_0216E7C8.c:45`). The slot fires at entry, before the
+task is created. The catalogue binds `encounter.start` here, not to
+`EVENT_BATTLE_CreateEncounterTask` (0x0216E818), the trainer battle task
+(`docs/mod-events.md`, section 1c).
 
 | Field | Type | Where it comes from | Why a mod wants it |
 |---|---|---|---|
-| `ctx` | u32 | parameter `a0` (`:53`) | the game system; the port reads `GAMESYSTEM_GetGameData` from it (`:64`) |
-| `field` | u32 | parameter `a1` (`:53`) | the field object; `FIELDMAP_GetEncount` reads its encounter table (`:63`) |
-| `mode` | u32 | parameter `a2` (`:53`) | passed as the setup `mode` (`:66`); single, double or multi |
-| `flag` | u32 | parameter `a3` (`:53`) | passed as the setup `flag` (`:66`) |
-| `battle_kind` | u16 | parameter `a4` (`:53`) | `EVENT_BATTLE_DispatchBattleKindNotify(a4, 0)` (`:67`) |
-| `extra` | u32 | parameter `a5` (`:53`) | passed through to the setup (`:66`) |
-| `flags` | u32 | parameter `a6` (`:53`) | bit 0 sets status flag 0x100 (`:72`) |
-| `encounter` | u32 | `FIELDMAP_GetEncount((u8 *)a1)` (`:63`) | the zone's encounter record; a call the port makes at the slot |
+| `ctx` | u32 | parameter `a0` (`:45`) | the game system; the port reads `GAMESYSTEM_GetGameData` from it (`:57`) |
+| `field` | u32 | parameter `a1` (`:45`) | the field object; `FIELDMAP_GetEncount` reads its encounter table (`:58`) |
+| `lead` | u32 | parameter `a2` (`:45`) | passed to `EVENT_BATTLE_NotifyLeadSpecies(a2, 0)` (`:56`) and stored at the task's `+0x4` (`:53`) |
+| `arg3` | u32 | parameter `a3` (`:45`) | stored at the task's `+0x8` (`:54`) |
+| `arg4` | u32 | parameter `a4` (`:45`) | stored at the task's `+0xC` (`:55`) |
+| `encounter` | u32 | `FIELDMAP_GetEncount((u8 *)a1)` (`:58`) | the zone's encounter record the call consumes a spot from; a call the port makes at the slot |
+| `trainer_record` | u32 | `GAME_DATA_GetTrainerRecord(GAMESYSTEM_GetGameData(a0))` (`:57`) | the trainer record the call touches at field 5 |
 
-A mod wants the mode and the kind to tell a wild battle from a scripted one,
-and the encounter record to key the route. Nuzlocke's first-encounter rule and
+A mod wants the lead and the encounter record to tell a wild battle from a
+scripted one and to key the route. Nuzlocke's first-encounter rule and
 Soullink's mirror both bind here (`docs/modding.md`, "Nuzlocke").
 
-Not reachable at entry: the task (created at `:61`) and the setup struct
-(created at `:65`). The species is not chosen at entry. The two events that
-carry them instead are `battle.setup.wild`, which fills the wild setup
+Not reachable at entry: the task (created at `:50`) and its work record
+(`:51`). The species the task builds is not chosen at entry. The two events
+that carry them instead are `battle.setup.wild`, which fills the wild setup
 (`arm9/func_0201347C.c:90`), and `encounter.start.mon`, which names the static
 mon's species and level (`ov010_func_0216EAB0.c:86`). A rule that needs the
 species reads it there, not here.
@@ -634,7 +637,8 @@ species reads it there, not here.
 
 Function `EVENT_BATTLE_CreateEncounterTaskWithMon(void *a0, u32 a1, u32 a2,
 u32 a3, u32 a4, u32 a5, u32 a6, u32 idx)` (`ov010_func_0216EAB0.c:70`). It
-calls `encounter.start` and then overwrites the party mon from a save entry.
+calls `EVENT_BATTLE_CreateEncounterTask` (0x0216E818, the trainer battle task)
+and then overwrites the party mon from a save entry.
 
 | Field | Type | Where it comes from | Why a mod wants it |
 |---|---|---|---|
@@ -760,7 +764,7 @@ Function `EVENT_BATTLE_NotifyBattleEnd(BattleEndCtx *c)`
 | `lead_name` | u32 | `POKE_TOOL_GetPartyValue(mon, 0x73, name)` (`:80`) | the lead's nickname buffer |
 
 Nuzlocke and Soullink read the outcome and the lead's state at the end
-(`docs/modding.md`, "Nuzlocke"; `docs/mod-events.md`, "The owner's examples,
+(`docs/modding.md`, "Nuzlocke"; `docs/mod-events.md`, "The example concepts,
 resolved").
 
 ### `battle.finish` (0x0216EFF0, ov010)
@@ -1439,8 +1443,9 @@ Function `BTLV_EFFVM_CompareAndJump(int a, int b, int c, int op, int e)`
 
 ## 13. Field and interaction
 
-The field and interaction area is the 59 events of `docs/mod-events.md`,
-section 1, that run on the field: the map change and route, the talk and the
+The field and interaction area is the 67 entries of `docs/mod-events.md`,
+section 1, that run on the field (50 events, 14 state entries and 3 override
+points): the map change and route, the talk and the
 script search, the field event checks, the messages and windows, the warps, the
 ledges and hops, the field skills and field moves, the field bag and overlay
 procedure, and the season, random, save record and special location commands.
@@ -2438,9 +2443,10 @@ These events carry the least, so a mod bound to them decides on little.
 
 ## 14. Inventory, items and moves
 
-The inventory, items and moves area is the 43 events of `docs/mod-events.md`,
+The inventory, items and moves area is the 37 entries of `docs/mod-events.md`,
 section 1, that touch the bag, the gifts, the field item use, the healing, the
-shops, the money, the move writes and the TM and tutor. The port tracks the
+shops, the money, the move writes and the TM and tutor (18 events, 16 state
+entries and 3 override points). The port tracks the
 item context (section 0a) for the item in play, the shop, the gift and the last
 move written. The six battle item and bag events are specified in section 9.
 The move, tutor and relearn events are shared with the progression area; this
@@ -3048,8 +3054,10 @@ Hidden Power type.
 - **The postman record's origin.** `item.gift.postman` receives the container
   pointer, not the record that filled it.
 - **The money getter.** `BEACON_GetPoints` (0x0200C274) is the read used by
-  `money.check` and `shop.pay`, but no matched source is in the tree. The port
-  calls the DS address, not a matched wrapper.
+  `money.check` and `shop.pay`. It has a matched source:
+  `src/matched/arm9/unit_0200C0E8.c:261-264` returns `p->unk00`, the money at
+  misc block 0x34, offset +0x00 (`docs/mod-events.md`, section 1c). The port
+  calls the matched accessor.
 
 ### The thinnest payloads
 
@@ -3066,10 +3074,11 @@ Hidden Power type.
 
 ## 15. Progression
 
-The progression area is the 52 events of `docs/mod-events.md`, section 1, that
+The progression area is the 47 entries of `docs/mod-events.md`, section 1, that
 add mons and eggs, learn moves, trade and select mons, register the Pokedex,
 run research, set flags and misc bytes, expose the event work, and read and
-write badges. The port tracks the progression contexts (section 0a) for the
+write badges (25 events, 16 state entries and 6 override points). The port
+tracks the progression contexts (section 0a) for the
 script VM, the party and box, the event work, the misc block, the dex and the
 badge date. The move, tutor and relearn events are specified in the inventory
 area (section 14); this area covers the rest. Each table gives the field, its
@@ -3428,25 +3437,25 @@ port can read the flag before and after by calling the accessor.
 | `flag_id` | u16 | `offset + 1420`, `ov010_func_0215A4D8.c:18` | the real flag id tested |
 | `value` | u16 | `EVENT_POKE_STATUS_CheckFlag` written to `*q`, `func_0215B378.c:59,61` | the answer |
 
-#### `flag.write` (0x0202F190, `SAVE_EVENT_Write`, override)
+#### `flag.write` (0x02014314, `ZONEDATA_SetEventFlag`, override)
+
+The catalogue binds `flag.write` here, not to `SAVE_EVENT_Write`
+(0x0202F190), a seven-way box-record writer (`docs/mod-events.md`, section
+1c). It sets one bit of the event-flag bitmap.
 
 | Field | Type | Where it comes from | Why a mod wants it |
 |---|---|---|---|
-| `record` | handle | call arg `a0`, passed through `POKE_TOOL_Dummy` to `SAVE_EVENT_WriteMode`, `arm9/func_0202F190.c:31` | the record the write is bracketed on |
-| `mode` | u32 | call arg `a1`, the switch selector in `SAVE_EVENT_WriteMode`, `arm9/func_0202F1B4.c:48` | which write path runs |
-| `arg_c` | u32 | call arg `a2`, stored by `SAVE_EVENT_StoreRecord`, `arm9/func_0202F1B4.c:52` | the record payload |
-| `event_id` | u32 | call arg `a3`, the id `SAVE_EVENT_WriteEventIdWithDate` writes, `arm9/func_0202F1B4.c:51` | the event id stamped |
-| `arg_e` | u16 | call arg `a4`, stored by `SAVE_EVENT_StoreRecord`, `arm9/func_0202F1B4.c:52` | the record payload |
+| `bitmap` | handle | call arg `a0`, `arm9/func_02014314.c:18` | the event-flag bitmap written |
+| `flag_id` | int | call arg `a1`, `arm9/func_02014314.c:18` | which flag is set |
+| `byte` | ptr | `ZONEDATA_GetEventFlagAddress(a0, a1)`, `arm9/func_02014314.c:20` | the byte that holds the flag; a null pointer means no write |
+| `bit` | u32 | `a1 % 8`, `arm9/func_02014314.c:23` | the bit set in the byte |
+| `value_before` | u8 | the byte before the write, `arm9/func_02014314.c:22` | the prior value |
+| `value_after` | u8 | the byte with the bit set, `arm9/func_02014314.c:23` | the new value |
 
-The catalogue binds `flag.write` to `SAVE_EVENT_Write` and states it writes an
-event flag to the save block (`docs/mod-events.md`, section 1). The source
-contradicts that: `SAVE_EVENT_Write` forwards to `SAVE_EVENT_WriteMode`, a
-seven-way writer over a box record keyed on the mode `a1`, with a date stamped by
-`SAVE_EVENT_WriteEventIdWithDate` (`arm9/func_0202F190.c:31`,
-`arm9/func_0202F1B4.c:44-84`). The event-flag bitmap write is
-`ZONEDATA_SetEventFlag` (0x02014314), not this function. So a mod that wants the
-flag bitmap write gets nothing from `flag.write`; the flag id is not an
-argument. This is a name and address mismatch to fix.
+`SAVE_EVENT_Write` (0x0202F190) is not this function: it forwards to
+`SAVE_EVENT_WriteMode`, a box-record writer keyed on the mode
+(`arm9/func_0202F190.c:31`, `arm9/func_0202F1B4.c:44-84`), and the flag id is
+not an argument.
 
 #### `flag.misc.set` (0x0215AC68, `SCRCMD_WORK_CmdSetMiscFlag`)
 
@@ -3598,10 +3607,6 @@ misc flag word, not only a badge, and not at one semantic moment.
   drawn inside `SCRCMD_PROC_CreateMonFromSpec` by `POKE_TOOL_CreatePersonalRnd`
   (`ov010_func_0215C40C.c:57`). The add events fire before the draw, so a mod
   reads them from the added mon after, not from the payload.
-- **The flag bitmap write behind `flag.write`.** The bound address is
-  `SAVE_EVENT_Write`, a box-record writer, not `ZONEDATA_SetEventFlag`
-  (`arm9/func_0202F190.c:31`, `arm9/func_0202F1B4.c:44-84`). No flag id is an
-  argument. The bitmap write has no declared override point.
 - **The exact species and form of a dex record at `zukan.seen.register`.** The
   species is a script value (`ov010_func_0215AEE8.c:45`), but the gender and form
   flags are set from the record the call creates, and the record's field ids are
@@ -3633,10 +3638,11 @@ misc flag word, not only a badge, and not at one semantic moment.
 
 ## 16. Save, overlay and networking
 
-The save, overlay and networking area is the 40 events of `docs/mod-events.md`,
-section 1: the six save entries, the two overlay lifecycle events, the three
-link entries, the two net entries, the nine comm entries, the eleven wm
-entries, the two dwc entries and the five network entries. The port tracks the
+The save, overlay and networking area is the 45 entries of `docs/mod-events.md`,
+section 1 (30 events, 11 state entries and 4 override points): the twelve save
+entries, the two overlay lifecycle entries, the two link entries, the one net
+entry, the nine comm entries, the eleven wm entries, the two dwc entries, the
+five network entries and the GTS trade entry. The port tracks the
 network context (section 0a) for the link, the comm, the wm and the dwc state.
 
 Networking has no transport anywhere in the tree, so the wm, dwc, comm and
@@ -4713,8 +4719,9 @@ to know which action ran, and `received` to learn whether the gift was taken.
    `battle.start` fires before the setup exists (`arm9/func_02013090.c:35`),
    `battle.result` and `battle.outcome` fire before the outcome is computed
    (`func_021C84D8.c:30`; `ov093_func_021CC668.c:36`), and `encounter.start`
-   fires before the task and the setup exist (`ov010_func_0216E818.c:61`,
-   `:65`). The work is to fix whether these fire at entry, after the original,
+   fires before the task and its work record exist
+   (`ov010_func_0216E7C8.c:50`, `:51`). The work is to fix whether these fire at
+   entry, after the original,
    or both, the way `catch.result` fires after (`docs/mod-events.md`,
    section 1). The context of section 0a is the alternative where the value is
    produced inside the function and the port can read it after the original;
@@ -4781,31 +4788,25 @@ to know which action ran, and `received` to learn whether the gift was taken.
     unobtainable: a non-damage faint names no status, hazard or weather tick,
     because the context tracks only the last move, attacker and damage. The
     work is to fix whether the port tracks a non-damage cause too.
-12. **Fix the `flag.write` name and address mismatch.** The catalogue binds
-    `flag.write` to `SAVE_EVENT_Write`, a box-record writer, not the flag bitmap
-    write (`arm9/func_0202F190.c:31`; `arm9/func_0202F1B4.c:44-84`). No flag id
-    is an argument, and the bitmap write has no declared override point. The
-    work is to fix the name and address, or declare `ZONEDATA_SetEventFlag`
-    (0x02014314) as the point.
-13. **The transport.** `sdk/arm7/` has no Wm or DWC responder and the tree has
+12. **The transport.** `sdk/arm7/` has no Wm or DWC responder and the tree has
     no sockets (`docs/modding.md`, "Networking seam: missing"). The `net.send`
     and `net.receive` payloads have no feed until it exists.
-14. **The send and receive points.** Which declared Wm, DWC or `GAME_COMM_*`
+13. **The send and receive points.** Which declared Wm, DWC or `GAME_COMM_*`
     address is the send and which the receive point is not fixed
     (`docs/mod-events.md`, still-to-build item 12).
-15. **The overlay event ordering.** Where the handler runs relative to the
+14. **The overlay event ordering.** Where the handler runs relative to the
     port's copy, bind, relocate and static initialisers is not fixed
     (`docs/mod-events.md`, still-to-build item 10). The fields are known at
     every point; the data is not.
-16. **The comm action names.** The kind to action map is not named
+15. **The comm action names.** The kind to action map is not named
     (`docs/mod-events.md`, still-to-build item 13). Aletheia does not name which
     kind is a battle turn and which is a trade.
-17. **A cross-instance player identity.** No accessor gives a stable player id
+16. **A cross-instance player identity.** No accessor gives a stable player id
     for the `owner` and `peer` fields. The port must fix one before a soullink
     rule can attribute a payload.
-18. **The save cause.** The port needs a second hook on `GAME_DATA_SaveStart`
+17. **The save cause.** The port needs a second hook on `GAME_DATA_SaveStart`
     (0x02012DAC) to fill the cause of `save.begin`, or it must state the cause
     as absent.
-19. **The peer identity at the link events.** The link predicate carries only
+18. **The peer identity at the link events.** The link predicate carries only
     the access point MAC (`ov009_func_0215CD24.c:22`); the peer must come from
     the WM or DWC context.

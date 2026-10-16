@@ -799,13 +799,18 @@ class Aletheia:
                 region = e.get("region", "arm9")
                 src = e["source"].replace("\\", "/")
                 names = e.get("functions") or [e["name"]]
-                covers = e.get("covers")
+                # aletheia pairs each unit's `functions` with its
+                # `addresses`; an older shard spells the same list `covers`.
+                # A descriptive member (SAVEDATA_GetTotalSize) has no address
+                # in its name, so without the pair it is placed nowhere and an
+                # address-spelled caller looks like a name the link lacks.
+                member_addrs = e.get("addresses") or e.get("covers")
                 base = int(e["address"], 16)
                 placed = []
                 for k, n in enumerate(names):
                     m = ADDR_FUNC.match(n)
-                    if covers and k < len(covers):
-                        a = int(covers[k], 16)
+                    if member_addrs and k < len(member_addrs):
+                        a = int(member_addrs[k], 16)
                     elif m:
                         a = int(m.group(1), 16)
                     elif k == 0:

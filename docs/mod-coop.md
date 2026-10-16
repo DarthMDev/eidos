@@ -271,8 +271,8 @@ entity, so a co-op mod adds its own id mapping. One option is one instance per
 entity, the owner simulating and the peer rendering a puppet; another is one
 authority for the whole world. Neither is decided by the matched code.
 
-Conflicts. The game does not arbitrate a write. `docs/mod-interface.md`, "Read
-and write", says "The port does not arbitrate a write", "the game's later write
+Conflicts. The game does not arbitrate a write. `docs/mod-interface.md`,
+section 4, says "The port does not arbitrate a write", "the game's later write
 wins", and the port "restores nothing and offers no transaction". A co-op mode
 therefore owns authority itself.
 
@@ -391,7 +391,7 @@ Everything else is the co-op project's work, not the port's.
 8. **Fix the authority and determinism model.** The port fixes which instance
    owns an entity, how two conflicting writes are ordered, and whether the
    simulation is event-agreement or lockstep. Evidence: the game does not
-   arbitrate a write (`docs/mod-interface.md`, "Read and write") and
+   arbitrate a write (`docs/mod-interface.md`, section 4) and
    `docs/modding.md`, still-to-build items 3 and 5, leave both open.
 9. **Provide a shared random source if lockstep is chosen.** Every global RNG
    call in the field simulation routes through one source. Evidence:

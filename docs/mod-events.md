@@ -89,7 +89,7 @@ code-pointer path (`docs/mod-interface.md`, still-to-build item 12), not by a
 new `#define` per call site.
 
 The merge with `progress/EVENT_SURVEY.md` grew the declared set from 180 rows to
-193. The catalogue gained 139 entries: 91 data tables, 34 state entries, 4
+193. The catalogue gained 138 entries: 91 data tables, 34 state entries, 3
 events and 10 override points. Only an event and an override point take a slot,
 so the set gained 13 rows. Scaled the same way, 193 rows is about 193 slots and
 up to about 322 redirects, about 2.2 per cent of the uniform slot count and
@@ -122,7 +122,7 @@ An entry is one of four kinds, and the catalogue says which:
 
 Where a concept spans more than one address, the row says so. A badge, for
 example, is a flag write, not a function call, and is stated as state, not as
-an event (see "The owner's examples, resolved").
+an event (see "The example concepts, resolved").
 
 ## 1. The event catalogue
 
@@ -131,7 +131,7 @@ mod bound to it. The declared-set address is the row the port reads from
 `mod/declared_set.txt`. The region is `arm9` or the overlay id. The "Mods"
 column is the example mods that need the entry (Nuzlocke N, Soullink S,
 Nuzlocke plus Soullink NS, Multiplayer MP); "none" means no example mod names
-it and the owner asked for it.
+it; the entry covers a concept the port must be able to reach.
 
 ### Battle
 
@@ -556,9 +556,9 @@ and a NARC member override both work (`docs/mods.md`). Every row above is
 therefore reachable as data. A rule that must read the same value needs the
 state entry beside it, not the override.
 
-## 1a. The owner's examples, resolved
+## 1a. The example concepts, resolved
 
-Each requested concept, and what it turned out to be. The evidence is the
+Each example concept, and what it turned out to be. The evidence is the
 function named.
 
 - **Leveling up.** A battle event, but not one function. `BTL_POKEPARAM_AddExp`
@@ -827,7 +827,7 @@ enum {
 proceeds to call the original. `BW_EVENT_BLOCK` means the handler forbids the
 action and the slot does not call the original. A block is the return of a
 block on a slot that defines one, not a state write (`docs/mod-interface.md`,
-section 4; `docs/modding.md`, "What block an action means").
+section 4; `docs/modding.md`, still-to-build item 7).
 
 Two returns are defined today. No third return exists. A return value other
 than the two is not defined, and the port must fix what it does with one
@@ -1107,27 +1107,16 @@ the per-packet manifests, the same revision and the same check as section 1.
 
 ### Writes, and when the game contradicts one
 
-The port does not arbitrate a write. A mod may write the same bytes it reads.
-When a mod writes something the game then contradicts, the game's later write
-wins; the port restores nothing and offers no transaction
-(`docs/mod-interface.md`, section 4; kenon's `docs/mod-contract.md`, "What a
-mod may do"). Two cases change what a mod can rely on
-(`docs/mod-interface.md`, section 4):
-
-- An ARM9 save-block field written at `save.begin` persists until
-  `bw_ds_reset` or a later game write. It is durable state (`sdk/dsmem.h`,
-  `bw_ds_reset`).
-- An overlay's data is reset on every load: `provider_load` copies the file to
-  the window, binds the names and relocates the pointers on each
-  `FS_LoadOverlayImage` (`sdk/overlay_image.c`, `provider_load`). A write into
-  an overlay's data does not survive the next load of that overlay or of any
-  overlay sharing its window.
-
-So a change that must stick is made at the event the game derives the state
-from, or through the override's return, not as a write the game recomputes
-(`docs/mod-interface.md`, section 4). A "block an action" is the return of a
-block on a slot that defines one, not a state write (`docs/modding.md`, "What
-block an action means").
+The write discipline is `docs/mod-interface.md`, section 4, which is its owner:
+the port does not arbitrate a write, the game's later write wins, and the port
+restores nothing. The two cases a mod must know are stated there: an ARM9
+save-block field written at `save.begin` is durable until `bw_ds_reset` or a
+later game write, and a write into an overlay's data does not survive the next
+load of that overlay or of any overlay sharing its window. A change that must
+stick is made at the event the game derives the state from, or through the
+override's return, not as a write the game recomputes. A "block an action" is
+the return of a block on a slot that defines one, not a state write
+(`docs/modding.md`, still-to-build item 7).
 
 ### A mod's own state
 
@@ -1169,8 +1158,9 @@ Nothing else is in it. In particular, none of these is in it:
   the 0x20-byte status record and the save blocks;
 - the DS addresses of the declared set or of the accessors, which are the
   game's, not the port's;
-- the rule language and its field names, which are kenon's work
-  (`docs/events-and-rules.md`, "What is not decided");
+- the rule language and its field names, which are the port's work
+  (`docs/mod-rules.md`, section 1; `docs/mod-interface.md`, still-to-build item
+  14);
 - the transport, the state file layout, the settings surface and the manifest
   keys beyond `api`.
 
@@ -1187,7 +1177,7 @@ distinction matters is that a game struct can change under aletheia's waves
 without a mod rebuild, because the accessor hides it, while a change to a
 port-owned struct is a new `api`.
 
-The catalogue grew from 18 events to 355 entries (156 events, 27 override
+The catalogue grew from 17 events to 359 entries (160 events, 27 override
 points, 81 state entries and 91 data tables), so the ABI grew with it: the
 event names of
 section 1 are part of it, and each new event needs its struct frozen before a
@@ -1197,32 +1187,14 @@ must fix how a name a mod asks for that the port does not define is handled
 
 ## 6. The trust model
 
-A mod is native C. It is loaded into the port's process and runs with the
-port's full privilege. It can read and write any memory the process holds,
-call any function, corrupt the game's state or the port's, hang, and crash the
-process. A mod can defeat the on/off switch and the conflict report, because
-both are in the same address space it runs in (`docs/mod-interface.md`,
-section 5; kenon's `docs/mod-contract.md`, "What the port promises and does
-not promise").
-
-The port promises, and only promises (`docs/mod-interface.md`, section 5):
-
-- a deterministic load order, a later-wins rule for a replacement, and a
-  visible conflict report (`sdk/vfs.h`, "The mod list";
-  `docs/mod-overrides.md`, "Two mods on one address");
-- the `bw_hook_enabled` switch over a slot, so one mod's override can be
-  isolated while debugging (`sdk/mod_hooks.h`);
-- that a build with no mods defines every address the way a build without the
-  override machinery does, because matched files are never edited
-  (`README.md`, portability rule 1; `docs/mod-overrides.md`, "The base is never
-  edited").
-
-The port does not promise isolation, sandboxing, bounded resource use,
-validation of a mod's reads or writes, or recovery from a bad write. It does
-not promise a stable ABI across `api` versions: a mismatch is refused, not
-translated (`docs/mod-interface.md`, section 5). The correct model is that a
-mod is a build of the port's own code by another author, trusted to the same
-degree (`docs/mod-interface.md`, section 5).
+The trust model is `docs/mod-interface.md`, section 5, which is its owner: a
+mod is native C loaded with the port's full privilege, and the port promises
+only a deterministic load order, a later-wins rule for a replacement, a visible
+conflict report, the `bw_hook_enabled` switch over a slot, and that a build
+with no mods defines every address the way a build without the override
+machinery does. It does not promise isolation, sandboxing, bounded resource
+use, validation of a mod's reads or writes, or a stable ABI across `api`
+versions.
 
 The consequence for the event and state API is that the port validates
 nothing. A handler that returns a value other than the two defined, a handler
@@ -1290,7 +1262,7 @@ The work they name is in "Still to build" below.
    `docs/modding.md` needs one, because a replacement is the `override` key and
    not a handler return (`docs/mod-interface.md`, section 3).
 3. **Freeze the event structs.** Only `BwEventEncounterStart` is spelled out
-   (`docs/mod-interface.md`, section 4). The catalogue has 355 entries, so the
+   (`docs/mod-interface.md`, section 4). The catalogue has 359 entries, so the
    work is to fix each concrete struct's members, the identity of a Pokemon in
    a payload (an index or a handle), the type of `catch.result`, the field-VM
    command payload and the talk and item payloads. The evidence for the
@@ -1372,14 +1344,14 @@ The work they name is in "Still to build" below.
     tables to be replaceable. `progress/STORY_HACKS.md` covers what a story
     hack needs. The catalogue has `route.change` and `field.map.event` but no
     map generator.
-19. **Re-read the payloads of the corrected events.** The corrected rows
+19. **Verify the corrected payloads.** The corrected rows
     (`docs/mod-events.md`, section 1c) change the function behind `flag.write`
     (`ZONEDATA_SetEventFlag`, 0x02014314) and `encounter.start`
     (`EVENT_BATTLE_CreateScriptedBattle`, 0x0216E7C8), and correct the
     `money.set`, `money.add` and `save.flag` descriptions.
-    `docs/mod-payloads.md` still describes the old bindings and the old
-    `SAVE_EVENT_Write` payload. The work is to re-read each corrected function
-    and rewrite its payload table. The evidence for the new bindings is
+    `docs/mod-payloads.md` now describes the corrected `flag.write` and
+    `encounter.start` payloads. The work is to read each corrected function
+    once more against its payload table. The evidence for the new bindings is
     section 1c.
 20. **Re-read the remaining name-and-body rows.** The same pass flagged rows
     whose description the body does not clearly support but which are not yet
@@ -1409,8 +1381,8 @@ The work they name is in "Still to build" below.
     still states `packed_1a`, low ten bits, at +0x1a. The work is aletheia's,
     not the port's, and is recorded here so the conflict does not reappear.
 23. **Read the data tables against the read beside them.** The pass read every
-    address-bearing entry: the 193 declared rows and the 69 state accessors,
-    249 addresses in all. The 91 data tables have no address and no function,
+    address-bearing entry: the 193 declared rows and the 69 state accessor
+    rows, 249 distinct addresses in all. The 91 data tables have no address and no function,
     so the pass could not read them. The work is to read each data table
     against the state entry the catalogue places beside it (section 4, "State
     reads of the data tables"), so a rule that names a value reads the same
