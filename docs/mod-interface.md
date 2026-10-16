@@ -125,20 +125,22 @@ artifact by hand until a tool generates the table.
 Every row was checked against aletheia's per-packet manifests under
 `layout/matched/` (`pkt_*.json`), at revision
 `80f06a261e8731f2db94c1a66627bb351ad47673`, not copied from this table. All
-180 rows match a manifest function name and region. One address is shared by
+193 rows match a manifest function name and region. One address is shared by
 two overlays that occupy the same RAM window: `0x021C5200` is
 `BTL_SERVER_FLOW_ProcFaintRewards` in ov093 and
 `ZUKAN_DETAIL_FORM_SignalAnimDone` in ov208. The declared row is the ov093
 function; the overlay id disambiguates and the bare address does not.
 
 The table above is the original 44 rows, the addresses the four example mods
-need. The artifact has grown to 180 rows, because the event catalogue of
+need. The artifact has grown to 193 rows, because the event catalogue of
 `docs/mod-events.md`, section 1, was rebuilt from the game's own command
 tables: the field script VM's 609-entry table at `d_0217062C` and the battle
-effect VM's 78-entry table at `0x02209E88`. 136 rows are new. A row with an
-empty fourth column is one no example mod names; the owner asked for its
-concept to be coverable. A state accessor that a mod reads and writes through
-an accessor, and that no event or override binds, is not declared here;
+effect VM's 78-entry table at `0x02209E88`. 136 rows came from that rebuild,
+and 13 more came from the merge with `progress/EVENT_SURVEY.md`: 3 events and
+10 override points (`docs/mod-events.md`, section 0). A row with an empty
+fourth column is one no example mod names; the owner asked for its concept to
+be coverable. A state accessor that a mod reads and writes through an
+accessor, and that no event or override binds, is not declared here;
 `docs/mod-events.md`, section 4, lists it.
 
 The evidence for each original row is the mod's need in `docs/modding.md`; the
@@ -566,7 +568,8 @@ address moves in aletheia.
 | `catch.result` | the return of 0x021CBA40 | the throw returns | N S NS |
 | `battle.faint` | 0x021C5200 | a faint is processed | N S NS |
 | `heal.party` | 0x0215B5A8 | a script heals the party | N S NS |
-| `whiteout.begin` | 0x021D1960, 0x02158A20 | the player blacks out | N S NS |
+| `whiteout.begin.battle` | 0x021D1960 | the player blacks out, the battle-screen half | N S NS |
+| `whiteout.begin.field` | 0x02158A20 | the player blacks out, the field-recover half | N S NS |
 | `route.change` | 0x021643E8 | the field loads a new zone | N S NS |
 | `save.begin` | 0x02007150 | a save starts | N S NS MP |
 | `save.done` | 0x02007168 | the save completes | N S NS MP |
@@ -577,10 +580,11 @@ address moves in aletheia.
 | `net.receive` | the Wm and DWC receive points | bytes arrive | MP |
 
 These sixteen names are the catalogue of this section and stay unchanged.
-`docs/mod-events.md`, section 1, extends it to 216 entries (152 events, 17
-override points and 47 state entries), derived from the game's own command
-tables, and binds each to a declared address or an accessor. The names here are
-the subset the four example mods name.
+`docs/mod-events.md`, section 1, extends it to 355 entries (156 events, 27
+override points, 81 state entries and 91 data tables), derived from the game's
+own command tables and from `progress/EVENT_SURVEY.md`, and binds each to a
+declared address, an accessor or a data table. The names here are the subset
+the four example mods name.
 
 Exact semantics and the accepted writes:
 
@@ -606,11 +610,12 @@ Exact semantics and the accepted writes:
 - `heal.party`. Fires when a script heals the party. A block forbids the
   heal, which is Nuzlocke's rule against healing a Pokemon the run has
   declared dead.
-- `whiteout.begin`. Fires when the party blacks out. It spans two addresses,
-  the battle-screen half (0x021D1960) and the field-recover half (0x02158A20),
-  because one semantic concept is not one address (`docs/modding.md`, "Name
-  and key the events"). A block suppresses the return to the last heal point,
-  which Nuzlocke uses to continue after a whiteout. See still-to-build item 8.
+- `whiteout.begin.battle`, `whiteout.begin.field`. Fire when the party blacks
+  out, the battle-screen half (0x021D1960) and the field-recover half
+  (0x02158A20). The catalogue splits the one concept into two events because
+  one event is one address (`docs/mod-events.md`, section 0). A block
+  suppresses the return to the last heal point, which Nuzlocke uses to continue
+  after a whiteout. See still-to-build item 8.
 - `route.change`. Fires when the field loads a new zone. The payload names the
   map. Read-only. Nuzlocke keys the used-route set on it.
 - `save.begin`, `save.done`. Fire around a game save. A mod writes its state
@@ -816,10 +821,11 @@ build of the port's own code by another author, trusted to the same degree.
 7. **Fix where events are declared.** A mod can register a handler in its
    code, and a `subscribe` line lets the port report a conflict before the mod
    runs. The work is to fix which form the port reads.
-8. **Fix how `whiteout.begin` spans two addresses.** One concept, two
-   functions. The port must fix whether one event name binds both or two
-   events exist. The evidence is that the two halves are in different modules
-   (`ov093`, `ov010`).
+8. **Bind the two `whiteout.begin` events.** The catalogue carries two events,
+   `whiteout.begin.battle` (0x021D1960, ov093) and `whiteout.begin.field`
+   (0x02158A20, ov010), because one event is one address (`docs/mod-events.md`,
+   section 0). The evidence is that the two halves are in different modules
+   (`ov093`, `ov010`). The work is to fix how the port binds the two names.
 9. **Fix block composition.** The port must fix whether any handler blocks or
    every handler must allow. The conservative rule is any-blocks, and the port
    reports both.

@@ -56,6 +56,14 @@ address, function name and region, revision
 `80f06a261e8731f2db94c1a66627bb351ad47673`; `mod/declared_set.txt` carries the
 same check.
 
+The catalogue also folds in `progress/EVENT_SURVEY.md`, the mechanics view of
+the same ground. The survey lists 373 moments across 19 areas. The moments the
+command tables do not carry are added here in the kind the survey gives them: a
+data table for a value the game reads from the data layer, a state entry for a
+value a rule reads or writes, and an event or an override point for a call site
+the command tables miss. The survey names no address, so each added address was
+found in aletheia and checked the same way.
+
 The declared set grew from 44 rows to 180, about 4.1 times, when this catalogue
 was built. `progress/SEAM_COST.md` measured the 44-row set as 44 slots and about
 73 redirects, against about 8,000 to 9,100 slots and about 12,600 redirects for
@@ -70,9 +78,17 @@ site. Those rows need the slot consulted by the VM's table lookup and by the
 code-pointer path (`docs/mod-interface.md`, still-to-build item 12), not by a
 new `#define` per call site.
 
-### The three kinds
+The merge with `progress/EVENT_SURVEY.md` grew the declared set from 180 rows to
+193. The catalogue gained 139 entries: 91 data tables, 34 state entries, 4
+events and 10 override points. Only an event and an override point take a slot,
+so the set gained 13 rows. Scaled the same way, 193 rows is about 193 slots and
+up to about 322 redirects, about 2.2 per cent of the uniform slot count and
+about 2.6 per cent of the uniform redirect count. At 250 to 400 bytes a slot,
+193 slots is 48 to 77 KB.
 
-An entry is one of three kinds, and the catalogue says which:
+### The four kinds
+
+An entry is one of four kinds, and the catalogue says which:
 
 - **event.** Something the game did. A slot at the declared address fires the
   event when it is entered, calls the handlers, and then calls the original
@@ -87,6 +103,12 @@ An entry is one of three kinds, and the catalogue says which:
   mod's function in place of the original (section 2; `docs/mod-overrides.md`).
   An override point is in `mod/declared_set.txt` but is not an event: it fires
   whenever the game calls it, which is not one semantic moment.
+- **data table.** A table or an asset the game reads, replaced as a whole file
+  or a NARC member (`docs/mods.md`). A data table has no DS address, so it is
+  not in `mod/declared_set.txt` and takes no slot. It is listed here because
+  the survey names it and because a rule often needs to read the same value
+  through the state entry beside it (section 4, "State reads of the data
+  tables").
 
 Where a concept spans more than one address, the row says so. A badge, for
 example, is a flag write, not a function call, and is stated as state, not as
@@ -145,7 +167,8 @@ it and the owner asked for it.
 | `battle.bag.sub` | 0x021B90BC | ov093 | event | `BTL_MAIN_SubItemFromBag` takes an item from the bag | none |
 | `battle.badge.count` | 0x021B85A0 | ov093 | state | `BTL_MAIN_GetBadgeCount` reads the badge count at +0x80 of the battle main object | none |
 | `battle.money.loss` | 0x021D7FF8 | ov093 | state | `BTL_CALC_CalcDefeatMoneyLoss` computes the money lost on defeat from the badge count | none |
-| `whiteout.begin` | 0x021D1960, 0x02158A20 | ov093, ov010 | event (block) | the party blacks out; the battle-screen half and the field-recover half, one concept over two addresses | N S NS |
+| `whiteout.begin.battle` | 0x021D1960 | ov093 | event (block) | the party blacks out; the battle-screen half, `BTL_CLIENT_StepShowBlackoutMessages` | N S NS |
+| `whiteout.begin.field` | 0x02158A20 | ov010 | event (block) | the party blacks out; the field-recover half, `SCRIPT_SYS_RunRecoverScript` | N S NS |
 | `whiteout.fieldrecover` | 0x02158AD4 | ov010 | event | `SCRIPT_SYS_RunFieldRecoverScript` runs the field recover script | N S NS |
 | `battle.effectvm.create` | 0x021F93F4 | ov094 | override | `BTLV_EFFVM_Create` creates a battle effect VM instance | none |
 | `battle.effectvm.jumpif` | 0x021FBD44 | ov094 | override | `BTLV_EFFVM_CmdJumpIf` is one branch command of the effect VM | none |
@@ -153,6 +176,29 @@ it and the owner asked for it.
 | `battle.effectvm.jumpscript` | 0x021FC334 | ov094 | override | `BTLV_EFFVM_CmdJumpScript` jumps within a script | none |
 | `battle.effectvm.jumptoarchive` | 0x021FC374 | ov094 | override | `BTLV_EFFVM_CmdJumpToArchiveScript` calls an `a/0/6/7` sub-script | none |
 | `battle.effectvm.comparejump` | 0x021FBDD4 | ov094 | override | `BTLV_EFFVM_CompareAndJump` compares then branches | none |
+| `battle.damage.calc` | 0x021C1E74 | ov093 | override | `BTL_SERVER_FLOW_CalcMoveDamage` computes a move's damage | none |
+| `battle.damage.base` | 0x021D7A44 | ov093 | override | `BTL_CALC_CalcBaseDamage` computes the base damage | none |
+| `battle.critical.roll` | 0x021D7930 | ov093 | override | `BTL_CALC_RollCriticalHit` rolls the critical chance | none |
+| `battle.critical.capture` | 0x021CBEA8 | ov093 | override | `BTL_SERVER_FLOW_RollCriticalCapture` rolls the critical capture | none |
+| `species.type` | 0x0201AE1C | arm9 | state | `POKE_PERSONAL_GetParam` reads a species' type from the personal data | none |
+| `species.stats` | 0x0201AE1C | arm9 | state | `POKE_PERSONAL_GetParam` reads a species' base stats | none |
+| `species.ability` | 0x0201AE1C | arm9 | state | `POKE_PERSONAL_GetParam` reads a species' ability slots | none |
+| `species.catch` | 0x0201AE1C | arm9 | state | `POKE_PERSONAL_GetParam` reads a species' catch rate | none |
+| `species.gender` | 0x020185F8 | arm9 | state | `POKE_TOOL_GetGenderRatioClass` reads a species' gender ratio class | none |
+| `personal.param` | 0x02019C90 | arm9 | state | `POKE_TOOL_GetPersonalParam` reads one field of the personal data | none |
+| `personal.data` | 0x02019C54 | arm9 | state | `POKE_TOOL_GetPersonalData` returns the personal record | none |
+| `personal.gender` | 0x02019C7C | arm9 | state | `POKE_TOOL_GetPersonalGender` reads a species' gender | none |
+| `mon.type` | 0x021D57A8 | ov093 | state | `BTL_POKEPARAM_GetTypes` reads an in-battle mon's type pair | none |
+| `mon.type.pair` | 0x021D57FC | ov093 | state | `BTL_POKEPARAM_GetTypePair` reads the two types as a pair | none |
+| `mon.has.type` | 0x021D5814 | ov093 | state | `BTL_POKEPARAM_HasType` tests an in-battle mon's type | none |
+| `move.type` | 0x0201C1C8 | arm9 | state | `WAZA_TOOL_GetType` reads a move's type | none |
+| `move.power` | 0x0201C1D8 | arm9 | state | `WAZA_TOOL_GetPower` reads a move's power | none |
+| `move.category` | 0x0201C1BC | arm9 | state | `WAZA_TOOL_GetCategory` reads a move's physical or special split | none |
+| `move.maxpp` | 0x0201C158 | arm9 | state | `WAZA_TOOL_GetMaxPP` reads a move's base PP | none |
+| `type.effectiveness` | 0x021C6E3C | ov093 | state | `BTL_SERVER_FLOW_CalcTypeEffectiveness` reads the type chart for a matchup | none |
+| `move.effectiveness` | 0x021C7DAC | ov093 | state | `BTL_SERVER_FLOW_CalcMoveTypeEffectiveness` reads a move's matchup | none |
+| `level_up.move` | 0x02018328 | arm9 | state | `POKE_TOOL_GetLevelUpMove` reads the move a species learns at a level | none |
+| `party.mon.species` | 0x02017E1C | arm9 | state | `POKE_TOOL_GetPartyValue` field id 0x05 reads a party member's species | none |
 
 The battle effect VM's 78-entry table is a second vocabulary of battle effect
 commands, but aletheia has not named the 78 handlers (they are unnamed
@@ -222,6 +268,14 @@ catalogued here. Naming the rest is "Still to build" item 14.
 | `field.save.record` | 0x0215AAF4 | ov010 | state | `SCRCMD_WORK_CmdGetSaveRecord` reads a save record | none |
 | `field.season` | 0x0215ABD0 | ov010 | state | `SCRCMD_WORK_CmdGetSeason` reads the season | none |
 | `field.special.location` | 0x0215ADCC | ov010 | event | `SCRCMD_WORK_CmdSetSpecialLocation` sets the special location | none |
+| `field.npc.spawn` | 0x021894E0 | ov021 | event | `FIELDMAP_AddZoneNpcs` adds the zone's NPCs to the field | none |
+| `field.overlay.sequence` | 0x02164A2C | ov010 | event | `CALENDER_OverlaySequenceEvent` runs a field overlay sequence | none |
+| `field.flash` | 0x021C7E30 | ov021 | override | `FIELD_FLASH_Apply` applies the field flash or map effect | none |
+| `weather.on_date` | 0x02164844 | ov010 | state | `CALENDER_GetWeatherOnDate` reads the weather a zone has on a date | none |
+| `season.display` | 0x02014484 | arm9 | state | `FIELD_STATUS_GetSeasonDispFlag` reads whether the season banner shows | none |
+| `bicycle.usable` | 0x02164508 | ov010 | state | `EVENTDATA_SYSTEM_CheckBicycleUsable` tests whether the bicycle is usable | none |
+| `player.position` | 0x021A3038 | ov021 | state | `FIELD_PLAYER_GetPos` reads the player's field position | none |
+| `camera` | 0x02188C58 | ov021 | state | `FIELDMAP_GetCamera` reads the field camera | none |
 
 ### Inventory and items
 
@@ -250,6 +304,7 @@ catalogued here. Naming the rest is "Still to build" item 14.
 | `money.set` | 0x0215C558 | ov010 | event | `SCRCMD_PROC_SetMiscValue` sets the money | none |
 | `money.add` | 0x0215C584 | ov010 | event | `SCRCMD_PROC_AddMiscValue` adds to the money | none |
 | `money.check` | 0x0215C5B0 | ov010 | state | `SCRCMD_PROC_CheckMiscValueReached` tests the money against a value | none |
+| `money.print` | 0x021BAFC4 | ov070 | override | `ITEMMENU_PrintMoney` prints the money in the bag | none |
 
 ### Progression
 
@@ -307,6 +362,14 @@ catalogued here. Naming the rest is "Still to build" item 14.
 | `badge.write` | 0x0200C248 | arm9 | override | `BEACON_SetFlag` sets one flag bit; the game awards a badge by setting the bit, not by a call | none |
 | `badge.date` | 0x02008A7C | arm9 | event | `TRCARD_SIGN_SetBadgeDate` stamps the badge date on the trainer card | none |
 | `badge.profile` | 0x0216F40C | ov010 | state | `TRCARD_SYS_BuildProfile` builds the badge mask from bits 0..7 | none |
+| `egg.shiny.roll` | 0x021C4030 | ov021 | override | `SODATEYA_ApplyMasudaMethod` applies the Masuda shiny roll | none |
+| `egg.nature.roll` | 0x021C3C78 | ov021 | override | `SODATEYA_RollNature` rolls the inherited nature | none |
+| `egg.ability.roll` | 0x021C3D1C | ov021 | override | `SODATEYA_RollAbilitySlot` rolls the inherited ability slot | none |
+| `daycare.exp` | 0x021C3530 | ov021 | override | `SODATEYA_GrantExp` grants daycare experience | none |
+| `daycare.egg_ready` | 0x0200BCA0 | arm9 | state | `DAYCARE_GetEggReady` reads whether an egg is ready | none |
+| `daycare.steps` | 0x0200BD48 | arm9 | state | `DAYCARE_AddSteps` reads or changes the steps an egg needs | none |
+| `mon.shiny` | 0x02017EAC | arm9 | state | `POKE_TOOL_IsShiny` tests whether a party mon is shiny | none |
+| `box.mon.shiny` | 0x02017EB4 | arm9 | state | `POKE_TOOL_IsBoxShiny` tests whether a box mon is shiny | none |
 
 ### Save and load
 
@@ -318,6 +381,12 @@ catalogued here. Naming the rest is "Still to build" item 14.
 | `save.flag` | 0x02012BF8 | arm9 | state | `GAME_DATA_CheckSaveFlag` reads a save flag | N S NS MP |
 | `save.block` | 0x020071CC | arm9 | override | `SAVE_CONTROL_GetBlock` returns a save block by id | none |
 | `save.misc` | 0x02012F08 | arm9 | override | `GAME_DATA_GetMiscSave` returns the misc block (id 0x34), which holds the money and the badge flags | none |
+| `config.battle_style` | 0x020083C8 | arm9 | state | `CONFIG_GetBattleStyle` reads the shift or set setting | none |
+| `config.battle_scene` | 0x020083AC | arm9 | state | `CONFIG_GetBattleScene` reads the battle-scene toggle | none |
+| `config.text_speed` | 0x02008374 | arm9 | state | `CONFIG_GetTextSpeed` reads the text-speed setting | none |
+| `config.sound_mode` | 0x02008390 | arm9 | state | `CONFIG_GetSoundMode` reads the sound mode | none |
+| `config.button_mode` | 0x02008428 | arm9 | state | `CONFIG_GetButtonMode` reads the button mode | none |
+| `config.battle_flag` | 0x02008448 | arm9 | state | `CONFIG_GetBattleFlag` reads the battle flag | none |
 
 ### Overlay lifecycle
 
@@ -360,12 +429,122 @@ catalogued here. Naming the rest is "Still to build" item 14.
 | `comm.offer` | 0x02182150 | ov018 | event | `EVENT_COMM_COMMON_OfferEventMain` runs an offer | MP |
 | `comm.buy` | 0x0218261C | ov018 | event | `EVENT_COMM_COMMON_ItemPurchaseEventMain` runs a purchase | MP |
 | `comm.sell` | 0x021823A8 | ov018 | event | `EVENT_COMM_COMMON_ItemSaleEventMain` runs a sale | MP |
+| `gts.trade` | 0x021D42D8 | ov120 | event | `GTSNEGO_DISP_StartTrade` starts a GTS trade | none |
 
 The general rule for when an event fires is the slot's: a slot at a declared
 address fires the event when it is entered, calls the handlers, and then calls
 the original unless a handler blocks (`docs/mod-interface.md`, section 4). A
 field VM command's event fires when the VM dispatches that opcode, which is one
 command in one script frame.
+
+### Data tables
+
+A data table is a value the game reads from the data layer, replaced as a whole
+file or a NARC member (`docs/mods.md`). It has no DS address, so it takes no
+slot and is not in `mod/declared_set.txt`. The survey names these moments; the
+catalogue lists them so the read side beside them (section 4, "State reads of
+the data tables") is not lost. The "Where it lives" column is the data layer,
+which resolves a NitroFS path against the mod roots (`docs/mods.md`). The last
+column is the survey source.
+
+| Table | Where it lives | What a mod replaces | Source |
+|---|---|---|---|
+| Wild encounter table read for a zone and slot | the data layer | Replace the species and level per zone and slot | UPR |
+| Shaking grass, dust and ripple spot | the data layer | Choose the special species (Audino, Drilbur) or force the spot | PSYPOKESFULL |
+| Fishing encounter table | the data layer | Replace the rod encounter species | DSPRE |
+| Surfing encounter table | the data layer | Replace the surf encounter species | DSPRE |
+| Swarm encounter table | the data layer | Replace the daily swarm species | SEREBIISWARM |
+| Hidden Grotto contents | the data layer | Replace the grotto species, ability or item | BULBAGROTTO |
+| Static overworld Pokemon | the data layer | Replace the species, level or form of a static | UPR |
+| Gift Pokemon from an NPC | the data layer | Replace the species, level or held item of a gift | UPR |
+| Starter choice | the data layer | Replace the three starters or their level | UPR |
+| Starter sprite and cry | the data layer | Replace the sprite and the cry the picker plays | UPR |
+| Trainer party species | the data layer | Replace the species on a trainer's team | UPR |
+| Trainer party level | the data layer | Scale a trainer's levels or set them outright | POKERANDO |
+| Trainer class and name | the data layer | Replace the class and the display name | UPR |
+| Trainer held items | the data layer | Give or remove a trainer Pokemon's held item | PK3DS |
+| Trainer movesets | the data layer | Replace the four moves a trainer Pokemon has | PK3DS |
+| Trainer AI flags | the data layer | Make a trainer's AI smarter or dumber | DSPRE |
+| Pokemon base stats | the data layer | Change a species' base stats | UPR |
+| Pokemon types | the data layer | Change a species' types | UPR |
+| Pokemon abilities | the data layer | Change the ability slots of a species | UPR |
+| Hidden ability slot | the data layer | Change or enable the hidden ability | PK3DS |
+| Evolution target and method | the data layer | Change what a species evolves into and how | UPR |
+| Trade evolution to level up | the data layer | Replace a trade evolution with a level or item method | UNOVADEX2 |
+| Move properties | the data layer | Change a move's power, accuracy, type or PP | UPR |
+| Level-up learnset | the data layer | Change the moves a species learns by level | UPR |
+| Egg move pool | the data layer | Change the moves a species inherits | POKERANDO |
+| TM contents | the data layer | Change which move a TM teaches | UPR |
+| TM and HM compatibility | the data layer | Change which species can learn a machine | UPR |
+| Move tutor moves | the data layer | Change what a tutor teaches | UPR |
+| Wild held item table | the data layer | Change the items a wild Pokemon can hold | UPR |
+| Ground item ball contents | the data layer | Change what an item ball holds | UPR |
+| Hidden item spots | the data layer | Change what a hidden spot holds or where it is | UPR |
+| In-game trade Pokemon | the data layer | Change the given and wanted Pokemon of a trade | UPR |
+| Static or legendary special music | the data layer | Play or suppress the special battle music | UPR |
+| Species catch rate | the data layer | Change the base catch rate of a species | UPRZX |
+| Type chart matchups | the data layer | Change the whole effectiveness table | TYPECHART |
+| Shop inventory randomization | the data layer | Replace a mart's stock | RANDX |
+| Given item randomization | the data layer | Replace the item an NPC or ball gives | RANDX |
+| Trainer level scaling | the data layer | Raise or lower trainer levels globally | SUPERKAIZO |
+| Boss party size | the data layer | Give a gym leader a full six Pokemon | SUPERKAIZO |
+| Boss held items | the data layer | Give bosses sensible held items | SUPERKAIZO |
+| Boss movesets | the data layer | Give bosses competitive moves | PLATINUMREDUX |
+| Smart AI per trainer | the data layer | Turn on the smarter move choice | SUPERKAIZO |
+| Level cap per boss | the data layer | Set the cap to the next boss's ace | NUZLOCKECAP |
+| EV gain from a battle | the data layer | Zero or scale the EV yield | PLATINUMREDUX |
+| Pokemon ban list | the data layer | Forbid named species from the run | NUZLOCKEPEDIA |
+| Mandatory trainer battles | the data layer | Make an optional trainer fight unavoidable | BLUEMAZ |
+| Battle format per trainer | the data layer | Set single, double, triple or rotation | DRAYANO |
+| Rival keeps starter | the data layer | Keep the rival's starter through the game | POKERANDO |
+| Type-themed gym | the data layer | Give every gym one shared type | POKERANDO |
+| Type effectiveness lookup | the data layer | Change a matchup on the fly | TYPECHART |
+| Physical and special split | the data layer | Change a move's damage category | REDUX |
+| Ball modifier | the data layer | Change a ball's multiplier | VEEKUN |
+| Held item effect | the data layer | Change or replace a held item's effect | DSPRE |
+| Item ball pickup | the data layer | Change what the ball gives | UPR |
+| Area music | the data layer | Change the field music by area or season | SEREBIIBGM |
+| Shop inventory | the data layer | Replace a mart's stock | DSHACK |
+| Shop price | the data layer | Change an item's price | DSPRE |
+| Sell price | the data layer | Change an item's sell value | DSPRE |
+| Exchange corner | the data layer | Change the Battle Point exchange stock | SUBWAY |
+| In-game trade | the data layer | Change a trade's Pokemon | DSPRE |
+| Trade evolution | the data layer | Change a trade evolution | UNOVADEX2 |
+| Version-exclusive encounter | the data layer | Add the other version's encounter | UNOVADEX2 |
+| Pokemon textures and sprites | the data layer | Replace a species sprite | MODS |
+| Pokemon 3D models | the data layer | Replace a species model | DSPRE |
+| Overworld sprites | the data layer | Replace an overworld sprite | MASTERYESE |
+| Trainer sprites and VS faces | the data layer | Replace a trainer sprite or face | MASTERYESE |
+| Pokemon icons | the data layer | Replace a party or dex icon | MASTERYESE |
+| Music and fanfares | the data layer | Replace a track or a fanfare | SMASHMUSIC |
+| Sound effects and cries | the data layer | Replace a cry or an effect | MASTERYESE |
+| Soundfont and instruments | the data layer | Change an instrument or sample | SOUNDFONT |
+| Fonts | the data layer | Replace the text font | FONT |
+| UI text | the data layer | Replace the port's own UI strings | SETTINGS |
+| Message text | the data layer | Replace a message bank member | SETTINGS |
+| Menu graphics and palettes | the data layer | Replace a menu background or palette | DSPRE |
+| Title screen | the data layer | Replace the title art or text | BWDELUXE |
+| Type chart | the data layer | Replace the effectiveness table | TYPECHART |
+| Data tables in general | the data layer | Replace any table by NARC member | MODS |
+| C-Gear skin | the data layer | Replace the C-Gear art | SEREBIIGL |
+| Pokedex skin | the data layer | Replace the dex art | SEREBIIGL |
+| Battle backgrounds | the data layer | Replace a battle backdrop | MASTERYESE |
+| Text colour and alignment | the data layer | Change a message's colour or align | ARSCRIPT |
+| Seasonal music arrangement | the data layer | Replace a season's music arrangement | SEREBIIBGM |
+| Weather graphics | the data layer | Replace a weather effect's art | DSHACK |
+| Text size | the data layer | Scale the dialogue and menu text | FONT |
+| Text colour and contrast | the data layer | Raise the contrast of text | SINISTER |
+| Egg move inheritance | the data layer | Change the inherited moves | POKERANDO |
+| Legendary encounter | the data layer | Change a postgame legendary | REDUX |
+| Text encoding | the data layer | Change the character table | FONT |
+| Text insertion | the data layer | Replace a message bank | PROJECTPOKEMON |
+| UI label | the data layer | Replace a port UI label | SETTINGS |
+| Text colour code | the data layer | Change a message's colour code | ARSCRIPT |
+
+The data layer is the only fully working surface today: a whole-file override
+and a NARC member override both work (`docs/mods.md`). Every row above is
+therefore reachable as data. A rule that must read the same value needs the
+state entry beside it, not the override.
 
 ## 1a. The owner's examples, resolved
 
@@ -556,7 +735,8 @@ than the two is not defined, and the port must fix what it does with one
 
 **A block at an event that defines none.** The events that define a block are
 `encounter.start`, `battle.start`, `catch.attempt`, `battle.faint`, `heal.party`
-and `whiteout.begin`, the six the earlier catalogue named (section 1; kenon's
+and the two `whiteout.begin` events, the block events the earlier catalogue
+named (section 1; kenon's
 `docs/events-and-rules.md`, "What a rule may do"). The others are observation
 only. Whether a new event such as `item.add`, `battle.item.use`,
 `item.use.field`, `shop.pay` or `field.ledge.check` also defines one is the
@@ -601,7 +781,7 @@ The rest, each a member set the port must confirm (still-to-build item 3):
 | `battle.faint` | `BwEventBattleFaint` | the fainted Pokemon |
 | `battle.exp` | `BwEventBattleExp` | the mon, the exp added, whether a level was gained |
 | `heal.party` | `BwEventHealParty` | none named |
-| `whiteout.begin` | `BwEventWhiteout` | which half, the two halves of section 1 |
+| `whiteout.begin.battle`, `whiteout.begin.field` | `BwEventWhiteout` | none named; the address is the half |
 | `route.change` | `BwEventRouteChange` | the map |
 | `save.begin`, `save.done` | `BwEventSave` | none named |
 | `save.load` | `BwEventSaveLoad` | none named |
@@ -710,6 +890,40 @@ belong to. The table below is the consolidated list.
 | `link_level` | `WCM_GetLinkLevel` | 0x021666C8 | u32 | read |
 | `link_level` | `WCM_CalcLinkLevel` | 0x02166710 | u32 | read |
 | `encounter_table` | `FIELDMAP_GetEncount` | 0x02188CE8 | table | read |
+| `species.type` | `POKE_PERSONAL_GetParam` | 0x0201AE1C | u32 by field id | read |
+| `species.stats` | `POKE_PERSONAL_GetParam` | 0x0201AE1C | u32 by field id | read |
+| `species.ability` | `POKE_PERSONAL_GetParam` | 0x0201AE1C | u32 by field id | read |
+| `species.catch` | `POKE_PERSONAL_GetParam` | 0x0201AE1C | u32 by field id | read |
+| `species.gender` | `POKE_TOOL_GetGenderRatioClass` | 0x020185F8 | u32 | read |
+| `personal.param` | `POKE_TOOL_GetPersonalParam` | 0x02019C90 | u32 by field id | read |
+| `personal.data` | `POKE_TOOL_GetPersonalData` | 0x02019C54 | opaque record | read |
+| `personal.gender` | `POKE_TOOL_GetPersonalGender` | 0x02019C7C | u32 | read |
+| `mon.type` | `BTL_POKEPARAM_GetTypes` | 0x021D57A8 | type pair | read |
+| `mon.type.pair` | `BTL_POKEPARAM_GetTypePair` | 0x021D57FC | u32 | read |
+| `mon.has.type` | `BTL_POKEPARAM_HasType` | 0x021D5814 | boolean | read |
+| `move.type` | `WAZA_TOOL_GetType` | 0x0201C1C8 | u32 | read |
+| `move.power` | `WAZA_TOOL_GetPower` | 0x0201C1D8 | u32 | read |
+| `move.category` | `WAZA_TOOL_GetCategory` | 0x0201C1BC | u32 | read |
+| `move.maxpp` | `WAZA_TOOL_GetMaxPP` | 0x0201C158 | u32 | read |
+| `type.effectiveness` | `BTL_SERVER_FLOW_CalcTypeEffectiveness` | 0x021C6E3C | multiplier | read |
+| `move.effectiveness` | `BTL_SERVER_FLOW_CalcMoveTypeEffectiveness` | 0x021C7DAC | multiplier | read |
+| `level_up.move` | `POKE_TOOL_GetLevelUpMove` | 0x02018328 | u32 | read |
+| `party.mon.species` | `POKE_TOOL_GetPartyValue` id 0x05 | 0x02017E1C | u32 | read |
+| `weather.on_date` | `CALENDER_GetWeatherOnDate` | 0x02164844 | u32 | read |
+| `season.display` | `FIELD_STATUS_GetSeasonDispFlag` | 0x02014484 | boolean | read |
+| `bicycle.usable` | `EVENTDATA_SYSTEM_CheckBicycleUsable` | 0x02164508 | boolean | read |
+| `player.position` | `FIELD_PLAYER_GetPos` | 0x021A3038 | position | read |
+| `camera` | `FIELDMAP_GetCamera` | 0x02188C58 | camera | read |
+| `daycare.egg_ready` | `DAYCARE_GetEggReady` | 0x0200BCA0 | boolean | read |
+| `daycare.steps` | `DAYCARE_AddSteps` | 0x0200BD48 | u32 | read, write |
+| `config.battle_style` | `CONFIG_GetBattleStyle` | 0x020083C8 | u32 | read, write |
+| `config.battle_scene` | `CONFIG_GetBattleScene` | 0x020083AC | u32 | read, write |
+| `config.text_speed` | `CONFIG_GetTextSpeed` | 0x02008374 | u32 | read, write |
+| `config.sound_mode` | `CONFIG_GetSoundMode` | 0x02008390 | u32 | read, write |
+| `config.button_mode` | `CONFIG_GetButtonMode` | 0x02008428 | u32 | read, write |
+| `config.battle_flag` | `CONFIG_GetBattleFlag` | 0x02008448 | u32 | read, write |
+| `mon.shiny` | `POKE_TOOL_IsShiny` | 0x02017EAC | boolean | read |
+| `box.mon.shiny` | `POKE_TOOL_IsBoxShiny` | 0x02017EB4 | boolean | read |
 
 Every original row is `docs/mod-interface.md`, section 4, "State fields a rule
 may name" and "The other state a mod plausibly needs". The money is the worked
@@ -754,6 +968,42 @@ override points (`docs/mod-interface.md`, section 4). A mod reaches them the
 way it reaches any matched accessor. The port's mod-facing wrapper is a thin
 call over the game accessor, so the game's struct layout is not in the ABI
 (section 5).
+
+### State reads of the data tables
+
+The data tables of section 1 are the right surface for overriding a value. A
+rule often needs to read the same value to decide something, and the survey
+lists the value only as data. The worked example is a monotype rule: it needs
+the type of a species and of a party member, and the survey lists the type only
+as a data table.
+
+The accessors above answer the read. `POKE_PERSONAL_GetParam` (0x0201AE1C,
+arm9) reads a species' type, base stats, ability slots and catch rate from the
+personal data. `BTL_POKEPARAM_GetTypes` (0x021D57A8, ov093),
+`BTL_POKEPARAM_GetTypePair` (0x021D57FC) and `BTL_POKEPARAM_HasType`
+(0x021D5814) answer the type question for an in-battle Pokemon.
+`POKE_TOOL_GetPartyValue` (0x02017E1C, arm9) with field id 0x05 gives a party
+member's species.
+
+The same split bites wherever a data table is also a rule input.
+`WAZA_TOOL_GetType` (0x0201C1C8), `WAZA_TOOL_GetPower` (0x0201C1D8),
+`WAZA_TOOL_GetCategory` (0x0201C1BC) and `WAZA_TOOL_GetMaxPP` (0x0201C158) read
+a move. `BTL_SERVER_FLOW_CalcTypeEffectiveness` (0x021C6E3C) and
+`BTL_SERVER_FLOW_CalcMoveTypeEffectiveness` (0x021C7DAC) read the type chart.
+`POKE_TOOL_GetLevelUpMove` (0x02018328) reads a learnset.
+`POKE_TOOL_GetPersonalParam` (0x02019C90), `POKE_TOOL_GetPersonalData`
+(0x02019C54), `POKE_TOOL_GetPersonalGender` (0x02019C7C) and
+`POKE_TOOL_GetGenderRatioClass` (0x020185F8) read the personal data directly.
+`CALENDER_GetWeatherOnDate` (0x02164844, ov010),
+`FIELD_STATUS_GetSeasonDispFlag` (0x02014484, arm9),
+`EVENTDATA_SYSTEM_CheckBicycleUsable` (0x02164508, ov010),
+`FIELD_PLAYER_GetPos` (0x021A3038, ov021), `FIELDMAP_GetCamera` (0x02188C58,
+ov021), `DAYCARE_GetEggReady` (0x0200BCA0, arm9) and `DAYCARE_AddSteps`
+(0x0200BD48, arm9) read field and daycare state the survey names.
+
+Each is a state entry in the table above and takes no slot. The survey names no
+address for any of them; each address was found in aletheia and checked against
+the per-packet manifests, the same revision and the same check as section 1.
 
 ### Writes, and when the game contradicts one
 
@@ -837,8 +1087,9 @@ distinction matters is that a game struct can change under aletheia's waves
 without a mod rebuild, because the accessor hides it, while a change to a
 port-owned struct is a new `api`.
 
-The catalogue grew from 18 events to 216 entries (152 events, 17 override
-points and 47 state entries), so the ABI grew with it: the event names of
+The catalogue grew from 18 events to 355 entries (156 events, 27 override
+points, 81 state entries and 91 data tables), so the ABI grew with it: the
+event names of
 section 1 are part of it, and each new event needs its struct frozen before a
 mod binds it. A mod built against a smaller `api` sees fewer names; the port
 must fix how a name a mod asks for that the port does not define is handled
@@ -879,14 +1130,58 @@ that writes a field the game then contradicts, and a handler that corrupts the
 event pointer are all the mod's responsibility, and the port's promise is only
 that the fan-out and the load order are deterministic (section 3).
 
+## 7. The challenge runs
+
+The catalogue is tested against the runs a player attempts. A run is
+expressible when the catalogue has a binding for every rule the run needs: an
+event to observe or block, a state entry to read or write, an override point,
+or a data table. Whether the port has built the field, battle and transport
+code is a separate question (`progress/EVENT_SURVEY.md`, "What the port reaches
+today"). A run that is not expressible is a finding, and the fourth column
+names what it needs.
+
+| Run | Expressible | What it needs |
+|---|---|---|
+| Nuzlocke | yes | `encounter.start` and `route.change` for the first encounter, `catch.attempt` to block a second, `battle.faint` for a death, `whiteout.begin.battle` and `whiteout.begin.field` to continue, and the state namespace |
+| Hardcore Nuzlocke | yes | the level cap reads `battle.exp` and `battle.levelup`, the item ban blocks `battle.item.use`, and set mode reads `config.battle_style` |
+| Monotype | yes | the type reads `species.type` (`POKE_PERSONAL_GetParam`), `party.mon.species` (`POKE_TOOL_GetPartyValue` id 0x05) and `mon.type` (`BTL_POKEPARAM_GetTypes`) |
+| Single Pokemon | yes | `mon.party.add` and `egg.add` block a second mon, and `party` reads the count |
+| No-exp | yes | an override at `battle.exp` (0x021D69B8) |
+| Itemless | yes | `battle.item.use` and `item.use.field` block an item use |
+| No-heal | yes | `heal.party`, `item.heal.party` and `battle.item.heal` block a heal |
+| Pacifist | yes | an override at `battle.move.used` (0x021C1A10) plus `move.power` to test a move |
+| Set mode | yes | `config.battle_style` reads and writes the setting |
+| Shiny Badge Quest | yes | `mon.shiny` (`POKE_TOOL_IsShiny`) plus `badge.state` |
+| Living Dex | yes | `zukan.is.caught` and `zukan.caught` |
+| Trashlocke | yes | the Pokemon ban list data table plus `encounter.start` |
+| Little Cup | yes | `species.stats` (`POKE_PERSONAL_GetParam`) plus a level cap on `battle.exp` |
+| Team lock | yes | `mon.party.add` blocks and `party` reads the count |
+| Wedlocke | yes | `personal.gender` (`POKE_TOOL_GetPersonalGender`) plus the mod's own pairing state |
+| Soullink | yes | `link.up`, `link.down`, `trade.start` and the mod's own pairing state |
+| Nuzlocke Soullink | yes | the Nuzlocke bindings and the Soullink bindings |
+| Egglocke | yes | `egg.add`, `egg.hatch` and `daycare.egg_ready` |
+| Wonderlocke | no | a wonder-trade binding. `gts.trade` (`GTSNEGO_DISP_StartTrade`, 0x021D42D8, ov120) covers a GTS trade; aletheia names the GTS negotiation but no wonder-trade entry |
+| Randomlocke | yes | the encounter data tables plus `encounter.start` |
+| Ironmon | yes | the data tables, `catch.attempt`, `battle.faint` and `mon.shiny`; the hidden-info display is a port UI question, not a catalogue one |
+| a randomized run | yes | the data tables plus `encounter.start`, `battle.setup.wild` and `encounter.trainer` |
+| a roguelike run | no | the map and zone tables (`progress/STORY_HACKS.md`) and a field-code path. The catalogue has `route.change` and `field.map.event` but no map generator |
+| co-op in the field | no | a position-sync and second-player binding. The survey names a player's position and a second body; the catalogue has the state (`player.position`, `camera`, `field.npc.spawn`) but no sync event, and the transport (`net.send`, `net.receive`) is not built (`docs/modding.md`, "Networking seam: missing") |
+| link battles | yes | `link.up`, `link.down`, `comm.update`, `network.start` and the `battle.*` events |
+| link trades | yes | `trade.start`, `trade.check`, `link.up` and `link.down` |
+| a battle facility | no | facility run events. The survey names the Battle Subway, the Battle Institute, the PWT and the Black Tower, and the catalogue has none |
+
+Four runs are not expressible with the catalogue as it now stands: Wonderlocke,
+a roguelike run, co-op in the field, and a battle facility. Each is a finding.
+The work they name is in "Still to build" below.
+
 ## Still to build
 
 1. **Fix which addresses each event binds.** `whiteout.begin` is the worked
-   case: one concept, two functions, the battle-screen half and the
-   field-recover half, and whether one event name binds both or two events
-   exist is not decided (`docs/mod-interface.md`, still-to-build item 8;
-   `docs/events-and-rules.md`, "What is not decided"). The work is to fix one
-   name to many addresses or a second name, for every such concept.
+   case: one concept, two functions, and the catalogue now carries two events,
+   `whiteout.begin.battle` (0x021D1960, ov093) and `whiteout.begin.field`
+   (0x02158A20, ov010) (`docs/mod-interface.md`, still-to-build item 8). The
+   work is to apply the same split to any concept that still spans more than
+   one address, and to fix the port's binding of the two names.
 2. **Fix the return contract.** The port defines `BW_EVENT_CONTINUE` and
    `BW_EVENT_BLOCK` and no third return (`docs/mod-interface.md`, section 4).
    The work is to fix what a return value other than the two does, and what a
@@ -895,7 +1190,7 @@ that the fan-out and the load order are deterministic (section 3).
    `docs/modding.md` needs one, because a replacement is the `override` key and
    not a handler return (`docs/mod-interface.md`, section 3).
 3. **Freeze the event structs.** Only `BwEventEncounterStart` is spelled out
-   (`docs/mod-interface.md`, section 4). The catalogue has 216 entries, so the
+   (`docs/mod-interface.md`, section 4). The catalogue has 355 entries, so the
    work is to fix each concrete struct's members, the identity of a Pokemon in
    a payload (an index or a handle), the type of `catch.result`, the field-VM
    command payload and the talk and item payloads. The evidence for the
@@ -964,6 +1259,19 @@ that the fan-out and the load order are deterministic (section 3).
     event the port does not carry. The work is to fix whether the port refuses
     the manifest, reports the unknown name, or ignores it, the way
     `read_manifest` ignores an unknown key (`sdk/vfs.c`, `read_manifest`).
+16. **Name the wonder trade binding.** The survey names a wonder trade and the
+    catalogue carries the GTS trade (`gts.trade`, 0x021D42D8, ov120) but no
+    wonder-trade entry. The work is to name the wonder-trade flow in aletheia,
+    or to bind the run to the GTS negotiation (`GTSNEGO_*`, ov120).
+17. **Name the battle facility run events.** The survey names the Battle
+    Subway, the Battle Institute, the PWT and the Black Tower, and the
+    catalogue has none. Aletheia names the Subway's comm and save code
+    (`BSUBWAY_COMM_*`, ov010; `BSUBWAY_SAVEDATA_*`, arm9). The work is to name
+    each facility's run entry point and its streak state.
+18. **Name the map and zone tables.** A roguelike run needs the map and zone
+    tables to be replaceable. `progress/STORY_HACKS.md` covers what a story
+    hack needs. The catalogue has `route.change` and `field.map.event` but no
+    map generator.
 
 ## Related documents
 

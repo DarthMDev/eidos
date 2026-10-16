@@ -28,9 +28,19 @@
 # g_02209E88.  The handler names are aletheia's per-packet manifests under
 # layout/matched/**/pkt_*.json.
 #
+# The set grew from 180 rows to 193 when progress/EVENT_SURVEY.md was folded
+# into the catalogue: 3 new events (CALENDER_OverlaySequenceEvent,
+# FIELDMAP_AddZoneNpcs, GTSNEGO_DISP_StartTrade) and 10 new override points
+# (BTL_SERVER_FLOW_CalcMoveDamage, BTL_CALC_CalcBaseDamage,
+# BTL_CALC_RollCriticalHit, BTL_SERVER_FLOW_RollCriticalCapture,
+# FIELD_FLASH_Apply, ITEMMENU_PrintMoney, SODATEYA_ApplyMasudaMethod,
+# SODATEYA_RollNature, SODATEYA_RollAbilitySlot, SODATEYA_GrantExp).  The 91
+# data tables and the 34 state entries the survey adds need no slot and are
+# not declared here (docs/mod-events.md, sections 1 and 4).
+#
 # Every row was checked against aletheia's per-packet manifests under
 # layout/matched/ (pkt_*.json), revision 80f06a261e8731f2db94c1a66627bb351ad47673,
-# not copied from the section 1 table.  All 180 rows match a manifest function
+# not copied from the section 1 table.  All 193 rows match a manifest function
 # name and region.  One address is shared by two overlays that occupy the same
 # RAM window: 0x021C5200 is BTL_SERVER_FLOW_ProcFaintRewards in ov093 and
 # ZUKAN_DETAIL_FORM_SignalAnimDone in ov208.  The declared row is the ov093
@@ -122,6 +132,7 @@
 0x021643E8	FIELD_MAP_CHANGE_SetupZone	ov010	nuzlocke,soullink,nuzlocke-soullink
 0x02164480	FIELD_SKILL_CHECK_FillUseFlags	ov010	
 0x021644C4	FIELD_SKILL_CHECK_CallHandler	ov010	
+0x02164A2C	CALENDER_OverlaySequenceEvent	ov010	
 0x0216B538	SCRCMD_RESEARCH_CmdRaiseResearchRank	ov010	
 0x0216B63C	SCRCMD_RESEARCH_CmdStartMission	ov010	
 0x0216B6DC	SCRCMD_RESEARCH_CmdClearMission	ov010	
@@ -147,6 +158,7 @@
 0x021870C4	FIELD_WFBC_DATA_LOCAL_CreatePersonTalkEvent	ov020	
 0x021871F8	FIELD_WFBC_DATA_LOCAL_PersonTalkEventMain	ov020	
 0x02188CE8	FIELDMAP_GetEncount	ov021	nuzlocke
+0x021894E0	FIELDMAP_AddZoneNpcs	ov021	
 0x02189BD0	FIELD_EVENT_CHECK_CheckGridEvents	ov021	
 0x0218A278	FIELD_EVENT_CHECK_CheckRailEvents	ov021	
 0x0218A4BC	FIELD_EVENT_CHECK_Run	ov021	
@@ -187,8 +199,14 @@
 0x021B76B4	PDW_POSTMAN_ReceiveItems	ov021	
 0x021C1024	FIELD_PLAYER_GRID_EVENT_CreateHopTask	ov021	
 0x021C1228	FIELD_PLAYER_GRID_EVENT_CreateJumpTask	ov021	
+0x021C3530	SODATEYA_GrantExp	ov021	
 0x021C360C	SODATEYA_LearnMove	ov021	
+0x021C3C78	SODATEYA_RollNature	ov021	
+0x021C3D1C	SODATEYA_RollAbilitySlot	ov021	
+0x021C4030	SODATEYA_ApplyMasudaMethod	ov021	
 0x021C4678	SCRCMD_IAIGIRI_StartOnPlayer	ov021	
+0x021C7E30	FIELD_FLASH_Apply	ov021	
+0x021BAFC4	ITEMMENU_PrintMoney	ov070	
 0x021BC2C8	PLIST_MENU_ShowItemUsedThenClose	ov091	
 0x021BC30C	PLIST_MENU_ShowItemUsedThenContinue	ov091	
 0x021BC350	PLIST_MENU_StartItemUse	ov091	
@@ -200,6 +218,7 @@
 0x021BF2EC	BTL_SERVER_FLOW_DispatchMoveResultEvent	ov093	
 0x021C1910	BTL_SERVER_FLOW_RunDamageDealtEvent	ov093	
 0x021C1A10	BTL_SERVER_FLOW_RunMoveUsedEvent	ov093	
+0x021C1E74	BTL_SERVER_FLOW_CalcMoveDamage	ov093	
 0x021C5200	BTL_SERVER_FLOW_ProcFaintRewards	ov093	nuzlocke,soullink,nuzlocke-soullink
 0x021C557C	BTL_SERVER_FLOW_CureMajorStatusWithMessage	ov093	
 0x021C6564	BTL_SERVER_FLOW_DispatchMoveDoneEvent	ov093	
@@ -207,6 +226,7 @@
 0x021CB730	BTL_SERVER_FLOW_ProcBagItemUse	ov093	nuzlocke,soullink,nuzlocke-soullink
 0x021CBA40	BTL_SERVER_FLOW_TryThrowBall	ov093	nuzlocke,soullink,nuzlocke-soullink
 0x021CBD48	BTL_SERVER_FLOW_GetBallCatchRate	ov093	nuzlocke,soullink,nuzlocke-soullink
+0x021CBEA8	BTL_SERVER_FLOW_RollCriticalCapture	ov093	
 0x021CBFA0	BTL_SERVER_FLOW_ItemEffectCheckSlotMessage	ov093	
 0x021CC2C0	BTL_SERVER_FLOW_ItemEffectRecoverHp	ov093	
 0x021CC668	BTL_SERVER_FLOW_CheckBattleOutcome	ov093	nuzlocke,soullink,nuzlocke-soullink
@@ -216,9 +236,12 @@
 0x021D2CA8	BTL_CLIENT_StepLearnLevelUpMoves	ov093	
 0x021D5B68	BTL_POKEPARAM_IsFainted	ov093	nuzlocke,soullink,nuzlocke-soullink
 0x021D69B8	BTL_POKEPARAM_AddExp	ov093	
+0x021D7930	BTL_CALC_RollCriticalHit	ov093	
+0x021D7A44	BTL_CALC_CalcBaseDamage	ov093	
 0x021F93F4	BTLV_EFFVM_Create	ov094	
 0x021FBD44	BTLV_EFFVM_CmdJumpIf	ov094	
 0x021FBD88	BTLV_EFFVM_CmdJumpIfNot	ov094	
 0x021FBDD4	BTLV_EFFVM_CompareAndJump	ov094	
 0x021FC334	BTLV_EFFVM_CmdJumpScript	ov094	
 0x021FC374	BTLV_EFFVM_CmdJumpToArchiveScript	ov094	
+0x021D42D8	GTSNEGO_DISP_StartTrade	ov120	
