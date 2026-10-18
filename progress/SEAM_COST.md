@@ -27,7 +27,7 @@ and `build32/boot/boot_asm_subst.txt`), the 5,805 expected headers under
 binds of the form `(*bw_dsref_NAME)`, 41 are private-copy defines ("another boot
 file owns"), and 1,649 are name renames, every one with a function target. Split
 by group: 1,624 renames in matched units and 25 in port units. Command:
-`python <home>\AppData\Local\Temp\opencode\seam_count.py`.
+`python seam_count.py`.
 
 Which number to trust: 1,649 and 1,647 agree within 2. The report's run used 14
 port units where the current plan lists 79, which accounts for the difference.
@@ -39,7 +39,7 @@ wrong: the directory holds 5,951 files against 5,805 units, so 146 are stale, an
 The rename count is not the cross-unit call surface. A caller that already uses
 the defined spelling gets no `#define` and is bound directly by the linker.
 Measured with the generator's own classifier, `closure.Index.refs`, over the
-5,726 matched sources (`python <home>\AppData\Local\Temp\opencode\seam_refs.py`):
+5,726 matched sources (`python seam_refs.py`):
 
 | class | (source, name) pairs | distinct names |
 |---|---|---|
@@ -73,7 +73,7 @@ textual `#define` cannot separate a reference from a definition).
 A regex scan of the 5,726 matched sources, with function definitions and
 prototypes removed using `closure.SourceScan`, counts 1,499 call occurrences to
 names the same source defines, over 901 distinct (unit, name) pairs. Command:
-`python <home>\AppData\Local\Temp\opencode\seam_calls2.py`. This is an
+`python seam_calls2.py`. This is an
 estimate; the parser noise from definitions, prototypes and function-like macros
 puts the range at roughly 1,300 to 1,600 occurrences. These sites stay unhookable
 under a uniform slot scheme unless the defining unit's own calls are also
@@ -87,7 +87,7 @@ the pointer redirected.
 ARM9 data, `build32/armdata/bw_arm9_data.c`: 777 relocation words, 484 of kind
 `BW_DATA_RELOC_CODE` and 293 of kind `BW_DATA_RELOC_DATA`; `k_funcs` holds 6,606
 entries, the functions whose address can be stored. Counted with
-`python <home>\AppData\Local\Temp\opencode\seam_tables.py`.
+`python seam_tables.py`.
 
 Title overlay data, `build32/ovl/boot/ov0*_link.c`: 1,022 code relocations and
 138 data relocations across the eight overlays; the `k_entries` tables hold 4,183

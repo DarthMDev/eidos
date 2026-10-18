@@ -41,9 +41,10 @@ which is how a renamed or deleted aletheia file shows up).
 
 ## Limits
 
-- A hook is compiled in, so a player-side mod cannot add one at run time. A
-  mod that wants to change data does it through the VFS (member overrides,
-  `sdk/vfs.h`); hooks are for logic. A later step is a data-driven row table
+- A hook is compiled in. It is the port's own mechanism for its own features;
+  a player's mod changes data through the VFS (member overrides, `sdk/vfs.h`)
+  and logic through events and raw hooks at run time (`docs/modding.md`,
+  `docs/mod-overrides.md`). A later step is a data-driven row table
   (docs/settings-design.md, "What is left") so most menu changes
   need no hook.
 - A hook replaces a whole function. Two hooks cannot patch the same one.

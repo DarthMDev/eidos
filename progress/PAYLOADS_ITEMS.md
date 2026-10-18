@@ -13,7 +13,7 @@ call is named in "Context the area tracks" and fed from an earlier event.
 
 Addresses, regions and kinds are `docs/mod-events.md`, section 1, and
 `mod/declared_set.txt`. The source is aletheia's matched tree under
-`<home>\OneDrive\Documents\bw_decomp\src\matched`.
+`src/matched in the aletheia checkout`.
 
 The events specified here: 43.
 

@@ -14,7 +14,7 @@ struct.
 Every field is attributed to the parameter, global or struct field it comes
 from, with the file and line it was read at. The sources are aletheia's matched
 sources under `src/matched/`, at the checkout
-`<home>\OneDrive\Documents\bw_decomp`. A citation `ov010_func_021643E8.c:59`
+`the aletheia checkout`. A citation `ov010_func_021643E8.c:59`
 means `src/matched/ov/ov010_func_021643E8.c`, line 59. Addresses are the
 Black-image addresses the catalogue names.
 

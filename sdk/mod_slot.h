@@ -32,7 +32,8 @@ extern "C" {
 #define BW_MOD_REGION_OVL(id) ((unsigned int)(id))
 
 /* How many (region, address) pairs the registry holds at once: the declared
- * set is 180 rows, and a mod may install one per row. */
+ * set is a few hundred rows (mod/declared_set.txt), and a mod may install one
+ * per row. */
 #define BW_MOD_SLOT_MAX 512
 
 /* One published original, for a per-overlay table in a generated link C. */

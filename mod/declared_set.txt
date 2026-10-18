@@ -1,112 +1,81 @@
-# mod/declared_set.txt -- the hookable set docs/mod-interface.md section 1
-# declares: the DS addresses the port generates an indirection (a slot) for.
-# This file is the single source of truth the generators read; section 1 is
-# the prose account.
+# mod/declared_set.txt -- the hookable set: the game functions the port
+# routes through a slot (docs/mod-interface.md, sections 1 and 2).  A mod can
+# reach a game function only when it is listed here.  tools/bootlink.py reads
+# the arm9 rows and tools/ovlink.py the overlay rows; each emits one slot per
+# row.  With no mod installed a slot calls the original.
 #
-# One row per address, tab separated:
-#   address   the even function start, as aletheia's `address:` line spells it
+# One row per function, tab separated:
+#   address   the even function start, as aletheia's manifests spell it
 #   function  the aletheia function name
-#   region    arm9, or the overlay id the address lives in
-#   mods      the example mods that need the address, comma separated:
-#             nuzlocke, soullink, nuzlocke-soullink, multiplayer
-#             An empty fourth column means no example mod names the address;
-#             the address is declared because the event catalogue of
-#             docs/mod-events.md, section 1, binds an event or an override to
-#             it.  The owner asked for these concepts to be coverable.
+#   region    arm9, or the overlay id; two overlays can share one address,
+#             so the region is part of the key
+#   events    the stable events the port binds to this function, comma
+#             separated (docs/mod-events.md, section 1).  Empty: the row is a
+#             raw hook only (docs/mod-events.md, section 5).
 #
-# A reader splits each line on tabs; `#` starts a comment.  tools/bootlink.py
-# takes the arm9 rows and tools/ovlink.py takes the overlay rows; both emit
-# the slot of section 2.
-#
-# The set grew from 44 rows to 180 when docs/mod-events.md, section 1, was
-# rebuilt from the game's own command tables: the field script VM's 609-entry
-# table at d_0217062C (entry points SCRIPT_SYS_CreateVm 0x02158BFC and
-# SCRIPT_SYS_Main 0x0215882C) and the battle effect VM's 78-entry table at
-# 0x02209E88 (entry point BTLV_EFFVM_Create 0x021F93F4).  The field VM's
-# opcode-to-handler map is aletheia's tools/assets/scripts.py, OPERAND_WIDTH;
-# the battle effect VM's handler list is layout/data_objects.json, the object
-# g_02209E88.  The handler names are aletheia's per-packet manifests under
-# layout/matched/**/pkt_*.json.
-#
-# The set grew from 180 rows to 193 when progress/EVENT_SURVEY.md was folded
-# into the catalogue: 3 new events (CALENDER_OverlaySequenceEvent,
-# FIELDMAP_AddZoneNpcs, GTSNEGO_DISP_StartTrade) and 10 new override points
-# (BTL_SERVER_FLOW_CalcMoveDamage, BTL_CALC_CalcBaseDamage,
-# BTL_CALC_RollCriticalHit, BTL_SERVER_FLOW_RollCriticalCapture,
-# FIELD_FLASH_Apply, ITEMMENU_PrintMoney, SODATEYA_ApplyMasudaMethod,
-# SODATEYA_RollNature, SODATEYA_RollAbilitySlot, SODATEYA_GrantExp).  The 91
-# data tables and the 34 state entries the survey adds need no slot and are
-# not declared here (docs/mod-events.md, sections 1 and 4).
-#
-# Every row was checked against aletheia's per-packet manifests under
-# layout/matched/ (pkt_*.json), revision 80f06a261e8731f2db94c1a66627bb351ad47673,
-# not copied from the section 1 table.  All 193 rows match a manifest function
-# name and region.  One address is shared by two overlays that occupy the same
-# RAM window: 0x021C5200 is BTL_SERVER_FLOW_ProcFaintRewards in ov093 and
-# ZUKAN_DETAIL_FORM_SignalAnimDone in ov208.  The declared row is the ov093
-# function; the overlay id disambiguates, the bare address does not.
-#
-# That check proves a row exists, not that the function does what the entry
-# says.  A later pass reads each row's matched source and asks that second
-# question; it found two rows that the address, name and region check passes
-# and the semantics fail.  flag.write was bound to SAVE_EVENT_Write
-# (0x0202F190), which forwards to SAVE_EVENT_WriteMode, a box-record writer,
-# and is now bound to ZONEDATA_SetEventFlag (0x02014314), the event-flag
-# bitmap writer.  encounter.start was bound to EVENT_BATTLE_CreateEncounterTask
-# (0x0216E818), the trainer battle task, and is now bound to
-# EVENT_BATTLE_CreateScriptedBattle (0x0216E7C8), the wild or scripted
-# battle task the wild encounter step returns.
-# docs/mod-events.md, section 1, "Corrections and the class of error",
-# records both and the class.
-#
-# The rows below are sorted by region, then by address.  The 44 original rows
-# are kept unchanged; the rest are new.  State accessors that a mod
-# reads and writes through an accessor, and that no event or override binds,
-# are not declared here: docs/mod-events.md, section 4, lists them, and
-# docs/mod-interface.md, section 4, explains why an accessor needs no slot.
-#
-0x02007150	SAVE_CONTROL_StartSave	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
-0x02007168	SAVE_CONTROL_MainSave	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
+# `#` starts a comment.  Every row is checked against aletheia's per-packet
+# manifests (layout/matched/**/pkt_*.json) by address, name and region.
+
+# arm9
+
+# arm9
+0x02007150	SAVE_CONTROL_StartSave	arm9	save.begin
+0x02007168	SAVE_CONTROL_MainSave	arm9	save.done
 0x020071CC	SAVE_CONTROL_GetBlock	arm9	
+0x020074D8	BOX_SAVEDATA_AddPokemon	arm9	
+0x02007E50	MYITEM_SAVEDATA_AddItem	arm9	item.add
 0x02008A7C	TRCARD_SIGN_SetBadgeDate	arm9	
-0x0200C248	BEACON_SetFlag	arm9	
-0x0200CDE0	ZUKAN_SAVE_RegisterCaught	arm9	
-0x0200CFA0	ZUKAN_SAVE_RegisterSeen	arm9	
-0x02012BF8	GAME_DATA_CheckSaveFlag	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
-0x02012C18	GAME_DATA_LoadFromSave	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
+0x0200C248	BEACON_SetFlag	arm9	badge.get
+0x0200C278	BEACON_AddPoints	arm9	money.change
+0x0200C29C	BEACON_SubPoints	arm9	money.change
+0x0200CDE0	ZUKAN_SAVE_RegisterCaught	arm9	dex.register
+0x0200CFA0	ZUKAN_SAVE_RegisterSeen	arm9	dex.register
+0x0201104C	GPOWER_UseHpRestore	arm9	heal
+0x02012BF8	GAME_DATA_CheckSaveFlag	arm9	
+0x02012C18	GAME_DATA_LoadFromSave	arm9	save.load
 0x02012F08	GAME_DATA_GetMiscSave	arm9	
-0x02013090	BTL_SETUP_Create	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
-0x0201347C	BTL_SETUP_SetupWild	arm9	nuzlocke,soullink,nuzlocke-soullink
-0x02014314	ZONEDATA_SetEventFlag	arm9	nuzlocke,soullink,nuzlocke-soullink
+0x02013090	BTL_SETUP_Create	arm9	battle.start
+0x0201347C	BTL_SETUP_SetupWild	arm9	
+0x02014314	ZONEDATA_SetEventFlag	arm9	flag.set
+0x02017430	POKE_TOOL_CreateEx	arm9	mon.create
 0x020180F4	POKE_TOOL_PushMove	arm9	
-0x02018198	POKE_TOOL_RecoverAllPP	arm9	nuzlocke,soullink,nuzlocke-soullink
+0x02018198	POKE_TOOL_RecoverAllPP	arm9	
 0x020181F4	POKE_TOOL_SetMoveSlot	arm9	
-0x0201BA34	POKE_TOOL_HealParty	arm9	nuzlocke,soullink,nuzlocke-soullink
-0x0202627C	GAME_COMM_Update	arm9	multiplayer
-0x02026388	GAME_COMM_CallHandler	arm9	multiplayer
-0x020263B0	GAME_COMM_CallKindNotify	arm9	multiplayer
-0x02059F6C	DWC_InitForProduction	arm9	multiplayer
-0x02059FA8	DWCi_Init	arm9	multiplayer
-0x02078EB0	FS_LoadOverlayImage	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
-0x0207902C	FS_StartOverlay	arm9	nuzlocke,soullink,nuzlocke-soullink,multiplayer
-0x0208E010	WM_Init	arm9	multiplayer
-0x0208E5BC	WmReceiveFifo	arm9	multiplayer
-0x0208EB0C	WM_SetPortCallback	arm9	multiplayer
-0x0208F224	WM_Enable	arm9	multiplayer
-0x0208F84C	WM_StartConnectEx	arm9	multiplayer
-0x0208FC4C	WM_StartMP	arm9	multiplayer
-0x0208FCB4	WM_SetMPDataToPortEx	arm9	multiplayer
-0x0209004C	WM_StartDataSharing	arm9	multiplayer
-0x020908F8	WmDataSharingReceiveData	arm9	multiplayer
-0x020909C8	WmDataSharingSendDataSet	arm9	multiplayer
-0x02090B18	WM_GetSharedDataAddress	arm9	multiplayer
-0x0215CD24	SOCL_LinkIsOn	ov009	soullink,nuzlocke-soullink,multiplayer
-0x021666C8	WCM_GetLinkLevel	ov009	soullink,nuzlocke-soullink,multiplayer
-0x02166710	WCM_CalcLinkLevel	ov009	soullink,nuzlocke-soullink,multiplayer
-0x02158A20	SCRIPT_SYS_RunRecoverScript	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x02158AD4	SCRIPT_SYS_RunFieldRecoverScript	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x02159728	SCRIPT_WORK_CmdSetEventFlag	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x02159750	SCRIPT_WORK_CmdResetEventFlag	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x02018328	POKE_TOOL_GetLevelUpMove	arm9	move.learn
+0x020186C8	POKE_TOOL_CreatePersonalRnd	arm9	mon.create
+0x0201A98C	POKEPARTY_Add	arm9	
+0x0201AB8C	POKEPARTY_SwapMembers	arm9	party.swap
+0x0201B2B0	SHINKA_CHECK_CheckEvolution	arm9	mon.evolve
+0x0201BA34	POKE_TOOL_HealParty	arm9	
+0x0202627C	GAME_COMM_Update	arm9	
+0x02026388	GAME_COMM_CallHandler	arm9	
+0x020263B0	GAME_COMM_CallKindNotify	arm9	
+0x02059F6C	DWC_InitForProduction	arm9	
+0x02059FA8	DWCi_Init	arm9	
+0x02078EB0	FS_LoadOverlayImage	arm9	
+0x0207902C	FS_StartOverlay	arm9	
+0x0208E010	WM_Init	arm9	
+0x0208E5BC	WmReceiveFifo	arm9	
+0x0208EB0C	WM_SetPortCallback	arm9	
+0x0208F224	WM_Enable	arm9	
+0x0208F84C	WM_StartConnectEx	arm9	
+0x0208FC4C	WM_StartMP	arm9	
+0x0208FCB4	WM_SetMPDataToPortEx	arm9	
+0x0209004C	WM_StartDataSharing	arm9	
+0x020908F8	WmDataSharingReceiveData	arm9	
+0x020909C8	WmDataSharingSendDataSet	arm9	
+0x02090B18	WM_GetSharedDataAddress	arm9	
+
+# ov009
+0x0215CD24	SOCL_LinkIsOn	ov009	
+0x021666C8	WCM_GetLinkLevel	ov009	
+0x02166710	WCM_CalcLinkLevel	ov009	
+
+# ov010
+0x02158A20	SCRIPT_SYS_RunRecoverScript	ov010	whiteout
+0x02158AD4	SCRIPT_SYS_RunFieldRecoverScript	ov010	
+0x02159728	SCRIPT_WORK_CmdSetEventFlag	ov010	
+0x02159750	SCRIPT_WORK_CmdResetEventFlag	ov010	
 0x0215AC68	SCRCMD_WORK_CmdSetMiscFlag	ov010	
 0x0215ADCC	SCRCMD_WORK_CmdSetSpecialLocation	ov010	
 0x0215AEE8	SCRCMD_WORK_CmdRegisterZukanSeen	ov010	
@@ -114,15 +83,17 @@
 0x0215B014	SCRCMD_WORK_CmdSetZukanFlagB	ov010	
 0x0215B068	SCRCMD_WORK_CmdSetFixedEventFlag	ov010	
 0x0215B138	SCRCMD_WORK_CmdSetMiscByte	ov010	
-0x0215B328	SCRCMD_WORK_CmdSetEventFlagOffset	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x0215B350	SCRCMD_WORK_CmdResetEventFlagOffset	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x0215B5A8	SCRCMD_PROC_HealParty	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x0215B328	SCRCMD_WORK_CmdSetEventFlagOffset	ov010	
+0x0215B350	SCRCMD_WORK_CmdResetEventFlagOffset	ov010	
+0x0215B5A8	SCRCMD_PROC_HealParty	ov010	heal
 0x0215BB50	SCRCMD_PROC_AddMonToPartySimple	ov010	
 0x0215BBD0	SCRCMD_PROC_AddMonToPartyDetailed	ov010	
 0x0215BD2C	SCRCMD_PROC_SetMonMove	ov010	
 0x0215C180	SCRCMD_PROC_AddMonToBoxSimple	ov010	
 0x0215C200	SCRCMD_PROC_AddMonToBoxDetailed	ov010	
-0x0215C2D0	SCRCMD_PROC_AddEggToParty	ov010	
+0x0215C2D0	SCRCMD_PROC_AddEggToParty	ov010	mon.receive
+0x0215C4C8	SCRCMD_PROC_AddMonToBox	ov010	mon.receive
+0x0215C510	SCRCMD_PROC_AddMonToParty	ov010	mon.receive
 0x0215C558	SCRCMD_PROC_SetMiscValue	ov010	
 0x0215C584	SCRCMD_PROC_AddMiscValue	ov010	
 0x0215C63C	SCRCMD_PROC_StartOverlayProc	ov010	
@@ -137,52 +108,71 @@
 0x0215EC40	MOVE_POKEMON_CreateDiveEvent	ov010	
 0x0215EC94	MOVE_POKEMON_CreateFlashEvent	ov010	
 0x0215ECBC	MOVE_POKEMON_FlashEventMain	ov010	
-0x0215F228	SCRCMD_NETWORK_CmdStartAutoComm	ov010	multiplayer
-0x0215F238	SCRCMD_NETWORK_CmdRequestCommExit	ov010	multiplayer
-0x0215F280	SCRCMD_NETWORK_CmdRestartAutoComm	ov010	multiplayer
+0x0215F228	SCRCMD_NETWORK_CmdStartAutoComm	ov010	
+0x0215F238	SCRCMD_NETWORK_CmdRequestCommExit	ov010	
+0x0215F280	SCRCMD_NETWORK_CmdRestartAutoComm	ov010	
+0x0215F8A8	SCRCMD_NETWORK_CreateCommBattleEvent	ov010	game.cleared
+0x0215FC40	SCRCMD_NETWORK_CreateBattleRecordLinkEvent	ov010	menu.open
+0x0215FCE0	SCRCMD_NETWORK_CreateBattleRecordLinkEventForZone	ov010	menu.open
 0x02162A54	EVENTDATA_SYSTEM_SearchBgEventScriptIdTalk	ov010	
-0x021643AC	FIELD_MAP_CHANGE_ApplyZoneHeader	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x021643E8	FIELD_MAP_CHANGE_SetupZone	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x021643AC	FIELD_MAP_CHANGE_ApplyZoneHeader	ov010	
+0x021643E8	FIELD_MAP_CHANGE_SetupZone	ov010	route.change
 0x02164480	FIELD_SKILL_CHECK_FillUseFlags	ov010	
-0x021644C4	FIELD_SKILL_CHECK_CallHandler	ov010	
+0x021644C4	FIELD_SKILL_CHECK_CallHandler	ov010	field.move
 0x02164A2C	CALENDER_OverlaySequenceEvent	ov010	
 0x0216B538	SCRCMD_RESEARCH_CmdRaiseResearchRank	ov010	
 0x0216B63C	SCRCMD_RESEARCH_CmdStartMission	ov010	
 0x0216B6DC	SCRCMD_RESEARCH_CmdClearMission	ov010	
-0x0216E7C8	EVENT_BATTLE_CreateScriptedBattle	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x0216EAB0	EVENT_BATTLE_CreateEncounterTaskWithMon	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x0216EE20	EVENT_BATTLE_DispatchBattleKindNotify	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x0216EE7C	EVENT_BATTLE_NotifyBattleEnd	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x0216EF84	EVENT_BATTLE_SetResultSound	ov010	nuzlocke,soullink,nuzlocke-soullink
-0x0216EFF0	EVENT_BATTLE_FinishBattleTask	ov010	nuzlocke,soullink,nuzlocke-soullink
+0x0216E7C8	EVENT_BATTLE_CreateScriptedBattle	ov010	encounter.static
+0x0216EAB0	EVENT_BATTLE_CreateEncounterTaskWithMon	ov010	
+0x0216EE20	EVENT_BATTLE_DispatchBattleKindNotify	ov010	
+0x0216EE7C	EVENT_BATTLE_NotifyBattleEnd	ov010	battle.end
+0x0216EF84	EVENT_BATTLE_SetResultSound	ov010	
+0x0216EFF0	EVENT_BATTLE_FinishBattleTask	ov010	
 0x0216F948	WAZA_OSHIE_CreateMoveList	ov010	
-0x0217FB5C	EVENT_COMM_COMMON_CreateTalkStartEvent	ov018	multiplayer
+
+# ov018
+0x0217FB5C	EVENT_COMM_COMMON_CreateTalkStartEvent	ov018	
 0x0217FC08	EVENT_COMM_COMMON_CreateTalkEvent	ov018	
-0x0217FD34	EVENT_COMM_COMMON_CreateTalkedEvent	ov018	multiplayer
+0x0217FD34	EVENT_COMM_COMMON_CreateTalkedEvent	ov018	
 0x0217FE6C	EVENT_COMM_COMMON_TalkEventMain	ov018	
-0x02181D8C	EVENT_COMM_COMMON_CreateSupportMsgEvent	ov018	multiplayer
-0x02182150	EVENT_COMM_COMMON_OfferEventMain	ov018	multiplayer
-0x021823A8	EVENT_COMM_COMMON_ItemSaleEventMain	ov018	multiplayer
-0x0218261C	EVENT_COMM_COMMON_ItemPurchaseEventMain	ov018	multiplayer
-0x021841C0	EVENT_MAPCHANGE_ChangeFieldEvent	ov020	nuzlocke,soullink,nuzlocke-soullink
-0x02184C78	EVENT_MAPCHANGE_RunFixedZoneEvent	ov020	nuzlocke,soullink,nuzlocke-soullink
-0x02185694	EVENT_MAPCHANGE_RunSituationWarpArrivalEvent	ov020	nuzlocke,soullink,nuzlocke-soullink
+0x02181D8C	EVENT_COMM_COMMON_CreateSupportMsgEvent	ov018	
+0x02182150	EVENT_COMM_COMMON_OfferEventMain	ov018	
+0x021823A8	EVENT_COMM_COMMON_ItemSaleEventMain	ov018	
+0x0218261C	EVENT_COMM_COMMON_ItemPurchaseEventMain	ov018	
+
+# ov020
+0x02183C9C	EVENT_MAPCHANGE_NewGameStartEvent	ov020	game.new
+0x021841C0	EVENT_MAPCHANGE_ChangeFieldEvent	ov020	map.warp
+0x02184C78	EVENT_MAPCHANGE_RunFixedZoneEvent	ov020	
+0x02185694	EVENT_MAPCHANGE_RunSituationWarpArrivalEvent	ov020	
 0x02187098	FIELD_WFBC_DATA_LOCAL_ScrCmdCallPersonTalkEvent	ov020	
 0x021870C4	FIELD_WFBC_DATA_LOCAL_CreatePersonTalkEvent	ov020	
 0x021871F8	FIELD_WFBC_DATA_LOCAL_PersonTalkEventMain	ov020	
-0x02188CE8	FIELDMAP_GetEncount	ov021	nuzlocke
+
+# ov021
+0x02188CE8	FIELDMAP_GetEncount	ov021	
 0x021894E0	FIELDMAP_AddZoneNpcs	ov021	
 0x02189BD0	FIELD_EVENT_CHECK_CheckGridEvents	ov021	
 0x0218A278	FIELD_EVENT_CHECK_CheckRailEvents	ov021	
 0x0218A4BC	FIELD_EVENT_CHECK_Run	ov021	
+0x0218A9B0	FIELD_EVENT_CHECK_CheckStepEvents	ov021	player.step
 0x0218B32C	FIELD_EVENT_CHECK_LedgeJumpTaskMain	ov021	
 0x0218B3DC	FIELD_EVENT_CHECK_CreateLedgeJumpTask	ov021	
 0x0218B408	FIELD_EVENT_CHECK_CheckLedgeJump	ov021	
+0x0218B4B0	FIELD_EVENT_CHECK_SearchGridFrontMmdl	ov021	npc.talk
+0x0218B53C	FIELD_EVENT_CHECK_SearchRailFrontMmdl	ov021	npc.talk
 0x021A4ED8	FIELD_PLAYER_GRID_StartLedgeJumpOnFoot	ov021	
 0x021A511C	FIELD_PLAYER_GRID_StartLedgeJumpOnCycle	ov021	
 0x021A5F74	FIELD_PLAYER_NOGRID_StartWalkLedgeJump	ov021	
 0x021A6338	FIELD_PLAYER_NOGRID_StartSlowLedgeJump	ov021	
-0x021AA5CC	FIELD_ENCOUNT_SetupTrainerBattle	ov021	nuzlocke,soullink,nuzlocke-soullink
+0x021A836C	FIELD_MENU_Create	ov021	menu.build
+0x021A954C	FIELD_ENCOUNT_CreateZoneWildMons	ov021	encounter.wild
+0x021A957C	FIELD_ENCOUNT_PickRoamer	ov021	encounter.wild
+0x021A9F40	FIELD_ENCOUNT_CheckWildEncount	ov021	
+0x021AA548	FIELD_ENCOUNT_SetupRoamerBattle	ov021	
+0x021AA5CC	FIELD_ENCOUNT_SetupTrainerBattle	ov021	encounter.trainer
+0x021AE0CC	EVENT_TRAINER_EYE_Check	ov021	trainer.spotted
 0x021AEABC	SCRCMD_StartTrainerBattle	ov021	
 0x021AEB3C	SCRCMD_StartMultiTrainerBattle	ov021	
 0x021AED24	SCRCMD_StartTrainerBattleWithMon	ov021	
@@ -200,61 +190,108 @@
 0x021B0ADC	SCRCMD_MSGWIN_OpenTalkWin	ov021	
 0x021B10D0	SCRCMD_MSGWIN_CmdPlainWinMsg	ov021	
 0x021B2FD8	SCRCMD_SHOP_StartShop	ov021	
+0x021B3370	SCRCMD_PROC_FLD_PickQuantityOutcome	ov021	shop.buy
 0x021B3568	SCRCMD_PROC_FLD_PayPrice	ov021	
 0x021B4894	SCRCMD_PROC_FLD_ShowMessage	ov021	
+0x021B4D60	SCRCMD_PROC_FLD_CallOv170Event	ov021	pc.open
 0x021B5B4C	SCRCMD_POKEMON_FLD_SelectPartyMon	ov021	
 0x021B61E8	SCRCMD_POKEMON_FLD_SelectTutorMon	ov021	
 0x021B631C	SCRCMD_POKEMON_FLD_StartSelectEvent	ov021	
-0x021B63D4	SCRCMD_POKEMON_FLD_StartEggHatch	ov021	
-0x021B654C	SCRCMD_POKEMON_FLD_StartTradeEvent	ov021	soullink,nuzlocke-soullink,multiplayer
+0x021B63D4	SCRCMD_POKEMON_FLD_StartEggHatch	ov021	egg.hatch
+0x021B654C	SCRCMD_POKEMON_FLD_StartTradeEvent	ov021	trade.ingame
 0x021B6BDC	SCRCMD_POKEMON_FLD_HandleMysteryGift	ov021	
+0x021B6F18	SCRCMD_POKEMON_FLD_ReceiveGiftMon	ov021	mon.receive
 0x021B7364	SCRCMD_POKEMON_FLD_GetDailyGift	ov021	
 0x021B76B4	PDW_POSTMAN_ReceiveItems	ov021	
 0x021C1024	FIELD_PLAYER_GRID_EVENT_CreateHopTask	ov021	
 0x021C1228	FIELD_PLAYER_GRID_EVENT_CreateJumpTask	ov021	
-0x021C3530	SODATEYA_GrantExp	ov021	
-0x021C360C	SODATEYA_LearnMove	ov021	
+0x021C32F4	SODATEYA_ReceiveEgg	ov021	mon.receive
+0x021C3530	SODATEYA_GrantExp	ov021	mon.exp
+0x021C360C	SODATEYA_LearnMove	ov021	move.learn
 0x021C3C78	SODATEYA_RollNature	ov021	
 0x021C3D1C	SODATEYA_RollAbilitySlot	ov021	
 0x021C4030	SODATEYA_ApplyMasudaMethod	ov021	
 0x021C4678	SCRCMD_IAIGIRI_StartOnPlayer	ov021	
 0x021C7E30	FIELD_FLASH_Apply	ov021	
+0x021CC500	FLD_TRADE_CreateEvent	ov021	mon.receive
+0x021CD2A4	EVENT_NAMEIN_Create	ov021	mon.nickname
+
+# ov070
 0x021BAFC4	ITEMMENU_PrintMoney	ov070	
+
+# ov091
+0x021BA624	POKELIST_SetHeldItem	ov091	mon.helditem
 0x021BC2C8	PLIST_MENU_ShowItemUsedThenClose	ov091	
 0x021BC30C	PLIST_MENU_ShowItemUsedThenContinue	ov091	
 0x021BC350	PLIST_MENU_StartItemUse	ov091	
+0x021BDD78	PLIST_DEMO_CheckItemUsable	ov091	item.use
+
+# ov092
+0x021B9614	EVENT_BATTLE_RETURN_Main	ov092	mon.receive
+
+# ov093
 0x021B9090	BTL_MAIN_AddItemToBag	ov093	
 0x021B90BC	BTL_MAIN_SubItemFromBag	ov093	
 0x021BA238	BTL_MAIN_NotifyLevelUp	ov093	
 0x021BB8BC	BTL_SERVER_NotifyLevelUp	ov093	
+0x021BD60C	BTL_SERVER_FLOW_TryEscape	ov093	battle.escape
+0x021BD9D4	BTL_SERVER_FLOW_ProcMemberIn	ov093	battle.switch
 0x021BE95C	BTL_SERVER_FLOW_DispatchMoveStartEvent	ov093	
 0x021BF2EC	BTL_SERVER_FLOW_DispatchMoveResultEvent	ov093	
 0x021C1910	BTL_SERVER_FLOW_RunDamageDealtEvent	ov093	
-0x021C1A10	BTL_SERVER_FLOW_RunMoveUsedEvent	ov093	
-0x021C1E74	BTL_SERVER_FLOW_CalcMoveDamage	ov093	
-0x021C5200	BTL_SERVER_FLOW_ProcFaintRewards	ov093	nuzlocke,soullink,nuzlocke-soullink
+0x021C1A10	BTL_SERVER_FLOW_RunMoveUsedEvent	ov093	battle.move
+0x021C1E74	BTL_SERVER_FLOW_CalcMoveDamage	ov093	battle.damage
+0x021C4F64	BTL_SERVER_FLOW_ProcFaintedPoke	ov093	battle.faint
+0x021C5200	BTL_SERVER_FLOW_ProcFaintRewards	ov093	
+0x021C5350	BTL_SERVER_FLOW_ApplyPartyExp	ov093	
 0x021C557C	BTL_SERVER_FLOW_CureMajorStatusWithMessage	ov093	
 0x021C6564	BTL_SERVER_FLOW_DispatchMoveDoneEvent	ov093	
-0x021C84D8	BTL_SERVER_FLOW_GetBattleResult	ov093	nuzlocke,soullink,nuzlocke-soullink
-0x021CB730	BTL_SERVER_FLOW_ProcBagItemUse	ov093	nuzlocke,soullink,nuzlocke-soullink
-0x021CBA40	BTL_SERVER_FLOW_TryThrowBall	ov093	nuzlocke,soullink,nuzlocke-soullink
-0x021CBD48	BTL_SERVER_FLOW_GetBallCatchRate	ov093	nuzlocke,soullink,nuzlocke-soullink
+0x021C84D8	BTL_SERVER_FLOW_GetBattleResult	ov093	
+0x021CB2D4	BTL_SERVER_FLOW_CalcPartyExpShares	ov093	mon.exp
+0x021CB730	BTL_SERVER_FLOW_ProcBagItemUse	ov093	
+0x021CBA40	BTL_SERVER_FLOW_TryThrowBall	ov093	catch.attempt,catch.result
+0x021CBD48	BTL_SERVER_FLOW_GetBallCatchRate	ov093	
 0x021CBEA8	BTL_SERVER_FLOW_RollCriticalCapture	ov093	
 0x021CBFA0	BTL_SERVER_FLOW_ItemEffectCheckSlotMessage	ov093	
+0x021CC008	BTL_SERVER_FLOW_ItemEffectRevive	ov093	
 0x021CC2C0	BTL_SERVER_FLOW_ItemEffectRecoverHp	ov093	
-0x021CC668	BTL_SERVER_FLOW_CheckBattleOutcome	ov093	nuzlocke,soullink,nuzlocke-soullink
-0x021D1290	BTL_CLIENT_StepShowResultMessage	ov093	nuzlocke,soullink,nuzlocke-soullink
-0x021D1960	BTL_CLIENT_StepShowBlackoutMessages	ov093	nuzlocke,soullink,nuzlocke-soullink
-0x021D2320	BTL_CLIENT_StepFaintMon	ov093	nuzlocke,soullink,nuzlocke-soullink
+0x021CC668	BTL_SERVER_FLOW_CheckBattleOutcome	ov093	
+0x021CE4D0	BTL_CLIENT_StepSelectAction	ov093	
+0x021CEDC0	BTL_CLIENT_StepSelectSwitchTarget	ov093	
+0x021CEEB8	BTL_CLIENT_StepSelectItem	ov093	
+0x021CF078	BTL_CLIENT_StepSelectRun	ov093	
+0x021CF5B0	BTL_CLIENT_IsMoveSelectionBlocked	ov093	battle.action
+0x021CF918	BTL_CLIENT_GetEscapeBlockerForSide	ov093	battle.action
+0x021D1290	BTL_CLIENT_StepShowResultMessage	ov093	
+0x021D1960	BTL_CLIENT_StepShowBlackoutMessages	ov093	whiteout
+0x021D2320	BTL_CLIENT_StepFaintMon	ov093	
 0x021D2CA8	BTL_CLIENT_StepLearnLevelUpMoves	ov093	
-0x021D5B68	BTL_POKEPARAM_IsFainted	ov093	nuzlocke,soullink,nuzlocke-soullink
-0x021D69B8	BTL_POKEPARAM_AddExp	ov093	
+0x021D5B68	BTL_POKEPARAM_IsFainted	ov093	
+0x021D69B8	BTL_POKEPARAM_AddExp	ov093	mon.levelup
 0x021D7930	BTL_CALC_RollCriticalHit	ov093	
 0x021D7A44	BTL_CALC_CalcBaseDamage	ov093	
+0x021EA01C	BTLV_CORE_GetSelectedItem	ov093	battle.item
+
+# ov094
 0x021F93F4	BTLV_EFFVM_Create	ov094	
 0x021FBD44	BTLV_EFFVM_CmdJumpIf	ov094	
 0x021FBD88	BTLV_EFFVM_CmdJumpIfNot	ov094	
 0x021FBDD4	BTLV_EFFVM_CompareAndJump	ov094	
 0x021FC334	BTLV_EFFVM_CmdJumpScript	ov094	
 0x021FC374	BTLV_EFFVM_CmdJumpToArchiveScript	ov094	
+
+# ov095
+0x0689CB1C	BTL_PICK_GetLast	ov095	battle.action
+
+# ov120
 0x021D42D8	GTSNEGO_DISP_StartTrade	ov120	
+
+# ov170
+0x021DC860	BOX2_MAIN_Init	ov170	
+0x021DD314	BOX2_MAIN_ClearSlot	ov170	mon.release
+0x021DD330	BOX2_MAIN_MoveMonToParty	ov170	
+0x021DD530	BOX2_MAIN_UpdateBoxSlots	ov170	box.deposit,box.withdraw
+0x021DD810	BOX2_MAIN_MoveMonIntoBox	ov170	
+
+# ov207
+0x0220B55C	ZUKAN_NICKNAME_Create	ov207	mon.nickname

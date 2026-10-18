@@ -1,9 +1,9 @@
 # Mods
 
-This is the user-facing guide to the mod surface that exists today: how to
-lay a mod over the game's own extracted files, and what a mod can replace.
-The design account is README.md, "The file layer"; this document is the
-how-to, and every rule below is attributed to the code that enforces it.
+This is the user-facing guide to the data layer: how to lay a mod over the
+game's own extracted files, and what a mod can replace. The design account is
+README.md, "The file layer"; `docs/modding.md` is the overview of the whole mod
+surface. Every rule below is attributed to the code that enforces it.
 
 A mod is a directory laid out like the data root. The port reads the data
 root and every mod root through one resolver, so a mod never edits the
@@ -51,12 +51,16 @@ lines.
 | `name` | a display name | the directory name |
 | `order` | a signed integer, the load order key | `0` |
 
+These are the keys the data layer reads. A mod with code or rules adds more
+keys (`api`, `port`, `code`, `state`, `override`, `rule`, `settings`), which
+the mod loader reads (`docs/mod-interface.md`, section 3).
+
 Rules (`sdk/vfs.c`, `read_manifest`):
 
 - `#` starts a comment: the rest of the line, from the `#` on, is dropped.
 - A line with no `=` is ignored.
-- A key other than `name` or `order` is ignored, on purpose, so a later
-  version can add keys.
+- A key the data layer does not read is ignored here, so the loader's keys
+  and later keys do not disturb it.
 - `name` needs a non-empty value; an empty one leaves the default.
 - `order` is parsed as a decimal integer in `-1000000` to `1000000`. A value
   that is empty, not a number, or out of that range is reported on stderr and

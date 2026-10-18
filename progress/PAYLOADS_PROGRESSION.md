@@ -18,7 +18,7 @@ the port can make, from a constant, or from the tracked context of section 2.
 No field is invented.
 
 The sources are aletheia's matched files under
-`<home>\OneDrive\Documents\bw_decomp\src\matched`. The address and
+`src/matched in the aletheia checkout`. The address and
 region of each event are `mod/declared_set.txt`.
 
 ## 1. What a payload carries
