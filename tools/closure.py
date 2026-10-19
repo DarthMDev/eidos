@@ -68,6 +68,12 @@ import sys
 
 EIDOS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.path.normpath(os.path.join(EIDOS_ROOT, "..", "aletheia"))
+# Which of aletheia's trees the port compiles: "matched" (src/matched, one
+# function or unit per file, found through the manifests) or "game"
+# (src/game, one original source file per file; tools/gametree.py).  The
+# build sets it (CMake's EIDOS_SOURCE_TREE) in the environment of every
+# generator (docs/game-tree.md).
+SOURCE_TREE = os.environ.get("EIDOS_SOURCE_TREE", "matched")
 
 ADDR_NAME = re.compile(r"^(?:sub|func|unit)_0([0-9A-Fa-f]{7})$")
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -532,7 +538,41 @@ class Index:
         self.rt_by_addr, self.rt_by_name = read_symbol_table("layout/runtime_arm9.txt")
         self._load_shards()
 
+    def _load_game(self):
+        """The entries of src/game (tools/gametree.py): one per translation
+        unit, every function at the address the manifests give its name."""
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import gametree
+        for e in gametree.entries(ROOT):
+            entry = {
+                "name": e["name"],
+                "address": e["address"],
+                "source": e["source"],
+                "isa": e["isa"],
+                "region": e["region"],
+                "status": e["status"],
+                "shard": "src/game",
+                "functions": e["functions"] or [e["name"]],
+            }
+            self.entries.append(entry)
+            self.sources[entry["source"]] = entry
+            for name in entry["functions"]:
+                self.defines.setdefault(name, entry["source"])
+            if entry["region"].startswith("ov"):
+                continue
+            self.by_addr.setdefault(entry["address"], entry)
+            for name, addr in zip(e["functions"], e["addresses"]):
+                if addr is None:
+                    addr = self._name_addr(name)
+                if addr is not None:
+                    self.member_addr[(entry["source"], name)] = addr
+                    self.member_by_addr.setdefault((entry["source"], addr), name)
+                    self.by_addr.setdefault(addr, entry)
+
     def _load_shards(self):
+        if SOURCE_TREE == "game":
+            self._load_game()
+            return
         pattern = os.path.join(ROOT, "layout", "matched", "**", "*.json")
         for path in sorted(glob.glob(pattern, recursive=True)):
             with open(path, encoding="utf-8") as fh:
@@ -738,7 +778,32 @@ class Index:
         owner = self.defines.get(seed)
         if owner:
             return owner
+        if SOURCE_TREE == "game" and seed.endswith(".c"):
+            # A src/matched path (the boot's seed lists name those): the
+            # src/game unit that defines the functions the manifests list
+            # for that file.
+            for name in self._matched_functions().get(seed.split("src/matched/")[-1], []):
+                owner = self.defines.get(name)
+                if owner:
+                    return owner
         raise SystemExit("closure.py: no matched source defines %r" % seed)
+
+    def _matched_functions(self):
+        """{path under src/matched/: [functions]} from the manifests."""
+        if getattr(self, "_mf", None) is None:
+            self._mf = {}
+            pattern = os.path.join(ROOT, "layout", "matched", "**", "*.json")
+            for path in sorted(glob.glob(pattern, recursive=True)):
+                try:
+                    with open(path, encoding="utf-8") as fh:
+                        shard = json.load(fh)
+                except (OSError, ValueError):
+                    continue
+                for fn in shard.get("functions", []):
+                    src = (fn.get("source") or "").replace("\\", "/")
+                    src = src.split("src/matched/")[-1]
+                    self._mf.setdefault(src, []).extend(fn.get("functions") or [fn["name"]])
+        return self._mf
 
 
 # ---------------------------------------------------------------------------
