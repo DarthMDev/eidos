@@ -42,7 +42,7 @@ binding's scope, `docs/mod-implementation.md`, section 1).
 | `save.begin` | `SAVE_CONTROL_StartSave` 0x02007150 | arm9 | - | - |
 | `save.done` | `SAVE_CONTROL_MainSave` 0x02007168 | arm9 | - | - |
 | `save.load` | `GAME_DATA_LoadFromSave` 0x02012C18 | arm9 | - | - |
-| `game.cleared` | `SCRCMD_NETWORK_CreateCommBattleEvent` 0x0215F8A8, the ending: Hall of Fame (ov180), credits (ov181), save screen (ov205) | ov010 | - | - |
+| `game.cleared` | `EVENT_GAMECLEAR_Create` 0x0215F8A8, the ending: Hall of Fame (ov180), credits (ov181), save screen (ov205) | ov010 | - | - |
 
 `save.begin` is not refusable: a save is a start step followed by
 `SAVE_CONTROL_MainSave` steps, driven by about ten callers (the save menu,
@@ -58,7 +58,7 @@ does not happen.
 | `player.step` | `FIELD_EVENT_CHECK_CheckStepEvents` 0x0218A9B0 | ov021 | - | - |
 | `trainer.spotted` | `EVENT_TRAINER_EYE_Check` 0x021AE0CC | ov021 | the trainer does not see the player (the function returns no event) | - |
 | `npc.talk` | `FIELD_EVENT_CHECK_SearchGridFrontMmdl` 0x0218B4B0; on rails `FIELD_EVENT_CHECK_SearchRailFrontMmdl` 0x0218B53C | ov021 | no person is found ahead; the A press goes on to the sign and tile checks | - |
-| `menu.open` | `SCRCMD_NETWORK_CreateBattleRecordLinkEvent` 0x0215FC40 (the X-button menu event) and `SCRCMD_NETWORK_CreateBattleRecordLinkEventForZone` 0x0215FCE0 | ov010 | the menu does not open (no event is returned) | - |
+| `menu.open` | `EVENT_FIELD_MENU_Create` 0x0215FC40 (the X-button menu event) and `EVENT_FIELD_MENU_CreateForZone` 0x0215FCE0 | ov010 | the menu does not open (no event is returned) | - |
 | `menu.build` | `FIELD_MENU_Create` 0x021A836C | ov021 | - | entries (add, hide) |
 | `field.move` | `FIELD_SKILL_CHECK_CallHandler` 0x021644C4 | ov010 | the field move shows as unusable | - |
 | `pc.open` | `SCRCMD_PROC_FLD_CallOv170Event` 0x021B4D60, the script command that opens the box screen (the PC, and the battle box with its kind 4) | ov021 | the PC does not open; the script reads a plain exit | - |
@@ -194,6 +194,39 @@ Notes from the callers:
 | `badge.get` | `BEACON_SetFlag` 0x0200C248 | arm9 | - | - |
 | `flag.set` | `ZONEDATA_SetEventFlag` 0x02014314 | arm9 | - | - |
 | `dex.register` | `ZUKAN_SAVE_RegisterSeen` 0x0200CFA0; `ZUKAN_SAVE_RegisterCaught` 0x0200CDE0 | arm9 | - | - |
+
+### 1c. Corrected rows
+
+aletheia corrected the function names in its matched corpus, and the port's
+catalogue and declared set follow its per-packet manifests
+(`layout/matched/**/pkt_*.json`), which name the function at each address. The
+rows below were renamed in the port after that check. Each row names the
+manifest packet, and the `port_renames.tsv` row when one reported it.
+
+| Address | Region | Port's old name | Corrected name | Source |
+|---|---|---|---|---|
+| 0x02012BF8 | arm9 | `GAME_DATA_CheckSaveFlag` | `GAME_DATA_ContainsRecentId` | `pkt_02012BF8.json` (Wave 16 rename) |
+| 0x0215AFE0 | ov010 | `SCRCMD_WORK_CmdSetZukanFlagA` | `SCRCMD_WORK_CmdEnableNationalDex` | `pkt_0215AFE0.json` (Wave 16 rename) |
+| 0x0215B014 | ov010 | `SCRCMD_WORK_CmdSetZukanFlagB` | `SCRCMD_WORK_CmdSetZukanObtained` | `pkt_0215B014.json` (Wave 16 rename) |
+| 0x0215C558 | ov010 | `SCRCMD_PROC_SetMiscValue` | `SCRCMD_PROC_AddMiscPoints` | `pkt_ov010_0215C558.json` (Wave 16 rename) |
+| 0x0215C584 | ov010 | `SCRCMD_PROC_AddMiscValue` | `SCRCMD_PROC_SubMiscPoints` | `pkt_ov010_0215C584.json` (Wave 16 rename) |
+| 0x0215F8A8 | ov010 | `SCRCMD_NETWORK_CreateCommBattleEvent` | `EVENT_GAMECLEAR_Create` | `port_renames.tsv` row 5; `pkt_0215F8A8.json` |
+| 0x0215FC40 | ov010 | `SCRCMD_NETWORK_CreateBattleRecordLinkEvent` | `EVENT_FIELD_MENU_Create` | `port_renames.tsv` row 10; `pkt_ov010_0215FC40.json` |
+| 0x0215FCE0 | ov010 | `SCRCMD_NETWORK_CreateBattleRecordLinkEventForZone` | `EVENT_FIELD_MENU_CreateForZone` | `port_renames.tsv` row 11; `pkt_ov010_0215FCE0.json` |
+| 0x02164A2C | ov010 | `CALENDER_OverlaySequenceEvent` | `BEACON_VIEW_EVENT_Sequence` | `pkt_ov010_02164A2C.json` (Wave 16 rename) |
+| 0x021B9090 | ov093 | `BTL_MAIN_AddItemToBag` | `BTL_MAIN_RemoveItemFromBag` | `port_renames.tsv` row 4; `pkt_ov093_021B9090.json` |
+| 0x021B90BC | ov093 | `BTL_MAIN_SubItemFromBag` | `BTL_MAIN_AddItemToBag` | `pkt_ov093_021B90BC.json` (Wave 16 rename) |
+| 0x021FBD88 | ov094 | `BTLV_EFFVM_CmdJumpIfNot` | `BTLV_EFFVM_CmdJumpIfCondCompare` | `pkt_ov094_021FBD88.json` (Wave 16 rename) |
+
+The names `BTL_MAIN_AddItemToBag` and `BTL_MAIN_SubItemFromBag` were also
+swapped: aletheia gives 0x021B9090 `BTL_MAIN_RemoveItemFromBag` and 0x021B90BC
+`BTL_MAIN_AddItemToBag`.
+
+Several `port_renames.tsv` rows name a function the port binds or cites but
+aletheia has not renamed: `POKE_TOOL_GetLevelUpMove` 0x02018328,
+`POKELIST_FindMoveSlot` 0x021BA5B4, `BOX2_MAIN_MoveMonIntoBox` 0x021DD810,
+`BOX2_MAIN_MoveMonToParty` 0x021DD330 and `BOX2_SEQ_StateMoveItemF` 0x021E81D0
+still carry those names in the manifest, so the port leaves them.
 
 ## 2. The handler contract
 
