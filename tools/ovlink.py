@@ -1005,6 +1005,9 @@ class Link:
             for part in re.split(r"[;, ]+", text):
                 if not part:
                     continue
+                if part.upper() == "TITLE":
+                    ids += TITLE_SET          # the title path plus more ids
+                    continue
                 m = re.match(r"^(?:ov)?0*(\d+)$", part, re.I)
                 if not m:
                     raise SystemExit("ovlink.py: bad overlay id %r" % part)

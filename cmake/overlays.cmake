@@ -87,7 +87,12 @@ else()
         -Wno-sequence-point -Wno-comment
         # a pointer stored to an int, as mwcc took it (GCC 14 makes it an
         # error): ov010_func_02166CD0.c's `int r0 = func_02012F08(a)`
-        -Wno-int-conversion)
+        -Wno-int-conversion
+        # a pointer passed where the file's own prototype names another
+        # pointer type, as mwcc took it (GCC 14 makes it an error): ov204's
+        # INTRO_GRAPHIC_Setup3d as G3D_SYSTEM_Init's callback, its file name
+        # string as GFL_HEAP_Alloc's
+        -Wno-incompatible-pointer-types)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         # deprecated-non-prototype: the `int name();` ovlink declares for a
         # call mwcc compiled with no declaration in scope.

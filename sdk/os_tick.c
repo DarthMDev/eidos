@@ -43,9 +43,33 @@ int OS_IsTickAvailable(void)
     return g_use_tick;
 }
 
+/*
+ * Within one frame the counter would stand still, and a busy wait on it
+ * would never end: ov231's CARD_SPI_RunCommand spins until 60 microseconds
+ * (about 31 ticks) have passed between two SPI commands.  So each read in
+ * the same frame moves on by one tick past the frame's count, never as far
+ * as the next frame's.  The count stays deterministic (it depends on the
+ * reads the game makes, not on the host clock), and the first read of a
+ * frame still returns the frame's own count.
+ */
+/* The whole ticks one frame advances (engine/frame/frame.h: 8752 and a
+ * remainder). */
+#define EIDOS_TICKS_PER_FRAME_MIN 8752u
+
+static u64 g_tick_base;               /* the frame count the reads refer to */
+static u32 g_tick_sub;                /* reads past it in this frame        */
+
 u64 OS_GetTick(void)
 {
-    return eidos_frame_tick(eidos_frame_current());
+    u64 base = eidos_frame_tick(eidos_frame_current());
+
+    if (base != g_tick_base) {
+        g_tick_base = base;
+        g_tick_sub = 0;
+    } else if (base != 0 && g_tick_sub < EIDOS_TICKS_PER_FRAME_MIN - 1) {
+        g_tick_sub++;
+    }
+    return base + g_tick_sub;
 }
 
 u32 OS_GetTickLo(void)
@@ -56,6 +80,8 @@ u32 OS_GetTickLo(void)
 void bw_os_tick_reset(void)
 {
     g_use_tick = 0;
+    g_tick_base = 0;
+    g_tick_sub = 0;
 }
 
 /* Address spellings (sdk/aliases.c says why a host link needs them). */
