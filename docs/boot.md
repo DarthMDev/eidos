@@ -16,7 +16,7 @@ utility arena, the power manager), then enters the frame loop.
 translation units; "Linking the boot" below is what it takes to link them
 and "Running the boot" how far they run. Everything past the first overlay
 load (title screen, field, battle) lives in overlays. They are matched as
-well: at aletheia commit 80f06a26 the overlays' game code is fully linked
+well: at aletheia commit e06766e4 the overlays' game code is fully linked
 (24,835 functions, 99.9993 percent of their instruction bytes) with all
 3,236 of their SDK functions. What those screens wait on is the port's
 wiring, not matching; `docs/title-closure.md` has the title path's detail.
@@ -382,7 +382,7 @@ allocation with a random alignment that failed in some runs and not others,
 a save block getter reading NULL, an animation advanced by a garbage count.
 
 `tools/regargs.py` lists every such site in the matched corpus (2306 when
-the port first ran it, 74 at aletheia commit 80f06a26): for each function
+the port first ran it, 74 at aletheia commit e06766e4): for each function
 that calls a callee it declares with fewer parameters than the callee's
 definition takes, where the callee uses the
 missing one, it reads the caller's code in the listing and says where the

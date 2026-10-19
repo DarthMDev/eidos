@@ -2,7 +2,7 @@
 
 Research notes: for each game function an earlier version of the event
 catalogue bound, the fields the call can supply and the file and line each
-comes from, read from aletheia's matched source at revision 80f06a26. The event
+comes from, read from aletheia's matched source at revision e06766e4. The event
 names here are that catalogue's labels for the functions. The stable events and
 their payloads are `docs/mod-events.md` and `docs/mod-payloads.md`; the builder
 of a stable event uses this survey to find where each of its fields comes from.

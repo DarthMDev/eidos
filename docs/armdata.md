@@ -1,7 +1,7 @@
 # The ARM9 image's data on the host
 
 The boot closure (docs/boot.md, `EIDOS_BOOT=ON`) names 1138 ARM9 data
-objects at 945 addresses (aletheia commit 80f06a26): tables, strings, the
+objects at 945 addresses (aletheia commit e06766e4): tables, strings, the
 SDK's state, linker constants. This document is how the port gives the
 matched code those objects with their DS initial contents, without a byte
 of the game in the repository.

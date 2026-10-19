@@ -8,7 +8,7 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `80f06a261e8731f2db94c1a66627bb351ad47673`
+- Revision: `e06766e42c915278b376fdd9e6b1ddfcdd4ea7f4`
 - Date: 2026-10-15 22:09:06 +0100
 - Subject: Cleanup wave 10 and the gap fixes: game code fully linked at
   100.00 percent; ov194 namein_graphic split into five originals; arm9 ui
@@ -77,7 +77,7 @@ working checkout:
 
 ```
 cmake -S . -B build \
-    -DALETHEIA_ROOT=%LOCALAPPDATA%\eidos\aletheia-80f06a261e \
+    -DALETHEIA_ROOT=%LOCALAPPDATA%\eidos\aletheia-e06766e42c \
     -DBW_DATA_ROOT=<working checkout>/extract/data
 ```
 

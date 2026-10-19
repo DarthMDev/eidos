@@ -12,7 +12,7 @@ The subject is aletheia, the decompilation of Pokemon Black
 project for Pokemon Black (and eventually White)"). Every address below is
 checked by name, address and region against aletheia's per-packet manifests
 under `layout/matched/**/pkt_*.json`, revision
-`80f06a261e8731f2db94c1a66627bb351ad47673`, and every semantic claim is read
+`e06766e42c915278b376fdd9e6b1ddfcdd4ea7f4`, and every semantic claim is read
 from the matched source the manifest names. No address is invented. The
 catalogue's own revision is the same.
 

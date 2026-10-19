@@ -91,7 +91,7 @@ per signal, the number of files at least one hit came from:
 
 The block above is the audit summary as this document first recorded it.
 The figures in the prose below are current, measured at aletheia revision
-`80f06a261e`: 33,541 sources audited, 14,301 of them affected (42.6 percent),
+`e06766e42c`: 33,541 sources audited, 14,301 of them affected (42.6 percent),
 and 4,766 with explicit padding.
 
 The same run reports 7,697 integer-typed addresses (A), 6,220 hardcoded
@@ -201,7 +201,7 @@ start from.
 
 **What would change this.** The B1 count is the metric to watch. This
 paragraph expected B1 to fall as the corpus replaces padding with real
-fields. It did not fall. At aletheia revision 80f06a261e B1 is 4,766 files,
+fields. It did not fall. At aletheia revision e06766e42c B1 is 4,766 files,
 against 355 when this document was written, while the affected share fell
 from 57.8 percent to 42.6 percent. The two readings point in opposite
 directions: on the absolute B1 count the exit condition is further away, on
