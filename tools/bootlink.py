@@ -279,6 +279,8 @@ def load_member_addresses(idx):
     same pair, so the boot and the overlays rename a spelling together and
     neither side loses the stub the other resolves to.
     """
+    if closure.SOURCE_TREE == "game":
+        return      # closure.Index._load_game placed every member already
     pattern = os.path.join(closure.ROOT, "layout", "matched", "**", "*.json")
     for path in sorted(glob.glob(pattern, recursive=True)):
         try:
@@ -502,6 +504,10 @@ def plan(args):
                 except SystemExit:
                     unlisted.append(s)
     excluded = read_list(args.exclude_file)
+    if closure.SOURCE_TREE == "game":
+        # src/matched paths: src/game cuts the shims' functions by name
+        # instead (plan_game), so the list only documents them.
+        excluded = []
     unknown = [s for s in excluded if s not in idx.sources]
     if unknown:
         raise SystemExit("bootlink.py: excluded sources not in the manifest: %s"
@@ -601,6 +607,10 @@ def plan(args):
     missing = sorted(s for s in clashes if s not in excluded)
     extra = sorted(s for s in excluded if s in in_closure and s not in clashes)
 
+    if closure.SOURCE_TREE == "game":
+        return plan_game(args, idx, sources, seeds, unlisted, library, shims, shim_addrs,
+                         shim_set)
+
     compile_list, asm_rows, subst, thunks = [], [], [], []
     for source in sorted(sources):
         if source in excluded or source in library:
@@ -653,6 +663,70 @@ def plan(args):
     print("\n".join(lines))
     if missing:
         return 1
+    return 0
+
+
+def plan_game(args, idx, sources, seeds, unlisted, library, shims, shim_addrs, shim_set):
+    """plan() for src/game (docs/game-tree.md).  Every unit of the closure is
+    compiled; what the port supplies itself is cut out of the unit's copy by
+    name instead of leaving the file out: a function a shim or the eidos
+    library defines (by name or by address), and every mwcc asm body, which
+    sdk/asm/ supplies by name where a replacement exists."""
+    import gamecut
+    out = args.out_dir
+    lib_names = set()
+    for rel in library:
+        lib_names |= defined_names(idx, rel)
+    asm_dir = os.path.abspath(args.asm_dir) if args.asm_dir else None
+    asm_by_name = {}
+    if asm_dir and os.path.isdir(asm_dir):
+        for fname in sorted(os.listdir(asm_dir)):
+            if fname.endswith(".c"):
+                path = os.path.join(asm_dir, fname)
+                for n in scan_file(path).defined:
+                    asm_by_name.setdefault(n, path.replace("\\", "/"))
+    cuts, compile_list, asm_rows, subst = [], [], [], set()
+    ncut = 0
+    for source in sorted(sources):
+        full = os.path.join(closure.ROOT, source).replace("\\", "/")
+        with open(full, encoding="latin-1") as fh:
+            text = fh.read()
+        drop = []
+        for name, _hs, _bo, _be, is_asm in gamecut.functions(text):
+            addr = defined_addr(idx, source, name)
+            port = name in shims.defines or name in lib_names \
+                or (addr is not None and (addr in shim_addrs
+                                          or "func_%08X" % addr in shims.defines))
+            if port:
+                drop.append(name)
+            elif is_asm:
+                repl = asm_by_name.get(name)
+                if repl is None:
+                    asm_rows.append("%s pending %s" % (source, name))
+                elif os.path.normcase(os.path.abspath(repl)) in shim_set:
+                    asm_rows.append("%s in-library %s %s" % (source, name, repl))
+                else:
+                    asm_rows.append("%s replaced-by %s %s" % (source, name, repl))
+                    subst.add(repl)
+        if drop:
+            cuts.append("%s\t%s" % (full, ",".join(sorted(drop))))
+            ncut += len(drop)
+        compile_list.append(full)
+    write_if_changed(os.path.join(out, "boot_cuts.txt"), "".join(r + "\n" for r in cuts))
+    write_if_changed(os.path.join(out, "boot_thunks.txt"), "")
+    write_if_changed(os.path.join(out, "boot_matched.txt"), "".join(p + "\n" for p in compile_list))
+    write_if_changed(os.path.join(out, "boot_asm.txt"), "".join(r + "\n" for r in asm_rows))
+    write_if_changed(os.path.join(out, "boot_asm_subst.txt"), "".join(p + "\n" for p in sorted(subst)))
+    lines = [
+        "closure from %d seeds: %d src/game translation units" % (len(seeds), len(sources)),
+        "  functions cut because the port defines them: %d (boot_cuts.txt)" % ncut,
+        "  mwcc asm bodies cut: %d (%d with an sdk/asm replacement)"
+        % (len(asm_rows), sum(1 for r in asm_rows if " replaced-by " in r or " in-library " in r)),
+        "  compiled for the boot: %d" % len(compile_list),
+        "  seeds the tree does not define, left out: %d" % len(unlisted),
+    ]
+    write_if_changed(os.path.join(out, "boot_plan.txt"), "\n".join(lines) + "\n")
+    print("\n".join(lines))
     return 0
 
 

@@ -459,6 +459,11 @@ endif()
 file(GLOB _boot_asm_present CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/*.c)
 
 file(STRINGS ${EIDOS_BOOT_DIR}/boot_matched.txt EIDOS_BOOT_MATCHED)
+# src/game: the functions each unit's copy has cut out (tools/gamecut.py,
+# cmake/dsaddr.cmake).
+if(EIDOS_SOURCE_TREE STREQUAL "game")
+    set(EIDOS_GAME_CUT_LIST ${EIDOS_BOOT_DIR}/boot_cuts.txt)
+endif()
 file(STRINGS ${EIDOS_BOOT_DIR}/boot_asm_subst.txt EIDOS_BOOT_ASM_SUBST)
 
 # --- build: the generated headers and C ------------------------------------
@@ -576,7 +581,7 @@ add_custom_target(eidos_boot_copies DEPENDS ${EIDOS_BOOT_COPIES})
 
 add_custom_command(
     OUTPUT ${_boot_headers} ${_boot_gen_c} ${EIDOS_BOOT_GEN}/boot_link_report.txt
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bootlink.py generate
+    COMMAND ${EIDOS_TREE_ENV} ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bootlink.py generate
             --aletheia-root ${ALETHEIA_ROOT}
             --plan-dir ${EIDOS_BOOT_DIR}
             --shim-sources ${EIDOS_BOOT_DIR}/shim_sources_gen.txt

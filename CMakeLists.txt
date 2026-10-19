@@ -42,6 +42,20 @@ if(NOT EXISTS "${ALETHEIA_ROOT}/src/matched")
     message(FATAL_ERROR "ALETHEIA_ROOT=${ALETHEIA_ROOT} does not contain src/matched; pass -DALETHEIA_ROOT=<path to the aletheia checkout>")
 endif()
 
+# Which of aletheia's trees the boot and the overlays compile
+# (docs/game-tree.md): `matched` (src/matched, one function or unit per file)
+# or `game` (src/game, one original source file per file).  Every generator
+# reads it from the environment, so it is set here for the configure-time
+# tools and passed to the build-time ones with `cmake -E env`.
+set(EIDOS_SOURCE_TREE "matched" CACHE STRING
+    "aletheia tree the boot compiles: matched (src/matched) or game (src/game)")
+set_property(CACHE EIDOS_SOURCE_TREE PROPERTY STRINGS matched game)
+if(EIDOS_SOURCE_TREE STREQUAL "game" AND NOT EXISTS "${ALETHEIA_ROOT}/src/game")
+    message(FATAL_ERROR "EIDOS_SOURCE_TREE=game but ${ALETHEIA_ROOT} has no src/game")
+endif()
+set(ENV{EIDOS_SOURCE_TREE} "${EIDOS_SOURCE_TREE}")
+set(EIDOS_TREE_ENV ${CMAKE_COMMAND} -E env EIDOS_SOURCE_TREE=${EIDOS_SOURCE_TREE})
+
 # Where the player's extracted assets live.  Relative paths are taken against
 # the aletheia checkout, so -DBW_DATA_ROOT=extract/data does the obvious
 # thing when aletheia is where the assets were extracted.
@@ -175,6 +189,17 @@ if(MSVC)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/msvc.cmake)
 else()
     add_compile_options(-Wall -Wextra -fsigned-char)
+    # MinGW lays structs out the way MSVC does by default: a 64-bit member is
+    # aligned to 8 and bitfields pack by their declared type.  mwccarm aligns
+    # a 64-bit member to 4 and packs bitfields as GCC does, so the game's
+    # structs came out with other sizes and offsets on Windows (BattleRecHeader
+    # is 0x44 bytes on the DS and was 0x48; aletheia's src/game size checks
+    # catch it).  -mno-ms-bitfields gives the DS layout.  It applies to every
+    # file the port compiles; the Win32 and SDL structs the platform layer
+    # passes have no member it moves.
+    if(WIN32)
+        add_compile_options(-mno-ms-bitfields)
+    endif()
     # The matched sources are written to reproduce mwccarm's output, not to
     # please a modern warning set.  They are compiled with the same warnings
     # as the port's own code, but the ones that are inherent to the style are

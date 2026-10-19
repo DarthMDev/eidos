@@ -236,9 +236,14 @@ function(eidos_overlays name)
         endif()
         set(copy ${dir}/src/${rel})
         get_filename_component(src_dir "${src}" DIRECTORY)
+        # A src/game unit's copy has its asm bodies cut (docs/game-tree.md).
+        set(cut_args)
+        if(rel MATCHES "^src/game/")
+            set(cut_args --cut-asm)
+        endif()
         add_custom_command(
             OUTPUT ${copy}
-            COMMAND ${Python3_EXECUTABLE} ${EIDOS_DSADDR_TOOL} ${src} -o ${copy} --name ${src}
+            COMMAND ${Python3_EXECUTABLE} ${EIDOS_DSADDR_TOOL} ${src} -o ${copy} --name ${src} ${cut_args}
             DEPENDS ${src} ${EIDOS_DSADDR_TOOL}
             COMMENT "dsaddr ${rel} (overlays ${name})"
             VERBATIM)

@@ -27,11 +27,19 @@
 set(EIDOS_DSADDR_TOOL ${CMAKE_CURRENT_LIST_DIR}/../tools/dsaddr.py)
 get_filename_component(EIDOS_DSADDR_TOOL "${EIDOS_DSADDR_TOOL}" ABSOLUTE)
 set(EIDOS_DSADDR_DIR ${CMAKE_BINARY_DIR}/dsaddr)
+get_filename_component(EIDOS_GAMECUT_TOOL "${CMAKE_CURRENT_LIST_DIR}/../tools/gamecut.py" ABSOLUTE)
 
 # eidos_dsaddr_path(<var> <source>): the build-tree copy of <source>.
 function(eidos_dsaddr_path var src)
     get_filename_component(src "${src}" ABSOLUTE)
     file(RELATIVE_PATH rel "${ALETHEIA_ROOT}/src/matched" "${src}")
+    if(rel MATCHES "^\.\./")
+        # A src/game file (docs/game-tree.md): under game/.
+        file(RELATIVE_PATH grel "${ALETHEIA_ROOT}/src/game" "${src}")
+        if(NOT grel MATCHES "^\.\./" AND NOT IS_ABSOLUTE "${grel}")
+            set(rel "game/${grel}")
+        endif()
+    endif()
     if(rel MATCHES "^\\.\\./" OR IS_ABSOLUTE "${rel}")
         # Not under src/matched: keep the name, keyed by the full path so
         # two files with one name cannot collide.
@@ -52,11 +60,23 @@ function(eidos_dsaddr out_var)
         eidos_dsaddr_path(out "${src}")
         get_filename_component(src_dir "${src}" DIRECTORY)
         file(RELATIVE_PATH shown "${ALETHEIA_ROOT}" "${src}")
+        # A src/game unit: its copy also has the port's own functions and
+        # its asm bodies cut out (tools/gamecut.py, docs/game-tree.md).
+        set(cut_args)
+        set(cut_deps)
+        if(shown MATCHES "^src/game/")
+            list(APPEND cut_args --cut-asm)
+            list(APPEND cut_deps ${EIDOS_GAMECUT_TOOL})
+            if(EIDOS_GAME_CUT_LIST)
+                list(APPEND cut_args --cut-list ${EIDOS_GAME_CUT_LIST})
+                list(APPEND cut_deps ${EIDOS_GAME_CUT_LIST})
+            endif()
+        endif()
         add_custom_command(
             OUTPUT ${out}
             COMMAND ${Python3_EXECUTABLE} ${EIDOS_DSADDR_TOOL}
-                    ${src} -o ${out} --name ${src}
-            DEPENDS ${src} ${EIDOS_DSADDR_TOOL}
+                    ${src} -o ${out} --name ${src} ${cut_args}
+            DEPENDS ${src} ${EIDOS_DSADDR_TOOL} ${cut_deps}
             COMMENT "dsaddr ${shown}"
             VERBATIM)
         set_source_files_properties(${out} PROPERTIES

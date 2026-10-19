@@ -1550,6 +1550,12 @@ def main(argv=None) -> int:
     ap.add_argument("--json", metavar="FILE")
     ap.add_argument("--show", type=int, default=4, metavar="N",
                     help="--survey: example sites per residue group (0: none)")
+    ap.add_argument("--cut-list", metavar="FILE",
+                    help="src/game: lines `<path>\t<name>,<name>...` naming the "
+                         "function definitions to cut from this file's copy "
+                         "(tools/gamecut.py, docs/game-tree.md)")
+    ap.add_argument("--cut-asm", action="store_true",
+                    help="src/game: cut every mwcc asm body from the copy")
     ap.add_argument("--check", action="store_true",
                     help="exit 1 if any input would be rewritten")
     a = ap.parse_args(argv)
@@ -1575,7 +1581,20 @@ def main(argv=None) -> int:
         ap.error("give one input and -o OUTPUT, or --survey DIR, or --check")
     src_path = a.inputs[0]
     name = a.name or os.path.abspath(src_path)
-    text, _, _ = rewrite(_read(src_path), name)
+    source = _read(src_path)
+    if a.cut_list or a.cut_asm:
+        import gamecut
+        drop = set()
+        if a.cut_list and os.path.exists(a.cut_list):
+            key = os.path.normcase(os.path.abspath(src_path)).replace("\\", "/")
+            with open(a.cut_list, encoding="utf-8") as fh:
+                for line in fh:
+                    path, _, names = line.rstrip("
+").partition("	")
+                    if os.path.normcase(os.path.abspath(path)).replace("\\", "/") == key:
+                        drop.update(n for n in names.split(",") if n)
+        source, _cut = gamecut.cut(source, drop, a.cut_asm)
+    text, _, _ = rewrite(source, name)
     _write(a.output, text)
     return 0
 

@@ -788,7 +788,41 @@ class Aletheia:
                     self.sdk_by_name.setdefault(parts[1], []).append((addr, region))
                     self.sdk_at.setdefault((region, addr), parts[1])
 
+    def _record(self, region, src, placed):
+        m = re.match(r"^ov(\d{3})$", region)
+        if m:
+            oid = int(m.group(1))
+            self.ov_sources.setdefault(oid, [])
+            if src not in self.ov_sources[oid]:
+                self.ov_sources[oid].append(src)
+            for n, a in placed:
+                self.ov_names.setdefault(oid, {}).setdefault(a, []).append(n)
+            self.src_names.setdefault(src, []).extend(placed)
+        else:
+            for n, a in placed:
+                self.arm9_at.setdefault(a, []).append(n)
+            self.arm9_src.setdefault(src, []).extend(placed)
+
+    def _read_game(self):
+        """src/game's translation units (tools/gametree.py, docs/game-tree.md):
+        each unit's functions at the addresses the manifests give them."""
+        import gametree
+        for e in gametree.entries(self.root):
+            region = e["region"]
+            placed = []
+            for n, a in zip(e["functions"], e["addresses"]):
+                if a is None:
+                    hits = [ad for ad, rg in self.sdk_by_name.get(n, []) if rg == region
+                            or (rg == "arm9" and not region.startswith("ov"))]
+                    a = hits[0] if hits else None
+                if a is not None:
+                    placed.append((n, a))
+            self._record(region, e["source"], placed)
+
     def _read_shards(self):
+        if os.environ.get("EIDOS_SOURCE_TREE", "matched") == "game":
+            self._read_game()
+            return
         pattern = os.path.join(self.root, "layout", "matched", "*", "*.json")
         for path in sorted(glob.glob(pattern)):
             with open(path, encoding="utf-8") as fh:
@@ -1110,6 +1144,15 @@ class Link:
                     st.excluded.append((rel, "missing in the checkout"))
                     continue
                 sc = Scan(path, read_text(path))
+                if sc.has_asm and rel.startswith("src/game/"):
+                    # A src/game unit keeps its C: its copy has the asm bodies
+                    # cut out (tools/gamecut.py; cmake/overlays.cmake passes
+                    # --cut-asm), so it is read the way it will compile, and
+                    # the cut functions are stubbed like any other the link
+                    # lacks.
+                    import gamecut
+                    cut_text, _cut = gamecut.cut(read_text(path), set(), True)
+                    sc = Scan(path, cut_text)
                 if sc.has_asm:
                     # Portable C for an asm-bodied file, when the port has
                     # written it (sdk/asm/ov/<file>, as sdk/asm/ for ARM9),
