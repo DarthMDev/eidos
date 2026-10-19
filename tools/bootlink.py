@@ -45,10 +45,12 @@ from the port's own C:
     leaves every name it binds alone; a data name it does not bind and
     nothing defines fails the generation, by name.
 
- 6. Functions nothing defines, generated and listed: a linker veneer (a
-    `ldr ip, [pc]; bx ip` island with no source) becomes a forwarder to the
-    function its target word names, read from the player's arm9_dec.bin
-    when it is there; unmatched game code (`open`) and the asm-bodied SDK
+ 6. Functions nothing defines, generated and listed.  A linker veneer (a
+    `ldr ip, [pc]; bx ip` island with no source) the boot names is another
+    address of its target: the image says so (--arm9-image; aletheia's
+    listing labels the same islands `veneer_XXXXXXXX`), so it becomes a
+    forwarder to what defines the target, and the target's source joins the
+    closure (plan).  Unmatched game code (`open`) and the asm-bodied SDK
     files of step 1 with no sdk/asm/ replacement yet become stubs that
     panic with their address and name when called.
 
@@ -99,6 +101,40 @@ FORWARDER = re.compile(
 
 VENEERS = closure.VENEERS
 DS_LO, DS_HI = 0x02000000, 0x08000000
+
+# The ARM9 static module's load address (layout.json's arm9.load_address,
+# docs/armdata.md): the first byte of arm9_dec.bin is DS 0x02004000.
+ARM9_IMAGE_BASE = 0x02004000
+# A linker veneer: `ldr ip, [pc]` and `bx ip`, then the target word.
+VENEER_CODE = b"\x00\xc0\x9f\xe5\x1c\xff\x2f\xe1"
+
+
+def read_image(path):
+    """The player's ARM9 image, or None.  Its first byte is DS 0x02004000
+    (layout.json's arm9.load_address, docs/armdata.md)."""
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+def veneer_target(img, addr):
+    """The target of the linker veneer at `addr` in the image, or None.
+
+    aletheia's reassembly listing (asm/arm9/main.s) labels each veneer
+    `veneer_XXXXXXXX` and tools/closure.py reads those labels, but the
+    listing is generated and is not in a clean export of the pin, so a
+    veneer outside the hand-kept table there is missed and becomes a panic
+    stub.  The image is what the listing was made from: the 12-byte island
+    `ldr ip, [pc]; bx ip` (0xE59FC000 0xE12FFF1C) and the target word after
+    it, at the veneer's own address in the static module.
+    """
+    if img is None or addr is None:
+        return None
+    off = addr - ARM9_IMAGE_BASE
+    if off < 0 or off + 12 > len(img) or img[off:off + 8] != VENEER_CODE:
+        return None
+    return int.from_bytes(img[off + 8:off + 12], "little")
 
 
 def read_list(path):
@@ -449,6 +485,7 @@ def source_of_decl(rel):
 def plan(args):
     idx = closure.Index()
     load_member_addresses(idx)
+    image = read_image(getattr(args, "arm9_image", None))
     seeds = [idx.resolve_seed(s) for s in args.seed]
     # A seed file lists whole directories' worth (EIDOS_BOOT_ALL_GAME): a
     # file aletheia has added to src/matched before its manifest lists it
@@ -483,7 +520,7 @@ def plan(args):
     asm_dir_abs = os.path.abspath(args.asm_dir) if args.asm_dir else None
     library_paths = set(read_list(args.library_matched))
     while True:
-        sources, _open = idx.closure(seeds, stop=set(excluded))
+        sources, open_refs = idx.closure(seeds, stop=set(excluded))
         extra = list(port_paths)
         if asm_dir_abs:
             for source in sources:
@@ -495,6 +532,18 @@ def plan(args):
             for rel in port_references(idx, path):
                 if rel not in seeds and rel not in sources and rel not in library \
                         and os.path.join(closure.ROOT, rel).replace("\\", "/") not in library_paths:
+                    more.append(rel)
+        # A function the boot names that nothing defines, whose bytes in the
+        # image are a linker veneer: generate() emits a forwarder to the
+        # target, so the target's source has to be in the link.
+        for (_name, klass, detail), _srcs in open_refs.items():
+            if klass != "open" or not detail.startswith("0x"):
+                continue
+            target = veneer_target(image, int(detail, 16))
+            entry = idx.entry_at(target) if target is not None else None
+            if entry is not None:
+                rel = entry["source"]
+                if rel not in seeds and rel not in sources and rel not in library:
                     more.append(rel)
         if not more:
             break
@@ -743,6 +792,7 @@ def slot_function(region_expr, addr, slot):
 def generate(args):
     idx = closure.Index()
     load_member_addresses(idx)
+    image = read_image(getattr(args, "arm9_image", None))
     pdir = args.plan_dir
     matched = read_list(os.path.join(pdir, "boot_matched.txt"))
     port = read_list(args.port_sources) + read_list(os.path.join(pdir, "boot_asm_subst.txt"))
@@ -952,6 +1002,7 @@ def generate(args):
     for _unit, name, addr in missing_refs:
         spellings.setdefault(addr if addr is not None else name, set()).add(name)
     stub_name = {}
+    veneer_funcs = {}          # name -> (target name, target signature)
     for key, names in spellings.items():
         if not isinstance(key, str) and key in asm_at:
             stub_name[key] = asm_at[key]
@@ -966,6 +1017,18 @@ def generate(args):
             # and emit no stub.  MYSTATUS_NameToStrbuf (0x02008500) is the
             # case: the asm file names it and unit_020084BC.c defines it as C.
             continue
+        if addr is not None:
+            target = veneer_target(image, addr)
+            tname = func_at.get(target) if target is not None else None
+            sig = definition_signature(defined.get(tname), tname) if tname else None
+            if sig is not None:
+                # A linker veneer the listing would have labelled: the image
+                # says it is another address of tname.  Define it as a
+                # forwarder to tname (the overlays reach it by this spelling
+                # and ovlink leaves it to this link; tools/bootlink.py plan
+                # put tname's source in the closure).
+                veneer_funcs[name] = (tname, sig)
+                continue
         if name in asm_pending:
             why = "asm body, %s" % asm_pending[name]
         elif addr is not None and overlays_at(idx, addr):
@@ -1075,7 +1138,7 @@ def generate(args):
         write_if_changed(os.path.join(incdir, header_name(unit.path)), "\n".join(lines) + "\n")
 
     write_link_c(os.path.join(out, "boot_link.c"), consts, pinned, views, missing_funcs,
-                 arm9_slots)
+                 arm9_slots, veneer_funcs)
     # Data the data header does not bind and nothing defines has no
     # storage: the link would fail on it, so the generator does, by name.
     unbound = sorted((canonical[a], a) for a in data_names
@@ -1092,6 +1155,7 @@ def generate(args):
               "functions stubbed: %d open, %d asm-pending"
               % (sum(1 for v in missing_funcs.values() if v[1].startswith("open")),
                  sum(1 for v in missing_funcs.values() if not v[1].startswith("open"))),
+              "linker veneers: %d (forwarders to their image target)" % len(veneer_funcs),
               "mod slots: %d arm9 emitted, %d declared rows skipped"
               % (len(arm9_slots), len(slot_skipped))]
     for name, a, b in dups:
@@ -1108,6 +1172,10 @@ def generate(args):
     for unit in units:
         for name in sorted(unit.protos):
             report.append("  %s: %s %s()" % (unit.rel or unit.path, unit.protos[name], name))
+    report.append("")
+    report.append("linker veneers (the image's `ldr ip, [pc]; bx ip` island, forwarded to its target):")
+    for name in sorted(veneer_funcs):
+        report.append("  %-36s -> %s" % (name, veneer_funcs[name][0]))
     report.append("")
     report.append("functions stubbed:")
     for name in sorted(missing_funcs):
@@ -1194,8 +1262,29 @@ void bw_boot_link_init(void);
 """
 
 
-def write_link_c(path, consts, pinned, views, missing_funcs, slots=None):
+def veneer_forwarder(name, target, sig):
+    """A forwarder for the linker veneer `name`, calling `target` (the
+    image's target word) with the arguments the DS left in r0-r3 and
+    returning what it returns.  `sig` is the target's normalised
+    (return type, [param types]), from tools/ovlink.py's signature."""
+    ret, params = sig
+    tags = sorted({t for p in params
+                   for t in re.findall(r"\bstruct\s+([A-Za-z_]\w*)", p)})
+    args = ", ".join("a%d" % k for k in range(len(params)))
+    out = ["struct %s;" % tag for tag in tags]
+    out.append(ovlink.proto_decl(ret, target, params))
+    out.append(ovlink.proto(ret, name, params))
+    out.append("{")
+    out.append("    %s%s(%s);" % ("" if ret == "void" else "return ", target, args))
+    out.append("}")
+    out.append("")
+    return "\n".join(out)
+
+
+def write_link_c(path, consts, pinned, views, missing_funcs, slots=None,
+                 veneers=None):
     slots = slots or {}
+    veneers = veneers or {}
     lines = [LINK_C_HEAD]
     lines.append("/* ---- link-time constants ---- */\n")
     runtime = []               # (name, initial value), set at start-up
@@ -1236,6 +1325,11 @@ def write_link_c(path, consts, pinned, views, missing_funcs, slots=None):
         lines.append("/* ---- mod slots: one indirection per declared ARM9 address ---- */\n")
         for addr in sorted(slots):
             lines.append(slot_function("BW_MOD_REGION_ARM9", addr, slots[addr]))
+    if veneers:
+        lines.append("/* ---- linker veneers: an image address of its target ---- */\n")
+        for name in sorted(veneers):
+            target, sig = veneers[name]
+            lines.append(veneer_forwarder(name, target, sig))
     lines.append("/* ---- STUBS: functions nothing defines yet ---- */\n")
     for name in sorted(missing_funcs):
         addr, why = missing_funcs[name]
@@ -1258,6 +1352,9 @@ def main(argv=None):
                    help="file listing port sources (repeatable)")
     p.add_argument("--library-matched")
     p.add_argument("--asm-dir")
+    p.add_argument("--arm9-image",
+                   help="the player's extract/arm9_dec.bin, for the linker "
+                        "veneers the listing would label (optional)")
     p.add_argument("--port-sources",
                    help="file listing the boot's port sources, whose calls seed the walk")
     p.add_argument("--define", action="append", default=[],
@@ -1270,6 +1367,9 @@ def main(argv=None):
     g.add_argument("--port-sources", required=True)
     g.add_argument("--armdata-header",
                    help="tools/armdata.py's forced-include header: the data names it binds")
+    g.add_argument("--arm9-image",
+                   help="the player's extract/arm9_dec.bin, for the linker "
+                        "veneers the listing would label (optional)")
     g.add_argument("--define", action="append", default=[],
                    help="NAME=VALUE a port #if depends on (repeatable)")
     g.add_argument("--out-dir", required=True)

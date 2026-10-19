@@ -63,6 +63,12 @@ function(eidos_armdata prefix)
     foreach(src ${A_BIND})
         list(APPEND bind_args --bind-source ${src})
     endforeach()
+    # The player's ARM9 image beside the data root: the veneers and adjustor
+    # thunks the data points at, which the listing would name (optional).
+    get_filename_component(_armdata_extract_dir "${BW_DATA_ROOT_ABS}" DIRECTORY)
+    if(A_REGION STREQUAL "arm9" AND EXISTS "${_armdata_extract_dir}/arm9_dec.bin")
+        list(APPEND bind_args --arm9-image ${_armdata_extract_dir}/arm9_dec.bin)
+    endif()
 
     add_custom_command(
         OUTPUT ${out_c} ${out_h}

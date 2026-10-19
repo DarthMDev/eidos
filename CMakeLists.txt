@@ -2291,3 +2291,24 @@ foreach(_t IN LISTS _eidos_all_tests)
     set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT
         "EIDOS_SETTINGS=${CMAKE_CURRENT_BINARY_DIR}/test_${_t}.ini")
 endforeach()
+
+# The tests on the player's real ROM (test_extract_rom, test_firstrun_rom,
+# test_wizard's real install) read BW_ROM at test time.  -DBW_ROM=<path> at
+# configure time passes it to them, so a build that has the ROM does not
+# skip them.  Without it they read BW_ROM from the environment ctest runs in.
+set(BW_ROM "" CACHE FILEPATH
+    "the player's Pokemon Black ROM, for the tests that install it (optional)")
+# test_picker opens the native file dialog on the desktop and drives it from
+# a helper thread.  It runs only when asked: -DEIDOS_TEST_DIALOGS=ON, or
+# EIDOS_TEST_DIALOGS=1 in the environment when ctest runs.
+option(EIDOS_TEST_DIALOGS "run the test that opens the file dialog on the desktop" OFF)
+if(NOT "${BW_ROM}" STREQUAL "")
+    foreach(_t test_extract_rom test_firstrun_rom test_wizard)
+        if(TEST ${_t})
+            set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT "BW_ROM=${BW_ROM}")
+        endif()
+    endforeach()
+endif()
+if(EIDOS_TEST_DIALOGS AND TEST test_picker)
+    set_property(TEST test_picker APPEND PROPERTY ENVIRONMENT "EIDOS_TEST_DIALOGS=1")
+endif()

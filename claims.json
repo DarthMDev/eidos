@@ -1,11 +1,3 @@
 {
-  "claims": {
-    "W45": {
-      "note": "the events and state API implementation plan",
-      "paths": [
-        "docs/mod-implementation.md"
-      ],
-      "started": "2026-10-16"
-    }
-  }
+  "claims": {}
 }

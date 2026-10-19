@@ -29,6 +29,14 @@
 set(EIDOS_BOOT_DIR ${CMAKE_BINARY_DIR}/boot)
 set(EIDOS_BOOT_GEN ${EIDOS_BOOT_DIR}/gen)
 
+# The player's ARM9 image, beside the data root (docs/armdata.md).  The
+# reassembly listing that labels the linker veneers is generated and is not
+# in a clean export of the pin, so tools/bootlink.py reads the veneers out of
+# the image itself when it is there.  Optional: without it the veneers are
+# only the hand-kept ones (tools/closure.py, VENEERS) and the rest stay open.
+get_filename_component(_boot_extract_dir "${BW_DATA_ROOT_ABS}" DIRECTORY)
+set(EIDOS_BOOT_ARM9_IMAGE "${_boot_extract_dir}/arm9_dec.bin")
+
 # NitroMain's direct matched callees (stubs/reimpl_02005124.c).
 set(EIDOS_BOOT_SEEDS
     arm9/func_02005328.c      # system init
@@ -424,6 +432,7 @@ execute_process(
             --define EIDOS_HEAP_MATCHED=${_boot_heap_matched}
             --library-matched ${EIDOS_BOOT_DIR}/library_matched.txt
             --asm-dir ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm
+            --arm9-image ${EIDOS_BOOT_ARM9_IMAGE}
             --out-dir ${EIDOS_BOOT_DIR}
     RESULT_VARIABLE _boot_rc
     OUTPUT_VARIABLE _boot_out
@@ -438,6 +447,12 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/bootlink.py
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/closure.py)
+# A new image changes the veneer set: re-plan.  Only when it exists, so a
+# build with no game data is not reconfigured on every run.
+if(EXISTS "${EIDOS_BOOT_ARM9_IMAGE}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${EIDOS_BOOT_ARM9_IMAGE})
+endif()
 # A new sdk/asm/ file changes the plan: re-run it when the set changes.
 file(GLOB _boot_asm_present CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm/*.c)
 
@@ -565,6 +580,7 @@ add_custom_command(
             --shim-sources ${EIDOS_BOOT_DIR}/shim_sources_gen.txt
             --port-sources ${EIDOS_BOOT_DIR}/port_sources.txt
             --armdata-header ${bw_arm9_data_H}
+            --arm9-image ${EIDOS_BOOT_ARM9_IMAGE}
             --define EIDOS_HEAP_MATCHED=${_boot_heap_matched}
             --out-dir ${EIDOS_BOOT_GEN}
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/bootlink.py

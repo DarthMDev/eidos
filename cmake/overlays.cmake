@@ -108,6 +108,11 @@ endif()
 # ARM9 files (as paths under src/matched/) that define what the overlays
 # call and LINK_SOURCES lacks; the boot adds them to its closure.  A plan
 # only: writes under ${CMAKE_BINARY_DIR}/ovl/_seeds and compiles nothing.
+# The player's ARM9 image beside the data root (docs/armdata.md): ovlink reads
+# the linker veneers out of it (tools/ovlink.py --arm9-image).  Optional.
+get_filename_component(_eidos_ovl_extract_dir "${BW_DATA_ROOT_ABS}" DIRECTORY)
+set(EIDOS_OVL_ARM9_IMAGE "${_eidos_ovl_extract_dir}/arm9_dec.bin")
+
 function(eidos_overlays_seeds var)
     cmake_parse_arguments(A "" "ROOT" "OVERLAYS;LINK_SOURCES" ${ARGN})
     if(NOT A_ROOT)
@@ -128,6 +133,7 @@ function(eidos_overlays_seeds var)
                 --aletheia-root ${A_ROOT} --overlays ${ids_arg}
                 --link-sources ${dir}/link_sources.txt
                 --define EIDOS_HEAP_MATCHED=${heap}
+                --arm9-image ${EIDOS_OVL_ARM9_IMAGE}
                 --set-name seeds --out-dir ${dir}
         RESULT_VARIABLE rc
         ERROR_VARIABLE err)
@@ -181,6 +187,7 @@ function(eidos_overlays name)
                 --link-sources ${dir}/link_sources.txt
                 --set-name ${name}
                 --out-dir ${dir}
+                --arm9-image ${EIDOS_OVL_ARM9_IMAGE}
                 ${stub_arg} --summary
         RESULT_VARIABLE rc
         OUTPUT_VARIABLE out

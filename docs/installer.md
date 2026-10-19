@@ -52,6 +52,11 @@ The expected hashes are computed from that tree on each run, so no hash of
 any game file is written into the repository. Without `BW_ROM`, or without
 the reference tree, the test reports itself skipped.
 
+`BW_ROM` can also be given once, at configure time (`-DBW_ROM=<path to the
+ROM>`): the build then passes it to `test_extract_rom`, `test_firstrun_rom`
+and `test_wizard`, so they run on every `ctest` without the environment
+variable. `-DEIDOS_TEST_DIALOGS=ON` does the same for `test_picker`.
+
 ### Intended differences from aletheia's extract
 
 | aletheia writes | eidos | why |

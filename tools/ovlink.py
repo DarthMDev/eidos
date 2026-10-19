@@ -943,6 +943,12 @@ class OvState:
         self.mod_slots = []        # declared rows: {addr, declared, original, sig}
 
 
+# The ARM9 static module's load address (layout.json's arm9.load_address,
+# docs/armdata.md): the first byte of arm9_dec.bin is DS 0x02004000.
+ARM9_IMAGE_BASE = 0x02004000
+# A linker veneer: `ldr ip, [pc]` and `bx ip`, then the target word.
+VENEER_CODE = b"\x00\xc0\x9f\xe5\x1c\xff\x2f\xe1"
+
 class Link:
     def __init__(self, args):
         self.args = args
@@ -961,6 +967,12 @@ class Link:
             m = re.match(r"^ov0*(\d+)$", region)
             if m:
                 self.declared_by_addr.setdefault(addr, (int(m.group(1)), dname))
+        self.image = None
+        self.veneers = {}          # veneer address -> target address (listing)
+        self.veneer_fwd = {}       # forwarder name -> (target name, signature)
+        if getattr(args, "arm9_image", None) and os.path.exists(args.arm9_image):
+            with open(args.arm9_image, "rb") as fh:
+                self.image = fh.read()
         self.exclusions = armdata.load_exclusions(args.exclusions)
         self.ov_excl = {}
         for line in read_list(args.ov_exclusions):
@@ -1046,11 +1058,32 @@ class Link:
             if a is not None:
                 self.link_at.setdefault(a, n)
         # A linker veneer is another address of its target (the listing's
-        # veneer_ labels, closure.listing_veneers): an overlay calling the
-        # veneer reaches what the link defines at the target.
-        for v, t in closure.listing_veneers(self.root).items():
+        # veneer_ labels, closure.listing_veneers, or the image's islands):
+        # an overlay calling the veneer reaches what the link defines at the
+        # target, through a forwarder (veneer_target, write_dispatch).
+        self.veneers = dict(closure.listing_veneers(self.root))
+        # A data word or a code pointer at a veneer's address names the
+        # target too (a call goes through the forwarder instead).
+        for v, t in self.veneers.items():
             if t in self.link_at:
                 self.link_at.setdefault(v, self.link_at[t])
+
+    def veneer_target(self, addr):
+        """The target of the linker veneer at `addr`, or None: the listing's
+        `veneer_XXXXXXXX` label when the listing is there, else the player's
+        ARM9 image (--arm9-image).  The listing is generated and not in a
+        clean export of the pin; the image is what it was made from:
+        `ldr ip, [pc]; bx ip` (0xE59FC000 0xE12FFF1C), then the target word."""
+        if addr is None:
+            return None
+        if (addr & ~1) in self.veneers:
+            return self.veneers[addr & ~1]
+        if self.image is None:
+            return None
+        off = (addr & ~1) - ARM9_IMAGE_BASE
+        if off < 0 or off + 12 > len(self.image) or self.image[off:off + 8] != VENEER_CODE:
+            return None
+        return int.from_bytes(self.image[off + 8:off + 12], "little")
 
     def _read_overlays(self):
         for oid in self.ids:
@@ -1304,6 +1337,25 @@ class Link:
                         u.protos[n] = "int"
                     continue
                 if code:
+                    # A linker veneer: another address of what the link
+                    # defines at its target.  The name becomes a forwarder of
+                    # its own (bw_veneer_<address>, write_dispatch) rather
+                    # than the target's name, so a unit that declares two
+                    # veneers of one target with different prototypes
+                    # (G3D_CAMERA_Delete and G3D_LIGHT_DeleteSlots both reach
+                    # GFL_HEAP_Free) still compiles.
+                    vt = self.veneer_target(addr) if addr is not None else None
+                    vname = self.link_at.get(vt & ~1) if vt is not None else None
+                    vhead = self.link_heads.get(vname) if vname else None
+                    vsig = signature(vhead[0], vname, vhead[1]) if vhead else None
+                    if vsig is not None:
+                        fwd = "bw_veneer_%08X" % (addr & ~1)
+                        self.veneer_fwd[fwd] = (vname, vsig)
+                        st.renames[n] = fwd
+                        self.arm9_needs.setdefault(n, (addr, True))
+                        if n in implicit:
+                            u.protos[n] = implicit_return(vhead[0], n)
+                        continue
                     tgt = self.link_at.get(addr & ~1) if addr is not None else None
                     if tgt is not None and tgt != n:
                         st.renames[n] = tgt
@@ -1923,6 +1975,25 @@ def write_dispatch(link, path, set_name):
     w('#include "mod_slot.h"')
     w('#include "mod_hooks.h"')
     w("")
+    if link.veneer_fwd:
+        # Linker veneers the overlays call: each is another address of its
+        # target, so its forwarder calls the target with the arguments and
+        # returns what it returns (the target's own prototype, normalised).
+        w("/* ---- linker veneers: an ARM9 address of their target ---- */")
+        w("")
+        for fwd in sorted(link.veneer_fwd):
+            tname, (ret, params) = link.veneer_fwd[fwd]
+            for tag in sorted({t for p in params + (ret,)
+                               for t in re.findall(r"\bstruct\s+([A-Za-z_]\w*)", p)}):
+                w("struct %s;" % tag)
+            w(proto_decl(ret, tname, params))
+            w("%s;" % proto(ret, fwd, params))
+            w(proto(ret, fwd, params))
+            w("{")
+            args = ", ".join("a%d" % k for k in range(len(params)))
+            w("    %s%s(%s);" % ("" if ret == "void" else "return ", tname, args))
+            w("}")
+            w("")
     declared = {}
     body = []
     for name in sorted(link.tramps):
@@ -2171,6 +2242,9 @@ def main(argv=None):
                     help="port stand-ins for unmatched overlay functions, "
                          "ovNNN_<name>.c")
     ap.add_argument("--summary", action="store_true")
+    ap.add_argument("--arm9-image",
+                    help="the player's extract/arm9_dec.bin, for the linker "
+                         "veneers the listing would label (optional)")
     ap.add_argument("--define", action="append", default=[],
                     help="NAME=VALUE a port source is compiled with (repeatable)")
     args = ap.parse_args(argv)
@@ -2226,6 +2300,10 @@ def main(argv=None):
         if d:
             continue
         src = by_name.get(n) or (by_addr.get(a & ~1) if a is not None else None)
+        if src is None:
+            # A veneer: the boot needs the source of its target.
+            vt = link.veneer_target(a)
+            src = by_addr.get(vt & ~1) if vt is not None else None
         if src and src.startswith("src/matched/"):
             seeds.add(src[len("src/matched/"):])
     write_if_changed(os.path.join(out, "ovl_arm9_seeds.txt"),

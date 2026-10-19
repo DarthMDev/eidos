@@ -692,9 +692,26 @@ def load_exclusions(path: str):
 # The model
 # --------------------------------------------------------------------------
 
+# The ARM9 static module's load address: the first byte of arm9_dec.bin is
+# DS 0x02004000 (layout.json's arm9.load_address).
+ARM9_IMAGE_BASE = 0x02004000
+# `ldr ip, [pc]; bx ip`, then the target word: a linker veneer.
+VENEER_CODE = bytes.fromhex("00c09fe51cff2fe1")
+# `ldr ip, [pc, #4]; add r0, r0, #imm; bx ip`, then the target word: an
+# adjustor thunk, the target called with r0 moved by imm (the vtable at
+# 0x020A7F3C points at two of them, 0x0204D4E0 and 0x0204D4F0).
+ADJUST_LDR = bytes.fromhex("04c09fe5")
+ADJUST_BX = bytes.fromhex("1cff2fe1")
+
+
 class Model:
     def __init__(self, args):
         self.root = os.path.abspath(args.aletheia_root)
+        self.image = None
+        self.adjust = {}           # thunk address -> (imm, target name)
+        if getattr(args, "arm9_image", None) and os.path.exists(args.arm9_image):
+            with open(args.arm9_image, "rb") as fh:
+                self.image = fh.read()
         self.region = args.region
         self.warnings = []
         self.scan_code = getattr(args, "code_scan", False)
@@ -1022,6 +1039,8 @@ class Model:
         self._function_name(0)                  # loads self._veneers
         if tgt in self._veneers:
             return True                         # a linker veneer is code
+        if self._image_island(tgt):
+            return True                         # the same, read from the image
         kind = self.extern_kinds.get(tgt)
         if kind is not None:
             return kind == "func"
@@ -1118,6 +1137,18 @@ class Model:
             n = self._function_name(v)
             if n is not None:
                 self.funcs.setdefault(v, n)
+        # The same islands read out of the image, for a pin with no listing.
+        if self.image is not None:
+            img = self.image
+            for off in range(0, len(img) - 15, 4):
+                if img[off:off + 8] == VENEER_CODE or (
+                        img[off:off + 4] == ADJUST_LDR and img[off + 8:off + 12] == ADJUST_BX):
+                    v = ARM9_IMAGE_BASE + off
+                    if v in self.funcs:
+                        continue
+                    n = self._function_name(v)
+                    if n is not None:
+                        self.funcs.setdefault(v, n)
         lo = self.data_range[0] if self.data_range else None
         for s_, e_, _img, label in self.layout.copy:
             if "ITCM" in label or "VRAM" in label:
@@ -1147,6 +1178,43 @@ class Model:
         target = self._veneers.get(addr)
         if target is not None and target != addr:
             return self._function_name(target)
+        return self._image_thunk(addr)
+
+    def _image_island(self, addr: int) -> bool:
+        """True when the image holds a veneer or an adjustor thunk at addr."""
+        if self.image is None or self.region != "arm9":
+            return False
+        off = addr - ARM9_IMAGE_BASE
+        if off < 0 or off & 3 or off + 16 > len(self.image):
+            return False
+        img = self.image
+        return img[off:off + 8] == VENEER_CODE or (
+            img[off:off + 4] == ADJUST_LDR and img[off + 8:off + 12] == ADJUST_BX
+            and (int.from_bytes(img[off + 4:off + 8], "little") & 0xFFFFFF00) == 0xE2800000)
+
+    def _image_thunk(self, addr: int):
+        """The name for a veneer or an adjustor thunk at `addr` in the
+        player's ARM9 image (--arm9-image), or None.  The listing labels the
+        veneers, but it is generated and not in a clean export of the pin."""
+        if self.image is None or self.region != "arm9":
+            return None
+        off = addr - ARM9_IMAGE_BASE
+        if off < 0 or off + 16 > len(self.image):
+            return None
+        code = self.image[off:off + 16]
+        if code[:8] == VENEER_CODE:
+            target = int.from_bytes(code[8:12], "little")
+            if target != addr:
+                return self._function_name(target & ~1)
+            return None
+        word = int.from_bytes(code[4:8], "little")
+        if code[:4] == ADJUST_LDR and code[8:12] == ADJUST_BX \
+                and (word & 0xFFFFFF00) == 0xE2800000:
+            target = int.from_bytes(code[12:16], "little")
+            tname = self._function_name(target & ~1)
+            if tname:
+                self.adjust[addr] = (word & 0xFF, tname)
+                return "bw_adj_%08X" % addr
         return None
 
 
@@ -1211,8 +1279,22 @@ def write_c(m: Model, path: str):
     w('#include "armdata.h"')
     w("")
     # Functions the relocations point at.
-    defined = sorted({n for n in m.funcs.values() if n})
+    defined = sorted({n for n in m.funcs.values() if n and not n.startswith("bw_adj_")})
     traps = sorted(t for t, n in m.funcs.items() if not n)
+    if m.adjust:
+        w("/* Adjustor thunks in the image (`ldr ip, [pc, #4]; add r0, r0, #imm;")
+        w(" * bx ip`): the target called with its first argument moved, and the")
+        w(" * other argument registers passed on. */")
+        w("#include <stdint.h>")
+        for a in sorted(m.adjust):
+            imm, tname = m.adjust[a]
+            w("extern void %s(void);" % tname)
+            w("static uintptr_t bw_adj_%08X(char *a0, uintptr_t a1, uintptr_t a2, uintptr_t a3)" % a)
+            w("{")
+            w("    return ((uintptr_t (*)(char *, uintptr_t, uintptr_t, uintptr_t))%s)(a0 + 0x%X, a1, a2, a3);"
+              % (tname, imm))
+            w("}")
+        w("")
     if defined:
         w("/* Functions the build defines that initialised data points at.  The")
         w(" * real prototypes differ; only the address is taken here. */")
@@ -1286,7 +1368,9 @@ def write_c(m: Model, path: str):
     for i, t in enumerate(sorted(m.funcs)):
         n = m.funcs[t]
         fn_index[t] = i
-        if n:
+        if n and n.startswith("bw_adj_"):
+            w('    { 0x%08Xu, (BwDataFn)%s, "%s" },' % (t, n, n))
+        elif n:
             w('    { 0x%08Xu, %s, "%s" },' % (t, n, n))
         else:
             w('    { 0x%08Xu, bw_trap_%08X, NULL },' % (t, t & ~1))
@@ -1409,6 +1493,9 @@ def main(argv=None) -> int:
                          "ranges, for the run-time scan for code pointers the "
                          "metadata misses (a program that links everything it "
                          "names: the boot)")
+    ap.add_argument("--arm9-image",
+                    help="the player's extract/arm9_dec.bin, for the linker veneers "
+                         "and adjustor thunks the listing would name (optional)")
     ap.add_argument("--no-listing", action="store_true",
                     help="ignore asm/ listings (data_objects.json only)")
     ap.add_argument("--strict", action="store_true",

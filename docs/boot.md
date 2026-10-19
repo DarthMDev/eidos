@@ -235,7 +235,17 @@ manifest's address (which wins over the SDK table, whose spelling of a
 name can sit at another address), its other functions by their address
 spellings or the SDK table. A linker veneer (`ldr ip, [pc]; bx ip` and a
 target word, no source) is another address of its target: the walk follows
-it and the header renames it (`tools/closure.py`, `VENEERS`).
+it and the header renames it (`tools/closure.py`, `VENEERS`). The listing
+that labels the veneers is generated and is not in a clean export of the
+pin, so the generators also read them out of the player's ARM9 image
+(`arm9_dec.bin` beside the data root): `tools/bootlink.py` and
+`tools/ovlink.py` give a veneer the boot or an overlay calls a forwarder to
+its target (the overlays' named `bw_veneer_<address>`, so one unit can
+declare two veneers of one target with different prototypes), and
+`tools/armdata.py` treats a pointer to a veneer in the data as code. The
+image also holds adjustor thunks (`ldr ip, [pc, #4]; add r0, r0, #imm;
+bx ip`, the clact animation table at 0x020A7F3C points at two):
+`tools/armdata.py` gives each a forwarder that moves the first argument.
 
 **Data.** Every ARM9 data name a matched file (or the boot's port code)
 uses is bound to its DS address in the player's own image
