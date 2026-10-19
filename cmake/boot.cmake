@@ -288,6 +288,9 @@ set(EIDOS_BOOT_SHIM_REPLACED
     # stubs/reimpl_0206CB8C.c: one clear over two locals, which only the DS
     # compiler's stack layout makes adjacent
     src/matched/arm9/func_0206CB8C.c
+    # stubs/reimpl_02050DB8.c: PARTICLE_KillAllEffects called with no
+    # argument, which only r0 passing through makes work
+    src/matched/arm9/func_02050DB8.c
 )
 
 # The pointer-width switches (CMakeLists.txt, "Pointer width") put a
@@ -367,6 +370,7 @@ list(APPEND EIDOS_BOOT_PORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D360.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D380.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0206CB8C.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02050DB8.c
     # unit members the pinned manifests do not list (stubs/unit_members.c)
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/unit_members.c
 )

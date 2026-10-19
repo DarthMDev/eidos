@@ -1,0 +1,126 @@
+/*
+ * function: NAMEIN_GRAPHIC_InitInputField
+ * address:  0x021F1E28
+ * packet:   pkt_ov194_021F1E28
+ * region:   ov194
+ * compiler: dsi/1.1p1
+ * flags:    -O4,p
+ * lang:     c99
+ * isa:      thumb
+ * replaces: src/matched/ov/ov194_func_021F1E28.c
+ * Port reimplementation for one parameter type: the fourth parameter `c` is
+ * the font the input field measures and prints with (stored to +0x34 and
+ * passed as a pointer to GF_FONT_MeasureWidestLine), but the matched C
+ * declares it u16, which the note below chose for the register spill
+ * order.  mwcc keeps the whole register, so the DS stores the full
+ * pointer; a host compiler narrows it to 16 bits and the name entry
+ * screen read the font through 0x0000FD34.  Here it is u32; everything
+ * else is the matched function.  Sent to aletheia; this file goes when the
+ * port compiles src/game with the fix (docs/game-tree.md).
+ *
+ * original status:   EXACT*
+ * note 2026-10-05 (wD7 lane05): the entry spill order (b before a) follows the type of the
+ *   fourth parameter: c as u16 closes it (as int the compiler spills a, b, c).
+ * symbols:
+ *   MI_CpuFill8  0x02082BCC  arm
+ *   BMP_WIN_Create  0x020450F0  arm
+ *   BMP_WIN_TransferChars  0x02045334  arm
+ *   BMP_WIN_MakeScreen  0x02045374  arm
+ *   BMP_WIN_GetBgLayer  0x02045730  arm
+ *   BG_SYS_PushTile  0x020409B4  arm
+ *   STRBUF_Create  0x020457B0  arm
+ *   NAMEIN_GRAPHIC_LoadCharMember  0x021F4DBC  thumb  ov194
+ *   NAMEIN_GRAPHIC_LoadPairMember  0x021F4F50  thumb  ov194
+ *   NAMEIN_GRAPHIC_GetActor  0x021F1998  thumb  ov194
+ *   STRBUF_GetLength  0x020458F8  arm
+ *   STRBUF_GetEosChar  0x02045A98  arm
+ *   STRBUF_ToChars  0x02045A38  arm
+ *   CLACT_SetActorAnimSeq  0x0204B878  arm
+ *   CLACT_SetActorAutoAnim  0x0204B92C  arm
+ *   CLACT_AddActorSurfacePos  0x0204B404  arm
+ *   CLACT_SetActorDrawEnable  0x0204B3DC  arm
+ *   CLACT_StartActorAnim  0x0204B95C  arm
+ *   NAMEIN_GRAPHIC_RefreshInputField  0x021F1FB4  thumb  ov194
+ */
+
+
+typedef unsigned char u8;
+typedef unsigned short u16;
+typedef unsigned int u32;
+extern void MI_CpuFill8(void *p, int v, int n);
+struct Actor;
+struct Cfg;
+struct Descriptor;
+struct Obj;
+struct U16Vec;
+struct Vec2;
+extern u32 BMP_WIN_Create(u32 layer, u32 a, u32 b, u32 tiles, u8 c, u8 d, u8 slot);
+extern void BMP_WIN_TransferChars(struct Descriptor *d);
+extern void BMP_WIN_MakeScreen(struct Cfg *cfg);
+extern u8 BMP_WIN_GetBgLayer(struct Descriptor *p);
+extern void BG_SYS_PushTile(u32 index);
+extern struct U16Vec *STRBUF_Create(u32 capacity, u32 heapId);
+extern int NAMEIN_GRAPHIC_LoadCharMember(int a, int b);
+extern int NAMEIN_GRAPHIC_LoadPairMember(int a);
+extern void *NAMEIN_GRAPHIC_GetActor(u8 *p, u32 i);
+extern u16 STRBUF_GetLength(struct U16Vec *vec);
+extern u16 STRBUF_GetEosChar(void);
+extern void STRBUF_ToChars(struct U16Vec *vec, u16 *out, u32 n);
+extern void CLACT_SetActorAnimSeq(struct Obj *p, u16 value);
+extern void CLACT_SetActorAutoAnim(struct Obj *p, u32 v);
+extern void CLACT_AddActorSurfacePos(struct Obj *p, const struct Vec2 *delta, u32 which);
+extern void CLACT_SetActorDrawEnable(struct Obj *p, u32 v);
+extern void CLACT_StartActorAnim(struct Actor *a);
+extern int NAMEIN_GRAPHIC_RefreshInputField(u8 *p);
+void NAMEIN_GRAPHIC_InitInputField(u8 *p, int a, u16 b, u32 c, int d, u8 *e, int f)
+{
+    u16 pos[2];
+    int i;
+    int h;
+    int base;
+    MI_CpuFill8(p, 0, 0x94);
+    i = 0;
+    *(int *)(p + 0x34) = c;
+    *(u16 *)(p + 0x22) = b;
+    *(int *)(p + 0x38) = d;
+    h = BMP_WIN_Create(0, 8, 2, 0x18, 2, 15, 1);
+    *(int *)(p + 0x40) = h;
+    BMP_WIN_TransferChars((struct Descriptor *)h);
+    BMP_WIN_MakeScreen((struct Cfg *)h);
+    BG_SYS_PushTile(BMP_WIN_GetBgLayer((struct Descriptor *)h));
+    *(int *)(p + 0x2c) = *(int *)(p + 0x40);
+    *(u8 *)(p + 0x30) = i;
+    *(int *)(p + 0x3c) = (int)STRBUF_Create(0xe, f);
+    for (i = 0; i < 3; i++) {
+        *(int *)(p + i * 4 + 0x84) = NAMEIN_GRAPHIC_LoadCharMember(i, f);
+    }
+    *(int *)(p + 0x90) = NAMEIN_GRAPHIC_LoadPairMember(f);
+    for (i = 0; i < 16; i++) {
+        *(int *)(p + i * 4 + 0x44) = (int)NAMEIN_GRAPHIC_GetActor(e, i);
+    }
+    if (STRBUF_GetLength((struct U16Vec *)a) == 0) {
+        *(u16 *)p = STRBUF_GetEosChar();
+    } else {
+        STRBUF_ToChars((struct U16Vec *)a, (u16 *)p, b + 1);
+        *(u16 *)(p + 0x1e) = STRBUF_GetLength((struct U16Vec *)a);
+    }
+    pos[1] = 0x25;
+    base = 0x40 - (*(u16 *)(p + 0x22) * 14) / 2;
+    if (base < 0) {
+        base = 0;
+    }
+    base += 0x40;
+    for (i = 0; i < 16; i++) {
+        pos[0] = base + i * 14;
+        CLACT_SetActorAnimSeq((struct Obj *)(*(int *)(p + i * 4 + 0x44)), 1);
+        CLACT_SetActorAutoAnim((struct Obj *)(*(int *)(p + i * 4 + 0x44)), 1);
+        CLACT_AddActorSurfacePos((struct Obj *)(*(int *)(p + i * 4 + 0x44)), (const struct Vec2 *)pos, 0);
+        CLACT_SetActorDrawEnable((struct Obj *)(*(int *)(p + i * 4 + 0x44)), 1);
+    }
+    for (i = *(u16 *)(p + 0x22); i < 16; i++) {
+        CLACT_SetActorDrawEnable((struct Obj *)(*(int *)(p + i * 4 + 0x44)), 0);
+    }
+    CLACT_StartActorAnim((struct Actor *)(*(int *)(p + *(u16 *)(p + 0x1e) * 4 + 0x44)));
+    *(int *)(p + 0x28) = 1;
+    NAMEIN_GRAPHIC_RefreshInputField(p);
+}
