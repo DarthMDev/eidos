@@ -113,28 +113,20 @@ void PXI_InitFifo(void)
 
 extern BOOL TP_GetUserInfo(TPCalibrateParam *calibrate);   /* TP_GetUserInfo */
 extern void TP_SetCalibrateParam(const TPCalibrateParam *param); /* 0208AA2C */
-extern unsigned long func_0208AF18(TPCalibrateParam *calibrate,
-                                   u16 x1, u16 y1, u16 dx1, u16 dy1,
-                                   u16 x2, u16 y2, u16 dx2, u16 dy2);
+extern unsigned long TP_CalcCalibrateParam(TPCalibrateParam *calibrate,
+                                           u16 x1, u16 y1, u16 dx1, u16 dy1,
+                                           u16 x2, u16 y2, u16 dx2, u16 dy2);
 extern void TP_GetCalibratedPoint(TPData *disp, const TPData *raw);
 
-int TP_CalcCalibrateParam(TPCalibrateParam *calibrate, u16 x1, u16 y1,
-                          u16 dx1, u16 dy1, u16 x2, u16 y2, u16 dx2, u16 dy2);
-
-int TP_CalcCalibrateParam(TPCalibrateParam *calibrate, u16 x1, u16 y1,
-                          u16 dx1, u16 dy1, u16 x2, u16 y2, u16 dx2, u16 dy2)
-{
-    return (int)func_0208AF18(calibrate, x1, y1, dx1, dy1, x2, y2, dx2, dy2);
-}
 
 #if BW_TEST_TP_MATCHED
 extern void TP_Init(void);                          /* TP_Init      */
-extern void func_0208AB1C(void);                    /* RequestSampling    */
-extern unsigned long func_0208ABB8(TPData *result); /* WaitRawResult      */
+extern void TP_RequestSamplingAsync(void);                    /* RequestSampling    */
+extern unsigned long TP_WaitRawResult(TPData *result); /* WaitRawResult      */
 extern void TP_RequestAutoSamplingStartAsync(u16 vcount, u16 frequence,
                           TPData bufs[], u16 bufSize); /* TP_RequestAutoSamplingStartAsync   */
 extern void TP_RequestAutoSamplingStopAsync(void);  /* TP_RequestAutoSamplingStopAsync      */
-extern void func_0208ADB4(TPData *result);          /* LatestRawPointInAuto */
+extern void TP_GetLatestRawPointInAuto(TPData *result);          /* LatestRawPointInAuto */
 extern u16  TP_GetLatestIndexInAuto(void);          /* TP_GetLatestIndexInAuto      */
 extern void TP_WaitBusy(unsigned int command_flgs); /* TP_WaitBusy      */
 extern unsigned int TP_CheckError(unsigned int command_flgs); /* 0208B238  */
@@ -480,10 +472,10 @@ static void test_round_trip(void)
 
     /* Single sampling.                                                     */
     touch_host(1, 100, 50);
-    func_0208AB1C();                                /* RequestSampling    */
+    TP_RequestSamplingAsync();                                /* RequestSampling    */
     BW_CHECK_EQ("tp: not busy after the reply", g_02152FA4.command_flg, 0);
     memset(&raw, 0, sizeof raw);
-    BW_CHECK_EQ("tp: TP_WaitRawResult", func_0208ABB8(&raw), 0);
+    BW_CHECK_EQ("tp: TP_WaitRawResult", TP_WaitRawResult(&raw), 0);
     BW_CHECK_EQ("tp: raw x", raw.x, 1599);
     BW_CHECK_EQ("tp: raw y", raw.y, 1133);
     BW_CHECK_EQ("tp: raw touch", raw.touch, 1);
@@ -492,8 +484,8 @@ static void test_round_trip(void)
     BW_CHECK_EQ("tp: screen x", disp.x, 100);
     BW_CHECK_EQ("tp: screen y", disp.y, 50);
     touch_host(0, 0, 0);
-    func_0208AB1C();
-    BW_CHECK_EQ("tp: untouched", func_0208ABB8(&raw) == 0 && raw.touch == 0,
+    TP_RequestSamplingAsync();
+    BW_CHECK_EQ("tp: untouched", TP_WaitRawResult(&raw) == 0 && raw.touch == 0,
                 1);
 
     /* The game's touch pass: lid open, single-sampling mode (+0x74 = 0).   */
@@ -541,7 +533,7 @@ static void test_round_trip(void)
     BW_CHECK_EQ("auto: four samples", TP_GetLatestIndexInAuto(), 4);
     BW_CHECK_EQ("auto: ring slot 4 x", bufs[4].x, 2999);  /* 192+14*200+7 */
     memset(&raw, 0, sizeof raw);
-    func_0208ADB4(&raw);
+    TP_GetLatestRawPointInAuto(&raw);
     TP_GetCalibratedPoint(&disp, &raw);
     BW_CHECK_EQ("auto: latest touch", raw.touch, 1);
     BW_CHECK_EQ("auto: latest x", disp.x, 200);

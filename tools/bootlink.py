@@ -330,7 +330,10 @@ def defined_addr(idx, rel, name):
         # spelling of a name can sit at another address (a signature
         # matcher's guess), and the manifest is what the DS build linked.
         entry = idx.sources.get(rel)
-        if entry is not None and name in (entry["name"], entry["functions"][0]):
+        if entry is not None and closure.SOURCE_TREE != "game" \
+                and name in (entry["name"], entry["functions"][0]):
+            # (A src/game unit lists its functions in no address order: its
+            # members' addresses are all in member_addr below.)
             return entry["address"]
         addr = idx.member_addr.get((rel, name))
         if addr is not None:
@@ -512,8 +515,11 @@ def plan(args):
     excluded = read_list(args.exclude_file)
     if closure.SOURCE_TREE == "game":
         # src/matched paths: src/game cuts the shims' functions by name
-        # instead (plan_game), so the list only documents them.
-        excluded = []
+        # instead (plan_game), so the list only documents them.  Its
+        # src/game rows are units the port replaces whole (crt0.c: the
+        # port starts the game itself).
+        args.game_excluded = set(s for s in excluded if s.startswith("src/game/"))
+        excluded = list(args.game_excluded)
     unknown = [s for s in excluded if s not in idx.sources]
     if unknown:
         raise SystemExit("bootlink.py: excluded sources not in the manifest: %s"
@@ -684,16 +690,23 @@ def plan_game(args, idx, sources, seeds, unlisted, library, shims, shim_addrs, s
     for rel in library:
         lib_names |= defined_names(idx, rel)
     asm_dir = os.path.abspath(args.asm_dir) if args.asm_dir else None
-    asm_by_name = {}
+    asm_by_name, asm_by_addr = {}, {}
     if asm_dir and os.path.isdir(asm_dir):
         for fname in sorted(os.listdir(asm_dir)):
             if fname.endswith(".c"):
                 path = os.path.join(asm_dir, fname)
                 for n in scan_file(path).defined:
                     asm_by_name.setdefault(n, path.replace("\\", "/"))
+                    # sdk/asm/ spells many by address (func_0200421A.c, the
+                    # src/matched name): src/game's SVC_CpuSet is that file.
+                    a = idx._name_addr(n)
+                    if a is not None:
+                        asm_by_addr.setdefault(a, path.replace("\\", "/"))
     cuts, compile_list, asm_rows, subst = [], [], [], set()
     ncut = 0
     for source in sorted(sources):
+        if source in getattr(args, "game_excluded", ()):
+            continue
         full = os.path.join(closure.ROOT, source).replace("\\", "/")
         with open(full, encoding="latin-1") as fh:
             text = fh.read()
@@ -707,6 +720,8 @@ def plan_game(args, idx, sources, seeds, unlisted, library, shims, shim_addrs, s
                 drop.append(name)
             elif is_asm:
                 repl = asm_by_name.get(name)
+                if repl is None and addr is not None:
+                    repl = asm_by_addr.get(addr)
                 if repl is None:
                     asm_rows.append("%s pending %s" % (source, name))
                 elif os.path.normcase(os.path.abspath(repl)) in shim_set:
@@ -879,9 +894,28 @@ def generate(args):
     asm_rows = [r.split() for r in read_list(os.path.join(pdir, "boot_asm.txt"))]
     data_bound, data_objects, data_lines = read_armdata_header(args.armdata_header)
 
+    spellings = {}
+    if getattr(args, "gamespell", None) and os.path.exists(args.gamespell):
+        with open(args.gamespell, encoding="utf-8") as fh:
+            for m in re.finditer(r"^#define\s+(\w+)\s+(\w+)\s*$", fh.read(), re.M):
+                spellings[m.group(1)] = m.group(2)
     units = []
+    game_cuts = {}
+    if closure.SOURCE_TREE == "game":
+        # A src/game unit compiles as its cut copy (plan_game, dsaddr.py
+        # --cut-list --cut-asm): read it that way, or every function the
+        # port defines would look defined twice.
+        for row in read_list(os.path.join(pdir, "boot_cuts.txt")):
+            p, _, names = row.partition("\t")
+            game_cuts[os.path.normcase(os.path.abspath(p))] = set(n for n in names.split(",") if n)
     for path in matched:
         rel = rel_to_root(path)
+        if closure.SOURCE_TREE == "game" and rel is not None:
+            import gamecut
+            with open(path, encoding="latin-1") as fh:
+                text = fh.read()
+            drop = game_cuts.get(os.path.normcase(os.path.abspath(path)), set())
+            idx._scans[rel] = closure.SourceScan(gamecut.cut(text, drop, True)[0])
         units.append(Unit(path, rel, idx.scan(rel)))
     for path in port:
         units.append(Unit(path, None, scan_file(path)))
@@ -986,7 +1020,13 @@ def generate(args):
     # replacement (same file name, same names) drops in without a rename.
     asm_pending, asm_at = {}, {}
     for row in asm_rows:
-        if len(row) >= 2 and row[1] == "pending":
+        if len(row) >= 3 and row[1] == "pending":
+            # src/game (plan_game): one row per cut asm body, by name.
+            asm_pending[row[2]] = row[0]
+            addr = defined_addr(idx, row[0], row[2])
+            if addr is not None:
+                asm_at.setdefault(addr, row[2])
+        elif len(row) >= 2 and row[1] == "pending":
             sc = idx.scan(row[0])
             for name in sorted(sc.defined - sc.statics):
                 asm_pending[name] = row[0]
@@ -1002,6 +1042,12 @@ def generate(args):
             for name in names:
                 addr, kind = idx.address_of(unit.rel, name)
                 klass, _detail = idx.classify(unit.rel, name)
+                if klass == "local" and closure.SOURCE_TREE == "game" \
+                        and name not in unit.scan.defined:
+                    # src/game: the unit's header lists the name but its copy
+                    # has it cut (an asm body, or a function the port
+                    # defines): the definition is elsewhere or a stub.
+                    klass = "matched"
                 if klass == "local":
                     # The file calls itself by another name (an SDK
                     # function's recursion through its library name).
@@ -1015,9 +1061,15 @@ def generate(args):
             return out
         out = []
         for name in unit.scan.references(idx.is_global_name)[0]:
+            # The port's old spelling of a game function compiles as the
+            # src/game name (tools/gamespell.py's header): no stub for it.
+            spelled = name
+            name = spellings.get(name, name)
             addr = idx._name_addr(name)
+            if addr is None and spelled != name:
+                addr = idx._name_addr(spelled)
             out.append((name, addr, None, "data" if addr is None and
-                        name not in unit.scan.prototyped else "func"))
+                        spelled not in unit.scan.prototyped else "func"))
         return out
 
     # A name's DS address as any boot file's `symbols:` block records it,
@@ -1455,6 +1507,9 @@ def main(argv=None):
     g.add_argument("--plan-dir", required=True)
     g.add_argument("--shim-sources", required=True)
     g.add_argument("--port-sources", required=True)
+    g.add_argument("--gamespell",
+                   help="src/game: tools/gamespell.py's header, the port's old "
+                        "spellings of game functions")
     g.add_argument("--armdata-header",
                    help="tools/armdata.py's forced-include header: the data names it binds")
     g.add_argument("--arm9-image",

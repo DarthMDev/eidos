@@ -1554,6 +1554,10 @@ def main(argv=None) -> int:
                     help="src/game: lines `<path>\t<name>,<name>...` naming the "
                          "function definitions to cut from this file's copy "
                          "(tools/gamecut.py, docs/game-tree.md)")
+    ap.add_argument("--cut-decls", action="store_true",
+                    help="with --cut-list: the cut functions leave no "
+                         "declaration (a port patch defines them with "
+                         "another type)")
     ap.add_argument("--cut-asm", action="store_true",
                     help="src/game: cut every mwcc asm body from the copy")
     ap.add_argument("--check", action="store_true",
@@ -1592,7 +1596,7 @@ def main(argv=None) -> int:
                     path, _, names = line.rstrip("\n").partition("\t")
                     if os.path.normcase(os.path.abspath(path)).replace("\\", "/") == key:
                         drop.update(n for n in names.split(",") if n)
-        source, _cut = gamecut.cut(source, drop, a.cut_asm)
+        source, _cut = gamecut.cut(source, drop, a.cut_asm, a.cut_decls)
     text, _, _ = rewrite(source, name)
     _write(a.output, text)
     return 0

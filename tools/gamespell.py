@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""gamespell.py -- the port's old spellings of game functions, for src/game.
+
+The port's own C (sdk/, stubs/, tests/, demo/) calls some game functions by
+the names src/matched gave them: an address spelling (sub_0202FC48) or a
+descriptive name src/game has since changed (SAVEDATA_PanicFailPrintf).
+src/game defines each one under its own name (GFL_HEAP_InitManager,
+GF_PANIC_FailPrintf).  When the build compiles src/game
+(EIDOS_SOURCE_TREE=game, docs/game-tree.md) this tool writes one header of
+`#define <old> <src/game name>` lines that every port source is compiled
+with, so the port keeps one spelling and links against either tree.
+
+A spelling gets a line when:
+  - a port source names it and no port source defines it;
+  - src/game does not define it under that name;
+  - its address is known (the spelling itself, a src/matched file's
+    `function:` header, or a symbols row whose name has a capital letter or
+    a leading underscore) and src/game defines a function at that address.
+
+    gamespell.py ALETHEIA_ROOT -o OUT.h DIR [DIR ...]
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gametree  # noqa: E402
+
+ADDR = re.compile(r"^(?:func|sub)_([0-9A-Fa-f]{8})$")
+IDENT_CALL = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+DEFINITION = re.compile(r"(?m)^[A-Za-z_][\w \t\*]*?\b([A-Za-z_]\w*)[ \t]*\([^;{}]*\)\s*\{")
+SYMROW = re.compile(r"^\s*\*\s+([A-Za-z_]\w*)\s+0x([0-9A-Fa-f]{8})\s+(arm|thumb)\b")
+
+
+def port_names(dirs):
+    used, defined = set(), set()
+    for d in dirs:
+        for dirpath, _dirs, files in os.walk(d):
+            for f in files:
+                if not f.endswith((".c", ".h")):
+                    continue
+                with open(os.path.join(dirpath, f), encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                used.update(IDENT_CALL.findall(text))
+                defined.update(DEFINITION.findall(text))
+    return used, defined
+
+
+def matched_addresses(root):
+    """{name: address} from src/matched's symbols rows and headers."""
+    out = {}
+    base = os.path.join(root, "src", "matched")
+    for dirpath, _dirs, files in os.walk(base):
+        for f in files:
+            if not f.endswith(".c"):
+                continue
+            with open(os.path.join(dirpath, f), encoding="utf-8", errors="replace") as fh:
+                head = fh.read(16384)
+            m = re.search(r"^ \* function:\s*(\w+)\s*$", head, re.M)
+            a = re.search(r"^ \* address:\s*0x([0-9A-Fa-f]{8})", head, re.M)
+            r = re.search(r"^ \* region:\s*(\S+)", head, re.M)
+            if m and a and (r is None or not r.group(1).startswith("ov")):
+                out.setdefault(m.group(1), int(a.group(1), 16))
+            for line in head.split("\n"):
+                s = SYMROW.match(line)
+                # A symbols row may name a callee by a local's word (alloc,
+                # close, value): only a name with a capital letter or a
+                # leading underscore is taken from one.
+                if s and re.search(r"[A-Z]|^_", s.group(1)):
+                    out.setdefault(s.group(1), int(s.group(2), 16))
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("root")
+    ap.add_argument("-o", dest="out", required=True)
+    ap.add_argument("dirs", nargs="+")
+    a = ap.parse_args()
+
+    used, defined = port_names(a.dirs)
+    game_at, game_names = {}, set()
+    for e in gametree.entries(a.root):
+        game_names.update(e["functions"])
+        if e["region"].startswith("ov"):
+            continue
+        for n, addr in zip(e["functions"], e["addresses"]):
+            if addr is not None:
+                game_at.setdefault(addr, n)
+    import alcache
+    old = dict(alcache.memo(a.root, "gamespell.matched_addresses", ("src/matched",),
+                            lambda: matched_addresses(a.root)))
+    # Names the port still uses that the checkout's src/matched no longer
+    # spells (renamed there too): tools/gamespell_extra.txt, `name address`.
+    extra = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gamespell_extra.txt")
+    if os.path.exists(extra):
+        with open(extra, encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.split("#", 1)[0].split()
+                if len(parts) == 2:
+                    old.setdefault(parts[0], int(parts[1], 16))
+    lines = []
+    for name in sorted(used - defined - game_names):
+        m = ADDR.match(name)
+        if not m and not re.search(r"[A-Z]|^_", name):
+            continue        # memset, close: a C library or local's word
+        addr = int(m.group(1), 16) if m else old.get(name)
+        target = game_at.get(addr) if addr is not None else None
+        if target and target != name:
+            lines.append("#define %s %s\n" % (name, target))
+    text = ("/* Generated by tools/gamespell.py: the port's spellings of game\n"
+            " * functions src/game names otherwise (docs/game-tree.md).  A target\n"
+            " * that compiles its own src/matched copies with its own renames\n"
+            " * (tests/test_pxi.c and the like) defines EIDOS_NO_GAMESPELL. */\n"
+            "#if !defined(EIDOS_GAMESPELL_H) && !defined(EIDOS_NO_GAMESPELL)\n"
+            "#define EIDOS_GAMESPELL_H\n"
+            + "".join(lines) + "#endif\n")
+    old_text = None
+    if os.path.exists(a.out):
+        with open(a.out, encoding="utf-8") as fh:
+            old_text = fh.read()
+    if old_text != text:
+        os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+        with open(a.out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+    print("gamespell.py: %d spellings" % len(lines))
+
+
+if __name__ == "__main__":
+    main()

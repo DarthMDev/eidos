@@ -72,6 +72,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gametree  # noqa: E402  (pair_members)
+import alcache   # noqa: E402  (parse cache)
+
+_PARSES = alcache.ParseCache("armdata-sourcefile", [
+    os.path.abspath(__file__),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "gamecut.py")])
 
 EIDOS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_EXCLUSIONS = os.path.join(EIDOS_ROOT, "tools", "armdata_exclusions.txt")
@@ -80,7 +85,8 @@ DEFAULT_EXCLUSIONS = os.path.join(EIDOS_ROOT, "tools", "armdata_exclusions.txt")
 # Small helpers
 # --------------------------------------------------------------------------
 
-SYMBOLS_HDR = re.compile(r"^\s*\*\s*symbols:\s*$")
+# The leading `*` is optional: src/game/arm9/gx_load2d.c's header lost it.
+SYMBOLS_HDR = re.compile(r"^\s*\*?\s*symbols:\s*$")
 SYMBOL_ROW = re.compile(
     r"^\s*\*\s+([A-Za-z_]\w*)\s+(0x[0-9A-Fa-f]{1,8})\s+(thumb|arm|data)\b(.*)$")
 ALIGN_COL = re.compile(r"^a(\d+)$")
@@ -256,10 +262,28 @@ def declarator_name(decl: str):
     return (ids[-1], False) if ids else (None, False)
 
 
+_GAME_ENTRIES = {}
+
+
+def _game_addresses(path):
+    """[(name, address)] of a src/game unit, from tools/gametree.py, or None
+    for any other file."""
+    p = path.replace("\\", "/")
+    if "/src/game/" not in p:
+        return None
+    root, rel = p.split("/src/game/", 1)
+    if root not in _GAME_ENTRIES:
+        _GAME_ENTRIES[root] = {e["source"]: list(zip(e["functions"], e["addresses"]))
+                               for e in gametree.entries(root)}
+    return _GAME_ENTRIES[root].get("src/game/" + rel, [])
+
+
 class SourceFile:
     """What one C file declares, defines and names."""
 
     def __init__(self, path: str, text: str, matched: bool):
+        import gamecut
+        text = gamecut.knr_to_ansi(text)     # old-style definitions, see gamecut
         self.path = path
         self.matched = matched
         self.symbols = {}         # name -> (addr, kind, region, align)
@@ -275,7 +299,13 @@ class SourceFile:
         self.header_isa = None            # "arm" / "thumb" from the header
         self._header(text)
         self._symbols(text)
-        self._scan(strip_c(text))
+        code = strip_c(text)
+        self._scan(code)
+        # A function declared `static` anywhere in the file is internal even
+        # when its definition omits the keyword (C keeps the first linkage):
+        # src/game/arm9/game_beacon.c's GAME_BEACON_WriteItemUse.
+        self.defined_functions -= set(re.findall(
+            r"\bstatic\b[^;{}()=]*?\b([A-Za-z_]\w*)\s*\(", code))
 
     def _header(self, text: str):
         head = text[:4096]
@@ -299,6 +329,16 @@ class SourceFile:
             listed += " " + cm.group(1)
             k += 1
         names = [n.strip() for n in listed.split(",") if n.strip()]
+        game = _game_addresses(self.path)
+        if game is not None:
+            # src/game: the list is not in address order, so the header's
+            # one address belongs to whichever function starts the unit;
+            # every member's address comes from the manifests instead
+            # (tools/gametree.py).
+            for n, a in game:
+                if a is not None:
+                    self.header_functions.append((n, a))
+            return
         for i, n in enumerate(names):
             a = name_address(n)
             if a is None and i == 0 and am:
@@ -334,36 +374,38 @@ class SourceFile:
         self.identifiers = set(re.findall(r"[A-Za-z_]\w*", code))
         self.members = set(re.findall(r"(?:\.|->)\s*([A-Za-z_]\w*)", code))
         self._shadows(code)
+        # The statement so far is code[start:i]: a slice when it is needed
+        # (a top-level brace or semicolon), not a string rebuilt at every
+        # brace, which made a file with large initialisers quadratic.
         depth = 0
-        stmt = []
+        start = 0
         i, n = 0, len(code)
         while i < n:
             c = code[i]
             if c == "{":
-                head = "".join(stmt)
-                if depth == 0 and re.search(r"\)\s*$", head) and "=" not in head:
-                    # A function body: record the definition, skip the body.
-                    self._function_definition(head)
-                    k, d = i, 0
-                    while k < n:
-                        if code[k] == "{":
-                            d += 1
-                        elif code[k] == "}":
-                            d -= 1
-                            if d == 0:
-                                break
-                        k += 1
-                    i = k + 1
-                    stmt = []
-                    continue
+                if depth == 0:
+                    head = code[start:i]
+                    if re.search(r"\)\s*$", head) and "=" not in head:
+                        # A function body: record the definition, skip the body.
+                        self._function_definition(head)
+                        k, d = i, 0
+                        while k < n:
+                            if code[k] == "{":
+                                d += 1
+                            elif code[k] == "}":
+                                d -= 1
+                                if d == 0:
+                                    break
+                            k += 1
+                        i = k + 1
+                        start = i
+                        continue
                 depth += 1
             elif c == "}":
                 depth -= 1
             if c == ";" and depth == 0:
-                self._declaration("".join(stmt))
-                stmt = []
-            else:
-                stmt.append(c)
+                self._declaration(code[start:i])
+                start = i + 1
             i += 1
 
     NOT_TYPES = {"return", "case", "sizeof", "else", "do", "goto", "extern"}
@@ -727,6 +769,14 @@ class Model:
         self.exclusions = load_exclusions(args.exclusions)
         self.sources = []
         self.missing = []
+        self._game_cuts = {}
+        if getattr(args, "cut_list", None) and os.path.exists(args.cut_list):
+            with open(args.cut_list, encoding="utf-8") as fh:
+                for line in fh:
+                    p, _, names = line.rstrip("\n").partition("\t")
+                    if p:
+                        self._game_cuts[os.path.normcase(os.path.abspath(p))] = \
+                            set(n for n in names.split(",") if n)
         # Port sources compiled with the header like matched ones (the
         # boot's transliterations of asm functions name game data by its
         # matched spelling): their names are bound too.
@@ -748,7 +798,15 @@ class Model:
                 self.missing.append(path)
                 continue
             text = read_text(path)
-            self.sources.append(SourceFile(path, text, self._is_matched(path, text)))
+            if "/src/game/" in path.replace("\\", "/"):
+                # As the copy compiles: the functions the port defines and
+                # the asm bodies are cut (cmake/dsaddr.cmake, --cut-list).
+                import gamecut
+                text = gamecut.cut(text, self._game_cuts.get(
+                    os.path.normcase(os.path.abspath(path)), set()), True)[0]
+            matched = self._is_matched(path, text)
+            self.sources.append(_PARSES.get(("SourceFile", path, matched), text,
+                                            lambda: SourceFile(path, text, matched)))
         self.func_names, self.isa_by_addr = load_function_names(
             self.root, self.sources, self.region)
         self._collect_definitions()
@@ -927,6 +985,12 @@ class Model:
             # bw_data_bind), so the name is its address as a value too.
             itcm = sec != "const" and (addr < MAIN_RAM_BASE
                                        or addr >= TWL_EXT_RAM_BASE) and port is None
+            # A linker symbol a static initialiser names (SDK_STATIC_BSS_END
+            # in src/game's crt0.c tables): its address is the value, never
+            # storage to register over whatever lies there.
+            if n.startswith("SDK_") and e["object"] and port is None:
+                e["bind"] = "CONST"
+                continue
             if e["object"] and sec != "const" and not itcm and port is None:
                 e["bind"] = "OBJECT"
                 continue
@@ -1488,6 +1552,10 @@ def main(argv=None) -> int:
                     help="a port source compiled with the header: bind the "
                          "data names it uses like a matched file's (repeatable)")
     ap.add_argument("--region", default="arm9")
+    ap.add_argument("--cut-list",
+                    help="src/game: `path<TAB>name,...` rows of functions the "
+                         "port defines; each src/game source is read with those "
+                         "and its asm bodies cut (tools/gamecut.py)")
     ap.add_argument("--exclusions", default=DEFAULT_EXCLUSIONS)
     ap.add_argument("--out-c")
     ap.add_argument("--out-h")

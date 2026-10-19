@@ -1,0 +1,4 @@
+# tools/gamespell.py: names the port's own C still uses whose address the
+# aletheia checkout's src/matched no longer gives (renamed there as well).
+# One `name address` per line.
+SAVEDATA_PanicFailPrintf  0x02034734   # sdk/aliases.c; GF_PANIC_FailPrintf in src/game

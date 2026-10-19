@@ -78,7 +78,8 @@ SOURCE_TREE = os.environ.get("EIDOS_SOURCE_TREE", "matched")
 ADDR_NAME = re.compile(r"^(?:sub|func|unit)_0([0-9A-Fa-f]{7})$")
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SYMBOL_ROW = re.compile(r"^\s*\*\s+([A-Za-z_][A-Za-z0-9_]*)\s+(0x[0-9A-Fa-f]{1,8})\s+(thumb|arm|data)\b(?:\s+\S+)*\s*$")
-SYMBOLS_HDR = re.compile(r"^\s*\*\s*symbols:\s*$")
+# The leading `*` is optional: src/game/arm9/gx_load2d.c's header lost it.
+SYMBOLS_HDR = re.compile(r"^\s*\*?\s*symbols:\s*$")
 CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 MEMBER = re.compile(r"(?:\.|->)\s*[A-Za-z_]\w*")
 ASM_BODY = re.compile(r"\b(?:asm|__asm)\b")
@@ -148,6 +149,9 @@ def read_symbol_table(path):
 # A declared name counts only when the file uses it outside its own
 # declaration: in a function body, an initializer or a macro body.  A name
 # that is declared and never used costs the linker nothing.
+
+_SOURCESCANS = None      # alcache.ParseCache, made on first use
+
 
 def strip_source(text):
     """Comments, string and character literals blanked; line splices joined."""
@@ -282,6 +286,8 @@ class SourceScan:
     """What one matched source defines, declares, uses and calls."""
 
     def __init__(self, text):
+        import gamecut
+        text = gamecut.knr_to_ansi(text)     # old-style definitions, see gamecut
         self.symbols = self._parse_symbols(text)
         self.defined = set()       # functions and objects with a body here
         self.statics = set()       # file-local names (static)
@@ -646,6 +652,9 @@ class Index:
             return int("0" + m.group(1), 16)
         if name in self.sdk_by_name:
             return self.sdk_by_name[name]
+        m = re.match(r"^ov(\d{3})_id$", name)
+        if m:
+            return int(m.group(1))      # the linker's overlay id symbol
         return None
 
     def scan(self, source):
@@ -656,7 +665,14 @@ class Index:
             if os.path.exists(full):
                 with open(full, encoding="utf-8", errors="replace") as fh:
                     text = fh.read()
-            sc = self._scans[source] = SourceScan(text)
+            import alcache
+            global _SOURCESCANS
+            if _SOURCESCANS is None:
+                _SOURCESCANS = alcache.ParseCache("closure-sourcescan", [
+                    os.path.abspath(__file__),
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "gamecut.py")])
+            sc = self._scans[source] = _SOURCESCANS.get(
+                ("SourceScan",), text, lambda: SourceScan(text))
         return sc
 
     def is_global_name(self, name):
@@ -669,7 +685,7 @@ class Index:
         name = self.member_by_addr.get((entry["source"], addr))
         if name is not None:
             return name
-        if entry["address"] == addr:
+        if entry["address"] == addr and SOURCE_TREE != "game":
             return entry["functions"][0]
         return None
 
@@ -809,41 +825,54 @@ class Index:
         """{name: (address, kind)} from every symbols block of src/game and
         src/matched (headers only); src/game's rows win."""
         if getattr(self, "_gsym", None) is None:
-            self._gsym = {}
-            for tree in ("game", "matched"):
-                base = os.path.join(ROOT, "src", tree)
-                for dirpath, _dirs, files in os.walk(base):
-                    for f in files:
-                        if not f.endswith((".c", ".h")):
-                            continue
-                        try:
-                            with open(os.path.join(dirpath, f), encoding="utf-8",
-                                      errors="replace") as fh:
-                                head = fh.read(16384)
-                        except OSError:
-                            continue
-                        if "symbols:" not in head:
-                            continue
-                        for n, (a, k) in SourceScan._parse_symbols(head).items():
-                            self._gsym.setdefault(n, (a, k))
+            import alcache
+            self._gsym = alcache.memo(ROOT, "closure.global_symbols",
+                                      ("src/game", "src/matched"),
+                                      self._read_global_symbols)
         return self._gsym
+
+    def _read_global_symbols(self):
+        gsym = {}
+        for tree in ("game", "matched"):
+            base = os.path.join(ROOT, "src", tree)
+            for dirpath, _dirs, files in os.walk(base):
+                for f in files:
+                    if not f.endswith((".c", ".h")):
+                        continue
+                    try:
+                        with open(os.path.join(dirpath, f), encoding="utf-8",
+                                  errors="replace") as fh:
+                            head = fh.read(16384)
+                    except OSError:
+                        continue
+                    if "symbols:" not in head:
+                        continue
+                    for n, (a, k) in SourceScan._parse_symbols(head).items():
+                        gsym.setdefault(n, (a, k))
+        return gsym
 
     def _matched_functions(self):
         """{path under src/matched/: [functions]} from the manifests."""
         if getattr(self, "_mf", None) is None:
-            self._mf = {}
-            pattern = os.path.join(ROOT, "layout", "matched", "**", "*.json")
-            for path in sorted(glob.glob(pattern, recursive=True)):
-                try:
-                    with open(path, encoding="utf-8") as fh:
-                        shard = json.load(fh)
-                except (OSError, ValueError):
-                    continue
-                for fn in shard.get("functions", []):
-                    src = (fn.get("source") or "").replace("\\", "/")
-                    src = src.split("src/matched/")[-1]
-                    self._mf.setdefault(src, []).extend(fn.get("functions") or [fn["name"]])
+            import alcache
+            self._mf = alcache.memo(ROOT, "closure.matched_functions",
+                                    ("layout/matched",), self._read_matched_functions)
         return self._mf
+
+    def _read_matched_functions(self):
+        mf = {}
+        pattern = os.path.join(ROOT, "layout", "matched", "**", "*.json")
+        for path in sorted(glob.glob(pattern, recursive=True)):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    shard = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            for fn in shard.get("functions", []):
+                src = (fn.get("source") or "").replace("\\", "/")
+                src = src.split("src/matched/")[-1]
+                mf.setdefault(src, []).extend(fn.get("functions") or [fn["name"]])
+        return mf
 
 
 # ---------------------------------------------------------------------------
@@ -925,7 +954,7 @@ def strip_comments(text):
 def _base_type(decl):
     """The last word of a declaration's type, with qualifiers dropped."""
     words = [w for w in decl.split() if w not in
-             ("const", "volatile", "static", "extern", "struct", "union", "enum")]
+         ("const", "volatile", "static", "extern", "struct", "union", "enum")]
     if not words:
         return ""
     if len(words) >= 2 and words[-2] in ("unsigned", "signed"):

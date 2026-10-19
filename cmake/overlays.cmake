@@ -179,6 +179,11 @@ function(eidos_overlays name)
     if(A_ARM9_STUBS)
         set(stub_arg --arm9-stubs)
     endif()
+    # src/game: read the boot's units as their cut copies (cmake/boot.cmake).
+    set(_ovl_cut_arg)
+    if(EIDOS_SOURCE_TREE STREQUAL "game" AND EIDOS_GAME_CUT_LIST)
+        set(_ovl_cut_arg --cut-list ${EIDOS_GAME_CUT_LIST})
+    endif()
     # sdk/ decides some names with `#if EIDOS_HEAP_MATCHED`.
     if(EIDOS_HEAP_MATCHED)
         list(APPEND stub_arg --define EIDOS_HEAP_MATCHED=1)
@@ -193,7 +198,7 @@ function(eidos_overlays name)
                 --set-name ${name}
                 --out-dir ${dir}
                 --arm9-image ${EIDOS_OVL_ARM9_IMAGE}
-                ${stub_arg} --summary
+                ${stub_arg} ${_ovl_cut_arg} --summary
         RESULT_VARIABLE rc
         OUTPUT_VARIABLE out
         ERROR_VARIABLE err)
@@ -238,13 +243,22 @@ function(eidos_overlays name)
         get_filename_component(src_dir "${src}" DIRECTORY)
         # A src/game unit's copy has its asm bodies cut (docs/game-tree.md).
         set(cut_args)
+        set(cut_dep)
         if(rel MATCHES "^src/game/")
             set(cut_args --cut-asm)
+            # A port patch (stubs/ov/patch_*) defines some of the unit's
+            # functions: tools/ovlink.py lists them in a fourth field.
+            list(LENGTH parts nparts)
+            if(nparts GREATER 3)
+                list(GET parts 3 cut_file)
+                list(APPEND cut_args --cut-list ${cut_file} --cut-decls)
+                set(cut_dep ${cut_file})
+            endif()
         endif()
         add_custom_command(
             OUTPUT ${copy}
             COMMAND ${Python3_EXECUTABLE} ${EIDOS_DSADDR_TOOL} ${src} -o ${copy} --name ${src} ${cut_args}
-            DEPENDS ${src} ${EIDOS_DSADDR_TOOL}
+            DEPENDS ${src} ${EIDOS_DSADDR_TOOL} ${cut_dep}
             COMMENT "dsaddr ${rel} (overlays ${name})"
             VERBATIM)
         if(MSVC)

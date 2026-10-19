@@ -143,8 +143,13 @@ def functions(text):
     return out
 
 
-def cut(text, drop, cut_asm):
-    """`text` with the chosen definitions replaced by prototypes."""
+def cut(text, drop, cut_asm, drop_decls=False):
+    """`text` with the chosen definitions replaced by prototypes.
+
+    With `drop_decls` the functions in `drop` leave no declaration at all:
+    the definition and every file-scope prototype of the name go, so the
+    port's definition (a patch with another type, tools/ovlink.py) is the
+    only one the unit sees, through its overlay header."""
     pieces = []
     last = 0
     cut_names = []
@@ -156,6 +161,8 @@ def cut(text, drop, cut_asm):
         # The port defines the cut function in another unit, so it cannot
         # stay static here.
         proto = re.sub(r"^static\s+", "", re.sub(r"\s+", " ", proto)) + ";"
+        if drop_decls and name in drop:
+            proto = ""
         body_lines = text.count("\n", hs, be) - proto.count("\n")
         pieces.append(text[last:hs])
         pieces.append(proto + "\n" * max(body_lines, 0))
@@ -176,11 +183,19 @@ def cut(text, drop, cut_asm):
         for name, hs, bo, _be, _a in functions(out):
             head = out[hs:bo]
             if re.match(r"\s*static\b", head) and re.search(
-                    r"(?m)^[ \t]*(extern[ \t]+)?(?!static)[^;{}\n]*\b%s[ \t]*\([^;{}]*\)[ \t]*;"
+                    # a declaration: type words, then the name (not a macro
+                    # body or a statement that calls it, dgt_md5.c's STEP)
+                    r"(?m)^[ \t]*(extern[ \t]+)?(?!static)[A-Za-z_][\w \t\*]*\b%s[ \t]*\([^;{}=]*\)[ \t]*;"
                     % re.escape(name), out[:hs]):
                 out = out[:hs] + re.sub(r"^(\s*)static\s+", r"\1", head, count=1) + out[bo:]
                 changed = True
                 break           # positions moved: scan again
+    if drop_decls:
+        for name in drop:
+            # File-scope prototypes start in column 0; a statement calling
+            # the function is indented and has no type in front.
+            out = re.sub(r"(?m)^(?:extern[ 	]+)?(?:static[ 	]+)?[A-Za-z_][\w 	\*]*%s"
+                         r"[ 	]*\([^;{}=]*\)[ 	]*;[ 	]*$" % re.escape(name), "", out)
     for name in set(cut_names):
         # A cut static function is defined in another unit now: its other
         # declarations here lose `static` too.
@@ -219,3 +234,43 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+KNR_DEF = re.compile(
+    r"(?m)^([A-Za-z_][\w \t\*]*?\b[A-Za-z_]\w*)[ \t]*"
+    r"\(([A-Za-z_]\w*(?:[ \t]*,[ \t]*[A-Za-z_]\w*)*)\)[ \t]*\n"
+    r"((?:[ \t]*[A-Za-z_][^;{}()\n]*;[ \t]*\n)+)([ \t]*)\{")
+
+
+def knr_to_ansi(text):
+    """`text` with each old-style (K&R) definition head rewritten as a
+    prototype-style one, for the scanners only (tools/ovlink.py Scan,
+    tools/closure.py SourceScan, tools/armdata.py SourceFile): they find a
+    function by the `)` in front of its `{`, and an identifier list with its
+    declarations after it hides the definition and, after it, the rest of
+    the file.  src/game keeps K&R where mwcc's argument promotions need it
+    (ov010/symbol_map.c and a few more).  The line count is kept."""
+    def one(m):
+        names = [n.strip() for n in m.group(2).split(",")]
+        decl = {}
+        for line in m.group(3).split("\n"):
+            line = line.strip().rstrip(";").strip()
+            if not line:
+                continue
+            parts = line.split(",")
+            first = parts[0].strip()
+            mm = re.match(r"^(.*?)([\*\s]*)\b([A-Za-z_]\w*)\s*(\[[^\]]*\])?$", first)
+            if not mm:
+                continue
+            base = mm.group(1).strip()
+            decl[mm.group(3)] = "%s %s%s%s" % (base, mm.group(2).strip(), mm.group(3),
+                                              mm.group(4) or "")
+            for p in parts[1:]:
+                pm = re.match(r"^\s*([\*\s]*)\b([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*$", p)
+                if pm:
+                    decl[pm.group(2)] = "%s %s%s%s" % (base, pm.group(1).strip(),
+                                                      pm.group(2), pm.group(3) or "")
+        params = ", ".join(decl.get(n, "int " + n) for n in names)
+        lines = m.group(0).count("\n")
+        return "%s(%s)%s%s{" % (m.group(1), params, "\n" * lines, m.group(4))
+    return KNR_DEF.sub(one, text)

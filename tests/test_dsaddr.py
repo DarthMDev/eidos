@@ -708,8 +708,9 @@ class Corpus(unittest.TestCase):
         if not CFG.aletheia_root:
             self.skipTest("no --aletheia-root given")
         text = dsaddr.build_report(os.path.join(CFG.aletheia_root, "src", "matched"))
-        m = re.search(r"(\d+) through a define, (\d+) through a macro, "
-                      r"(\d+) through a callee", text)
+        # (Since aletheia's wave 20 no src/matched file reaches a DS address
+        # through a callee, so that count may be absent.)
+        m = re.search(r"(\d+) through a define, (\d+) through a macro", text)
         self.assertTrue(m, text[:2000])
         self.assertTrue(all(int(g) > 0 for g in m.groups()), m.group(0))
         print("\n  report: %s" % m.group(0), file=sys.stderr)

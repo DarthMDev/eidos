@@ -237,10 +237,54 @@ def _split_top(text, sep):
     return parts
 
 
+import alcache  # noqa: E402  (parse caches)
+
+_GAMECUT_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gamecut.py")
+_ARMDATA_PARSES = alcache.ParseCache("armdata-sourcefile", [armdata.__file__, _GAMECUT_PY])
+_SCANS = alcache.ParseCache("ovlink-scan", [os.path.abspath(__file__), armdata.__file__,
+                                             _GAMECUT_PY])
+
+
+_INCLUDE_RE = re.compile(r'^[ 	]*#[ 	]*include[ 	]+"([^"]+)"', re.M)
+_INC_TYPEDEFS = {}
+
+
+def include_typedefs(path, text):
+    """The typedef names of the headers `text` includes with quotes, found
+    beside `path`, and of theirs: src/game keeps u8, BOOL and the SDK types
+    in shared headers (types.h, sdk_os.h), and a name the scanner does not
+    know as a type reads as a call (`u8 (*fn)(...)`, a cast)."""
+    out = {}
+    for inc in _INCLUDE_RE.findall(text):
+        hp = os.path.normcase(os.path.normpath(os.path.join(os.path.dirname(path), inc)))
+        if hp not in _INC_TYPEDEFS:
+            _INC_TYPEDEFS[hp] = {}          # a cycle stops here
+            if os.path.isfile(hp):
+                _INC_TYPEDEFS[hp] = dict(Scan(hp, read_text(hp)).typedefs)
+        out.update(_INC_TYPEDEFS[hp])
+    return out
+
+
+def include_signature(path, text):
+    """Which headers `text` includes and when they changed, for a parse
+    cache key (the typedefs above come from them)."""
+    sig = []
+    for inc in _INCLUDE_RE.findall(text):
+        hp = os.path.normpath(os.path.join(os.path.dirname(path), inc))
+        try:
+            st = os.stat(hp)
+            sig.append("%s:%d:%d" % (hp, st.st_size, st.st_mtime_ns))
+        except OSError:
+            sig.append(hp)
+    return "|".join(sig)
+
+
 class Scan:
     """What one source defines, declares, uses and calls."""
 
     def __init__(self, path, text):
+        import gamecut
+        text = gamecut.knr_to_ansi(text)     # old-style definitions, see gamecut
         self.path = path
         self.symbols = {}          # name -> (addr, kind)
         self.defined = set()       # functions and objects with a body or storage here
@@ -260,6 +304,9 @@ class Scan:
         code = strip_source(text)
         self.has_asm = bool(ASM_BODY.search(code))
         self.literals = set(int(v, 16) for v in LITERAL_CAST.findall(code))
+        # Types from the headers the file includes (src/game's types.h).
+        for n, t in include_typedefs(path, text).items():
+            self.typedefs.setdefault(n, t)
         self._scan(code)
         # stubs/stubs.h's BW_STUB(name, address, why) defines `name`.
         for m in re.finditer(r"\bBW_STUB\s*\(\s*([A-Za-z_]\w*)", code):
@@ -267,7 +314,8 @@ class Scan:
             self.func_defs.add(m.group(1))
         # armdata's reading of the same file: which names are used as a
         # member, a tag, a local or in a static initialiser.
-        sf = armdata.SourceFile(path, text, True)
+        sf = _ARMDATA_PARSES.get(("armdata.SourceFile", path, True), text,
+                                 lambda: armdata.SourceFile(path, text, True))
         self.conflicts = {n for n in sf.identifiers
                           if n in sf.members or n in sf.init_names or n in sf.shadowed}
 
@@ -821,7 +869,9 @@ class Aletheia:
             self._record(region, e["source"], placed)
 
     def _read_shards(self):
-        if os.environ.get("EIDOS_SOURCE_TREE", "matched") == "game":
+        if os.environ.get("EIDOS_SOURCE_TREE", "matched") == "game"                 and os.path.isdir(os.path.join(self.root, "src", "game")):
+            # (A tree without src/game, such as the synthetic one the tests
+            # link, is read the src/matched way whatever the build's switch.)
             self._read_game()
             return
         pattern = os.path.join(self.root, "layout", "matched", "*", "*.json")
@@ -954,9 +1004,11 @@ class Unit:
         self.scan = scan
         self.protos = {}           # name -> return type (implicit calls)
         self.builtins = set()
+        self.builtins_declared = set()
         self.private = {}          # name -> this file's own copy's name
         self.literal_table = False
         self.header = None
+        self.cuts = set()          # src/game: functions a port patch defines
 
 
 class OvState:
@@ -1065,6 +1117,13 @@ class Link:
 
     def _read_link(self):
         """The rest of the link: what it defines, and where."""
+        self.game_cuts = None
+        if getattr(self.args, "cut_list", None) and os.path.exists(self.args.cut_list):
+            self.game_cuts = {}
+            for row in read_list(self.args.cut_list):
+                path, _, names = row.partition("\t")
+                self.game_cuts[os.path.normcase(os.path.abspath(path))] = \
+                    set(n for n in names.split(",") if n)
         self.link_defs = set()
         self.link_at = {}          # addr -> defined name
         self.link_scans = []
@@ -1080,7 +1139,16 @@ class Link:
             seen.add(p)
             if not os.path.exists(p):
                 continue                 # generated later in the build
-            sc = Scan(p, preprocess(read_text(p)))
+            ptext = preprocess(read_text(p))
+            if "/src/game/" in p.replace("\\", "/") and self.game_cuts is not None:
+                # As the boot compiles it (tools/bootlink.py plan_game): the
+                # functions the port defines and the asm bodies are cut, so
+                # a call to one resolves to the port's spelling by address.
+                import gamecut
+                ptext = gamecut.cut(ptext, self.game_cuts.get(
+                    os.path.normcase(os.path.abspath(p)), set()), True)[0]
+            sc = _SCANS.get(("ovlink.Scan", p, include_signature(p, ptext)), ptext,
+                            lambda: Scan(p, ptext))
             self.link_scans.append(sc)
             for n in sc.exported():
                 self.link_defs.add(n)
@@ -1201,6 +1269,36 @@ class Link:
         d = self.args.port_ov_dir
         if not d or not os.path.isdir(d):
             return
+        # A patch of a src/game unit, stubs/ov/patch_ovNNN_<name>.c: its header
+        # names the unit and the functions it defines in the unit's place
+        # (` * patches: src/game/ov009/dwc_match.c NameA NameB`).  Those
+        # definitions are cut from the unit's copy (tools/gamecut.py) and the
+        # patch is compiled beside it: one function changes, the file stays.
+        for fname in sorted(os.listdir(d)):
+            if not (fname.startswith("patch_" + st.ov.tag + "_") and fname.endswith(".c")):
+                continue
+            path = os.path.join(d, fname)
+            text = read_text(path)
+            m = re.search(r"^\s*\*\s*patches:\s*(\S+)\s+(.+)$", text[:4096], re.M)
+            if not m:
+                raise SystemExit("ovlink.py: %s names no unit and functions it patches" % path)
+            rel, names = m.group(1), set(m.group(2).split())
+            unit = next((u for u in st.units if u.rel == rel), None)
+            if unit is None:
+                st.excluded.append((path, "patches %s, which this overlay does not "
+                                    "compile (renamed or gone in aletheia?)" % rel))
+                self.notes.append("port patch %s patches nothing" % path)
+                continue
+            import gamecut
+            unit.cuts |= names
+            cut_text, cut = gamecut.cut(read_text(unit.path), unit.cuts, True, True)
+            missing = sorted(names - set(cut))
+            if missing:
+                self.notes.append("port patch %s: %s not defined in %s"
+                                  % (path, ", ".join(missing), rel))
+            unit.scan = Scan(unit.path, cut_text)
+            st.units.append(Unit(oid, "port/ov/" + fname, path, Scan(path, text)))
+            st.replaced.append((rel + " (" + ", ".join(sorted(names)) + ")", path))
         for fname in sorted(os.listdir(d)):
             if not (fname.startswith("reimpl_" + st.ov.tag + "_") and fname.endswith(".c")):
                 continue
@@ -1306,6 +1404,12 @@ class Link:
         arm = [ad for ad, rg in hits if not rg.startswith("ov")]
         if arm:
             return arm[0]
+        m = re.match(r"^ov(\d{3})_id$", name)
+        if m:
+            # The linker's overlay id symbol, its value the overlay number:
+            # a file that names it without a symbols row (src/game's
+            # ov010/event_wifi_proc.c, ov020_id).
+            return int(m.group(1))
         return None
 
     # -- names -------------------------------------------------------------
@@ -1329,13 +1433,21 @@ class Link:
         for u in st.units:
             sc = u.scan
             refs, implicit = sc.references(self.universe)
+            # An overlay id a macro pastes together (`ov##n##_id`, so the
+            # scanner sees only the declaration): resolve every declared one.
+            refs = set(refs) | {n for n in sc.declared
+                                if re.match(r"^ov\d{3}_id$", n) and n not in sc.defined}
             # Everything this file exports is the overlay's.
             for n in sc.exported():
                 st.renames[n] = self.own(st, n)
             for n in sorted(refs):
                 if n in MWCC_BUILTINS:
-                    if n in implicit:
-                        u.builtins.add(n)
+                    # Implicit (the matched files) or declared by the file
+                    # itself (src/game's gamespy units): either way the port's
+                    # body; a declared one keeps the file's own prototype.
+                    u.builtins.add(n)
+                    if n not in implicit:
+                        u.builtins_declared.add(n)
                     continue
                 if n in st.defs:
                     addr = self.declared_addr(st, n, sc)
@@ -1734,7 +1846,8 @@ def write_unit_header(link, u, ov_header, path):
                          % (n, link.own(st, n)))
     for n in sorted(u.builtins):
         port, decl = MWCC_BUILTINS[n]
-        lines.append(decl)
+        if n not in u.builtins_declared:
+            lines.append(decl)
         lines.append("#define %s %s" % (n, port))
     if u.literal_table:
         fn = "bw_ovl_ds_ptr_%s" % st.ov.tag
@@ -2293,6 +2406,10 @@ def main(argv=None):
                     help="port stand-ins for unmatched overlay functions, "
                          "ovNNN_<name>.c")
     ap.add_argument("--summary", action="store_true")
+    ap.add_argument("--cut-list",
+                    help="src/game: the boot's cut list (tools/bootlink.py "
+                         "plan_game, `path<TAB>name,...`); the link sources are "
+                         "read as their cut copies compile")
     ap.add_argument("--arm9-image",
                     help="the player's extract/arm9_dec.bin, for the linker "
                          "veneers the listing would label (optional)")
@@ -2316,8 +2433,14 @@ def main(argv=None):
         for u in st.units:
             u.header = os.path.join(inc, "tu", flat_name(u.rel) + ".h")
             write_unit_header(link, u, oh, u.header)
-            units.append("%d|%s|%s" % (oid, u.path.replace("\\", "/"),
-                                        u.header.replace("\\", "/")))
+            cut = ""
+            if u.cuts:
+                cut = os.path.join(inc, "tu", flat_name(u.rel) + ".cut")
+                write_if_changed(cut, "%s\t%s\n" % (u.path.replace("\\", "/"),
+                                                     ",".join(sorted(u.cuts))))
+                cut = "|" + cut.replace("\\", "/")
+            units.append("%d|%s|%s%s" % (oid, u.path.replace("\\", "/"),
+                                          u.header.replace("\\", "/"), cut))
         write_overlay_c(link, st, os.path.join(out, "%s_link.c" % st.ov.tag))
     write_if_changed(os.path.join(out, "ovl_c.txt"), "".join(
         os.path.join(out, "ov%03d_link.c" % oid).replace("\\", "/") + "\n"

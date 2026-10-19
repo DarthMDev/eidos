@@ -59,7 +59,7 @@ extern unsigned long PM_GetAmp(int *swBuf);
 #endif
 extern void RTC_Init(void);                /* RTC_Init                */
 extern int  RTCi_WriteRawStatus2Async(void);
-extern BOOL func_02088F2C(unsigned long command);
+extern BOOL RtcSendPxiCommand(unsigned long command);
 typedef struct { unsigned long year, month, day; int week; } RTCDate;
 typedef struct { unsigned long hour, minute, second; } RTCTime;
 extern int RTC_GetDateTimeAsync(RTCDate *date, RTCTime *time,
@@ -307,13 +307,13 @@ static void test_rtc(void)
     *(volatile u16 *)bw_ds_ptr(0x02FFFDEAu) = 0x0044;
     BW_CHECK_EQ("rtc: write status 2", RTCi_WriteRawStatus2Async(), 1);
     *(volatile u16 *)bw_ds_ptr(0x02FFFDEAu) = 0;
-    BW_CHECK_EQ("rtc: read status 2", func_02088F2C(0x17), 1);
+    BW_CHECK_EQ("rtc: read status 2", RtcSendPxiCommand(0x17), 1);
     BW_CHECK_EQ("rtc: status 2 read back", rd16(0x02FFFDEAu), 0x0044);
 
     /* An unknown command is refused with the SDK's invalid-command code.   */
     PXI_SetFifoRecvCallback(BW_PXI_TAG_RTC, recorder);
     g_nrec = 0;
-    BW_CHECK_EQ("rtc: unknown command", func_02088F2C(0x7E), 1);
+    BW_CHECK_EQ("rtc: unknown command", RtcSendPxiCommand(0x7E), 1);
     BW_CHECK_EQ("rtc: refused", g_nrec == 1 ? g_rec[0].data : 0, 0x7E01);
     bw_arm7_rtc_fix_time(NULL);
 }

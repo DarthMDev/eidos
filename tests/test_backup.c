@@ -86,10 +86,10 @@ typedef struct {
     void (*full_callback)(int result, void *arg);
     void *full_arg;
 } MicAutoParam;
-extern void func_0208B24C(void);                        /* MIC_Init           */
-extern int  func_0208B2BC(const MicAutoParam *param,
+extern void MIC_Init(void);                        /* MIC_Init           */
+extern int  MIC_StartAutoSamplingAsync(const MicAutoParam *param,
                           void (*cb)(int result, void *arg), void *arg);
-extern int  func_0208B424(void (*cb)(int result, void *arg), void *arg);
+extern int  MIC_StopAutoSamplingAsync(void (*cb)(int result, void *arg), void *arg);
 extern int  WmInitCore(void *buf, u16 dma, unsigned long size); /* WmInitCore */
 #endif
 
@@ -614,18 +614,18 @@ static void test_mic_wm_matched(void)
     static union { u8 b[0x2000]; u64 align[4]; } wmbuf;
     MicAutoParam param;
 
-    func_0208B24C();                    /* MIC_Init: spins on tag 9         */
+    MIC_Init();                    /* MIC_Init: spins on tag 9         */
     memset(&param, 0, sizeof param);
     param.type = 0;
     param.buffer = (void *)(((uintptr_t)micbuf.b + 31) & ~(uintptr_t)31);
     param.size = 0x200;
     param.rate = 0x1000;
     g_mic_done = 0;
-    BW_CHECK_EQ("mic matched: start issued", func_0208B2BC(&param, mic_done, NULL), 0);
+    BW_CHECK_EQ("mic matched: start issued", MIC_StartAutoSamplingAsync(&param, mic_done, NULL), 0);
     BW_CHECK_EQ("mic matched: answered", g_mic_done, 1);
     BW_CHECK_EQ("mic matched: illegal status", g_mic_result, 5);
     g_mic_done = 0;
-    BW_CHECK_EQ("mic matched: stop issued", func_0208B424(mic_done, NULL), 0);
+    BW_CHECK_EQ("mic matched: stop issued", MIC_StopAutoSamplingAsync(mic_done, NULL), 0);
     BW_CHECK_EQ("mic matched: stop answered", g_mic_result == 0 && g_mic_done == 1, 1);
 
     /* WM_Init's core: no wireless component, the SDK's own answer.          */

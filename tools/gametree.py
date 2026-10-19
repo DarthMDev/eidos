@@ -161,7 +161,32 @@ def source_files(root):
 
 
 def entries(root):
-    """The manifest-shaped entries of src/game/ (see the module comment)."""
+    """The manifest-shaped entries of src/game/ (see the module comment),
+    kept by tools/alcache.py while src/game and layout are unchanged."""
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import alcache
+    import hashlib
+    extra = _extra_rows()
+    key = hashlib.sha1(repr(sorted(extra.items())).encode()).hexdigest()[:12]
+    return alcache.memo(root, "gametree.entries." + key, ("src/game", "layout"),
+                        lambda: _entries(root, extra))
+
+
+def _extra_rows():
+    """{source: [(name, address)]} from tools/gametree_extra.txt."""
+    out = {}
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gametree_extra.txt")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.split("#", 1)[0].split()
+                if len(parts) == 3:
+                    out.setdefault(parts[0], []).append((parts[1], int(parts[2], 16)))
+    return out
+
+
+def _entries(root, extra=None):
     by_name = _manifest_addresses(root)
     sdk = _symbol_table(root, os.path.join("layout", "symbols_sdk.txt"))
     rt = _symbol_table(root, os.path.join("layout", "runtime_arm9.txt"))
@@ -181,7 +206,14 @@ def entries(root):
             if a is None and not region.startswith("ov"):
                 a = sdk.get(f, rt.get(f))
             addrs.append(a)
-        isa = (h.get("isa") or "arm").split()[0] if h.get("isa") else "arm"
+        for f, a in (extra or {}).get(rel, []):
+            if f in funcs:
+                if addrs[funcs.index(f)] is None:
+                    addrs[funcs.index(f)] = a
+            else:
+                funcs.append(f)
+                addrs.append(a)
+        isa =(h.get("isa") or "arm").split()[0] if h.get("isa") else "arm"
         out.append({
             "name": os.path.splitext(os.path.basename(rel))[0],
             "address": addr,

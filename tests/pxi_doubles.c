@@ -67,17 +67,15 @@ int func_02088610(int fifotag, unsigned long data, BOOL err)
     return PXI_SendWordByFifo(fifotag, data, err);
 }
 
-extern BOOL func_02088F2C(unsigned long command);
-int RtcSendPxiCommand(unsigned long command)
-{
-    return func_02088F2C(command);
-}
+/* RtcSendPxiCommand (0x02088F2C) is the matched file's own name since
+ * aletheia's wave 19; this file only calls it. */
+extern BOOL RtcSendPxiCommand(unsigned long command);
 
 /* RTCi_ReadRawDateTimeAsync is a three-instruction asm veneer in aletheia:
  * `mov r0, #0x10` and a tail call of RtcSendPxiCommand.                    */
 BOOL RTCi_ReadRawDateTimeAsync(void)
 {
-    return func_02088F2C(0x10);
+    return RtcSendPxiCommand(0x10);
 }
 
 extern void MSL_C_LIB_EmptyStub(void);

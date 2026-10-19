@@ -47,5 +47,47 @@ the plan for that move and its state.
    while both work.
 5. The pin moves to an aletheia revision with src/game, the tests run, the
    title and NEW GAME runs reach at least where they do from src/matched, and
-   the switch's default becomes `game`.
+   the switch's default becomes `game`.  Done at aletheia `25c15c1610`
+   (2026-10-20): 61 of 61 tests pass, and a NEW GAME run reaches the Nuvema
+   Town scene at frame 10,900 as the src/matched build did.
 6. `stubs/` and `sdk/asm/` drop what src/game made unnecessary.
+
+## What compiling src/game needed
+
+- **Cuts.** Each unit compiles as a copy with its mwcc `asm` bodies and the
+  functions the port defines removed (tools/gamecut.py, `boot_cuts.txt`).
+  Every tool that reads a unit reads that copy: the boot generator, the
+  overlay linker (`--cut-list`) and the data tool (`--cut-list`).  A
+  replacement in `sdk/asm/` is found by name or by address (`func_0200421A.c`
+  is `SVC_CpuSet`).
+- **Patches.** `stubs/ov/patch_ovNNN_<name>.c` names a unit and functions
+  (` * patches: src/game/... NameA NameB`): those are cut from the unit and
+  the patch compiled beside it.  For a fix aletheia keeps out of its source
+  (the u16 font pointer of NAMEIN_GRAPHIC_InitInputField) or has not landed.
+- **Old spellings.** The port's own C keeps src/matched's names; a generated
+  header maps them (tools/gamespell.py, `gamespell.h`, and
+  tools/gamespell_extra.txt for names src/matched no longer has).  The boot
+  generator applies the same map.
+- **Addresses.** A src/game unit lists its functions in no address order;
+  every member's address comes from the manifests (tools/gametree.py).
+  Functions the manifests do not list yet get a row in
+  tools/gametree_extra.txt until aletheia records them.
+- **Scanner forms.** Old-style (K&R) definitions, types from included
+  headers (`../types.h`), `static` from an earlier declaration, `ovNNN_id`
+  pasted by a macro, linker symbols in static initialisers.
+- **Data bytes.** A few units include `build/gen/*.inc` game bytes;
+  tools/aletheiagen.py runs aletheia's generator against the player's
+  extract at configure time.
+- **The ARM9 closure.** Every src/game ARM9 unit is seeded (a function only a
+  data table reaches, such as TRIAL_HOUSE_SAVE_GetSize, has no other way in);
+  `crt0.c` is left out (stubs/game_crt0.c keeps OSi_ReferSymbol).
+
+## Build speed
+
+The generators read tens of thousands of aletheia files.  tools/alcache.py
+keeps what they derive (manifest addresses, symbol rows, each file's parse)
+keyed by the files' paths, sizes and times, so a configure after the first
+re-reads only what changed: about 2 minutes, from 26.  tools/syncexport.py
+moves an export to a newer commit in place, which keeps those caches warm;
+an antivirus exclusion for the export and build folders makes a cold run
+several times faster.

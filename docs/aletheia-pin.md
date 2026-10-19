@@ -8,11 +8,21 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `e06766e42c915278b376fdd9e6b1ddfcdd4ea7f4`
-- Date: 2026-10-15 22:09:06 +0100
-- Subject: Cleanup wave 10 and the gap fixes: game code fully linked at
-  100.00 percent; ov194 namein_graphic split into five originals; arm9 ui
-  merged; non-contiguous pieces now verifiable
+- Revision: `25c15c1610e2b022a5323b413f04b1f6625a1ac1`
+- Date: 2026-10-19 22:49:37 +0100
+- Subject: Wave 20 phase 0: shared type headers (types.h, sdk_*.h),
+  duplicate-type and header tools, 48 second names fixed
+
+The port compiles this revision's `src/game` (EIDOS_SOURCE_TREE=game, the
+default, docs/game-tree.md).  The previous pin, `e06766e42c` (cleanup wave
+10), is the last one the `src/matched` build was run against; at the new pin
+some tests name src/matched functions by their wave 19 names (TP_, MIC_,
+RtcSendPxiCommand), so `matched` is kept for comparison runs against that
+older export only.
+
+To move an export to a newer pin without losing the generators' caches,
+`tools/syncexport.py REPO COMMIT DEST` rewrites only the files the two
+commits differ in (docs/game-tree.md, "Build speed").
 
 The pin lives in `cmake/aletheia_pin.cmake` as `EIDOS_ALETHEIA_PIN`.
 

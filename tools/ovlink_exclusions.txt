@@ -5,13 +5,3 @@
 #
 # Sources whose bodies are mwcc `asm` are left out without a line here: the
 # tool finds them itself and says so in its report.
-
-# src/game (EIDOS_SOURCE_TREE=game, docs/game-tree.md): network units with
-# mwcc-only forms GCC refuses (a static definition after a non-static or
-# implicit declaration, one function declared with two prototypes).  Sent to
-# aletheia for its wave 19; these lines go when the fixes land.
-src/game/ov009/dwc_match.c        DWCi_GetNumConnectionHost and DWCi_DebugPrintServerList declared two ways
-src/game/ov009/gslargeint.c       gsiLargeIntSubDivide called before any declaration
-src/game/ov009/gsxml.c            gsiXmlUtilTagMatches, gsiXmlUtilGrowBuffer: static after implicit declaration
-src/game/ov009/sb_server.c        StringHash called before any declaration
-src/game/ov009/socl_shutdown.c    SOCLi_ShutdownCallBack: static after a non-static declaration

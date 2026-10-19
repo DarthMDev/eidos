@@ -81,6 +81,14 @@ if(EIDOS_BOOT_ALL_GAME)
     file(GLOB _boot_all_game RELATIVE ${ALETHEIA_ROOT}/src/matched
          ${ALETHEIA_ROOT}/src/matched/arm9/*.c)
     list(APPEND EIDOS_BOOT_SEEDS ${_boot_all_game})
+    if(EIDOS_SOURCE_TREE STREQUAL "game")
+        # src/game splits and merges src/matched's files, so its own ARM9
+        # units are seeded too (a table-only callee such as
+        # trial_house_savedata.c has no src/matched seed that maps to it).
+        file(GLOB _boot_all_game_src RELATIVE ${ALETHEIA_ROOT}
+             ${ALETHEIA_ROOT}/src/game/arm9/*.c)
+        list(APPEND EIDOS_BOOT_SEEDS ${_boot_all_game_src})
+    endif()
 endif()
 
 # With overlays compiled in (EIDOS_OVERLAYS, cmake/overlays.cmake): the
@@ -374,6 +382,12 @@ list(APPEND EIDOS_BOOT_PORT_SOURCES
     # unit members the pinned manifests do not list (stubs/unit_members.c)
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/unit_members.c
 )
+if(EIDOS_SOURCE_TREE STREQUAL "game")
+    # src/game units the port replaces whole: crt0.c is the game's start-up
+    # (its tables name linker symbols as initialisers); sdk/ starts the game.
+    list(APPEND EIDOS_BOOT_SHIM_REPLACED src/game/arm9/crt0.c)
+    list(APPEND EIDOS_BOOT_PORT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/stubs/game_crt0.c)
+endif()
 if(NOT EIDOS_TCBL_MATCHED)
     # stubs/reimpl_ for the nine tcbl files (CMakeLists.txt, "Pointer
     # width"): the overlays' ARM9 callees reach the matched ones.
@@ -423,7 +437,11 @@ endif()
 # past a Windows command line's length.
 set(_seed_lines)
 foreach(s ${EIDOS_BOOT_SEEDS})
-    string(APPEND _seed_lines "src/matched/${s}\n")
+    if(s MATCHES "^src/")
+        string(APPEND _seed_lines "${s}\n")
+    else()
+        string(APPEND _seed_lines "src/matched/${s}\n")
+    endif()
 endforeach()
 file(WRITE ${EIDOS_BOOT_DIR}/boot_seeds.txt "${_seed_lines}")
 set(_seed_args --seed-file ${EIDOS_BOOT_DIR}/boot_seeds.txt)
@@ -471,6 +489,11 @@ endif()
 file(STRINGS ${EIDOS_BOOT_DIR}/boot_asm_subst.txt EIDOS_BOOT_ASM_SUBST)
 
 # --- build: the generated headers and C ------------------------------------
+
+set(_boot_gamespell_arg)
+if(EIDOS_GAMESPELL_H)
+    set(_boot_gamespell_arg --gamespell ${EIDOS_GAMESPELL_H})
+endif()
 
 set(_boot_headers)
 set(_boot_units ${EIDOS_BOOT_MATCHED} ${EIDOS_BOOT_PORT_SOURCES} ${EIDOS_BOOT_ASM_SUBST})
@@ -586,6 +609,7 @@ add_custom_target(eidos_boot_copies DEPENDS ${EIDOS_BOOT_COPIES})
 add_custom_command(
     OUTPUT ${_boot_headers} ${_boot_gen_c} ${EIDOS_BOOT_GEN}/boot_link_report.txt
     COMMAND ${EIDOS_TREE_ENV} ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bootlink.py generate
+            ${_boot_gamespell_arg}
             --aletheia-root ${ALETHEIA_ROOT}
             --plan-dir ${EIDOS_BOOT_DIR}
             --shim-sources ${EIDOS_BOOT_DIR}/shim_sources_gen.txt

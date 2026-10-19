@@ -70,6 +70,13 @@ function(eidos_armdata prefix)
         list(APPEND bind_args --arm9-image ${_armdata_extract_dir}/arm9_dec.bin)
     endif()
 
+    # src/game: read each unit as its cut copy compiles (tools/gamecut.py).
+    set(_armdata_cut_dep)
+    if(EIDOS_SOURCE_TREE STREQUAL "game" AND EIDOS_GAME_CUT_LIST)
+        list(APPEND bind_args --cut-list ${EIDOS_GAME_CUT_LIST})
+        set(_armdata_cut_dep ${EIDOS_GAME_CUT_LIST})
+    endif()
+
     add_custom_command(
         OUTPUT ${out_c} ${out_h}
         COMMAND ${Python3_EXECUTABLE} ${EIDOS_ARMDATA_TOOL}
@@ -83,6 +90,7 @@ function(eidos_armdata prefix)
                 ${EIDOS_ARMDATA_EXCLUSIONS}
                 ${A_SOURCES_LIST}
                 ${A_BIND}
+                ${_armdata_cut_dep}
                 ${ALETHEIA_ROOT}/layout/layout.json
                 ${ALETHEIA_ROOT}/layout/data_objects.json
                 ${ALETHEIA_ROOT}/layout/symbols_sdk.txt

@@ -47,7 +47,7 @@ endif()
 # or `game` (src/game, one original source file per file).  Every generator
 # reads it from the environment, so it is set here for the configure-time
 # tools and passed to the build-time ones with `cmake -E env`.
-set(EIDOS_SOURCE_TREE "matched" CACHE STRING
+set(EIDOS_SOURCE_TREE "game" CACHE STRING
     "aletheia tree the boot compiles: matched (src/matched) or game (src/game)")
 set_property(CACHE EIDOS_SOURCE_TREE PROPERTY STRINGS matched game)
 if(EIDOS_SOURCE_TREE STREQUAL "game" AND NOT EXISTS "${ALETHEIA_ROOT}/src/game")
@@ -72,6 +72,40 @@ endif()
 file(TO_CMAKE_PATH "${BW_DATA_ROOT_ABS}" BW_DATA_ROOT_ABS)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+# src/game names many functions otherwise than src/matched did; the port's
+# own C keeps the old spellings and is compiled with a header of #defines to
+# the src/game names (tools/gamespell.py).  Written when the aletheia
+# checkout changes; delete it to write it again.
+if(EIDOS_SOURCE_TREE STREQUAL "game")
+    set(EIDOS_GAMESPELL_H ${CMAKE_BINARY_DIR}/gamespell.h)
+    if(NOT EXISTS ${EIDOS_GAMESPELL_H}
+       OR NOT "${EIDOS_GAMESPELL_ROOT}" STREQUAL "${ALETHEIA_ROOT}"
+       OR ${CMAKE_CURRENT_SOURCE_DIR}/tools/gamespell_extra.txt IS_NEWER_THAN ${EIDOS_GAMESPELL_H})
+        execute_process(
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gamespell.py
+                    ${ALETHEIA_ROOT} -o ${EIDOS_GAMESPELL_H}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/stubs
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/demo
+            RESULT_VARIABLE _gs_rc)
+        if(NOT _gs_rc EQUAL 0)
+            message(FATAL_ERROR "tools/gamespell.py failed (${_gs_rc})")
+        endif()
+        set(EIDOS_GAMESPELL_ROOT "${ALETHEIA_ROOT}" CACHE INTERNAL "")
+    endif()
+    add_compile_options("SHELL:-include ${EIDOS_GAMESPELL_H}")
+    # Game bytes some src/game files include from build/gen/ (tools/aletheiagen.py).
+    get_filename_component(_eidos_extract_dir "${BW_DATA_ROOT_ABS}" DIRECTORY)
+    if(EXISTS "${_eidos_extract_dir}/arm9_dec.bin")
+        execute_process(
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/aletheiagen.py
+                    ${ALETHEIA_ROOT} ${_eidos_extract_dir}
+            RESULT_VARIABLE _ag_rc)
+        if(NOT _ag_rc EQUAL 0)
+            message(FATAL_ERROR "tools/aletheiagen.py failed (${_ag_rc})")
+        endif()
+    endif()
+endif()
 
 # Whether the player's extracted assets are there at all.  The fixture
 # generator and the four oracles read them at build time, and seven tests
@@ -2336,4 +2370,16 @@ if(NOT "${BW_ROM}" STREQUAL "")
 endif()
 if(EIDOS_TEST_DIALOGS AND TEST test_picker)
     set_property(TEST test_picker APPEND PROPERTY ENVIRONMENT "EIDOS_TEST_DIALOGS=1")
+endif()
+
+# Tests that compile their own copies of src/matched files under their own
+# renames keep the src/matched spellings: tools/gamespell.py's header steps
+# aside for them.
+if(EIDOS_SOURCE_TREE STREQUAL "game")
+    foreach(_t test_armdata_real test_backup test_firmware test_input test_pxi
+               test_snd_matched test_tp)
+        if(TARGET ${_t})
+            target_compile_definitions(${_t} PRIVATE EIDOS_NO_GAMESPELL)
+        endif()
+    endforeach()
 endif()
