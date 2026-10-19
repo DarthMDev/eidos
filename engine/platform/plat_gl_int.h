@@ -60,10 +60,13 @@
     X(PFNGLUNMAPBUFFERPROC, glUnmapBuffer) \
     X(PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC, glRenderbufferStorageMultisample) \
     X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer) \
-    X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)
+    X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)     X(PFNGLDRAWBUFFERSPROC, glDrawBuffers)     X(PFNGLCOLORMASKIPROC, glColorMaski)     X(PFNGLCLEARBUFFERFVPROC, glClearBufferfv)     X(PFNGLCLEARBUFFERUIVPROC, glClearBufferuiv)     X(PFNGLUNIFORM1UIPROC, glUniform1ui)
 
 typedef struct GlFb {
-    GLuint fbo, color, depth;
+    GLuint fbo, color, depth;     /* depth: a DEPTH24_STENCIL8 texture       */
+    GLuint pid;                   /* R8UI: 0x80 | polygon ID of an opaque pixel,
+                                     else the clear plane's ID (edge marking) */
+    GLuint post_fbo, color2;      /* the edge-marking pass writes here      */
     int w, h;
     GLuint ms_fbo, ms_color, ms_depth;   /* the multisampled target (anti-aliasing) */
     int ms_w, ms_h;
@@ -108,7 +111,10 @@ struct EidosGl {
     int have3d;
     GLuint p3d;
     GLint u_mode, u_alpha5, u_tex3, u_texture, u_texsize3, u_wrap, u_alpharef,
-          u_toon, u_highlight, u_toontab, u_front, u_back, u_wbuf, u_pass;
+          u_toon, u_highlight, u_toontab, u_front, u_back, u_wbuf, u_pass,
+          u_id;
+    GLuint pedge;                  /* the edge-marking pass (0: unavailable) */
+    GLint ue_col, ue_id, ue_dep, ue_step, ue_cid, ue_cdep, ue_edge;
     GlFb fb[2];                    /* 0: the display size, 1: DS size (readback) */
     unsigned read_serial;          /* snapshot serial last read back         */
     GLuint pbo;                    /* async readback target                  */
@@ -117,6 +123,11 @@ struct EidosGl {
     GLuint vbo3, vao3;
     GLuint *gtex;
     unsigned n_gtex, cap_gtex;
+    unsigned *gtex_key;            /* per GL texture: what it holds (w, h and
+                                      a hash of the texels), so an unchanged
+                                      texture is not uploaded again          */
+    unsigned tex_serial;           /* snapshot whose textures are uploaded   */
+    int tex_serial_valid;
     float *vtx;
     size_t cap_vtx;
 };

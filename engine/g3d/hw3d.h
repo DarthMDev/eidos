@@ -154,6 +154,7 @@ typedef struct G3dSnapshot {
     u32 clear_depth;        /* CLEAR_DEPTH, 15 bits                       */
     u32 unsupported;        /* G3D_SNAP_* the GPU path cannot honour      */
     u8  toon[32 * 3];       /* R,G,B per entry                            */
+    u16 edge[8];            /* EDGE_COLOR, BGR555, one per 8 polygon IDs  */
 } G3dSnapshot;
 
 /* Frame features the GPU renderer does not do yet (a frame using one is
@@ -162,6 +163,11 @@ typedef struct G3dSnapshot {
 #define G3D_SNAP_FOG     0x2u   /* fog                                 */
 #define G3D_SNAP_REARBMP 0x4u   /* rear-plane bitmap                   */
 #define G3D_SNAP_SHADOW  0x8u   /* shadow polygons                     */
+
+/* The G3D_SNAP_* features the GPU renderer draws itself (its platform
+ * layer says so once its shaders are up).  A frame that uses a feature
+ * outside this set is marked unsupported and drawn by the CPU rasteriser. */
+void g3d_hw_gpu_features(u32 snap_mask);
 
 /* With the snapshot on, skip the CPU rasteriser for the following frames: a
  * GPU renderer draws them from the snapshot and g3d_hw_frame() goes stale.

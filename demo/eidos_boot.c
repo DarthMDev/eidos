@@ -660,6 +660,18 @@ static void boot_screenshot(BootRun *run, u64 n)
     } else {
         fprintf(stderr, "eidos_boot: cannot write %s\n", path);
     }
+#if EIDOS_BOOT_SDL
+    /* With a window, also the picture as the window shows it, at its own
+     * resolution (the GPU's 3D at the window's scale), as a BMP. */
+    if (run->plat != NULL) {
+        snprintf(path, sizeof(path), "%s/eidos_boot_frame%llu_window.bmp",
+                 g_shot_dir, (unsigned long long)n);
+        if (eidos_platform_screenshot(run->plat, path) == 0) {
+            printf("eidos_boot: frame %llu window saved to %s\n",
+                   (unsigned long long)n, path);
+        }
+    }
+#endif
     fflush(stdout);
 }
 

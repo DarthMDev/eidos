@@ -10,9 +10,16 @@
  * projected winding.  The result is premultiplied RGBA (a translucent pixel
  * over the clear plane keeps its own alpha, as the 2D engine expects).
  *
+ * Edge marking is a second pass: the draw writes each opaque pixel's
+ * polygon ID beside its colour, and the pass outlines every opaque pixel
+ * that is nearer than a neighbour of another ID, in the EDGE_COLOR entry of
+ * its ID, as engine/g3d/raster.c g3d_target_edge_mark does.  The neighbour
+ * is one DS pixel away (the scale, in framebuffer pixels), so the outline
+ * keeps the DS's width at any resolution.
+ *
  * Not done on the GPU (the snapshot says so in `unsupported` and the caller
- * shows the CPU frame instead): edge marking, fog, the rear-plane bitmap,
- * shadow polygons.  Anti-aliasing is the resolution itself.
+ * shows the CPU frame instead): fog, the rear-plane bitmap, shadow polygons.
+ * Anti-aliasing is the resolution itself.
  */
 
 #include <stdio.h>
@@ -20,6 +27,7 @@
 #include <string.h>
 
 #include "plat_gl_int.h"
+#include "g3d.h"
 #include "hw3d.h"
 #include "prof.h"
 
@@ -42,7 +50,9 @@ static const char *k_fs3 =
     "#version 330 core\n"
     "in vec2 v_st;\n"
     "in vec3 v_rgb;\n"
-    "out vec4 o;\n"
+    "layout(location = 0) out vec4 o;\n"
+    "layout(location = 1) out uint o_id;\n"
+    "uniform int u_id;\n"
     "uniform int u_mode;\n"          /* 0 modulate, 1 decal, 2 toon/highlight */
     "uniform int u_alpha5;\n"
     "uniform int u_tex;\n"
@@ -108,8 +118,53 @@ static const char *k_fs3 =
     "    if (a5 == 0 || a5 <= u_alpharef) { discard; }\n"
     "    float a = float(a5) / 31.0;\n"
     "    o = vec4(vec3(col) / 255.0 * a, a);\n"
+    "    o_id = uint(u_id);\n"
     "    gl_FragDepth = (u_wbuf == 1) ? clamp((1.0 / gl_FragCoord.w) / 16777216.0, 0.0, 1.0)\n"
     "                                 : gl_FragCoord.z;\n"
+    "}\n";
+
+/* Edge marking, over the frame just drawn (see the file comment).  A pixel
+ * off the frame counts as the clear plane: its ID and depth. */
+static const char *k_vse =
+    "#version 330 core\n"
+    "void main() {\n"
+    "    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);\n"
+    "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+    "}\n";
+
+static const char *k_fse =
+    "#version 330 core\n"
+    "uniform sampler2D u_col;\n"
+    "uniform usampler2D u_id;\n"
+    "uniform sampler2D u_dep;\n"
+    "uniform int u_step;\n"
+    "uniform uint u_cid;\n"
+    "uniform float u_cdep;\n"
+    "uniform vec3 u_edge[8];\n"
+    "out vec4 o;\n"
+    "void main() {\n"
+    "    ivec2 p = ivec2(gl_FragCoord.xy);\n"
+    "    ivec2 sz = textureSize(u_col, 0);\n"
+    "    vec4 c = texelFetch(u_col, p, 0);\n"
+    "    uint id = texelFetch(u_id, p, 0).r;\n"
+    "    o = c;\n"
+    "    if ((id & 0x80u) == 0u) { return; }\n"
+    "    id &= 0x3Fu;\n"
+    "    float d = texelFetch(u_dep, p, 0).r;\n"
+    "    ivec2 k[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));\n"
+    "    for (int i = 0; i < 4; i++) {\n"
+    "        ivec2 q = p + k[i] * u_step;\n"
+    "        uint nid = u_cid;\n"
+    "        float nd = u_cdep;\n"
+    "        if (q.x >= 0 && q.y >= 0 && q.x < sz.x && q.y < sz.y) {\n"
+    "            nid = texelFetch(u_id, q, 0).r & 0x3Fu;\n"
+    "            nd = texelFetch(u_dep, q, 0).r;\n"
+    "        }\n"
+    "        if (nid != id && d < nd) {\n"
+    "            o = vec4(u_edge[id >> 3], 1.0);\n"
+    "            return;\n"
+    "        }\n"
+    "    }\n"
     "}\n";
 
 static u8 c5to8(u32 v)
@@ -139,13 +194,30 @@ int eidos_gl3d_init(EidosGl *g)
     LOC(u_back, "u_back");
     LOC(u_wbuf, "u_wbuf");
     LOC(u_pass, "u_pass");
+    LOC(u_id, "u_id");
 #undef LOC
+    /* Edge marking is optional: without it, frames that use it stay on the
+     * CPU rasteriser (g3d_hw_gpu_features). */
+    g->pedge = eidos_gl_compile_program(g, k_vse, k_fse);
+    if (g->pedge != 0) {
+        g->ue_col = g->glGetUniformLocation(g->pedge, "u_col");
+        g->ue_id = g->glGetUniformLocation(g->pedge, "u_id");
+        g->ue_dep = g->glGetUniformLocation(g->pedge, "u_dep");
+        g->ue_step = g->glGetUniformLocation(g->pedge, "u_step");
+        g->ue_cid = g->glGetUniformLocation(g->pedge, "u_cid");
+        g->ue_cdep = g->glGetUniformLocation(g->pedge, "u_cdep");
+        g->ue_edge = g->glGetUniformLocation(g->pedge, "u_edge");
+    }
     g->glGenFramebuffers(1, &g->fb[0].fbo);
     g->glGenFramebuffers(1, &g->fb[1].fbo);
     g->glGenVertexArrays(1, &g->vao3);
     g->glGenBuffers(1, &g->vbo3);
     g->have3d = 1;
-    return glGetError() == GL_NO_ERROR ? 0 : -1;
+    if (glGetError() != GL_NO_ERROR) {
+        return -1;
+    }
+    g3d_hw_gpu_features(g->pedge != 0 ? G3D_SNAP_EDGE : 0u);
+    return 0;
 }
 
 void eidos_gl3d_destroy(EidosGl *g)
@@ -159,10 +231,15 @@ void eidos_gl3d_destroy(EidosGl *g)
             g->glDeleteFramebuffers(1, &f->fbo);
         }
         if (f->depth != 0) {
-            g->glDeleteRenderbuffers(1, &f->depth);
+            glDeleteTextures(1, &f->depth);
         }
         if (f->color != 0) {
             glDeleteTextures(1, &f->color);
+            glDeleteTextures(1, &f->pid);
+            glDeleteTextures(1, &f->color2);
+        }
+        if (f->post_fbo != 0) {
+            g->glDeleteFramebuffers(1, &f->post_fbo);
         }
         if (f->ms_fbo != 0) {
             g->glDeleteFramebuffers(1, &f->ms_fbo);
@@ -179,11 +256,53 @@ void eidos_gl3d_destroy(EidosGl *g)
     if (g->p3d != 0) {
         g->glDeleteProgram(g->p3d);
     }
+    if (g->pedge != 0) {
+        g->glDeleteProgram(g->pedge);
+    }
+    g3d_hw_gpu_features(0u);
     for (i = 0; i < g->n_gtex; i++) {
         glDeleteTextures(1, &g->gtex[i]);
     }
     free(g->gtex);
+    free(g->gtex_key);
     free(g->vtx);
+}
+
+static void tex_params(GLint filter)
+{
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+/* Attach `color`, the ID buffer and the depth to the frame's FBO, and
+ * `color2` to the edge pass's.  The two colour textures swap after an
+ * edge pass, so this runs again then. */
+static int fbo_attach(EidosGl *g, GlFb *f)
+{
+    static const GLenum bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+
+    g->glBindFramebuffer(GL_FRAMEBUFFER, f->fbo);
+    g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                              GL_TEXTURE_2D, f->color, 0);
+    g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
+                              GL_TEXTURE_2D, f->pid, 0);
+    g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                              GL_TEXTURE_2D, f->depth, 0);
+    g->glDrawBuffers(2, bufs);
+    if (g->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return -1;
+    }
+    g->glBindFramebuffer(GL_FRAMEBUFFER, f->post_fbo);
+    g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                              GL_TEXTURE_2D, f->color2, 0);
+    if (g->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return -1;
+    }
+    return 0;
 }
 
 static int fbo_resize(EidosGl *g, GlFb *f, int w, int h)
@@ -193,29 +312,77 @@ static int fbo_resize(EidosGl *g, GlFb *f, int w, int h)
     }
     if (f->color == 0) {
         glGenTextures(1, &f->color);
-        g->glGenRenderbuffers(1, &f->depth);
+        glGenTextures(1, &f->color2);
+        glGenTextures(1, &f->pid);
+        glGenTextures(1, &f->depth);
+        g->glGenFramebuffers(1, &f->post_fbo);
     }
     glBindTexture(GL_TEXTURE_2D, f->color);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
                  GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    g->glBindRenderbuffer(GL_RENDERBUFFER, f->depth);
-    g->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
-    g->glBindFramebuffer(GL_FRAMEBUFFER, f->fbo);
-    g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                              GL_TEXTURE_2D, f->color, 0);
-    g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                                 GL_RENDERBUFFER, f->depth);
-    if (g->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    tex_params(GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, f->color2);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, NULL);
+    tex_params(GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, f->pid);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8UI, w, h, 0, GL_RED_INTEGER,
+                 GL_UNSIGNED_BYTE, NULL);
+    tex_params(GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, f->depth);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0,
+                 GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
+    tex_params(GL_NEAREST);
+    if (fbo_attach(g, f) != 0) {
         return -1;
     }
     f->w = w;
     f->h = h;
     return 0;
+}
+
+/* The edge-marking pass: the frame's colour, ID and depth in, the marked
+ * frame out into color2, which then becomes the frame's colour. */
+static void edge_pass(EidosGl *g, GlFb *f, const G3dSnapshot *s, int w,
+                      double clear_depth)
+{
+    GLfloat edge[24];
+    GLuint t;
+    int k, step = w / 256;
+
+    for (k = 0; k < 8; k++) {
+        u32 c = s->edge[k];
+
+        edge[k * 3 + 0] = (float)c5to8(c) / 255.f;
+        edge[k * 3 + 1] = (float)c5to8(c >> 5) / 255.f;
+        edge[k * 3 + 2] = (float)c5to8(c >> 10) / 255.f;
+    }
+    g->glBindFramebuffer(GL_FRAMEBUFFER, f->post_fbo);
+    glViewport(0, 0, f->w, f->h);
+    g->glUseProgram(g->pedge);
+    g->glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, f->color);
+    g->glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, f->pid);
+    g->glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, f->depth);
+    g->glUniform1i(g->ue_col, 0);
+    g->glUniform1i(g->ue_id, 1);
+    g->glUniform1i(g->ue_dep, 2);
+    g->glUniform1i(g->ue_step, step < 1 ? 1 : step);
+    g->glUniform1ui(g->ue_cid, (GLuint)((s->clear_color >> 24) & 0x3Fu));
+    g->glUniform1f(g->ue_cdep, (GLfloat)clear_depth);
+    g->glUniform3fv(g->ue_edge, 8, edge);
+    g->glBindVertexArray(g->vao3);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    g->glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    g->glActiveTexture(GL_TEXTURE0);
+    t = f->color;
+    f->color = f->color2;
+    f->color2 = t;
+    (void)fbo_attach(g, f);
 }
 
 /*
@@ -258,6 +425,22 @@ static int msaa_target(EidosGl *g, GlFb *f, int w, int h)
 
 #define ATTR_DEFAULT (((u32)1 << 6) | ((u32)1 << 7) | ((u32)31 << 16))
 
+/* What a snapshot texture holds, for the upload cache: FNV-1a over its size
+ * and texels (0 is kept for "nothing uploaded"). */
+static unsigned tex_key(const G3dSnapTex *t)
+{
+    unsigned h = 2166136261u;
+    size_t i, n = (size_t)t->w * t->h * 4u;
+    const u32 *w = (const u32 *)t->rgba;
+
+    h = (h ^ t->w) * 16777619u;
+    h = (h ^ t->h) * 16777619u;
+    for (i = 0; t->rgba != NULL && i < n / 4u; i++) {
+        h = (h ^ w[i]) * 16777619u;
+    }
+    return h != 0 ? h : 1u;
+}
+
 /* Render the snapshot at w x h into the framebuffer; the colour texture is
  * then eidos_gl_3d_texture(g).  Returns 0, or -1 if the GPU path cannot
  * draw this frame. */
@@ -271,7 +454,8 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     int prev_depth_eq = -1, prev_mask = -1;
     GLfloat toon[96];
     unsigned long long t_up, t_dr;
-    int use_ms;
+    int use_ms, edges;
+    double cdepth;
 
     if (g == NULL || !g->have3d || s == NULL || w < 1 || h < 1) {
         return -1;
@@ -285,13 +469,20 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
         if (g->n_gtex == g->cap_gtex) {
             unsigned c = g->cap_gtex ? g->cap_gtex * 2u : 16u;
             GLuint *n = (GLuint *)realloc(g->gtex, (size_t)c * sizeof(*n));
+            unsigned *k;
 
             if (n == NULL) {
                 return -1;
             }
             g->gtex = n;
+            k = (unsigned *)realloc(g->gtex_key, (size_t)c * sizeof(*k));
+            if (k == NULL) {
+                return -1;
+            }
+            g->gtex_key = k;
             g->cap_gtex = c;
         }
+        g->gtex_key[g->n_gtex] = 0;
         glGenTextures(1, &g->gtex[g->n_gtex]);
         glBindTexture(GL_TEXTURE_2D, g->gtex[g->n_gtex]);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -302,11 +493,25 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     t_up = eidos_prof_begin();
-    for (i = 0; i < s->n_tex; i++) {
-        glBindTexture(GL_TEXTURE_2D, g->gtex[i]);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)s->tex[i].w,
-                     (GLsizei)s->tex[i].h, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                     s->tex[i].rgba);
+    /* Upload only what changed: the same snapshot is drawn twice in a frame
+     * (the window's size and the DS size), and most textures stay from one
+     * frame to the next.  Re-specifying a texture the GPU is still drawing
+     * from can make the driver wait for that draw. */
+    if (!g->tex_serial_valid || g->tex_serial != s->serial) {
+        for (i = 0; i < s->n_tex; i++) {
+            unsigned key = tex_key(&s->tex[i]);
+
+            if (g->gtex_key[i] == key && key != 0) {
+                continue;
+            }
+            g->gtex_key[i] = key;
+            glBindTexture(GL_TEXTURE_2D, g->gtex[i]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)s->tex[i].w,
+                         (GLsizei)s->tex[i].h, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                         s->tex[i].rgba);
+        }
+        g->tex_serial = s->serial;
+        g->tex_serial_valid = 1;
     }
 
     eidos_prof_end(EIDOS_PROF_GLUP, t_up);
@@ -344,7 +549,10 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
         }
     }
 
-    use_ms = (s->disp3dcnt & 0x10u) != 0 && msaa_target(g, fb, w, h);
+    /* Edge marking needs the ID buffer, which the multisampled target does
+     * not carry; at a large size the resolution smooths the edges anyway. */
+    edges = (s->disp3dcnt & 0x20u) != 0 && g->pedge != 0;
+    use_ms = !edges && (s->disp3dcnt & 0x10u) != 0 && msaa_target(g, fb, w, h);
     if (!use_ms) {
         g->glBindFramebuffer(GL_FRAMEBUFFER, fb->fbo);
     }
@@ -364,13 +572,31 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
                  (float)cg / 255.f * (float)alpha / 255.f,
                  (float)cb / 255.f * (float)alpha / 255.f,
                  (float)alpha / 255.f);
-    glClearDepth(s->wbuffer ? (double)(s->clear_depth & 0x7FFFu) / 32768.0
-                            : ((s->clear_depth & 0x7FFFu) == 0x7FFFu
-                               ? 1.0
-                               : (double)(s->clear_depth & 0x7FFFu) / 32767.0));
+    cdepth = s->wbuffer ? (double)(s->clear_depth & 0x7FFFu) / 32768.0
+                        : ((s->clear_depth & 0x7FFFu) == 0x7FFFu
+                           ? 1.0
+                           : (double)(s->clear_depth & 0x7FFFu) / 32767.0);
+    glClearDepth(cdepth);
     glStencilMask(0xFFu);
     glClearStencil(0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    if (use_ms) {
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    } else {
+        /* the ID buffer is an integer target: cleared on its own, to the
+         * clear plane's polygon ID */
+        GLfloat c4[4];
+        GLuint id4[4] = { 0, 0, 0, 0 };
+
+        c4[0] = (float)cr / 255.f * (float)alpha / 255.f;
+        c4[1] = (float)cg / 255.f * (float)alpha / 255.f;
+        c4[2] = (float)cb / 255.f * (float)alpha / 255.f;
+        c4[3] = (float)alpha / 255.f;
+        id4[0] = (cc >> 24) & 0x3Fu;
+        g->glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        g->glClearBufferfv(GL_COLOR, 0, c4);
+        g->glClearBufferuiv(GL_COLOR, 1, id4);
+        glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    }
 
     if (nv > 0) {
         unsigned drawn = 0, first = 0;
@@ -466,6 +692,7 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
                 g->glUniform1i(g->u_tex3, 0);
             }
             xid = (GLint)(0x40u | G3D_ATTR_ID(attr));
+            g->glUniform1i(g->u_id, (GLint)(0x80u | G3D_ATTR_ID(attr)));
             if (a5 >= 31u && slot >= 0 && (s->disp3dcnt & 1u) && s->tex[slot].partial) {
                 /* An opaque polygon whose texture has partly transparent
                  * texels: the hardware decides per pixel from the final alpha,
@@ -475,10 +702,13 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
                 glDepthMask(GL_TRUE);
                 glStencilFunc(GL_ALWAYS, 0, 0xFFu);
                 g->glUniform1i(g->u_pass, 1);
+                g->glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
                 glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
                 glDepthMask(G3D_ATTR_XLU_DEPTH(attr) ? GL_TRUE : GL_FALSE);
                 glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
                 g->glUniform1i(g->u_pass, 2);
+                /* a translucent pixel keeps the ID beneath it */
+                g->glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
                 glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
                 g->glUniform1i(g->u_pass, 0);
                 prev_mask = G3D_ATTR_XLU_DEPTH(attr) ? 1 : 0;
@@ -488,6 +718,7 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
                 } else {
                     glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
                 }
+                g->glColorMaski(1, a5 >= 31u, a5 >= 31u, a5 >= 31u, a5 >= 31u);
                 glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
             }
             first += verts;
@@ -499,11 +730,22 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_STENCIL_TEST);
     glDisable(GL_BLEND);
+    g->glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    if (edges) {
+        edge_pass(g, fb, s, w, cdepth);
+    }
     if (use_ms) {
         /* resolve the samples into the frame's texture */
         g->glBindFramebuffer(GL_READ_FRAMEBUFFER, fb->ms_fbo);
+        static const GLenum c0[1] = { GL_COLOR_ATTACHMENT0 };
+        static const GLenum both[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+
         g->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb->fbo);
+        /* the colour only: the ID buffer is an integer target, which a
+         * blit from a normalised one may not write */
+        g->glDrawBuffers(1, c0);
         g->glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        g->glDrawBuffers(2, both);
     }
     g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     eidos_prof_end(EIDOS_PROF_GLDRAW, t_dr);

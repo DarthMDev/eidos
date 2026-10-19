@@ -30,9 +30,18 @@ Status of the renderer and where it goes. Written 2026-10-04.
   also rendered at DS size and read back (asynchronously, one frame late when it
   only feeds the capture) because the capture works at DS resolution on the
   hardware too; those scenes cannot exceed DS resolution.
-- Frames that use edge marking, fog, the rear-plane bitmap or shadow polygons
-  are not drawn by the GPU yet (`G3dSnapshot.unsupported`); the CPU rasteriser
-  draws them (at most `BOOT_CPU_3D_MAX`).
+- Edge marking is a GPU pass: the draw writes each opaque pixel's polygon ID
+  to a second (R8UI) target, and a full-screen pass outlines each opaque pixel
+  nearer than a neighbour of another ID, the neighbour one DS pixel away at any
+  scale. Such a frame is drawn without multisampling.
+- Frames that use fog, the rear-plane bitmap or shadow polygons are not drawn
+  by the GPU yet (`G3dSnapshot.unsupported`, less the features the GPU reports
+  with `g3d_hw_gpu_features`); the CPU rasteriser draws them (at most
+  `BOOT_CPU_3D_MAX`), in row bands on the worker pool, the same to the bit as
+  one pass.
+- A snapshot texture is uploaded only when its texels change (a hash per GL
+  texture): re-specifying every texture each frame made the driver wait on the
+  previous frame's draw, which cost a 6x frame about 25 ms.
 - Also done for speed: decoded textures persist across frames (hash of the
   source bytes), the 2D compositors run on a worker pool (`engine/g2d/par.c`:
   the engines in parallel, each screen in four row bands), the decoded-texture
@@ -100,7 +109,7 @@ hand written backends later; eidos is on SDL2 today.
 
 ## Not done yet
 
-Edge marking, fog, the rear-plane bitmap, shadow polygons and
+Fog, the rear-plane bitmap, shadow polygons and
 `DISP_1DOT_DEPTH` on the GPU path (those frames fall back to the CPU
 rasteriser); quads with non-planar vertex colours differ slightly from the
 software edge interpolation; the alpha-blend of the 3D layer with BLDALPHA is

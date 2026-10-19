@@ -864,6 +864,12 @@ static int g_snap_valid;
 static u32 g_snap_cap_ptex;
 
 static int g_skip_raster;
+static u32 g_gpu_features;
+
+void g3d_hw_gpu_features(u32 snap_mask)
+{
+    g_gpu_features = snap_mask;
+}
 
 void g3d_hw_skip_raster(int on)
 {
@@ -1003,6 +1009,9 @@ static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
     s->clear_color = cc;
     s->clear_depth = cd;
     memcpy(s->toon, g_hw.toon, sizeof(s->toon));
+    for (i = 0; i < 8u; i++) {
+        s->edge[i] = bw_io_read16(G3D_HW_EDGE_COLOR + i * 2u);
+    }
     s->unsupported = 0;
     if (d3 & 0x0020u) {
         s->unsupported |= G3D_SNAP_EDGE;
@@ -1016,6 +1025,7 @@ static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
     if (unsup & G3D_HW_UNSUP_SHADOW) {
         s->unsupported |= G3D_SNAP_SHADOW;
     }
+    s->unsupported &= ~g_gpu_features;
     g_snap_valid = 1;
 }
 

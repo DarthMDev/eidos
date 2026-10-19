@@ -18,10 +18,10 @@ What is known to be missing or worth adding, written 2026-10-04. Items marked
   window always opens at the DS size for the layout. Decide: remember the last
   non-maximized size (never a maximized one), or drop the two options.
 - **GPU 3D gaps.** The GPU rasteriser (engine/platform/plat_gl3d.c) does not do
-  edge marking, fog, the rear-plane bitmap or shadow polygons. A frame that uses
-  one is drawn by the CPU rasteriser at a capped scale. Edge marking needs a
-  polygon-ID attachment and a post pass; fog needs the depth buffer and the
-  FOG_TABLE; the rear-plane bitmap is a textured full-screen quad with depth.
+  fog, the rear-plane bitmap or shadow polygons. A frame that uses one is drawn
+  by the CPU rasteriser at a capped scale. Fog needs the depth buffer (now a
+  texture, for edge marking) and the FOG_TABLE; the rear-plane bitmap is a
+  textured full-screen quad with depth.
 - **2D over 3D.** A translucent 2D layer or sprite blended over a GPU 3D layer is
   lost: the composite shows the GPU frame wherever the 2D screen differs from the
   3D-off screen. The fix is to keep the layer-priority and blend information per

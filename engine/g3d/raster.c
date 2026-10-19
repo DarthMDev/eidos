@@ -425,10 +425,14 @@ static void interp(ScreenV *o, const ScreenV *a, const ScreenV *b,
 
 G3dRasterStats g3d_raster_stats;
 
-#define RSTAT(f) (g3d_raster_stats.f++)
+/* The statistics count once per polygon: a band other than the first
+ * (g3d_raster_geom) leaves them alone. */
+#define RSTAT(f) do { if (stats) { g3d_raster_stats.f++; } } while (0)
 
-void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
-                        u32 attr, u32 teximage, const G3dTexture *tex)
+/* One polygon, drawn on rows ylo..yhi only. */
+static void raster_band(G3dTarget *t, const G3dVertex *v, u32 n,
+                        u32 attr, u32 teximage, const G3dTexture *tex,
+                        s32 ylo, s32 yhi, int stats)
 {
     ClipV in[CLIP_MAX], tmp[CLIP_MAX];
     ScreenV sv[CLIP_MAX];
@@ -551,8 +555,8 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
         s32 y0 = (ymin - SUB_HALF + SUB_ONE - 1) >> SUBPIX;
         s32 y1 = (ymax - SUB_HALF - 1) >> SUBPIX;
 
-        if (y0 < 0) { y0 = 0; }
-        if (y1 >= (s32)t->height) { y1 = (s32)t->height - 1; }
+        if (y0 < ylo) { y0 = ylo; }
+        if (y1 > yhi) { y1 = yhi; }
 
         for (y = y0; y <= y1; y++) {
             s32 yc = (y << SUBPIX) + SUB_HALF;   /* the pixel centre */
@@ -718,6 +722,12 @@ void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
     }
 }
 
+void g3d_raster_polygon(G3dTarget *t, const G3dVertex *v, u32 n,
+                        u32 attr, u32 teximage, const G3dTexture *tex)
+{
+    raster_band(t, v, n, attr, teximage, tex, 0, (s32)t->height - 1, 1);
+}
+
 /*
  * [HW] The order the hardware draws polygons in: every opaque polygon first
  * (in the order they were sent), then the translucent ones (alpha 1..30), which
@@ -819,9 +829,28 @@ void g3d_geom_sort(G3dGeom *g, int manual)
     free(copy);
 }
 
-void g3d_raster_geom(G3dTarget *t, const G3dGeom *g,
-                     G3dTexLookup lookup, void *user)
+/*
+ * A frame's polygons, in bands of rows run on the compositor's worker pool
+ * (engine/g2d/par.c).  Every pixel belongs to one band and each band draws
+ * every polygon in order, so a pixel sees the same polygons in the same
+ * order as a single pass: the frame is the same to the bit.  Only the
+ * statistics are counted once, by the first band.
+ */
+#define BAND_MAX 8u
+#define BAND_MIN_POLYS 64u
+
+typedef struct BandJob {
+    G3dTarget *t;
+    const G3dGeom *g;
+    G3dTexLookup lookup;
+    void *user;
+    const G3dTexture **tex;   /* per polygon, resolved before the bands */
+    u32 bands;
+} BandJob;
+
+static void raster_rows(const BandJob *j, s32 ylo, s32 yhi, int stats)
 {
+    const G3dGeom *g = j->g;
     u32 i;
 
     for (i = 0; i < g->n_polys; i++) {
@@ -835,9 +864,56 @@ void g3d_raster_geom(G3dTarget *t, const G3dGeom *g,
         for (k = 0; k < poly->count; k++) {
             v[k] = g->verts[g->idx[poly->first + k]];
         }
-        g3d_raster_polygon(t, v, poly->count, poly->attr, poly->teximage,
-                           lookup ? lookup(user, i) : NULL);
+        raster_band(j->t, v, poly->count, poly->attr, poly->teximage,
+                    j->tex != NULL ? j->tex[i]
+                    : j->lookup ? j->lookup(j->user, i) : NULL,
+                    ylo, yhi, stats);
     }
+}
+
+static void band_task(void *ctx, unsigned index)
+{
+    const BandJob *j = (const BandJob *)ctx;
+    s32 h = (s32)j->t->height;
+    s32 ylo = (s32)(((u32)h * index) / j->bands);
+    s32 yhi = (s32)(((u32)h * (index + 1u)) / j->bands) - 1;
+
+    raster_rows(j, ylo, yhi, index == 0);
+}
+
+void g3d_raster_geom(G3dTarget *t, const G3dGeom *g,
+                     G3dTexLookup lookup, void *user)
+{
+    BandJob j;
+    u32 i;
+
+    j.t = t;
+    j.g = g;
+    j.lookup = lookup;
+    j.user = user;
+    j.tex = NULL;
+    j.bands = g2d_par_workers() + 1u;
+    if (j.bands > BAND_MAX) {
+        j.bands = BAND_MAX;
+    }
+    if (j.bands >= 2u && g->n_polys >= BAND_MIN_POLYS && t->height >= j.bands) {
+        j.tex = (const G3dTexture **)malloc((size_t)g->n_polys * sizeof(*j.tex));
+    }
+    if (j.tex == NULL) {
+        raster_rows(&j, 0, (s32)t->height - 1, 1);
+        return;
+    }
+    /* The lookup decodes and caches on first use, which is not safe from
+     * several threads, and a cache that grows may move what it returned
+     * earlier: one pass fills the cache, a second takes the pointers. */
+    for (i = 0; i < g->n_polys; i++) {
+        j.tex[i] = lookup != NULL ? lookup(user, i) : NULL;
+    }
+    for (i = 0; lookup != NULL && i < g->n_polys; i++) {
+        j.tex[i] = lookup(user, i);
+    }
+    g2d_par_run(j.bands, band_task, &j);
+    free((void *)j.tex);
 }
 
 /* ------------------------------------------------------------------ */
