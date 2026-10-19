@@ -357,7 +357,7 @@ void bw_ovl_stub(u32 id, u32 addr)
              "overlay %lu: function 0x%08lX is not in this build (not matched in "
              "aletheia, or its source is excluded; tools/ovlink.py's report says "
              "which)", (unsigned long)id, (unsigned long)addr);
-    bw_panic("overlay stub", addr, why);
+    bw_stub_reached("overlay stub", addr, why);
 }
 
 void bw_ovl_arm9_stub(u32 addr, const char *name)
@@ -367,7 +367,7 @@ void bw_ovl_arm9_stub(u32 addr, const char *name)
     snprintf(why, sizeof(why),
              "%s: ARM9 function an overlay calls and this link does not define "
              "(tools/ovlink.py --arm9-stubs)", name);
-    bw_panic("overlay ARM9 stub", addr, why);
+    bw_stub_reached("overlay ARM9 stub", addr, why);
 }
 
 void bw_ovl_dispatch_fail(u32 addr, const char *name, int resident, int why)

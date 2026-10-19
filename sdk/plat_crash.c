@@ -146,6 +146,61 @@ static LONG WINAPI bw_crash_filter(EXCEPTION_POINTERS *ep)
 }
 
 static int bw_crash_on;
+static BwCodeResolver bw_code_resolver;
+
+/* The DS address space eidos maps at the same host addresses (sdk/dsmem.h):
+ * an execute fault inside it is a call to a DS code address. */
+#define BW_DS_CODE_LO 0x01FF8000u
+#define BW_DS_CODE_HI 0x02800000u
+
+static LONG WINAPI bw_ds_call_handler(EXCEPTION_POINTERS *ep)
+{
+    const EXCEPTION_RECORD *er = ep->ExceptionRecord;
+    uintptr_t at;
+    const char *name = NULL;
+    void *fn;
+    static unsigned int reported[256];
+    static unsigned int nreported;
+    unsigned int i;
+
+    if (bw_code_resolver == NULL || er->ExceptionCode != EXCEPTION_ACCESS_VIOLATION
+            || er->NumberParameters < 2 || er->ExceptionInformation[0] != 8) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    at = (uintptr_t)er->ExceptionInformation[1];
+    if (at < BW_DS_CODE_LO || at >= BW_DS_CODE_HI) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    fn = bw_code_resolver((unsigned int)at, &name);
+    if (fn == NULL) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    for (i = 0; i < nreported && reported[i] != (unsigned int)at; i++) {
+    }
+    if (i == nreported && nreported < 256) {
+        reported[nreported++] = (unsigned int)at;
+        fprintf(stderr, "ds call: 0x%08X -> %s\n", (unsigned int)at, name ? name : "?");
+    }
+#if defined(_M_X64) || defined(__x86_64__)
+    ep->ContextRecord->Rip = (DWORD64)(uintptr_t)fn;
+#elif defined(_M_IX86) || defined(__i386__)
+    ep->ContextRecord->Eip = (DWORD)(uintptr_t)fn;
+#else
+    return EXCEPTION_CONTINUE_SEARCH;
+#endif
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+void bw_plat_crash_code_resolver(BwCodeResolver resolve)
+{
+    static int added;
+
+    bw_code_resolver = resolve;
+    if (resolve != NULL && !added) {
+        AddVectoredExceptionHandler(1, bw_ds_call_handler);
+        added = 1;
+    }
+}
 
 void bw_plat_crash_install(void)
 {
@@ -353,6 +408,11 @@ void bw_plat_crash_install(void)
         sigaction(sigs[i], &sa, NULL);
     }
     bw_crash_on = 1;
+}
+
+void bw_plat_crash_code_resolver(BwCodeResolver resolve)
+{
+    (void)resolve;               /* Win32 only (sdk/plat_crash.h) */
 }
 
 #endif

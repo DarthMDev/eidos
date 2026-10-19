@@ -1246,7 +1246,8 @@ LINK_C_HEAD = """\
  * BW_DS_INTR_CHECK_BUF - 0x3FF8.
  *
  * Every function below the constants is a STUB: it panics with its DS
- * address when called.  "open" is game code aletheia has not matched;
+ * address when called (with keep-going on, it reports once and returns;
+ * sdk/port.h, bw_stub_reached).  "open" is game code aletheia has not matched;
  * "asm body" is an SDK file written as mwcc assembly, which sdk/asm/
  * replaces (bootlink.py plan picks a replacement up by file name).
  */
@@ -1334,7 +1335,7 @@ def write_link_c(path, consts, pinned, views, missing_funcs, slots=None,
     for name in sorted(missing_funcs):
         addr, why = missing_funcs[name]
         lines.append("void %s(void);" % name)
-        lines.append("void %s(void)\n{\n    bw_panic(\"boot stub reached (%s)\", 0x%08Xu, \"%s\");\n}\n"
+        lines.append("void %s(void)\n{\n    bw_stub_reached(\"boot stub reached (%s)\", 0x%08Xu, \"%s\");\n}\n"
                      % (name, why.replace("\\", "/"), addr or 0, name))
     write_if_changed(path, "\n".join(lines))
 

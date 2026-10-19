@@ -51,6 +51,21 @@ void bw_plat_watchdog(unsigned seconds, unsigned long long (*progress)(void));
 void bw_plat_crash_context(void (*fn)(void));
 void bw_plat_crash_context_run(void);
 
+/*
+ * A call to a DS code address.  Matched C sometimes holds a function's DS
+ * address as a plain number (a literal stored as a callback, a pointer the
+ * data scan could not see), and the host then jumps to it: an execute fault
+ * at an address in the DS address space.  With a resolver set, that fault
+ * is answered before the crash report: `resolve` gets the faulting address
+ * and returns the host function the build compiled for it, or NULL; on a
+ * hit the thread continues in that function with the call's own arguments
+ * and return address, and the first call through each address is reported
+ * on stderr once ("ds call: 0x... -> name").  Win32 only; a no-op
+ * elsewhere.  NULL removes it.
+ */
+typedef void *(*BwCodeResolver)(unsigned int ds_addr, const char **name);
+void bw_plat_crash_code_resolver(BwCodeResolver resolve);
+
 #ifdef __cplusplus
 }
 #endif

@@ -317,6 +317,20 @@ void bw_heap_note_release(u32 heap_id);
  */
 void bw_panic(const char *what, u32 address, const char *detail);
 
+/*
+ * A stub reached: a function the build does not define yet (a boot stub, an
+ * overlay's ARM9 stub, an unmatched overlay function, an armdata trap).
+ * Normally bw_panic.  With keep-going on (EIDOS_KEEP_GOING=1 in the
+ * environment, or bw_set_keep_going(1); eidos_boot's --keep-going), it
+ * reports the stub once per address on stderr ("STUB (kept going): ...")
+ * and returns, so one diagnostic run lists every stub on its way instead of
+ * stopping at the first.  The stub's caller then sees an undefined result:
+ * a run in this mode finds holes, it does not play the game correctly.
+ */
+void bw_stub_reached(const char *what, u32 address, const char *detail);
+void bw_set_keep_going(int on);
+int  bw_keep_going(void);
+
 /* ------------------------------------------------------------------ */
 /* Power-on                                                            */
 /* ------------------------------------------------------------------ */

@@ -458,9 +458,9 @@ u32 bw_data_scanned(void)
 
 void bw_data_trap(u32 addr)
 {
-    bw_panic("armdata", addr,
-             "called through a pointer in the ARM9 data to code the build does "
-             "not define (tools/armdata.py lists it as a trap)");
+    bw_stub_reached("armdata", addr,
+                    "called through a pointer in the ARM9 data to code the build does "
+                    "not define (tools/armdata.py lists it as a trap)");
 }
 
 /* ------------------------------------------------------------------ */

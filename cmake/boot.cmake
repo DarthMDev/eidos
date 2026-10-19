@@ -367,6 +367,8 @@ list(APPEND EIDOS_BOOT_PORT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D360.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204D380.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0206CB8C.c
+    # unit members the pinned manifests do not list (stubs/unit_members.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/unit_members.c
 )
 if(NOT EIDOS_TCBL_MATCHED)
     # stubs/reimpl_ for the nine tcbl files (CMakeLists.txt, "Pointer
