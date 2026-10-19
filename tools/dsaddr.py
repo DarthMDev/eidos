@@ -1589,8 +1589,7 @@ def main(argv=None) -> int:
             key = os.path.normcase(os.path.abspath(src_path)).replace("\\", "/")
             with open(a.cut_list, encoding="utf-8") as fh:
                 for line in fh:
-                    path, _, names = line.rstrip("
-").partition("	")
+                    path, _, names = line.rstrip("\n").partition("\t")
                     if os.path.normcase(os.path.abspath(path)).replace("\\", "/") == key:
                         drop.update(n for n in names.split(",") if n)
         source, _cut = gamecut.cut(source, drop, a.cut_asm)
