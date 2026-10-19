@@ -70,6 +70,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gametree  # noqa: E402  (pair_members)
+
 EIDOS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_EXCLUSIONS = os.path.join(EIDOS_ROOT, "tools", "armdata_exclusions.txt")
 
@@ -636,6 +639,7 @@ def load_function_names(root: str, sources, region: str = None):
     for fname in ("symbols_sdk.txt", "runtime_arm9.txt"):
         for addr, names in read_symbol_txt(os.path.join(root, "layout", fname)).items():
             by_addr.setdefault(addr, []).extend(names)
+    table_rows = {n: a for a, ns in by_addr.items() for n in ns}
     for sf in sources:
         for name, addr in sf.header_functions:
             by_addr.setdefault(addr, []).append(name)
@@ -657,8 +661,11 @@ def load_function_names(root: str, sources, region: str = None):
                 if not names or not addrs:
                     names = [entry["name"]] if entry.get("name") else []
                     addrs = [entry["address"]] if entry.get("address") else []
-                for name, addr in zip(names, addrs):
-                    a = int(addr, 16)
+                rows = None if region.startswith("ov") else table_rows
+                paired = gametree.pair_members(names, [int(a, 16) for a in addrs], rows)
+                for name, a in zip(names, paired):
+                    if a is None:
+                        continue
                     by_addr.setdefault(a, []).append(name)
                     if isa in ("arm", "thumb"):
                         isa_by_addr.setdefault(a, isa)

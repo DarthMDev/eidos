@@ -678,6 +678,13 @@ class Index:
         sym = self.scan(source).symbols.get(name)
         if sym:
             return sym
+        if SOURCE_TREE == "game":
+            # src/game merged its headers and some names lost their row (a
+            # data name a unit's own header does not list): the row any
+            # other src/game or src/matched file gives it.
+            sym = self._global_symbols().get(name)
+            if sym:
+                return sym
         addr = self._name_addr(name)
         if addr is None:
             addr = self.rt_by_name.get(name)
@@ -759,6 +766,16 @@ class Index:
             for name, klass, detail in self.refs(source):
                 if klass in ("matched", "alias"):
                     owner = detail if klass == "matched" else detail.split(" in ", 1)[1]
+                    if SOURCE_TREE == "game" and self.sources.get(owner, {}).get(
+                            "region", "arm9").startswith("ov") and not self.sources.get(
+                            source, {}).get("region", "arm9").startswith("ov"):
+                        # An ARM9 unit calling into an overlay: the call goes
+                        # through ovlink's trampoline to the overlay's own
+                        # compiled copy (cmake/overlays.cmake); a src/game
+                        # unit is a whole overlay file, so it is not pulled
+                        # into the ARM9 link.
+                        open_refs.setdefault((name, "overlay", owner), []).append(source)
+                        continue
                     if owner not in seen_set and owner not in queued:
                         queue.append(owner)
                         queued.add(owner)
@@ -787,6 +804,29 @@ class Index:
                 if owner:
                     return owner
         raise SystemExit("closure.py: no matched source defines %r" % seed)
+
+    def _global_symbols(self):
+        """{name: (address, kind)} from every symbols block of src/game and
+        src/matched (headers only); src/game's rows win."""
+        if getattr(self, "_gsym", None) is None:
+            self._gsym = {}
+            for tree in ("game", "matched"):
+                base = os.path.join(ROOT, "src", tree)
+                for dirpath, _dirs, files in os.walk(base):
+                    for f in files:
+                        if not f.endswith((".c", ".h")):
+                            continue
+                        try:
+                            with open(os.path.join(dirpath, f), encoding="utf-8",
+                                      errors="replace") as fh:
+                                head = fh.read(16384)
+                        except OSError:
+                            continue
+                        if "symbols:" not in head:
+                            continue
+                        for n, (a, k) in SourceScan._parse_symbols(head).items():
+                            self._gsym.setdefault(n, (a, k))
+        return self._gsym
 
     def _matched_functions(self):
         """{path under src/matched/: [functions]} from the manifests."""

@@ -15,8 +15,11 @@
  * order.  mwcc keeps the whole register, so the DS stores the full
  * pointer; a host compiler narrows it to 16 bits and the name entry
  * screen read the font through 0x0000FD34.  Here it is u32; everything
- * else is the matched function.  Sent to aletheia; this file goes when the
- * port compiles src/game with the fix (docs/game-tree.md).
+ * else is the matched function.  aletheia keeps u16 on purpose: the
+ * original source most likely declared it so (the DS ABI hides the bug, as
+ * mwcc never narrows a parameter on entry), and the pointer type moves the
+ * entry spills 4 bytes off.  So the port keeps this patch after it moves to
+ * src/game (docs/game-tree.md).
  *
  * original status:   EXACT*
  * note 2026-10-05 (wD7 lane05): the entry spill order (b before a) follows the type of the

@@ -92,6 +92,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import armdata          # noqa: E402  (name_address, SourceFile, exclusions)
 import overlay_table    # noqa: E402  (KNOWN_SINIT)
 import closure          # noqa: E402  (listing_veneers)
+import gametree         # noqa: E402  (pair_members)
 
 EIDOS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_EXCLUSIONS = os.path.join(EIDOS_ROOT, "tools", "armdata_exclusions.txt")
@@ -839,12 +840,16 @@ class Aletheia:
                 # in its name, so without the pair it is placed nowhere and an
                 # address-spelled caller looks like a name the link lacks.
                 member_addrs = e.get("addresses") or e.get("covers")
+                if member_addrs:
+                    rows = {n: hs[0][0] for n, hs in self.sdk_by_name.items()
+                            if hs and hs[0][1] == region}
+                    member_addrs = gametree.pair_members(names, [int(a, 16) for a in member_addrs], rows)
                 base = int(e["address"], 16)
                 placed = []
                 for k, n in enumerate(names):
                     m = ADDR_FUNC.match(n)
-                    if member_addrs and k < len(member_addrs):
-                        a = int(member_addrs[k], 16)
+                    if member_addrs and k < len(member_addrs) and member_addrs[k] is not None:
+                        a = member_addrs[k]
                     elif m:
                         a = int(m.group(1), 16)
                     elif k == 0:

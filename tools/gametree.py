@@ -68,9 +68,37 @@ def _header(text):
     return out
 
 
+def pair_members(names, addrs, rows=None):
+    """Pair a unit's `functions` with its manifest `addresses`.
+
+    aletheia lists the two in the same order, except where a unit's address
+    list is sorted and its names are not (src/matched/arm9/converters.c: nine
+    MSL converters, header order _s32_to_float.._f2d, addresses ascending).
+    A name whose own address is in the list (its func_XXXXXXXX spelling, or
+    its row in `rows`, the SDK and runtime tables) takes that address; the
+    other names take the addresses left, in order."""
+    want = set(addrs)
+    own = []
+    for n in names:
+        m = re.match(r"^(?:\w+_)?func_([0-9A-Fa-f]{8})$", n or "")
+        a = int(m.group(1), 16) if m else (rows or {}).get(n)
+        own.append(a if a in want else None)
+    taken = {a for a in own if a is not None}
+    rest = [a for a in addrs if a not in taken]
+    out = []
+    for a in own:
+        if a is None:
+            a = rest.pop(0) if rest else None
+        out.append(a)
+    return out
+
+
 def _manifest_addresses(root):
     """{(region, name): address} from aletheia's per-packet manifests."""
     out = {}
+    rows = dict(_symbol_table(root, os.path.join("layout", "runtime_arm9.txt")))
+    for k, v in _symbol_table(root, os.path.join("layout", "symbols_sdk.txt")).items():
+        rows.setdefault(k, v)
     pattern = os.path.join(root, "layout", "matched", "**", "*.json")
     for path in sorted(glob.glob(pattern, recursive=True)):
         try:
@@ -82,9 +110,10 @@ def _manifest_addresses(root):
             region = e.get("region", "arm9")
             names = e.get("functions") or [e.get("name")]
             addrs = e.get("addresses") or e.get("covers") or [e.get("address")]
-            for n, a in zip(names, addrs):
-                if n and a:
-                    out.setdefault((region, n), int(a, 16))
+            addrs = [int(a, 16) for a in addrs if a]
+            for n, a in zip(names, pair_members(names, addrs, None if region.startswith("ov") else rows)):
+                if n and a is not None:
+                    out.setdefault((region, n), a)
     return out
 
 

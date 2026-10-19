@@ -88,6 +88,7 @@ import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import closure  # noqa: E402
+import gametree  # noqa: E402  (pair_members)
 import ovlink    # noqa: E402  (the prototype normaliser, tools/ovlink.py)
 
 DATA_ADDR_NAME = re.compile(r"^[A-Za-z]+_([0-9A-Fa-f]{8})$")
@@ -299,10 +300,15 @@ def load_member_addresses(idx):
             # Overlays share address ranges, so only the static image is
             # resolved by address (closure.Index._load_shards does the same).
             static = not entry["region"].startswith("ov")
+            rows = dict(idx.rt_by_name)
+            for k, v in idx.sdk_by_name.items():
+                rows.setdefault(k, v)
+            paired = gametree.pair_members(entry["functions"], [int(a, 16) for a in addrs],
+                                           rows if static else None)
             for k, name in enumerate(entry["functions"]):
-                if k >= len(addrs):
+                if k >= len(addrs) or paired[k] is None:
                     break
-                addr = int(addrs[k], 16)
+                addr = paired[k]
                 idx.member_addr[(source, name)] = addr
                 idx.member_by_addr.setdefault((source, addr), name)
                 if static:
@@ -922,9 +928,18 @@ def generate(args):
 
     # Defined functions by address (func_/sub_ spellings and SDK names), and
     # defined data by address (g_XXXXXXXX spellings and BW_REG rows).
+    # A tail-call thunk (boot/thunk/) defines its matched source's function
+    # at that source's address: sub_0202C0C8 in func_0202B7E0.c is
+    # ISS_SWITCH_SYS_ZoneChange, which the thunk for func_0202C0C8.c defines.
+    thunk_rel = {}
+    for row in read_list(os.path.join(pdir, "boot_thunks.txt")):
+        parts = row.split(None, 2)
+        if len(parts) == 3 and parts[1] == "thunk":
+            thunk_rel[os.path.normcase(os.path.abspath(parts[2]))] = parts[0]
     func_at, data_at = {}, dict(shims.data_at)
     for name in sorted(defined):
-        addr = defined_addr(idx, rel_to_root(defined[name]), name)
+        rel = rel_to_root(defined[name])             or thunk_rel.get(os.path.normcase(os.path.abspath(defined[name])))
+        addr = defined_addr(idx, rel, name)
         if addr is not None:
             func_at.setdefault(addr, name)
         m = DATA_ADDR_NAME.match(name)
