@@ -271,6 +271,16 @@ static void *boot_resolve_code(unsigned int ds_addr, const char **name)
 #define REG_DISPSTAT 0x04000004u
 
 #define DISPSTAT_VBLANK_FLAG 0x0001u
+/* VCOUNT, the line the display is on.  The port has no line timing, so it
+ * holds the line the game's code would see: 192, the first line of vblank,
+ * from vblank until the next frame starts, and 0 from then.  The game's
+ * frame work runs after the vblank wait, while the console is still in
+ * vblank, and some of it checks for that: MCSS_TransTextureTask (the
+ * intro's professor and Pokemon, battle sprites) uploads its texture only
+ * when VCOUNT is between 192 and 200, and with VCOUNT stuck at 0 the sprites
+ * never became drawable. */
+#define REG_VCOUNT 0x04000006u
+#define VCOUNT_VBLANK_LINE 192u
 #define DISPSTAT_VBLANK_IRQ  0x0008u
 
 /* One DS frame is 560190 cycles of the 33513982 Hz system clock. */
@@ -730,6 +740,7 @@ static void boot_vblank(void *user)
     u32 dispstat = io_raw_read(REG_DISPSTAT, 2);
 
     io_raw_write(REG_DISPSTAT, 2, dispstat | DISPSTAT_VBLANK_FLAG);
+    io_raw_write(REG_VCOUNT, 2, VCOUNT_VBLANK_LINE);
     bw_io_sync();
     if (dispstat & DISPSTAT_VBLANK_IRQ) {
         bw_os_raise_irq(OS_IE_V_BLANK);
@@ -1133,6 +1144,7 @@ static void boot_frame(void *user)
     /* Line 0 of the next frame: the vblank flag drops. */
     io_raw_write(REG_DISPSTAT, 2,
                  io_raw_read(REG_DISPSTAT, 2) & ~DISPSTAT_VBLANK_FLAG);
+    io_raw_write(REG_VCOUNT, 2, 0);
 
     /* The input of this frame, before its vblank (sdk/input.h): the
      * window's keys and the --press / --input script, KEYINPUT and the
