@@ -778,6 +778,18 @@ def signature(head, name, typedefs):
     return ret, tuple(out)
 
 
+_WORD_TYPES = {"int", "unsigned int", "short", "unsigned short", "char", "signed char",
+               "unsigned char", "long", "unsigned long", "void *"}
+
+
+def _word_call(sig):
+    """True when a normalised signature passes and returns only word-sized
+    scalars and pointers: a call through it can carry another function's
+    arguments as words (the trampolines' cross-prototype call)."""
+    ret, params = sig
+    return (ret == "void" or ret in _WORD_TYPES) and all(t in _WORD_TYPES for t in params)
+
+
 def proto(ret, name, params):
     plist = ", ".join("%s a%d" % (t, k) for k, t in enumerate(params)) or "void"
     sep = "" if ret.endswith("*") else " "
@@ -2472,6 +2484,27 @@ def write_dispatch(link, path, set_name):
             if sym is None:
                 body.append("    if (ov == %d) {" % c)
                 body.append("        bw_ovl_stub(%du, %s);" % (c, key))
+                body.append("    }")
+                continue
+            if forward and s is not None and s != sig and _word_call(sig) and _word_call(s):
+                # Another function at the same address in this overlay
+                # (ov010 calls 0x021F385C as ov059's SP_POKE_GIMMICK_UpdatePairB;
+                # leaving the player's house ov065 is resident there with
+                # FIELD_GIMMICK_TIME_EFFECT_StartEffect).  The DS calls
+                # whatever is resident with the caller's registers; the host
+                # does the same with the caller's arguments as words, each
+                # cast to the callee's type, missing ones zero.
+                if sym not in declared:
+                    declared[sym] = proto_decl(s[0], sym, s[1])
+                wargs = ", ".join(
+                    ("(%s)(uintptr_t)a%d" % (t, k)) if k < len(params) else "(%s)0" % t
+                    for k, t in enumerate(s[1]))
+                body.append("    if (ov == %d) {" % c)
+                if ret == "void" or s[0] == "void":
+                    body.append("        %s(%s);" % (sym, wargs))
+                    body += leave(None if ret == "void" else "0", 8)
+                else:
+                    body += leave("(%s)(uintptr_t)%s(%s)" % (ret, sym, wargs), 8)
                 body.append("    }")
                 continue
             if not forward or s != sig:

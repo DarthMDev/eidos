@@ -296,7 +296,6 @@ typedef struct BootRun {
     u64 ff_shown_ns;   /* fast forward: when a frame was last shown      */
     int ff_skip;       /* fast forward: this frame is neither drawn nor shown */
     u32 ff_since;      /* fast forward: frames since one was shown        */
-    int raster_skip;   /* the 3D raster skip boot_render chose for drawn frames */
     u64 audio_rem;     /* the output-frame remainder, in clock units     */
     u8 *top;
     u8 *bottom;
@@ -1015,7 +1014,6 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
 
         g3d_hw_snapshot_enable(gpu);
         g3d_hw_skip_raster(skip);
-        run->raster_skip = skip;
         if (skip) {
             g3d_hw_set_scale(1u);
         } else {
@@ -1223,9 +1221,11 @@ static void boot_frame(void *user)
         g3d_hw_trace(eidos_frame_count(&run->loop) + 1u == g_trace_frame);
     }
 #if EIDOS_BOOT_SDL
-    /* Fast forward (Tab): one frame in `speed` is drawn and shown, the rest
-     * neither, so the game's own work is most of what runs; drawing a frame
-     * costs more than running one, more so at higher resolutions.  A frame is
+    /* Fast forward (Tab): one frame in `speed` is composed and shown, the
+     * rest neither, so the game's own work is most of what runs; composing a
+     * frame costs more than running one, more so at higher resolutions.  The
+     * 3D engine still works out every frame: a swap shows what was sent the
+     * frame before, so a frame it skipped would show stale or empty.  A frame is
      * shown sooner when 100 ms have passed, so the window never stalls.  Not
      * while the display capture is on: it reads the drawn frame back into
      * VRAM for the game. */
@@ -1237,8 +1237,6 @@ static void boot_frame(void *user)
             && (bw_io_read32(0x04000064u) & 0x80000000u) == 0u;
         run->ff_since = run->ff_skip ? run->ff_since + 1u : 0u;
     }
-    g3d_hw_skip_raster(run->ff_skip ? 1 : run->raster_skip);
-    g3d_hw_skip_frame(run->ff_skip);
 #endif
     eidos_frame_run_one(&run->loop);
     eidos_prof_end(EIDOS_PROF_STEP, t_step + g_render_ns);
