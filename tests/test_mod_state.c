@@ -191,9 +191,13 @@ int main(void)
      * pointer's alignment asks for. */
     BW_CHECK_EQ("the registration call follows the version",
                 (long)offsetof(BwModHost, on), (long)sizeof(void *));
-    BW_CHECK_EQ("the state table follows the registration call",
-                (long)offsetof(BwModHost, state)
+    /* The script call follows it (version 2 of the surface added it). */
+    BW_CHECK_EQ("the script call follows the registration call",
+                (long)offsetof(BwModHost, script)
                 - (long)offsetof(BwModHost, on), (long)sizeof(void *));
+    BW_CHECK_EQ("the state table follows the script call",
+                (long)offsetof(BwModHost, state)
+                - (long)offsetof(BwModHost, script), (long)sizeof(void *));
     BW_CHECK_EQ("the services table follows the state table",
                 (long)offsetof(BwModHost, services)
                 - (long)offsetof(BwModHost, state), (long)sizeof(void *));

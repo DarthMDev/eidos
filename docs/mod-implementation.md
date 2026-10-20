@@ -221,32 +221,38 @@ Steps 6 to 10 need 1 and can run in parallel with step 4.
 
 ### What is built
 
-Steps 1, 2, 3 and 5 are built, step 4 for the session, progress and items
-areas, and steps 6 and 7: `sdk/mod_api.h`, `sdk/mod_state.h`, `sdk/mod_event.h`
-and `sdk/mod_context.h` are the headers, `sdk/mod_event.c` and
-`sdk/mod_context.c` the dispatch and the contexts, `sdk/mod_state.c` the state
-calls, `sdk/mod_event_session.c` and `sdk/mod_event_items.c` the first two
-areas' rows, `sdk/mod_manifest.c` the manifest record and the apply,
+Steps 1, 2, 3 and 5 are built, step 4 for every area, and steps 6, 7 and 8's
+first service: `sdk/mod_api.h`, `sdk/mod_state.h`, `sdk/mod_event.h`,
+`sdk/mod_context.h`, `sdk/mod_script.h`, `sdk/mod_rule.h` and
+`sdk/mod_text.h` are the headers, `sdk/mod_event.c` and `sdk/mod_context.c`
+the dispatch and the contexts, `sdk/mod_state.c` the state calls, the five
+area files the rows, `sdk/mod_manifest.c` the manifest record and the apply,
 `sdk/mod_savedata.c` a mod's own saved data, `sdk/mod_loader.c` the loader,
-and the two generators emit the enter and leave calls. The declared set is at
-run time too: the boot link emits the table of every row and `sdk/mod_slot.c`
-answers from it.
+`sdk/mod_message.c` the message service, `sdk/mod_text.c` the port's text
+path, `sdk/mod_script.c` the script command hooks and `sdk/mod_rule.c` the
+rule interpreter. The declared set is at run time too: the boot link emits
+the table of every row and `sdk/mod_slot.c` answers from it.
 
 The tests are `tests/test_mod_surface.c` (the surface hash),
 `tests/test_mod_event.c` (the dispatch), `tests/test_mod_state.c` (the state
-calls), `tests/test_mod_manifest.c`, `tests/test_mod_savedata.c` and
-`tests/test_mod_loader.c` (which loads a real library).
+calls), `tests/test_mod_manifest.c`, `tests/test_mod_savedata.c`,
+`tests/test_mod_loader.c` (which loads a real library),
+`tests/test_mod_declare.c`, `tests/test_mod_messages.c`,
+`tests/test_mod_text.c`, `tests/test_mod_script.c` and
+`tests/test_mod_rule.c`.
 
-What step 4 still owes: the pokemon, field and battle areas' rows, and the
-builders of the events the port's own state cannot reach yet. What step 5
-owes the boot: the battle half of the state API and `FIELD_PLAYER_GetPos` are
-not in the boot's closure, and the port has to bind the game's live objects
-(the game data, the battle, the field player) where it learns them.
+What is still to build: the port's own hook into the game's text path (the
+field's talk window and the battle's message box), the stand-in for the
+script VMs' dispatch (both VMs run the same ARM9 function, so one stand-in
+covers them), the services but for the messages and the mod's own saved data
+(the panel, the timer, the export and import, the peer sessions, the external
+control), the script command hooks' operands in the view (the widest command
+carries more than the view holds), and the rule interpreter's peer send.
 
-What the loader path still owes: the services are empty but for the mod's own
-saved data, so a refused event cannot yet say why (step 8, messages first),
-and the script command hooks and the rule interpreter are not built (steps 9
-and 10).
+What the areas owe the boot: the battle half of the state API and
+`FIELD_PLAYER_GetPos` are not in the boot's closure, and the port has to bind
+the game's live objects (the game data, the battle, the field player) where
+it learns them.
 
 ## Related documents
 

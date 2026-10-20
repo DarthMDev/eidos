@@ -28,8 +28,11 @@ extern "C" {
  * The interface version.  A mod states the version it was built against in
  * its manifest, and the port refuses a mod whose number differs (the rule in
  * docs/mod-abi.md, section 3).
+ *
+ * Version 2 added the script command hooks: the host table's script call
+ * and the command's view.
  */
-#define BW_MOD_API_VERSION 1
+#define BW_MOD_API_VERSION 2
 
 /*
  * The surface hash: a digest of every struct's size and field offsets,
@@ -40,10 +43,10 @@ extern "C" {
  *
  * This is the 32-bit number, the port's reference configuration.  The three
  * tables hold function pointers, so their layout follows the pointer width
- * and the hash follows it; the test carries the other widths' numbers, so a
+ * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0x4B87F251u
+#define BW_MOD_API_HASH 0x062F41DBu
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
@@ -645,6 +648,62 @@ typedef struct BwDexRegister {
 } BwDexRegister;
 
 /* ------------------------------------------------------------------ */
+/* The script commands                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The two script VMs a mod can hook (docs/mod-events.md, section 5).  The
+ * field script VM dispatches every command through one table, and the battle
+ * effect VM through another; the port hooks both, so a mod can observe or
+ * replace a command by its opcode without one declared row per command.
+ */
+enum {
+    BW_SCRIPT_VM_FIELD  = 0,   /* the field script VM */
+    BW_SCRIPT_VM_BATTLE = 1    /* the battle effect VM */
+};
+
+/* What a script handler answers. */
+enum {
+    BW_SCRIPT_CONTINUE = 0,   /* the game's own handler runs too */
+    BW_SCRIPT_REPLACE  = 1    /* the game's own handler does not run */
+};
+
+/* How many operands a command may carry in the view. */
+#define BW_SCRIPT_ARGS_MAX 8
+
+/*
+ * One command, as the port's hook sees it.
+ *
+ *   opcode    the command's opcode;
+ *   nargs     how many operands the command carries;
+ *   args      the operands, as words.  A handler writes them to change the
+ *             command the game runs, and the game's own handler reads what
+ *             the handlers left;
+ *   pc        the program counter before the command;
+ *   next_pc   the program counter after it; the hook writes it.
+ *
+ * The program counter is a number, not a pointer: it is the hook's own count
+ * of where the command sits in the script, so the view carries no host
+ * pointer and reads the same at every pointer width.
+ *
+ * The view is valid only for the call.
+ */
+typedef struct BwScriptCommand {
+    u16 opcode;
+    u16 nargs;
+    u32 args[BW_SCRIPT_ARGS_MAX];
+    u32 pc;
+    u32 next_pc;
+} BwScriptCommand;
+
+/*
+ * A mod's handler for one command of one VM.  `mod_state` is the mod's own
+ * pointer, the value its start-up entry returned, and `cmd` points at the
+ * command, valid only for the call.
+ */
+typedef int (*BwScriptHandler)(void *mod_state, BwScriptCommand *cmd);
+
+/* ------------------------------------------------------------------ */
 /* The host table and the entry points                                 */
 /* ------------------------------------------------------------------ */
 
@@ -656,6 +715,7 @@ typedef struct BwDexRegister {
 typedef struct BwModHost {
     u32  api;                                   /* the port's interface version */
     int  (*on)(u32 kind, BwEventHandler fn);    /* bind a handler to an event */
+    int  (*script)(u32 vm, u16 opcode, BwScriptHandler fn);  /* to a command */
     const struct BwModState    *state;          /* sdk/mod_state.h */
     const struct BwModServices *services;       /* sdk/mod_state.h */
 } BwModHost;

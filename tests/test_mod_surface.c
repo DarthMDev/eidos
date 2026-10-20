@@ -57,28 +57,22 @@
 /*
  * The hash of the frozen surface on each layout the port is built at.
  *
- *   pointers  long    hash
- *   4         4       0x4B87F251u  the number in sdk/mod_api.h
- *   4         8       0xCC51605Fu
- *   8         4       0x0D517C01u
- *   8         8       0x3A271C22u
+ *   pointers  hash
+ *   4         0x062F41DBu  the number in sdk/mod_api.h
+ *   8         0x90F7F52Eu
  *
- * The 32-bit one is the number the header carries.  The others are the
- * same surface on the other layouts: the three tables hold host
- * pointers, so their layout follows the pointer width, and the fold puts
- * a number in as eight bytes, which a 32-bit long cannot hold without
- * repeating its lower four.
+ * The 32-bit one is the number the header carries.  The other is the same
+ * surface on the other layout: the three tables hold host pointers, so
+ * their layout follows the pointer width, and the fold puts every number
+ * in as eight bytes, so nothing else follows the platform.
  */
 static unsigned int expected_hash(void)
 {
-    if (sizeof(void *) == 4) {
-        return (sizeof(unsigned long) == 4) ? 0x4B87F251u : 0xCC51605Fu;
-    }
-    return (sizeof(unsigned long) == 4) ? 0x0D517C01u : 0x3A271C22u;
+    return (sizeof(void *) == 4) ? 0x062F41DBu : 0x90F7F52Eu;
 }
 
 /* The number in sdk/mod_api.h: the frozen one, the 32-bit hash. */
-#define BW_SURFACE_HASH_FROZEN 0x4B87F251u
+#define BW_SURFACE_HASH_FROZEN 0x062F41DBu
 
 /* The running hash. */
 static unsigned int h;
@@ -95,24 +89,19 @@ static void tag(const char *s)
 /*
  * A number, as eight little-endian bytes.
  *
- * The width of the platform's `unsigned long` decides what the upper
- * four bytes are: the fold this test follows shifts a 32-bit long by 32
- * and more, and the shift count wraps on x86, so there the upper four
- * bytes repeat the lower four; an 8-byte long has zeros in them.  The
- * frozen number was computed with a 32-bit long, so the bytes are put in
- * here rather than left to the shift's undefined behaviour.
+ * The width is fixed: the fold puts every number in as eight bytes, so the
+ * hash does not follow the platform's `unsigned long`.  Only the pointer
+ * width is left, and only because the three tables a mod is handed hold
+ * host pointers, so their layout follows it.
  */
 static void num(unsigned long v)
 {
     int i;
 
-    for (i = 0; i < 4; i++) {
-        h = (h ^ (unsigned int)((v >> (i * 8)) & 0xFFu)) * 16777619u;
-    }
-    for (i = 0; i < 4; i++) {
-        unsigned int b = (sizeof(unsigned long) > 4)
-                       ? 0u
-                       : (unsigned int)((v >> (i * 8)) & 0xFFu);
+    for (i = 0; i < 8; i++) {
+        unsigned int b = (i < (int)sizeof(unsigned long))
+                       ? (unsigned int)((v >> (i * 8)) & 0xFFu)
+                       : 0u;
         h = (h ^ b) * 16777619u;
     }
 }
@@ -293,10 +282,26 @@ int main(void)
 #undef F
 #undef PAYLOAD_FIELDS
 
+    /* The script commands. */
+    str("BwScriptCommand");
+    field("opcode", offsetof(BwScriptCommand, opcode), sizeof(((BwScriptCommand *)0)->opcode));
+    field("nargs", offsetof(BwScriptCommand, nargs), sizeof(((BwScriptCommand *)0)->nargs));
+    field("args", offsetof(BwScriptCommand, args), sizeof(((BwScriptCommand *)0)->args));
+    field("pc", offsetof(BwScriptCommand, pc), sizeof(((BwScriptCommand *)0)->pc));
+    field("next_pc", offsetof(BwScriptCommand, next_pc), sizeof(((BwScriptCommand *)0)->next_pc));
+    str("BwScriptHandler");
+    num(sizeof(BwScriptHandler));
+    str("script enums");
+#define EN(n) do { str(#n); num((unsigned long)(n)); } while (0)
+    EN(BW_SCRIPT_VM_FIELD); EN(BW_SCRIPT_VM_BATTLE);
+    EN(BW_SCRIPT_CONTINUE); EN(BW_SCRIPT_REPLACE);
+#undef EN
+
     /* The host table. */
     str("BwModHost");
     field("api", offsetof(BwModHost, api), sizeof(((BwModHost *)0)->api));
     field("on", offsetof(BwModHost, on), sizeof(((BwModHost *)0)->on));
+    field("script", offsetof(BwModHost, script), sizeof(((BwModHost *)0)->script));
     field("state", offsetof(BwModHost, state), sizeof(((BwModHost *)0)->state));
     field("services", offsetof(BwModHost, services), sizeof(((BwModHost *)0)->services));
 
@@ -354,8 +359,8 @@ int main(void)
     printf("expected:     %08x\n", expected);
     printf("covers:       the event header, the Pokemon reference, the handler\n");
     printf("              type, the event ids, the small enums, every payload\n");
-    printf("              struct, the host, state and services tables and the\n");
-    printf("              state file header\n");
+    printf("              struct, the script command's view, the host, state\n");
+    printf("              and services tables and the state file header\n");
 
     BW_CHECK_EQ("the surface hash matches", (long)h, (long)expected);
     if (h != expected) {

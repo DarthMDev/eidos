@@ -110,8 +110,11 @@
 #include "mod_loader.h"
 #include "mod_manifest.h"
 #include "mod_message.h"
+#include "mod_rule.h"
+#include "mod_script.h"
 #include "mod_slot.h"
 #include "mod_state.h"
+#include "mod_text.h"
 #include "vfs.h"
 
 #include <stdio.h>
@@ -141,6 +144,8 @@ extern int         bw_mod_manifest_parse_dir(void *manifest, const char *root,
 extern int         bw_mod_manifest_apply(void *manifest);
 extern u32         bw_mod_manifest_override_count(const void *manifest);
 extern const void *bw_mod_manifest_override_at(const void *manifest, u32 i);
+extern u32         bw_mod_manifest_rule_count(const void *manifest);
+extern const void *bw_mod_manifest_rule_at(const void *manifest, u32 i);
 extern const char *bw_mod_manifest_name(const void *manifest);
 extern const char *bw_mod_manifest_code(const void *manifest);
 extern const char *bw_mod_manifest_state(const void *manifest);
@@ -279,6 +284,7 @@ static u32 g_api_in_force = BW_MOD_API_VERSION;
  * The helpers the per-mod calls use; they are defined further down.
  */
 static int loader_bind(int slot, u32 kind, BwEventHandler fn);
+static int loader_bind_script(int slot, u32 vm, u16 opcode, BwScriptHandler fn);
 static int loader_run(int slot, void *state, BwEvent *event);
 
 /*
@@ -291,6 +297,10 @@ static int loader_run(int slot, void *state, BwEvent *event);
     static int loader_on_##n(u32 kind, BwEventHandler fn)              \
     {                                                                   \
         return loader_bind(n, kind, fn);                               \
+    }                                                                   \
+    static int loader_script_##n(u32 vm, u16 opcode, BwScriptHandler fn) \
+    {                                                                   \
+        return loader_bind_script(n, vm, opcode, fn);                  \
     }                                                                   \
     static int loader_handler_##n(void *state, BwEvent *event)          \
     {                                                                   \
@@ -320,6 +330,14 @@ static int (*const g_on_table[BW_MOD_LOADER_MAX])(u32, BwEventHandler) = {
     loader_on_4,  loader_on_5,  loader_on_6,  loader_on_7,
     loader_on_8,  loader_on_9,  loader_on_10, loader_on_11,
     loader_on_12, loader_on_13, loader_on_14, loader_on_15
+};
+
+/* The script registration call of each slot. */
+static int (*const g_script_table[BW_MOD_LOADER_MAX])(u32, u16, BwScriptHandler) = {
+    loader_script_0,  loader_script_1,  loader_script_2,  loader_script_3,
+    loader_script_4,  loader_script_5,  loader_script_6,  loader_script_7,
+    loader_script_8,  loader_script_9,  loader_script_10, loader_script_11,
+    loader_script_12, loader_script_13, loader_script_14, loader_script_15
 };
 
 /* The entry the dispatch holds for each slot. */
@@ -492,6 +510,59 @@ static void loader_register_kind(BwModLoaderMod *m, BwModLoaderKind *k)
         k->registered = 1;
     }
     bw_mod_event_set_registering_state(NULL);
+}
+
+/*
+ * The mod's own cells: the rule layer reads and writes them, and they live
+ * in the mod's own file under its namespace (docs/mod-state.md).  The port
+ * installs the two calls, and they reach the saved-data layer with that
+ * namespace in force.
+ */
+static s32 loader_cells_load(const char *ns, void *buf, u32 size)
+{
+    const char *saved = bw_mod_savedata_namespace();
+    s32 n;
+
+    bw_mod_savedata_set_namespace(ns);
+    n = bw_mod_savedata_load(buf, size);
+    bw_mod_savedata_set_namespace(saved);
+    return n;
+}
+
+static int loader_cells_store(const char *ns, const void *buf, u32 size)
+{
+    const char *saved = bw_mod_savedata_namespace();
+    int rc;
+
+    bw_mod_savedata_set_namespace(ns);
+    rc = bw_mod_savedata_store(buf, size);
+    bw_mod_savedata_set_namespace(saved);
+    return rc;
+}
+
+/*
+ * A mod binds a handler to a script command through the host table's
+ * `script`.  The registry holds the handler with the mod's own state, so a
+ * handler receives the state its mod's start returned, the same rule the
+ * event handlers follow.
+ */
+static int loader_bind_script(int slot, u32 vm, u16 opcode, BwScriptHandler fn)
+{
+    BwModLoaderMod *m = &g_mods[slot];
+    int rc;
+
+    if (m->loaded == 0 || fn == NULL) {
+        return -1;
+    }
+    bw_mod_script_set_registering_state(m->state);
+    rc = bw_mod_script_register(vm, opcode, fn);
+    bw_mod_script_set_registering_state(NULL);
+    if (rc != 0) {
+        fprintf(stderr,
+                "eidos: mod %s: the handler for command %u of vm %u was not "
+                "bound\n", m->name, (unsigned int)opcode, (unsigned int)vm);
+    }
+    return rc;
 }
 
 /*
@@ -712,6 +783,24 @@ static int loader_load(u32 index)
     code = bw_mod_manifest_code(manifest);
     copy_str(m->name, sizeof(m->name), mod_label(name, label));
     copy_str(m->ns, sizeof(m->ns), ns != NULL ? ns : label);
+
+    /* The rules: the manifest's rule lines, bound to their events.  A rule
+     * that is refused is reported by the rule layer and the mod keeps the
+     * rest of its manifest. */
+    {
+        u32 rcount = bw_mod_manifest_rule_count(manifest);
+        u32 r;
+
+        for (r = 0; r < rcount; r++) {
+            const BwModRule *rule =
+                (const BwModRule *)bw_mod_manifest_rule_at(manifest, r);
+
+            if (rule != NULL && rule->event != NULL && rule->path != NULL) {
+                bw_mod_rule_bind_manifest(root, dir_name, rule->event,
+                                         rule->path, m->ns, m->name);
+            }
+        }
+    }
     m->api = BW_MOD_API_VERSION;
     if (code == NULL || *code == '\0') {
         /* A mod without a `code` key runs no native code; its rules and
@@ -765,8 +854,13 @@ static int loader_load(u32 index)
     m->loaded = 1;
     m->host.api = BW_MOD_API_VERSION;
     m->host.on = g_on_table[slot];
+    m->host.script = g_script_table[slot];
     m->host.state = bw_mod_state_table();
     m->host.services = &m->services;
+    /* The port's own text path: the sink the message service hands a text
+     * to, and the font's own answer to "does the font lack this character"
+     * (sdk/mod_text.h). */
+    bw_mod_text_install();
     m->services.state_load = bw_mod_savedata_load;
     m->services.state_store = bw_mod_savedata_store;
     m->services.state_clear = bw_mod_savedata_clear;
@@ -776,6 +870,8 @@ static int loader_load(u32 index)
      * refusal needs (docs/mod-services.md, "Messages"). */
     m->services.message = bw_mod_message_show;
     m->services.confirm = bw_mod_message_confirm;
+    /* The rules' cells: the mod's own file under its namespace. */
+    bw_mod_rule_set_cells_io(loader_cells_load, loader_cells_store);
 
     /* 4. the start: the mod binds its handlers through the host table. */
     {

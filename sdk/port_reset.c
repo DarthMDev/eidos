@@ -36,7 +36,10 @@
 #include "mod_context.h"
 #include "mod_event.h"
 #include "mod_message.h"
+#include "mod_rule.h"
+#include "mod_script.h"
 #include "mod_state.h"
+#include "mod_text.h"
 #include "os.h"
 #include "port.h"
 #include "pxi.h"
@@ -54,13 +57,17 @@ void bw_port_reset(void)
     bw_cp_reset();
 
     /* The mod layer: no mod is loaded, no context carries over a run, no
-     * game object stays bound, no message is waiting, and the port's own
-     * rows are bound again (the reset empties the binding table). */
+     * game object stays bound, no message is waiting, no rule and no script
+     * handler is bound, and the port's own rows are bound again (the reset
+     * empties the binding table). */
     bw_mod_event_reset();
     bw_mod_event_bind_all();
     bw_mod_context_reset();
     bw_mod_state_reset();
     bw_mod_message_reset();
+    bw_mod_text_reset();
+    bw_mod_rule_reset();
+    bw_mod_script_reset();
 
     bw_pxi_set_irq_sink(bw_os_raise_irq);
     bw_os_set_cpu_step(bw_arm7_step);

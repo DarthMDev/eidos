@@ -429,6 +429,9 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_savedata.c   # a mod's own saved data: the file, the envelope, the versions
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_loader.c     # the loader: the library, the host table, the handlers
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_title.c     # title menu hook state (docs/hooks.md)
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_text.c           # the port's text path: the sink that shows a queued message
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_script.c         # the script command hooks: the field VM and the battle effect VM
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_rule.c           # the rule interpreter (docs/mod-rules-language.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_dir.c      # path kind and directory listing, Win32 and POSIX
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_save.c     # save folder, mkdir, sync, replace: Win32 and POSIX
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/save.c          # the save folder and the atomic whole-file write
@@ -1475,8 +1478,12 @@ endforeach()
 # binds to (sdk/mod_state.h) and the contract its calls keep;
 # test_mod_declare checks the declared set at run time
 # (docs/mod-state.md, section 4); test_mod_messages checks the message
-# service's queue (docs/mod-services.md).
-foreach(t test_mod_surface test_mod_event test_mod_state test_mod_declare test_mod_messages)
+# service's queue (docs/mod-services.md); test_mod_text checks the port's
+# text path, the sink the queued text is shown through; test_mod_script
+# checks the script command hooks (docs/mod-events.md, section 5);
+# test_mod_rule checks the rule interpreter (docs/mod-rules-language.md).
+foreach(t test_mod_surface test_mod_event test_mod_state test_mod_declare test_mod_messages
+          test_mod_text test_mod_script test_mod_rule)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)

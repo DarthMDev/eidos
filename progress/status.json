@@ -2,28 +2,28 @@
   "asm_bodies": 125,
   "boot_matched": 430,
   "clashes": 0,
-  "compile_errors": 0,
+  "compile_errors": 1,
   "compiled_for_host": 429,
   "configure": "pass",
-  "errors_conflicting": 0,
+  "errors_conflicting": 1,
   "errors_implicit": 0,
   "errors_other": 0,
-  "failed_targets": 0,
+  "failed_targets": 1,
   "host_surface_pct": 31.22,
   "implicit_decls": 0,
   "link_failed_targets": 0,
   "matched_total": 1374,
-  "note": "the rest of the event areas (pokemon, world, battle) and the message service",
+  "note": "the text path, the script command hooks and the rule interpreter; one file of ov013 does not compile: the new aletheia headers give one function two spellings with different prototypes, and the port merges the spellings",
   "shim_replaced": 238,
   "stubbed_asm": 17,
   "stubbed_open": 4,
   "tests": {
     "failed": 0,
-    "passed": 69,
-    "total": 69
+    "passed": 72,
+    "total": 72
   },
   "tree": "src/game",
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 15
+  "wave": 16
 }

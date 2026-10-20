@@ -21,3 +21,4 @@ Waves 3 and 4 have no row. The log has no record for either.
 | 13 | 2026-10-20 | 31.22% | 429 | 0 | 0 | the events and the state API in sdk/: the dispatch, the state calls, the slots that fire the events, and the session and items areas |
 | 14 | 2026-10-20 | 31.22% | 429 | 0 | 0 | the loader path: the manifest, the loader, a mod's own saved data, and the declared set at run time |
 | 15 | 2026-10-20 | 31.22% | 429 | 0 | 0 | the rest of the event areas (pokemon, world, battle) and the message service |
+| 16 | 2026-10-20 | 31.22% | 429 | 1 | 1 | the text path, the script command hooks and the rule interpreter; one file of ov013 does not compile: the new aletheia headers give one function two spellings with different prototypes, and the port merges the spellings |

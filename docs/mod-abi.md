@@ -156,9 +156,9 @@ move the hash.
 
 The three tables hold function pointers, so their layout follows the pointer
 width and the hash follows it: the number beside the version number is the
-32-bit one, the port's reference configuration, and the test carries the other
-widths' numbers as well, so a change fails on every width the port is built
-at. The payload structs, the ids and the enums hold no pointer and hash the
+32-bit one, the port's reference configuration, and the test carries the
+64-bit one as well, so a change fails on every width the port is built at.
+The payload structs, the ids and the enums hold no pointer and hash the
 same everywhere.
 
 ## 4. What the port promises
