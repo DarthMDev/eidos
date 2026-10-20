@@ -639,6 +639,40 @@ INT_TYPES = {
 BASE_WORDS = {"unsigned", "signed", "char", "short", "int", "long", "void"}
 
 
+_WORD_SCALARS = {"u32", "s32", "int", "unsigned", "BOOL", "fx32", "vu32", "vs32"}
+
+
+def _word_aggregate(body):
+    """True when a struct or union body is one 32-bit word: a union whose
+    members are 32-bit scalars or structs of bitfields of at most 32 bits
+    (ov093's BtlvSlot, the battle's packed condition word), or such a
+    struct.  Passed by value, it travels as an unsigned int does in the
+    host's calling convention, so a trampoline can carry it as one."""
+    inner = body[body.find("{") + 1:body.rfind("}")]
+    members = [m.strip() for m in _split_top(inner, ";") if m.strip()]
+    if not members:
+        return False
+    has_word = False
+    for m in members:
+        if "{" in m:
+            fields = [f.strip() for f in m[m.find("{") + 1:m.rfind("}")].split(";") if f.strip()]
+            bits = 0
+            for f in fields:
+                fm = re.match(r"^(?:unsigned\s+int|u32|s32|int|unsigned)\s+\w*\s*:\s*(\d+)$", f)
+                if not fm:
+                    return False
+                bits += int(fm.group(1))
+            if bits > 32:
+                return False
+            has_word = has_word or bits > 16
+        else:
+            fm = re.match(r"^(\w+)\s+\w+$", m)
+            if not fm or fm.group(1) not in _WORD_SCALARS:
+                return False
+            has_word = True
+    return has_word
+
+
 def _norm_type(text, typedefs, depth=0):
     """C type text (no declarator name) -> normalised spelling, or None."""
     t = re.sub(r"\b(?:const|volatile|register|static|extern|inline|__inline)\b", " ", text)
@@ -650,6 +684,13 @@ def _norm_type(text, typedefs, depth=0):
     if words[0] == "enum":
         return "int"
     if words[0] in ("struct", "union"):
+        # `union SickCont cont`: the body under that tag, from a typedef
+        # that names it, decides.
+        if len(words) == 2:
+            for td in typedefs.values():
+                if re.match(r"^\s*typedef\s+%s\s+%s\s*\{" % (words[0], re.escape(words[1])), td) \
+                        and _word_aggregate(td):
+                    return "unsigned int"
         return None
     if all(w in BASE_WORDS for w in words):
         s = set(words)
@@ -674,9 +715,13 @@ def _norm_type(text, typedefs, depth=0):
         if td and depth < 8:
             m = re.match(r"^\s*typedef\s+(.*?)\b" + re.escape(w) + r"\s*$", " ".join(td.split()))
             if m:
-                return _norm_type(m.group(1), typedefs, depth + 1)
+                r = _norm_type(m.group(1), typedefs, depth + 1)
+                if r is not None:
+                    return r
             if re.search(r"\(\s*\*\s*" + re.escape(w) + r"\s*\)", td):
                 return "void *"
+            if re.match(r"^\s*typedef\s+(?:struct|union)\b[^{;]*\{", td) and _word_aggregate(td):
+                return "unsigned int"
         return None
     return None
 

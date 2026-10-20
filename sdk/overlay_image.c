@@ -312,6 +312,7 @@ BwDataFn bw_ovl_code_entry(u32 value)
      * address alone: the host function is the same either way. */
     u32 key = value & ~1u;
     u32 i;
+    int ambiguous = 0;
 
     if (g_set == NULL) {
         return NULL;
@@ -346,13 +347,15 @@ BwDataFn bw_ovl_code_entry(u32 value)
                  * ov099's): the one resident now is the one the DS runs. */
                 return o->entries[lo].fn;
             }
+            /* Not resident: a later image may be the resident one (ov223's
+             * 0x021BB9DC is ov088's and ov091's too), so keep looking. */
             if (found != NULL) {
-                return NULL;        /* two overlays: needs a trampoline */
+                ambiguous = 1;      /* two overlays: needs a trampoline */
             }
             found = o->entries[lo].fn;
         }
     }
-    return found;
+    return ambiguous ? NULL : found;
 }
 
 void bw_ovl_stub(u32 id, u32 addr)

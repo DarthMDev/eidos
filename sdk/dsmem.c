@@ -974,6 +974,31 @@ void *bw_ds_ptr(u32 addr)
         bw_panic("bw_ds_ptr", addr, "bw_ds_reset has not been called");
     }
     p = bw_ds_try_ptr(addr);
+    if (p == NULL && addr >> 24 == BW_DS_VRAM_BASE >> 24) {
+        /* VRAM no bank is mapped at: the DS drops the writes and reads
+         * nothing back.  The battle copies its sub OBJ extended palettes
+         * to LCDC 0x068A0000 while bank I serves as sub OBJ VRAM, so the
+         * copy goes nowhere on the console.  The port sends such an access
+         * to a scratch block, cleared each time, so a copy that size never
+         * leaves it. */
+        static u8 *sink;
+        static int told;
+        const u32 SINK = 0x40000u;
+
+        if (sink == NULL) {
+            sink = (u8 *)calloc(2u, SINK);
+        }
+        if (sink != NULL) {
+            if (!told) {
+                told = 1;
+                fprintf(stderr, "bw_ds_ptr: VRAM 0x%08lX has no bank mapped; "
+                        "accesses there go nowhere, as on the DS\n",
+                        (unsigned long)addr);
+            }
+            memset(sink, 0, 2u * SINK);
+            return sink + (addr & (SINK - 1u));
+        }
+    }
     if (p == NULL) {
         const char *why = "address outside every backed DS region";
         if (addr >> 24 == BW_DS_VRAM_BASE >> 24) {

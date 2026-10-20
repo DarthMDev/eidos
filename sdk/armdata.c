@@ -134,9 +134,18 @@ int bw_data_load(const BwDataImage *img)
 
         g_flat[i] = NULL;
         if (!in_main(r->addr, r->size)) {
-            continue;               /* ITCM, VRAM: code, see the header */
+            /* The ARM9's ITCM and VRAM autoloads hold code (see the header).
+             * An overlay the game loads into VRAM holds data too: ov095, the
+             * battle's, runs from LCDC bank H at 0x06898020 and its handler
+             * tables need their pointers rewritten.  The game maps the bank
+             * to LCDC before it loads the overlay, so the range is one flat
+             * block of the VRAM array then; otherwise it stays code only. */
+            if (img->overlay < 0 || (dst = flat_block(r->addr, r->size)) == NULL) {
+                continue;
+            }
+        } else {
+            dst = flat_block(r->addr, r->size);
         }
-        dst = flat_block(r->addr, r->size);
         if (dst == NULL) {
             return fail(BW_DATA_E_LAYOUT, r->addr,
                         "range is not one flat block of main RAM; "
