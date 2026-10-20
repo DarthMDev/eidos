@@ -1142,6 +1142,7 @@ static void boot_frame(void *user)
 {
     BootRun *run = (BootRun *)user;
     int audio_device = 0;
+    int speed = 1;   /* fast forward factor (Tab), eidos_platform_fast_forward */
     u64 t_step, t_ph;
 
 #if EIDOS_BOOT_SDL
@@ -1186,10 +1187,14 @@ static void boot_frame(void *user)
         if (!eidos_platform_pump(run->plat)) {
             boot_finish(0, "window closed");
         }
+        speed = eidos_platform_fast_forward(run->plat);
         t_ph = eidos_prof_begin();
         /* Badly behind (two frames or more): skip showing this frame, at
-         * most three in a row; the game's steps are never skipped. */
-        if (eidos_platform_lag_frames(run->plat) >= 2u && run->skipped < 3u) {
+         * most three in a row; the game's steps are never skipped.  Fast
+         * forward (Tab) shows one frame in `speed`. */
+        if (speed > 1 && eidos_frame_count(&run->loop) % (u64)speed != 0) {
+            run->skipped = 0;
+        } else if (eidos_platform_lag_frames(run->plat) >= 2u && run->skipped < 3u) {
             run->skipped++;
         } else {
             run->skipped = 0;
@@ -1200,7 +1205,9 @@ static void boot_frame(void *user)
             }
         }
         eidos_prof_end(EIDOS_PROF_PRESENT, t_ph);
-        audio_device = eidos_platform_audio_open(run->plat);
+        /* Fast forward is silent: the sound advances with the game's
+         * frames (the no-device path below), none of it is queued. */
+        audio_device = speed > 1 ? 0 : eidos_platform_audio_open(run->plat);
         t_ph = eidos_prof_begin();
         if (audio_device) {
             boot_audio_push(run);

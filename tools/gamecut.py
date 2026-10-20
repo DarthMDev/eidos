@@ -252,6 +252,16 @@ def narrow_returns(root):
                         bad.add(name)
                     seen[name] = t
         return {k: v for k, v in seen.items() if k not in bad}
+    # tools/dsaddr.py calls this once per unit, so the key must be cheap:
+    # an export's stamp names its commit (tools/syncexport.py), where
+    # fingerprinting src/game would stat 2000 files every call.
+    try:
+        with open(os.path.join(root, ".eidos-aletheia-rev"), encoding="utf-8") as fh:
+            rev = fh.read().strip()
+    except OSError:
+        rev = ""
+    if rev:
+        return alcache.memo(root, "gamecut.narrow_returns." + rev, (), build)
     return alcache.memo(root, "gamecut.narrow_returns", ("src/game",), build)
 
 

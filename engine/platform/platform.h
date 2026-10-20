@@ -420,6 +420,13 @@ u64 eidos_frame_period_ns(void);
  */
 void eidos_platform_wait_frame(EidosPlatform *p);
 
+/* Fast forward: while Tab is held in the game window, the game runs
+ * EIDOS_FAST_FORWARD frames in the time of one.  Returns the speed factor:
+ * EIDOS_FAST_FORWARD while the key is held, 1 otherwise (and with no
+ * window).  eidos_platform_wait_frame paces by it. */
+#define EIDOS_FAST_FORWARD 8
+int  eidos_platform_fast_forward(const EidosPlatform *p);
+
 /* Monotonic nanoseconds since the platform was created. */
 u64  eidos_platform_now_ns(const EidosPlatform *p);
 

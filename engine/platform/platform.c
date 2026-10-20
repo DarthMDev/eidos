@@ -429,19 +429,37 @@ u32 eidos_platform_late_frames(const EidosPlatform *p)
     return p == NULL ? 0 : p->late_frames;
 }
 
+int eidos_platform_fast_forward(const EidosPlatform *p)
+{
+    const Uint8 *keys;
+
+    if (p == NULL || p->window == NULL) {
+        return 0;
+    }
+    /* SDL keeps the state of the window with keyboard focus only, so the
+     * key does nothing while another program has the focus. */
+    keys = SDL_GetKeyboardState(NULL);
+    return keys != NULL && keys[SDL_SCANCODE_TAB] ? EIDOS_FAST_FORWARD : 1;
+}
+
 void eidos_platform_wait_frame(EidosPlatform *p)
 {
     u64 now;
-    u64 step = eidos_frame_period_ns();
-    /* 560190 * 10^9 mod 33513982 = 3790034, the part of the period the
-     * integer nanosecond count drops.  Accumulating it adds the missing
-     * nanosecond back every ninth frame instead of losing 0.113 ns a frame. */
-    u64 rem_step = (u64)EIDOS_DS_FRAME_CLOCKS * 1000000000ull
-                   % (u64)EIDOS_DS_SYSTEM_CLOCK;
+    u64 period;
+    u64 step;
+    u64 rem_step;
 
     if (p == NULL) {
         return;
     }
+    /* Held Tab: the period is EIDOS_FAST_FORWARD times shorter. */
+    period = (u64)EIDOS_DS_FRAME_CLOCKS * 1000000000ull
+             / (u64)eidos_platform_fast_forward(p);
+    step = period / (u64)EIDOS_DS_SYSTEM_CLOCK;
+    /* 560190 * 10^9 mod 33513982 = 3790034, the part of the period the
+     * integer nanosecond count drops.  Accumulating it adds the missing
+     * nanosecond back every ninth frame instead of losing 0.113 ns a frame. */
+    rem_step = period % (u64)EIDOS_DS_SYSTEM_CLOCK;
     now = now_ns(p);
     if (!p->paced) {
         p->next_ns = now;

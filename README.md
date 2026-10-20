@@ -1500,8 +1500,9 @@ QWERTZ or AZERTY keyboard. A caller may pass its own table. The defaults:
 | L | Q | R | E |
 | SELECT | Right Shift, Backspace | | |
 
-Escape quits and F12 writes a screenshot; those two are the platform layer's
-own and are not in the table. The button word keeps the DS keypad's bit order
+Escape quits, F12 writes a screenshot and a held Tab runs the game 8 times
+as fast (one frame shown in 8, sound muted); those three are the platform
+layer's own and are not in the table. The button word keeps the DS keypad's bit order
 (`KEYINPUT`, the SDK's `PAD_*`) but is active high, because every caller asks
 "is A down" and the inversion belongs at the one place that reads the
 register. No key may be bound to two buttons: the word is rebuilt from the
