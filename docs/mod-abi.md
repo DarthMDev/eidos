@@ -22,8 +22,13 @@ typedef unsigned int   u32;
 typedef signed int     s32;
 ```
 
-Every port-owned struct uses these fixed-width types and holds no host
-pointer, so a layout is the same on every host the port supports.
+Every payload struct uses these fixed-width types and holds no host
+pointer, so a payload's layout is the same on every host the port supports.
+The three tables a mod is handed (`BwModHost`, `BwModState`,
+`BwModServices`) hold function pointers, so *their* layout follows the
+pointer width; a mod is a native library built for the port's platform, so
+it shares that width, and the tables are reached through pointers rather
+than copied.
 
 ### The event header
 
@@ -149,6 +154,13 @@ A change to the surface fails the test until the number is raised and the hash
 updated in the same change. A comment or a change outside the headers does not
 move the hash.
 
+The three tables hold function pointers, so their layout follows the pointer
+width and the hash follows it: the number beside the version number is the
+32-bit one, the port's reference configuration, and the test carries the other
+widths' numbers as well, so a change fails on every width the port is built
+at. The payload structs, the ids and the enums hold no pointer and hash the
+same everywhere.
+
 ## 4. What the port promises
 
 - **Within a version** a mod runs unchanged, with no rebuild: event names,
@@ -164,11 +176,7 @@ move the hash.
 
 ## Still to build
 
-1. **The headers.** `sdk/mod_api.h` and `sdk/mod_state.h`, with the surface
-   hash test.
-2. **The payload structs.** One per stable event, from
-   `docs/mod-payloads.md`.
-3. **The loader.** Load the library, check `api`, call `eidos_mod_start`, and
+1. **The loader.** Load the library, check `api`, call `eidos_mod_start`, and
    bind the handlers (`docs/mod-implementation.md`).
 
 ## Related documents

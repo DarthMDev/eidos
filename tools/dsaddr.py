@@ -1604,6 +1604,8 @@ def main(argv=None) -> int:
                 spath[:spath.rindex("/src/game/")]))
             # functions that fall off their end (tools/gamereturns.txt)
             source = gamecut.add_returns(source, gamecut.returns_table())
+            # mwcc's hand-written va_start/va_arg (gamecut.fix_va_macros)
+            source = gamecut.fix_va_macros(source)
             _rewrite_local_headers(src_path, a.output, set())
     text, _, _ = rewrite(source, name)
     _write(a.output, text)

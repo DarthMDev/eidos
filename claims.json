@@ -1,3 +1,45 @@
 {
-  "claims": {}
+  "claims": {
+    "W13-AREA": {
+      "note": "the session and items area tables",
+      "paths": [
+        "sdk/mod_event_items.c",
+        "sdk/mod_event_session.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W13-BLD": {
+      "note": "the build wiring and the tests",
+      "paths": [
+        "CMakeLists.txt",
+        "tests/test_mod_event.c",
+        "tests/test_mod_state.c",
+        "tests/test_mod_surface.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W13-EVT": {
+      "note": "the event dispatch core",
+      "paths": [
+        "sdk/mod_context.c",
+        "sdk/mod_event.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W13-GEN": {
+      "note": "the slots fire the events",
+      "paths": [
+        "tools/bootlink.py",
+        "tools/ovlink.py"
+      ],
+      "started": "2026-10-20"
+    },
+    "W13-STATE": {
+      "note": "the state calls over the game's accessors",
+      "paths": [
+        "sdk/mod_state.c"
+      ],
+      "started": "2026-10-20"
+    }
+  }
 }

@@ -306,6 +306,8 @@ typedef struct BootRun {
     u8 *frame1x;       /* the GPU's 3D frame at DS size (read back)      */
     int frame1x_valid; /* the GPU drew this frame's 3D (frame1x or sentinel) */
     u8 *sentinel;      /* a 3D layer of one unlikely colour, alpha 255   */
+    u8 *black3d;       /* a 3D layer of opaque black                      */
+    u8 *zero;          /* the 3D screen composed with black3d, 256x192    */
     int gpu_real;      /* this frame's 3D layer is the real read-back frame */
     u8 *cap_a;         /* capture source A with the sentinel 3D layer, 256x192 */
     u8 *cap_behind;    /* the same with the 3D layer off                  */
@@ -803,6 +805,27 @@ static void boot_gpu3d(BootRun *run, int behind_done)
         if (f > 16u) {
             f = 16u;
         }
+        /* What 2D the game blends over the 3D (the battle's message box):
+         * the screen with an opaque black 3D layer, beside the one with the
+         * sentinel.  Only when the screen was composed with the sentinel. */
+        const u8 *zero = NULL;
+
+        if (!run->gpu_real) {
+            if (run->black3d == NULL) {
+                u32 k;
+
+                run->black3d = (u8 *)calloc(1, (size_t)256 * 192 * 4);
+                for (k = 0; run->black3d != NULL && k < 256u * 192u; k++) {
+                    run->black3d[k * 4u + 3] = 255;
+                }
+                run->zero = (u8 *)calloc(1, (size_t)256 * 192 * 4);
+            }
+            if (run->black3d != NULL && run->zero != NULL
+                && g2d_hw_main_graphics_dsmem(run->black3d, run->zero) == 0) {
+                zero = run->zero;
+            }
+        }
+        eidos_platform_set_3d_zero(run->plat, zero);
         if (eidos_platform_set_3d(run->plat, screen, run->behind, snap,
                                   eidos_settings_internal_scale(),
                                   bmode == 1u || bmode == 2u ? (int)bmode : 0,

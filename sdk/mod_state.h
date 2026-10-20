@@ -213,13 +213,50 @@ typedef struct BwModServices {
     /* The mod's own settings. */
     int  (*setting_get)(const char *key);
 
-    /* The mod's own saved data (docs/mod-state.md, section 2). */
-    long (*state_load)(void *buf, u32 size);
+    /* The mod's own saved data (docs/mod-state.md, section 2).  The count
+     * is s32 and not long: long is four bytes on Windows and eight on a
+     * 64-bit Unix, and the ABI is fixed-width. */
+    s32  (*state_load)(void *buf, u32 size);    /* bytes read, -1 on damage */
     int  (*state_store)(const void *buf, u32 size);
     int  (*state_clear)(void);
     int  (*state_info)(BwModStateHeader *out);
     int  (*state_dir)(char *out, u32 out_size);
 } BwModServices;
+
+/* ------------------------------------------------------------------ */
+/* The port's own side of the state calls                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The game's live objects cannot be named from outside the game: the game
+ * data lives in a heap only GAMESYSTEM_GetGameData reaches, and the
+ * battle's main object and the field player are the game's own.  The port
+ * binds them where it learns them (a save load, a battle, the field map),
+ * and the state calls answer from them.
+ *
+ * Until an object is bound, the calls that need it report a failure; they
+ * never read through an unbound pointer.
+ *
+ * These are the port's own calls, not part of the mod ABI: a mod reaches
+ * the state through the BwModState table above.
+ */
+void bw_mod_state_set_game_data(void *game_data);
+void bw_mod_state_set_battle(void *battle_main);
+void bw_mod_state_set_field_player(void *field_player);
+
+/* The table the host table hands to a mod. */
+const BwModState *bw_mod_state_table(void);
+
+/* Drop the bound objects and the queued moves: at power-on and at every
+ * reset (bw_port_reset). */
+void bw_mod_state_reset(void);
+
+/* The moves the state calls queued (mon_to_box, mon_take_item).  They are
+ * applied when no battle, party screen or PC holds the party open, in the
+ * order the mod made them; the caller knows when that is. */
+void   bw_mod_state_apply_pending(void);
+void   bw_mod_state_drop_moves(void);
+u32    bw_mod_state_pending(void);
 
 #ifdef __cplusplus
 }

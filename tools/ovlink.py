@@ -600,8 +600,11 @@ DECLARED_SET = os.path.join(EIDOS_ROOT, "mod", "declared_set.txt")
 
 
 def read_declared_set():
-    """Rows of mod/declared_set.txt: (address, name, region).  `#` starts a
-    comment; a line is tab separated."""
+    """Rows of mod/declared_set.txt: (address, name, region, events).  `#`
+    starts a comment; a line is tab separated.  The fourth column names the
+    stable events the port binds to the function (docs/mod-events.md,
+    section 1); it is empty for a raw-hook-only row, and it may name two
+    events (catch.attempt,catch.result)."""
     rows = []
     if not os.path.exists(DECLARED_SET):
         return rows
@@ -613,7 +616,10 @@ def read_declared_set():
             parts = [p.strip() for p in line.rstrip("\n").split("\t")]
             if len(parts) < 3 or not parts[0].startswith("0x"):
                 continue
-            rows.append((int(parts[0], 16), parts[1], parts[2]))
+            events = []
+            if len(parts) > 3:
+                events = [e.strip() for e in parts[3].split(",") if e.strip()]
+            rows.append((int(parts[0], 16), parts[1], parts[2], events))
     return rows
 
 
@@ -784,26 +790,99 @@ def proto_decl(ret, name, params):
     return "%s%s%s(%s);" % (ret, sep, name, plist)
 
 
-def slot_function(region_expr, slot):
+# The event layer's limit: how many arguments a bound game function may
+# take.  It is sdk/mod_event.h's BW_EVENT_ARGS_MAX, and the two must agree:
+# the call the slot builds carries the arguments as words.  A slot with more
+# is reported by the generator, not papered over.
+BW_EVENT_ARGS_MAX = 16
+
+
+def event_call_init(params):
+    """The BwEventCall initialiser for a slot's parameters: the arguments
+    as words, and their count (sdk/mod_event.h)."""
+    init = ", ".join("(uintptr_t)a%d" % k for k in range(len(params)))
+    return "{ { %s }, %du, 0 }" % (init or "0", len(params))
+
+
+def event_call_args(params):
+    """The call's arguments, cast back to the function's own parameter
+    types: the original is called with these, not with the incoming
+    arguments, so a handler's change to an argument reaches the game
+    (docs/mod-implementation.md, section 1)."""
+    return ", ".join("(%s)call.a[%d]" % (params[k], k) for k in range(len(params)))
+
+
+def event_result(ret, expr):
+    """`expr`, the result of a call, as the call's s64 result."""
+    if expr == "0":
+        return "(s64)0"
+    if ret.endswith("*"):
+        return "(s64)(uintptr_t)%s" % expr
+    return "(s64)%s" % expr
+
+
+def event_value(ret):
+    """The call's result as the slot's own return type."""
+    if ret.endswith("*"):
+        return "(void *)(uintptr_t)call.ret"
+    return "(%s)call.ret" % ret
+
+
+def slot_function(region_expr, addr, slot):
     """The generated slot for one declared address: the indirection at the
-    call site (docs/mod-interface.md, section 2).  Its default is the
-    original, so with no mod installed it behaves as the direct call did."""
+    call site (docs/mod-interface.md, section 2) and, for a row that carries
+    a stable event, the event's enter and leave around the call
+    (docs/mod-implementation.md, section 1, "At the slot").  Its default is
+    the original, so with no mod installed it behaves as the direct call did.
+
+    `slot` is {name, declared, original, sig, events}: the events are the
+    declared set's fourth column, empty for a raw-hook-only row.  Every
+    slot pushes its (region, address) on the scope stack and pops it on
+    return, so a binding that is inside or outside a function can tell
+    (docs/mod-implementation.md, section 1, "Scope")."""
     ret, params = slot["sig"]
     name = slot["name"]
+    events = slot.get("events") or []
     args = ", ".join("a%d" % k for k in range(len(params)))
     cast = "%s (*)(%s)" % (ret, ", ".join(params) or "void")
+    key = "0x%08Xu" % addr
     out = [proto(ret, name, params), "{"]
-    out.append("    void *h = bw_mod_slot_lookup(%s, 0x%08Xu);" % (region_expr, slot["addr"]))
+    if events:
+        out.append("    BwEventCall    call = %s;" % event_call_init(params))
+        out.append("    BwEventPayload payload;")
+    out.append("    void *h = bw_mod_slot_lookup(%s, %s);" % (region_expr, key))
+    if ret != "void":
+        out.append("    %s%s" % (ret, "r;" if ret.endswith("*") else " r;"))
+    out.append("")
+    out.append("    /* The scope: this function runs, so a scoped binding can tell. */")
+    out.append("    bw_mod_event_push(%s, %s);" % (region_expr, key))
+    if events:
+        out.append("    if (bw_mod_event_enter(%s, %s, &call, &payload)) {" % (region_expr, key))
+        out.append("        bw_mod_event_pop();")
+        if ret != "void":
+            out.append("        return %s;" % event_value(ret))
+        else:
+            out.append("        return;")
+        out.append("    }")
+    cargs = event_call_args(params) if events else args
     out.append('    if (h != NULL && bw_hook_enabled("%s")) {' % slot["declared"])
     if ret == "void":
-        out.append("        ((%s)h)(%s);" % (cast, args))
-        out.append("        return;")
-        out.append("    }")
-        out.append("    %s(%s);" % (slot["original"], args))
+        out.append("        ((%s)h)(%s);" % (cast, cargs))
     else:
-        out.append("        return ((%s)h)(%s);" % (cast, args))
-        out.append("    }")
-        out.append("    return %s(%s);" % (slot["original"], args))
+        out.append("        r = ((%s)h)(%s);" % (cast, cargs))
+    out.append("    } else {")
+    if ret == "void":
+        out.append("        %s(%s);" % (slot["original"], cargs))
+    else:
+        out.append("        r = %s(%s);" % (slot["original"], cargs))
+    out.append("    }")
+    if events:
+        if ret != "void":
+            out.append("    call.ret = %s;" % event_result(ret, "r"))
+        out.append("    bw_mod_event_leave(%s, %s, &call, &payload);" % (region_expr, key))
+    out.append("    bw_mod_event_pop();")
+    if ret != "void":
+        out.append("    return %s;" % (event_value(ret) if events else "r"))
     out.append("}")
     out.append("")
     return "\n".join(out)
@@ -1091,18 +1170,23 @@ class Link:
         self.root = os.path.abspath(args.aletheia_root)
         self.al = Aletheia(self.root)
         self.notes = []
+        self.event_notes = []      # declared rows whose event cannot fire
         self.ids = self._parse_ids(args.overlays)
         # The declared overlay rows (docs/mod-interface.md, section 1): the
-        # (region, address) pairs a mod may override.
+        # (region, address) pairs a mod may override, and the events the
+        # port binds to them.
         self.declared = {}          # overlay tag -> {addr: declared name}
-        self.declared_by_addr = {}  # addr -> (overlay id, declared name)
-        for addr, dname, region in read_declared_set():
+        self.declared_events = {}   # (overlay tag, addr) -> [event names]
+        self.declared_by_addr = {}  # addr -> (overlay id, declared name, events)
+        for addr, dname, region, events in read_declared_set():
             if region == "arm9":
                 continue
             self.declared.setdefault(region, {})[addr] = dname
+            self.declared_events[(region, addr)] = events
             m = re.match(r"^ov0*(\d+)$", region)
             if m:
-                self.declared_by_addr.setdefault(addr, (int(m.group(1)), dname))
+                self.declared_by_addr.setdefault(
+                    addr, (int(m.group(1)), dname, events))
         self.image = None
         self.veneers = {}          # veneer address -> target address (listing)
         self.veneer_fwd = {}       # forwarder name -> (target name, signature)
@@ -1652,9 +1736,11 @@ class Link:
 
     def _mod_slots(self):
         """The declared overlay rows and the slot each one gets: the
-        indirection at the call site (docs/mod-interface.md, section 2).  A
-        row whose definition the link does not carry has no slot; it is
-        reported and skipped."""
+        indirection at the call site (docs/mod-interface.md, section 2) and,
+        for a row that carries a stable event, the event's enter and leave
+        around the call (docs/mod-implementation.md, section 1).  A row whose
+        definition the link does not carry has no slot; it is reported and
+        skipped."""
         for oid in self.ids:
             st = self.state[oid]
             decl = self.declared.get(st.ov.tag, {})
@@ -1684,12 +1770,23 @@ class Link:
                     for n in [k for k, v in st.slot_names.items() if v == slot]:
                         del st.slot_names[n]
                     continue
+                events = self.declared_events.get((st.ov.tag, addr), [])
+                if events and len(sig[1]) > BW_EVENT_ARGS_MAX:
+                    # The event's call carries the arguments as words, and
+                    # there are only so many: the row is reported, and the
+                    # slot keeps the plain indirection.
+                    self.event_notes.append(
+                        "%s: declared 0x%08X (%s): %d arguments, more than the "
+                        "event layer's %d: the event does not fire here"
+                        % (st.ov.tag, addr, dname, len(sig[1]), BW_EVENT_ARGS_MAX))
+                    events = []
                 st.mod_slots.append({
                     "name": self.slot_name(st, addr),
                     "addr": addr,
                     "declared": dname,
                     "original": original,
                     "sig": sig,
+                    "events": events,
                 })
 
     def arm9_canonical(self, addr):
@@ -1981,6 +2078,7 @@ def write_overlay_c(link, st, path):
     w('#include "overlay_image.h"')
     w('#include "mod_slot.h"')
     w('#include "mod_hooks.h"')
+    w('#include "mod_event.h"')
     w("")
     # Stubs.
     if st.stubs:
@@ -2028,7 +2126,7 @@ def write_overlay_c(link, st, path):
         w(" * original, so with no mod installed it behaves as the direct call")
         w(" * did. */")
         for s in st.mod_slots:
-            w("%s" % slot_function("BW_MOD_REGION_OVL(%d)" % ov.id, s))
+            w("%s" % slot_function("BW_MOD_REGION_OVL(%d)" % ov.id, s["addr"], s))
         w("")
     traps = sorted({t & ~1 for t, n in funcs.items() if not n})
     for t in traps:
@@ -2229,6 +2327,7 @@ def write_dispatch(link, path, set_name):
     w('#include "overlay_image.h"')
     w('#include "mod_slot.h"')
     w('#include "mod_hooks.h"')
+    w('#include "mod_event.h"')
     w("")
     if link.veneer_fwd:
         # Linker veneers the overlays call: each is another address of its
@@ -2269,11 +2368,13 @@ def write_dispatch(link, path, set_name):
                 # has another function at 0x021DFE98).
                 sig = s
         decl = link.declared_by_addr.get(addr)
+        events = []
         if decl is not None:
             # A declared address: the declared function's prototype is the
             # contract, from aletheia's metadata when the overlay is not
             # compiled into this build.
-            dsig = link.declared_signature(decl[0], addr, decl[1])
+            rid, dname, events = decl
+            dsig = link.declared_signature(rid, addr, dname)
             if dsig is not None:
                 sig = dsig
         if sig is None:
@@ -2283,57 +2384,122 @@ def write_dispatch(link, path, set_name):
             forward = True
         ret, params = sig
         args = ", ".join("a%d" % k for k in range(len(params)))
+        key = "0x%08Xu" % addr
+        reg = "BW_MOD_REGION_OVL(%d)" % decl[0] if decl is not None else None
+        # A trampoline over a declared address is another route to the
+        # function the row binds: the event fires here too, and the scope
+        # stack names the row (docs/mod-implementation.md, section 1).
+        ev = bool(decl is not None and events and forward)
+        if decl is not None and events and not forward:
+            link.event_notes.append(
+                "trampoline %s at 0x%08X: the declared row's prototype does not "
+                "normalise, so the event does not fire here" % (name, addr))
+        if decl is not None and events and forward and len(params) > BW_EVENT_ARGS_MAX:
+            link.event_notes.append(
+                "trampoline %s at 0x%08X: %d arguments, more than the event "
+                "layer's %d: the event does not fire here"
+                % (name, addr, len(params), BW_EVENT_ARGS_MAX))
+            ev = False
+        cargs = event_call_args(params) if ev else args
+
+        def leave(expr, indent):
+            """The lines a trampoline leaves with: the event's leave, the
+            scope's pop, and the return.  `expr` is the call's result, or
+            None for a call that returns nothing.  The result is held
+            before the scope pops, so the pop happens after the call."""
+            pad = " " * indent
+            out = []
+            if expr is not None:
+                if ev:
+                    out.append("%scall.ret = %s;" % (pad, event_result(ret, expr)))
+                elif decl is not None:
+                    out.append("%sr = %s;" % (pad, expr))
+            if ev:
+                out.append("%sbw_mod_event_leave(%s, %s, &call, &payload);"
+                           % (pad, reg, key))
+            if decl is not None:
+                out.append("%sbw_mod_event_pop();" % pad)
+            if expr is None:
+                out.append("%sreturn;" % pad)
+            elif ev:
+                out.append("%sreturn %s;" % (pad, event_value(ret)))
+            elif decl is not None:
+                out.append("%sreturn r;" % pad)
+            else:
+                out.append("%sreturn %s;" % (pad, expr))
+            return out
+
         body.append("/* %s at 0x%08X: %s */" % (
             name, addr, ", ".join("ov%03d" % c for c in cands) or "no overlay"))
         body.append("%s;" % proto(ret, name, params))
         body.append(proto(ret, name, params))
         body.append("{")
+        if ev:
+            body.append("    BwEventCall    call = %s;" % event_call_init(params))
+            body.append("    BwEventPayload payload;")
         if forward and decl is not None:
             # A declared address: an installed override wins over whichever
             # overlay is resident (docs/mod-interface.md, section 2).
-            rid, dname = decl
-            body.append("    void *h = bw_mod_slot_lookup(BW_MOD_REGION_OVL(%d), 0x%08Xu);"
-                        % (rid, addr))
-            body.append('    if (h != NULL && bw_hook_enabled("%s")) {' % dname)
+            body.append("    void *h = bw_mod_slot_lookup(%s, %s);" % (reg, key))
+        if decl is not None and ret != "void" and not ev:
+            # The result is held, so the scope pops after the call.
+            body.append("    %s%s" % (ret, "r;" if ret.endswith("*") else " r;"))
+        if decl is not None:
+            body.append("    bw_mod_event_push(%s, %s);" % (reg, key))
+        if ev:
+            body.append("    if (bw_mod_event_enter(%s, %s, &call, &payload)) {" % (reg, key))
+            body.append("        bw_mod_event_pop();")
             if ret == "void":
-                body.append("        ((void (*)(%s))h)(%s);"
-                            % (", ".join(params) or "void", args))
                 body.append("        return;")
             else:
-                body.append("        return ((%s (*)(%s))h)(%s);"
-                            % (ret, ", ".join(params) or "void", args))
+                body.append("        return %s;" % event_value(ret))
             body.append("    }")
-        body.append("    int ov = bw_ovl_resident_at(0x%08Xu);" % addr)
+        if forward and decl is not None:
+            body.append('    if (h != NULL && bw_hook_enabled("%s")) {' % decl[1])
+            if ret == "void":
+                body.append("        ((void (*)(%s))h)(%s);"
+                            % (", ".join(params) or "void", cargs))
+                body += leave(None, 8)
+            else:
+                body += leave("((%s (*)(%s))h)(%s)"
+                              % (ret, ", ".join(params) or "void", cargs), 8)
+            body.append("    }")
+        body.append("    int ov = bw_ovl_resident_at(%s);" % key)
         for c, sym, s in targets:
             if c not in link.state:
                 continue
             st = link.state[c]
             if sym is None:
                 body.append("    if (ov == %d) {" % c)
-                body.append("        bw_ovl_stub(%du, 0x%08Xu);" % (c, addr))
+                body.append("        bw_ovl_stub(%du, %s);" % (c, key))
                 body.append("    }")
                 continue
             if not forward or s != sig:
                 body.append("    if (ov == %d) {" % c)
-                body.append("        bw_ovl_dispatch_fail(0x%08Xu, %s, ov, BW_OVL_WHY_SIGNATURE);"
-                            % (addr, c_str(name)))
+                body.append("        bw_ovl_dispatch_fail(%s, %s, ov, BW_OVL_WHY_SIGNATURE);"
+                            % (key, c_str(name)))
                 body.append("    }")
                 continue
             if sym not in declared:
                 declared[sym] = proto_decl(s[0], sym, s[1])
             body.append("    if (ov == %d) {" % c)
             if ret == "void":
-                body.append("        %s(%s);" % (sym, args))
-                body.append("        return;")
+                body.append("        %s(%s);" % (sym, cargs))
+                body += leave(None, 8)
             else:
-                body.append("        return %s(%s);" % (sym, args))
+                body += leave("%s(%s)" % (sym, cargs), 8)
             body.append("    }")
-        body.append("    bw_ovl_dispatch_fail(0x%08Xu, %s, ov, ov < 0 ? BW_OVL_WHY_NONE "
-                    ": BW_OVL_WHY_NOT_COMPILED);" % (addr, c_str(name)))
+        body.append("    bw_ovl_dispatch_fail(%s, %s, ov, ov < 0 ? BW_OVL_WHY_NONE "
+                    ": BW_OVL_WHY_NOT_COMPILED);" % (key, c_str(name)))
         for k in range(len(params)):
             body.append("    (void)a%d;" % k)
-        if ret != "void":
-            body.append("    return 0;")
+        if decl is None and not ev:
+            # A plain trampoline: the dispatch failed, and there is no scope
+            # and no event to leave.
+            if ret != "void":
+                body.append("    return 0;")
+        else:
+            body += leave("0" if ret != "void" else None, 4)
         body.append("}")
         body.append("")
     if declared:
@@ -2424,11 +2590,15 @@ def write_report(link, path):
     r = []
     p = r.append
     tot_units = sum(len(st.units) for st in link.state.values())
+    tot_slots = sum(len(st.mod_slots) for st in link.state.values())
+    ev_slots = sum(1 for st in link.state.values() for s in st.mod_slots
+                    if s.get("events"))
     p("ovlink: %d overlays, %d translation units, %d trampolines, %d ARM9 names "
-      "(%d not in the link), %d declared slots, %d declared rows not in the link" % (
+      "(%d not in the link), %d declared slots (%d with an event), "
+      "%d declared rows not in the link" % (
           len(link.ids), tot_units, len(link.tramps), len(link.arm9_needs),
           sum(1 for v in link.arm9_needs.values() if not v[1]),
-          sum(len(st.mod_slots) for st in link.state.values()),
+          tot_slots, ev_slots,
           sum(1 for oid in link.ids
               for a in link.declared.get(link.state[oid].ov.tag, {})
               if a not in [s["addr"] for s in link.state[oid].mod_slots])))
@@ -2474,10 +2644,13 @@ def write_report(link, path):
     for oid in link.ids:
         st = link.state[oid]
         for s in st.mod_slots:
-            p("  %s slot %s 0x%08X (%s -> %s)" % (
-                st.ov.tag, s["name"], s["addr"], s["declared"], s["original"]))
+            p("  %s slot %s 0x%08X (%s -> %s%s)" % (
+                st.ov.tag, s["name"], s["addr"], s["declared"], s["original"],
+                (", events " + ",".join(s["events"])) if s.get("events") else ""))
     for line in link.notes:
         p("  note: " + line)
+    for line in link.event_notes:
+        p("  EVENT NOTE: " + line)
     write_if_changed(path, "\n".join(r) + "\n")
     return r
 
@@ -2577,6 +2750,8 @@ def main(argv=None):
     write_if_changed(os.path.join(out, "ovl_arm9_seeds.txt"),
                      "".join(x + "\n" for x in sorted(seeds)))
     rep = write_report(link, os.path.join(out, "ovl_report.txt"))
+    for line in link.event_notes:
+        print("ovlink.py: %s" % line, file=sys.stderr)
     if args.summary:
         print("\n".join(rep[:1 + len(link.ids)]))
     return 0

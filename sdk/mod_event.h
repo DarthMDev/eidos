@@ -29,9 +29,10 @@ extern "C" {
 
 /*
  * How many arguments a bound game function can take.  The DS's own are few;
- * the widest the declared set binds is under this.
+ * the widest the declared set binds takes nine (BTL_SERVER_FLOW_CalcMoveDamage
+ * and ZUKAN_NICKNAME_Create), and the call carries room for more.
  */
-#define BW_EVENT_ARGS_MAX 8
+#define BW_EVENT_ARGS_MAX 16
 
 /*
  * The call a slot hands to the event layer: the arguments the game function
@@ -214,6 +215,14 @@ int  bw_mod_event_scope_matches(unsigned int scope_region,
 int bw_mod_event_register(u32 kind, BwEventHandler fn);
 
 /*
+ * The port's own hook into the registration: the state of the mod that is
+ * registering.  A handler receives the state its own mod's start-up
+ * returned, so the loader tells the layer which mod is calling `host->on`
+ * before it does.  Not part of the mod ABI.
+ */
+void bw_mod_event_set_registering_state(void *state);
+
+/*
  * The port's own bindings: one row per stable-event binding of
  * docs/mod-events.md, section 1.  The layer reads them from the tables the
  * area files publish.
@@ -224,6 +233,13 @@ void bw_mod_event_bind_area(const BwEventBinding *rows, u32 count);
 /* Drop every handler and every binding: the state at start-up and at a
  * reset. */
 void bw_mod_event_reset(void);
+
+/*
+ * Bind the port's own rows: the area tables of the stable events
+ * (sdk/mod_event_session.c and its siblings).  The reset empties the
+ * binding table, so this runs at start-up and after every reset.
+ */
+void bw_mod_event_bind_all(void);
 
 /* How many handlers are bound to an event, for the tests and the reports. */
 u32 bw_mod_event_handler_count(u32 kind);

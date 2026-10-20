@@ -304,6 +304,22 @@ def add_returns(text, table):
     return text
 
 
+_VA_START_DEF = re.compile(r"(?m)^([ \t]*#[ \t]*define[ \t]+va_start)\(\s*(\w+)\s*,\s*(\w+)\s*\).*$")
+
+
+def fix_va_macros(text):
+    """`text` with a unit's own va_start (the mwcc form, `&(last) & ~3 + 4`)
+    defined as the host compiler's builtin.  The mwcc form assumes the last
+    named parameter stays in its incoming stack slot; GCC copies a narrow one
+    (ov093's BTL_SERVER_CMD_PushVariable(queue, u8 id, ...)) to a local when
+    its address is taken, so the variadic arguments were read from stack
+    garbage and the battle crashed on a garbage Pokemon id.  On i686 va_list
+    is `char *` at the first variadic word, the value the mwcc form meant, so
+    the units' own va_arg (a word stride; msl_printf.c's walks a list passed
+    down to it) still reads it."""
+    return _VA_START_DEF.sub(r"\1(\2, \3) __builtin_va_start(\2, \3)", text)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("input")

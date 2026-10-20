@@ -37,6 +37,11 @@ extern "C" {
  * sdk/mod_state.h.  A test recomputes it and compares; a change to the
  * surface that does not raise BW_MOD_API_VERSION and update this number
  * fails the test (docs/mod-abi.md, section 3).
+ *
+ * This is the 32-bit number, the port's reference configuration.  The three
+ * tables hold function pointers, so their layout follows the pointer width
+ * and the hash follows it; the test carries the other widths' numbers, so a
+ * change fails on every width the port is built at.
  */
 #define BW_MOD_API_HASH 0x4B87F251u
 

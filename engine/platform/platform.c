@@ -1494,6 +1494,13 @@ int eidos_platform_read3d_1x(EidosPlatform *p, const struct G3dSnapshot *snap,
     return eidos_gl_read3d_1x(p->gl, snap, out, async);
 }
 
+void eidos_platform_set_3d_zero(EidosPlatform *p, const u8 *zero)
+{
+    if (eidos_platform_gpu3d(p)) {
+        eidos_gl_set_3d_zero(p->gl, zero, (int)SCREEN_W, (int)SCREEN_H);
+    }
+}
+
 int eidos_platform_set_3d(EidosPlatform *p, int screen, const u8 *behind,
                           const struct G3dSnapshot *snap, int n, int bmode,
                           float bfac, int dilate)

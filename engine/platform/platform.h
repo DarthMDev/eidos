@@ -373,6 +373,10 @@ void eidos_platform_show_capture(EidosPlatform *p, int screen, int bmode,
  * -1 failure. */
 int  eidos_platform_read3d_1x(EidosPlatform *p, const struct G3dSnapshot *snap,
                               u8 *out, int async);
+/* The 3D screen composed with an opaque black 3D layer (256x192 RGBA), for
+ * the 2D layers the game blends over the 3D (plat_gl.c); NULL for none.
+ * Call before eidos_platform_set_3d. */
+void eidos_platform_set_3d_zero(EidosPlatform *p, const u8 *zero);
 int  eidos_platform_set_3d(EidosPlatform *p, int screen, const u8 *behind,
                            const struct G3dSnapshot *snap, int n, int bmode,
                            float bfac, int dilate);

@@ -416,6 +416,11 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs_narc.c      # member-level NARC overrides, the merged archive
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_hooks.c     # on/off switch for port-side code hooks (docs/hooks.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_slot.c      # the mod seam's slot registry (docs/mod-interface.md)
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event.c     # the event dispatch: bindings, handlers, the scope stack
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_context.c   # the contexts the payloads read (docs/mod-payloads.md)
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_state.c     # the state calls over the game's accessors
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_session.c  # the session and save events
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_items.c    # the item, money and heal events
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_title.c     # title menu hook state (docs/hooks.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_dir.c      # path kind and directory listing, Win32 and POSIX
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_save.c     # save folder, mkdir, sync, replace: Win32 and POSIX
@@ -1451,6 +1456,20 @@ endif()
 foreach(t test_affine test_bg_affine test_window test_frame test_tcbl test_heap test_vfs test_arcid test_compose3d test_dsmem)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(${t} PRIVATE eidos)
+    add_test(NAME ${t} COMMAND ${t})
+endforeach()
+
+# The mod layer's own tests need neither game data nor an oracle either.
+# test_mod_surface hashes the frozen ABI surface out of the headers and
+# compares it with the number stored beside the version in sdk/mod_api.h
+# (docs/mod-abi.md, section 3); test_mod_event drives the dispatch with a
+# fake binding and two handlers; test_mod_state reads the state API a mod
+# binds to (sdk/mod_state.h) and the contract its calls keep.
+foreach(t test_mod_surface test_mod_event test_mod_state)
+    add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
+    target_include_directories(${t} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t})
 endforeach()

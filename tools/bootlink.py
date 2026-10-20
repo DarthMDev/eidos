@@ -826,9 +826,12 @@ DECLARED_SET = os.path.join(closure.EIDOS_ROOT, "mod", "declared_set.txt")
 
 
 def read_declared_set(region=None):
-    """Rows of mod/declared_set.txt: (address, name, region), the rows of
-    `region` only when it is given.  `#` starts a comment; a line is tab
-    separated."""
+    """Rows of mod/declared_set.txt: (address, name, region, events), the rows
+    of `region` only when it is given.  `#` starts a comment; a line is tab
+    separated.  The fourth column names the stable events the port binds to
+    the function (docs/mod-events.md, section 1); it is empty for a
+    raw-hook-only row, and it may name two events (catch.attempt,
+    catch.result)."""
     rows = []
     if not os.path.exists(DECLARED_SET):
         return rows
@@ -842,7 +845,10 @@ def read_declared_set(region=None):
                 continue
             if region is not None and parts[2] != region:
                 continue
-            rows.append((int(parts[0], 16), parts[1], parts[2]))
+            events = []
+            if len(parts) > 3:
+                events = [e.strip() for e in parts[3].split(",") if e.strip()]
+            rows.append((int(parts[0], 16), parts[1], parts[2], events))
     return rows
 
 
@@ -861,27 +867,12 @@ def definition_signature(path, name):
 
 def slot_function(region_expr, addr, slot):
     """The generated slot for one declared address: the indirection at the
-    call site (docs/mod-interface.md, section 2).  Its default is the
-    original, so with no mod installed it behaves as the direct call did."""
-    ret, params = slot["sig"]
-    name = slot["name"]
-    args = ", ".join("a%d" % k for k in range(len(params)))
-    cast = "%s (*)(%s)" % (ret, ", ".join(params) or "void")
-    out = [ovlink.proto(ret, name, params), "{"]
-    out.append("    void *h = bw_mod_slot_lookup(%s, 0x%08Xu);" % (region_expr, addr))
-    out.append('    if (h != NULL && bw_hook_enabled("%s")) {' % slot["declared"])
-    if ret == "void":
-        out.append("        ((%s)h)(%s);" % (cast, args))
-        out.append("        return;")
-        out.append("    }")
-        out.append("    %s(%s);" % (slot["original"], args))
-    else:
-        out.append("        return ((%s)h)(%s);" % (cast, args))
-        out.append("    }")
-        out.append("    return %s(%s);" % (slot["original"], args))
-    out.append("}")
-    out.append("")
-    return "\n".join(out)
+    call site (docs/mod-interface.md, section 2) and, for a row that carries
+    a stable event, the event's enter and leave around the call
+    (docs/mod-implementation.md, section 1, "At the slot").  Its default is
+    the original, so with no mod installed it behaves as the direct call did.
+    The shape is tools/ovlink.py's, which the overlays use too."""
+    return ovlink.slot_function(region_expr, addr, slot)
 
 
 def generate(args):
@@ -986,7 +977,8 @@ def generate(args):
     # link does not carry is reported and skipped, like an unbound data name.
     arm9_slots = {}            # address -> slot dict
     slot_skipped = []          # (declared name, address, why)
-    for addr, dname, _region in read_declared_set("arm9"):
+    slot_notes = []            # (declared name, address, note)
+    for addr, dname, _region, events in read_declared_set("arm9"):
         oname = func_at.get(addr)
         if oname is None and dname in defined:
             # A unit's member whose spelling is not func_/sub_ and not in the
@@ -1001,11 +993,21 @@ def generate(args):
             slot_skipped.append((dname, addr,
                                  "%s: its prototype does not normalise" % oname))
             continue
+        if events and len(sig[1]) > ovlink.BW_EVENT_ARGS_MAX:
+            # The event's call carries the arguments as words, and there are
+            # only so many: the row is reported, and the slot keeps the plain
+            # indirection.
+            slot_notes.append((dname, addr,
+                               "%d arguments, more than the event layer's %d: "
+                               "the event does not fire here"
+                               % (len(sig[1]), ovlink.BW_EVENT_ARGS_MAX)))
+            events = []
         arm9_slots[addr] = {
             "name": "bw_slot_arm9_%08X" % addr,
             "declared": dname,
             "original": oname,
             "sig": sig,
+            "events": events,
         }
 
     # Every data spelling the boot uses, by address, so one object stands
@@ -1297,17 +1299,23 @@ def generate(args):
               % (sum(1 for v in missing_funcs.values() if v[1].startswith("open")),
                  sum(1 for v in missing_funcs.values() if not v[1].startswith("open"))),
               "linker veneers: %d (forwarders to their image target)" % len(veneer_funcs),
-              "mod slots: %d arm9 emitted, %d declared rows skipped"
-              % (len(arm9_slots), len(slot_skipped))]
+              "mod slots: %d arm9 emitted (%d with an event), %d declared rows skipped"
+              % (len(arm9_slots),
+                 sum(1 for s in arm9_slots.values() if s["events"]),
+                 len(slot_skipped))]
     for name, a, b in dups:
         report.append("DUPLICATE %s: %s and %s" % (name, a, b))
     report.append("")
     report.append("mod slots (a generated indirection per declared ARM9 address):")
     for addr in sorted(arm9_slots):
-        report.append("  %-36s 0x%08X -> %s" % (
-            arm9_slots[addr]["declared"], addr, arm9_slots[addr]["original"]))
+        report.append("  %-36s 0x%08X -> %s%s" % (
+            arm9_slots[addr]["declared"], addr, arm9_slots[addr]["original"],
+            (", events " + ",".join(arm9_slots[addr]["events"]))
+            if arm9_slots[addr]["events"] else ""))
     for dname, addr, why in slot_skipped:
         report.append("  SKIPPED %-28s 0x%08X %s" % (dname, addr, why))
+    for dname, addr, note in slot_notes:
+        report.append("  NOTE %-30s 0x%08X %s" % (dname, addr, note))
     report.append("")
     report.append("implicit declarations:")
     for unit in units:
@@ -1333,6 +1341,9 @@ def generate(args):
               % (name, "0x%08X" % addr if addr is not None else "no address"), file=sys.stderr)
     for dname, addr, why in slot_skipped:
         print("bootlink.py: no slot for %s (0x%08X): %s" % (dname, addr, why),
+              file=sys.stderr)
+    for dname, addr, note in slot_notes:
+        print("bootlink.py: %s (0x%08X): %s" % (dname, addr, note),
               file=sys.stderr)
     return 1 if dups or unbound else 0
 
@@ -1399,6 +1410,7 @@ LINK_C_HEAD = """\
 #include "port.h"
 #include "mod_slot.h"
 #include "mod_hooks.h"
+#include "mod_event.h"
 
 void bw_boot_link_init(void);
 """

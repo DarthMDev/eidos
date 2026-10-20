@@ -33,6 +33,9 @@
 #include "cp.h"
 #include "dsmem.h"
 #include "firmware.h"
+#include "mod_context.h"
+#include "mod_event.h"
+#include "mod_state.h"
 #include "os.h"
 #include "port.h"
 #include "pxi.h"
@@ -48,6 +51,14 @@ void bw_port_reset(void)
     bw_os_reset();
     bw_pxi_reset();
     bw_cp_reset();
+
+    /* The mod layer: no mod is loaded, no context carries over a run, no
+     * game object stays bound, and the port's own rows are bound again
+     * (the reset empties the binding table). */
+    bw_mod_event_reset();
+    bw_mod_event_bind_all();
+    bw_mod_context_reset();
+    bw_mod_state_reset();
 
     bw_pxi_set_irq_sink(bw_os_raise_irq);
     bw_os_set_cpu_step(bw_arm7_step);

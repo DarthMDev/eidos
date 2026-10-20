@@ -63,7 +63,14 @@ static const char *k_fs =
  * with the master brightness folded in exactly:
  *   up   (1 - f) P + f A + (1 - A) behind
  *   down (1 - f) P + (1 - A) behind
- * Everywhere else the screen shows as it is.
+ * Everywhere else the screen shows as it is.  A 2D layer the game blends
+ * over the 3D (the battle's message box: BG1 at full strength over 7/16 of
+ * the 3D) is kept too: `zero` is the screen composed with an opaque black 3D
+ * layer, so at a pixel where it differs from `tex` it is what the 2D adds,
+ * and the difference over the sentinel colour `sent` (the 3D layer `tex`
+ * was composed with) is how much of the 3D shows:
+ *   result = zero + w * (the 3D as above),  w = (tex - zero) / sent
+ * A pixel the dilation adds, where the two agree, shows the 3D as before.
  */
 static const char *k_fs3 =
     "#version 330 core\n"
@@ -75,6 +82,9 @@ static const char *k_fs3 =
     "uniform int bmode;\n"
     "uniform int dil;\n"
     "uniform float bfac;\n"
+    "uniform sampler2D zero;\n"
+    "uniform int hasz;\n"
+    "uniform vec3 sent;\n"
     "in vec2 uv;\n"
     "out vec4 color;\n"
     SHARP_FN
@@ -99,7 +109,17 @@ static const char *k_fs3 =
     "    if (bmode == 1) { P = (1.0 - bfac) * P + bfac * A; }\n"
     "    else if (bmode == 2) { P = (1.0 - bfac) * P; }\n"
     "    vec3 b = sharp(behind, uv, texsize, dstsize);\n"
-    "    color = vec4(P + (1.0 - A) * b, 1.0);\n"
+    "    vec3 d = P + (1.0 - A) * b;\n"
+    "    if (hasz != 0) {\n"
+    "        ivec2 c = clamp(ip, ivec2(0), sz - 1);\n"
+    "        vec3 T = texelFetch(tex, c, 0).rgb;\n"
+    "        vec3 X = texelFetch(zero, c, 0).rgb;\n"
+    "        if (T != X) {\n"
+    "            float w = clamp((T.g - X.g) / sent.g, 0.0, 1.0);\n"
+    "            d = min(vec3(1.0), sharp(zero, uv, texsize, dstsize) + w * d);\n"
+    "        }\n"
+    "    }\n"
+    "    color = vec4(d, 1.0);\n"
     "}\n";
 
 /*
@@ -306,6 +326,13 @@ EidosGl *eidos_gl_create(SDL_Window *window)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenTextures(1, &g->zero_tex);
+    glBindTexture(GL_TEXTURE_2D, g->zero_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 192, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     if (glGetError() != GL_NO_ERROR) {
         eidos_gl_destroy(g);
         return NULL;
@@ -323,6 +350,9 @@ EidosGl *eidos_gl_create(SDL_Window *window)
         g->u3_bmode = g->glGetUniformLocation(g->prog3, "bmode");
         g->u3_bfac = g->glGetUniformLocation(g->prog3, "bfac");
         g->u3_dil = g->glGetUniformLocation(g->prog3, "dil");
+        g->u3_zero = g->glGetUniformLocation(g->prog3, "zero");
+        g->u3_hasz = g->glGetUniformLocation(g->prog3, "hasz");
+        g->u3_sent = g->glGetUniformLocation(g->prog3, "sent");
         if (eidos_gl3d_init(g) != 0) {
             g->have3d = 0;
         }
@@ -351,6 +381,9 @@ void eidos_gl_destroy(EidosGl *g)
         SDL_GL_MakeCurrent(g->window, g->ctx);
         if (g->tex[0] != 0) {
             glDeleteTextures(2, g->tex);
+        }
+        if (g->zero_tex != 0) {
+            glDeleteTextures(1, &g->zero_tex);
         }
         if (g->behind_tex != 0) {
             glDeleteTextures(1, &g->behind_tex);
@@ -394,6 +427,23 @@ void eidos_gl_upload(EidosGl *g, int i, const unsigned char *rgba, int w,
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA,
                         GL_UNSIGNED_BYTE, rgba);
     }
+}
+
+/* The sentinel colour in the shader matches demo/eidos_boot.c's
+ * boot_sentinel: the opaque 3D layer the 2D screen is composed with. */
+void eidos_gl_set_3d_zero(EidosGl *g, const unsigned char *zero, int w, int h)
+{
+    if (g == NULL) {
+        return;
+    }
+    g->has_zero = 0;
+    if (zero == NULL || g->zero_tex == 0 || w != 256 || h != 192) {
+        return;
+    }
+    glBindTexture(GL_TEXTURE_2D, g->zero_tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, zero);
+    g->has_zero = 1;
 }
 
 void eidos_gl_set_3d(EidosGl *g, int screen, const unsigned char *behind,
@@ -512,6 +562,7 @@ int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
     g->glUniform1i(g->u3_bmode, 0);
     g->glUniform1f(g->u3_bfac, 0.f);
     g->glUniform1i(g->u3_dil, 1);
+    g->glUniform1i(g->u3_hasz, 0);
     g->glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, g->cap_src[1]);
     g->glActiveTexture(GL_TEXTURE2);
@@ -601,6 +652,15 @@ static void draw_frame(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
             g->glUniform1i(g->u3_bmode, g->bmode);
             g->glUniform1f(g->u3_bfac, g->bfac);
             g->glUniform1i(g->u3_dil, g->dilate);
+            {
+                static const GLfloat sent[3] = { 84.f / 255.f, 168.f / 255.f, 52.f / 255.f };
+
+                g->glUniform1i(g->u3_zero, 3);
+                g->glUniform1i(g->u3_hasz, g->has_zero);
+                g->glUniform3fv(g->u3_sent, 1, sent);
+            }
+            g->glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D, g->zero_tex);
             g->glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, g->behind_tex);
             g->glActiveTexture(GL_TEXTURE2);

@@ -78,10 +78,9 @@ The file is a port-owned header followed by the mod's opaque payload.
 | 12 | `payload_crc`, u32 | port |
 | 16 | `api_written`, u32, the manifest `api` in force | port |
 | 20 | `save_check`, u32, a checksum of the game save written in the same step | port |
-| 24 | `reserved`, 8 bytes, zero | port |
-| 32 | the payload | mod |
+| 24 | the payload | mod |
 
-The header is 32 bytes. The port writes and reads it. The mod owns the payload
+The header is 24 bytes (`BwModStateHeader` in `sdk/mod_state.h`). The port writes and reads it. The mod owns the payload
 and its internal format, which is the mod-owns-the-bytes rule of
 `docs/mod-interface.md`, section 3. The mod never sees the header; the
 port-owned calls of section 2 hand it the payload and its length. A mod that
@@ -161,7 +160,7 @@ A mod uses its state through the service table it receives at start-up
 mod is calling, so no call names a namespace:
 
 ```c
-long (*state_load)(void *buf, u32 size);          /* bytes read, -1 on damage */
+s32  (*state_load)(void *buf, u32 size);    /* bytes read, -1 on damage */
 int  (*state_store)(const void *buf, u32 size);   /* 0, or -1 */
 int  (*state_clear)(void);                         /* 0, or -1 */
 int  (*state_info)(BwModStateHeader *out);         /* the header fields */

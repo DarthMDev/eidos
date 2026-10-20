@@ -52,6 +52,10 @@ int eidos_gl_render3d(EidosGl *gl, const struct G3dSnapshot *snap, int w, int h)
  * bfac 0..1 are the engine's master brightness.  screen < 0 turns it off. */
 void eidos_gl_set_3d(EidosGl *gl, int screen, const unsigned char *behind,
                      int w, int h, int bmode, float bfac, int dilate);
+/* The same screen composed with an opaque black 3D layer (w x h RGBA), so
+ * the presenter can tell what a 2D layer adds over the 3D and how much of
+ * the 3D shows through a blend; NULL for none.  Call before eidos_gl_set_3d. */
+void eidos_gl_set_3d_zero(EidosGl *gl, const unsigned char *zero, int w, int h);
 
 /* Test aid: the last 3D frame as top-down, non-premultiplied RGBA, w x h as
  * rendered (the size given to eidos_gl_render3d).  0 on success. */

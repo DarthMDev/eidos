@@ -89,9 +89,11 @@ struct EidosGl {
     /* the 3D composite (a screen whose 3D layer the GPU draws) */
     GLuint prog3;
     GLint u3_rect, u3_tex, u3_behind, u3_g3d, u3_texsize, u3_dstsize,
-          u3_bmode, u3_bfac, u3_dil;
+          u3_bmode, u3_bfac, u3_dil, u3_zero, u3_hasz, u3_sent;
     int s3d;                       /* screen index, -1 none                */
     GLuint behind_tex;
+    GLuint zero_tex;               /* the screen with a black 3D layer, or 0 */
+    int has_zero;                  /* zero_tex holds this frame's          */
     int behind_w, behind_h;
     int bmode;                     /* master brightness: 0 off, 1 up, 2 down */
     float bfac;                    /* 0..1                                  */

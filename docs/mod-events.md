@@ -228,6 +228,31 @@ aletheia has not renamed: `POKE_TOOL_GetLevelUpMove` 0x02018328,
 `BOX2_MAIN_MoveMonToParty` 0x021DD330 and `BOX2_SEQ_StateMoveItemF` 0x021E81D0
 still carry those names in the manifest, so the port leaves them.
 
+### The rows the newer corpus renamed under the port
+
+The corpus aletheia builds from now (src/game at 4ee960765e) has renamed
+twelve of the declared set's functions.  The declared set keeps the port's
+spelling, because the spelling is the port's vocabulary for the hook
+switch a row carries; the generators resolve a row by its address, so the
+slot and the event fire either way.  The corpus's name is the one the
+port's own C calls (the build's gamespell header redirects the port's
+spelling to it).
+
+| Address | Region | The port's spelling | The corpus's name |
+|---|---|---|---|
+| 0x0200C248 | arm9 | `BEACON_SetFlag` | `MISC_SetBadge` |
+| 0x0200C278 | arm9 | `BEACON_AddPoints` | `MISC_AddMoney` |
+| 0x0200C29C | arm9 | `BEACON_SubPoints` | `MISC_SubMoney` |
+| 0x02018328 | arm9 | `POKE_TOOL_GetLevelUpMove` | `POKE_TOOL_LearnLevelUpMove` |
+| 0x0215AC68 | ov010 | `SCRCMD_WORK_CmdSetMiscFlag` | `SCRCMD_WORK_CmdSetBadge` |
+| 0x0215B328 | ov010 | `SCRCMD_WORK_CmdSetEventFlagOffset` | `SCRCMD_WORK_CmdSetTrainerDefeatedFlag` |
+| 0x0215B350 | ov010 | `SCRCMD_WORK_CmdResetEventFlagOffset` | `SCRCMD_WORK_CmdClearTrainerDefeatedFlag` |
+| 0x0215C558 | ov010 | `SCRCMD_PROC_AddMiscPoints` | `SCRCMD_PROC_AddMoney` |
+| 0x0215C584 | ov010 | `SCRCMD_PROC_SubMiscPoints` | `SCRCMD_PROC_SubMoney` |
+| 0x0216EF84 | ov010 | `EVENT_BATTLE_SetResultSound` | `EVENT_BATTLE_AddBattleRecord` |
+| 0x021DD330 | ov170 | `BOX2_MAIN_MoveMonToParty` | `BOX2_MAIN_SwapBoxAndPartyMon` |
+| 0x021DD810 | ov170 | `BOX2_MAIN_MoveMonIntoBox` | `BOX2_MAIN_ResetShayminFormInBox` |
+
 ## 2. The handler contract
 
 A handler is one C function per event:

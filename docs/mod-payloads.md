@@ -501,9 +501,12 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 
 1. **The source of each field.** For each field, the argument, accessor or
    context it is read from, confirmed against the bound game function when its
-   builder is written (`progress/PAYLOAD_SURVEY.md` holds most of them).
-2. **The enum values.** The numeric values of `method`, `source`, `format`,
-   `action`, `outcome` and the other small enums, fixed in `sdk/mod_api.h`.
+   builder is written (`progress/PAYLOAD_SURVEY.md` holds most of them). The
+   session and items areas' builders are written (`sdk/mod_event_session.c`,
+   `sdk/mod_event_items.c`); the pokemon, field and battle areas' are not.
+2. **The builders for the rest of the events.** The pokemon, field and battle
+   areas have no binding rows yet, and so no builder, applier or refusal
+   function (`docs/mod-implementation.md`, section 6, step 4).
 
 ## Related documents
 

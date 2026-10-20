@@ -46,12 +46,13 @@ incoming arguments, so a handler's modified fields that map onto arguments
 reach the game.
 
 `bw_mod_event_enter` looks the pair up in the binding table. For an event that
-fires before the function, it builds the payload, runs every handler, writes
-back the modifiable fields, and, when a handler refused, calls the event's
-refusal function and returns 1. `bw_mod_event_leave` does the same for an
-event that fires after the function, with `call.ret` in the payload. A pair
-with no binding returns 0 at once, so a raw-hook-only slot costs one table
-lookup.
+fires before the function, it builds the payload, runs every handler, and,
+when a handler refused, calls the event's refusal function and returns 1.
+A refusal replaces the write-back: the refused outcome is what the caller
+sees, so the modified fields are not written into a call that is not made.
+`bw_mod_event_leave` does the same for an event that fires after the
+function, with `call.ret` in the payload. A pair with no binding returns 0
+at once, so a raw-hook-only slot costs one table lookup.
 
 ### The binding table
 
@@ -217,6 +218,23 @@ Each step has a test that runs without game data unless it says so.
 
 Steps 2, 3 and 5 can run in parallel after step 1. Step 4 needs 2 and 3.
 Steps 6 to 10 need 1 and can run in parallel with step 4.
+
+### What is built
+
+Steps 1, 2, 3 and 5 are built, and step 4 for the session, progress and items
+areas: `sdk/mod_api.h`, `sdk/mod_state.h`, `sdk/mod_event.h` and
+`sdk/mod_context.h` are the headers, `sdk/mod_event.c` and `sdk/mod_context.c`
+the dispatch and the contexts, `sdk/mod_state.c` the state calls,
+`sdk/mod_event_session.c` and `sdk/mod_event_items.c` the first two areas'
+rows, and the two generators emit the enter and leave calls. The tests are
+`tests/test_mod_surface.c` (the surface hash), `tests/test_mod_event.c` (the
+dispatch) and `tests/test_mod_state.c` (the state calls).
+
+What step 4 still owes: the pokemon, field and battle areas' rows, and the
+builders of the events the port's own state cannot reach yet. What step 5
+owes the boot: the battle half of the state API and `FIELD_PLAYER_GetPos` are
+not in the boot's closure, and the port has to bind the game's live objects
+(the game data, the battle, the field player) where it learns them.
 
 ## Related documents
 
