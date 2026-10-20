@@ -68,9 +68,11 @@ def boot_plan(build):
         # so the unit counts of the two trees are not comparable and the
         # surface is measured against the tree the build used.
         out["tree"] = m.group(3)
-    for key, pat in (("shim_replaced", r"replaced by a port shim \(cmake/boot.cmake\): (\d+)"),
+    for key, pat in (("shim_replaced",
+                      r"replaced by a port shim \(cmake/boot.cmake\): (\d+)"
+                      r"|functions cut because the port defines them: (\d+)"),
                      ("in_library", r"already in the eidos library: (\d+)"),
-                     ("asm_bodies", r"mwcc asm bodies: (\d+)"),
+                     ("asm_bodies", r"mwcc asm bodies(?: cut)?: (\d+)"),
                      ("compiled", r"compiled for the boot: (\d+)"),
                      ("clashes", r"NOT EXCLUDED, defines a shim's name")):
         if key == "clashes":
@@ -78,7 +80,9 @@ def boot_plan(build):
             continue
         m = re.search(pat, text)
         if m:
-            out[key] = int(m.group(1))
+            # The plan names a count one way in each tree; the first group
+            # that matched carries it.
+            out[key] = int(next(g for g in m.groups() if g is not None))
     for line in read_lines(report):
         m = re.match(r"implicit declarations supplied: (\d+) in (\d+) files", line)
         if m:

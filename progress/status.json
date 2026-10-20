@@ -1,5 +1,5 @@
 {
-  "asm_bodies": null,
+  "asm_bodies": 125,
   "boot_matched": 430,
   "clashes": 0,
   "compile_errors": 0,
@@ -14,7 +14,7 @@
   "link_failed_targets": 0,
   "matched_total": 1374,
   "note": "src/game: the boot and the overlays compile aletheia's merged units, and the host surface is measured against the tree the build used",
-  "shim_replaced": null,
+  "shim_replaced": 238,
   "stubbed_asm": 17,
   "stubbed_open": 6,
   "tests": {
