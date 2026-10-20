@@ -16,6 +16,11 @@
  * The on/off switch is sdk/mod_hooks.h's bw_hook_enabled: a generated slot
  * asks it by the row's function name, and with the hook off calls the
  * original, the same rule a compiled hook follows (docs/hooks.md).
+ *
+ * The declared set is here too: the build emits the whole of
+ * mod/declared_set.txt as one table and registers it at start-up, and
+ * bw_mod_slot_declared answers whether a (region, address) pair is
+ * declared (docs/mod-state.md, section 4).
  */
 
 #ifndef BW_PORT_MOD_SLOT_H
@@ -42,6 +47,26 @@ typedef struct BwModSlotOriginal {
     unsigned int addr;
     void        *original;
 } BwModSlotOriginal;
+
+/* One row of the declared set: the (region, address) pair a mod may
+ * override (docs/mod-interface.md, section 1).  The build emits the whole
+ * set as one table, the arm9 rows and the overlay rows together
+ * (docs/mod-state.md, section 4). */
+typedef struct BwModDeclared {
+    unsigned int region;   /* BW_MOD_REGION_ARM9 or BW_MOD_REGION_OVL(id) */
+    unsigned int addr;     /* the even function start */
+} BwModDeclared;
+
+/* Register the declared set: the whole table of mod/declared_set.txt, as
+ * the build emits it.  The build calls this at start-up (bw_boot_link_init),
+ * before any mod loads, so the manifest's check answers for every region
+ * whether or not that region has loaded. */
+void bw_mod_declare_table(const BwModDeclared *rows, unsigned int count);
+
+/* Is (region, addr) a declared address?  1 when it is, 0 when it is not.
+ * The address may be the even start or the Thumb-tagged value a code
+ * pointer holds: the low bit is masked before the lookup. */
+int bw_mod_slot_declared(unsigned int region, unsigned int addr);
 
 /* The override installed for (region, addr), or NULL.  A generated slot asks
  * this before it calls anything. */

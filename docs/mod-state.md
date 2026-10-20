@@ -65,6 +65,17 @@ A bad namespace is reported and the port falls back to a value derived from the
 directory name, the way a bad `order` is reported and the default stands
 (`sdk/vfs.c`).
 
+The port's own rules, which the documents leave open:
+
+- The default namespace is the name in lower case, with the spaces and the
+  punctuation that is not a letter or a digit turned into nothing and the
+  words joined by a dash: "Nuzlocke Soul Link" gives "nuzlocke-soullink".
+  The name is cut at the first space, so the first word stands and the rest
+  follows it joined.
+- The namespace is at most 64 characters, and it may hold letters, digits,
+  `-`, `_` and `.` only. A reserved device name (CON, PRN, AUX, NUL, COM1
+  to COM9, LPT1 to LPT9, with or without an extension) is refused.
+
 ### The envelope and the payload
 
 The file is a port-owned header followed by the mod's opaque payload.
@@ -404,13 +415,27 @@ Steps 2, 3, 4 and 5 touch disjoint files. Step 5 touches only the generator.
 
 ## Still to build
 
-1. **The namespace validation table.** The reserved names, the character set
-   and the length cap, so a namespace can never leave the `mods/` folder.
-2. **The payload size cap.** A cap, and the report when a mod stores more.
-3. **The in-game mod menu.** Enabling and disabling a mod, the state clear
+1. **The in-game mod menu.** Enabling and disabling a mod, the state clear
    action and the orphan report (`docs/mod-services.md`).
-4. **The disable order.** Flush the state, revert the mod's slots, then unload
+2. **The disable order.** Flush the state, revert the mod's slots, then unload
    the library (constraint 2), built with the loader.
+3. **The per-mod answer to "is my state in step".** The `save.load` payload
+   carries one byte for every mod, and the payload is built once for all the
+   handlers of the event, so the answer cannot be per mod in the payload. The
+   port answers it through a service call, which needs the dispatch to know
+   which mod's handler it is running.
+
+The port's own choices, which the documents do not fix:
+
+- The header's version is 1 (`BW_MOD_STATE_VERSION` in `sdk/mod_state.h`).
+- The payload's checksum is a CRC-32 (the reflected IEEE polynomial), and the
+  port publishes it so the game save's own checksum is computed the same way
+  (`bw_mod_savedata_crc`).
+- The largest payload a mod may store is 4 MiB; a bigger store is refused
+  and reported (`BW_MOD_SAVEDATA_MAX_PAYLOAD`).
+- A file that is moved aside because it cannot be read keeps the name the
+  documents give it, with `.1`, `.2` added when that name is taken, so an
+  earlier moved file is never overwritten.
 
 ## Related documents
 

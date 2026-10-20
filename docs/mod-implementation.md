@@ -221,20 +221,32 @@ Steps 6 to 10 need 1 and can run in parallel with step 4.
 
 ### What is built
 
-Steps 1, 2, 3 and 5 are built, and step 4 for the session, progress and items
-areas: `sdk/mod_api.h`, `sdk/mod_state.h`, `sdk/mod_event.h` and
-`sdk/mod_context.h` are the headers, `sdk/mod_event.c` and `sdk/mod_context.c`
-the dispatch and the contexts, `sdk/mod_state.c` the state calls,
-`sdk/mod_event_session.c` and `sdk/mod_event_items.c` the first two areas'
-rows, and the two generators emit the enter and leave calls. The tests are
-`tests/test_mod_surface.c` (the surface hash), `tests/test_mod_event.c` (the
-dispatch) and `tests/test_mod_state.c` (the state calls).
+Steps 1, 2, 3 and 5 are built, step 4 for the session, progress and items
+areas, and steps 6 and 7: `sdk/mod_api.h`, `sdk/mod_state.h`, `sdk/mod_event.h`
+and `sdk/mod_context.h` are the headers, `sdk/mod_event.c` and
+`sdk/mod_context.c` the dispatch and the contexts, `sdk/mod_state.c` the state
+calls, `sdk/mod_event_session.c` and `sdk/mod_event_items.c` the first two
+areas' rows, `sdk/mod_manifest.c` the manifest record and the apply,
+`sdk/mod_savedata.c` a mod's own saved data, `sdk/mod_loader.c` the loader,
+and the two generators emit the enter and leave calls. The declared set is at
+run time too: the boot link emits the table of every row and `sdk/mod_slot.c`
+answers from it.
+
+The tests are `tests/test_mod_surface.c` (the surface hash),
+`tests/test_mod_event.c` (the dispatch), `tests/test_mod_state.c` (the state
+calls), `tests/test_mod_manifest.c`, `tests/test_mod_savedata.c` and
+`tests/test_mod_loader.c` (which loads a real library).
 
 What step 4 still owes: the pokemon, field and battle areas' rows, and the
 builders of the events the port's own state cannot reach yet. What step 5
 owes the boot: the battle half of the state API and `FIELD_PLAYER_GetPos` are
 not in the boot's closure, and the port has to bind the game's live objects
 (the game data, the battle, the field player) where it learns them.
+
+What the loader path still owes: the services are empty but for the mod's own
+saved data, so a refused event cannot yet say why (step 8, messages first),
+and the script command hooks and the rule interpreter are not built (steps 9
+and 10).
 
 ## Related documents
 

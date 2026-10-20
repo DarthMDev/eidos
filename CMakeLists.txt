@@ -421,6 +421,9 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_state.c     # the state calls over the game's accessors
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_session.c  # the session and save events
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_items.c    # the item, money and heal events
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_manifest.c   # the run-time manifest: the record, the parse, the apply
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_savedata.c   # a mod's own saved data: the file, the envelope, the versions
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_loader.c     # the loader: the library, the host table, the handlers
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_title.c     # title menu hook state (docs/hooks.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_dir.c      # path kind and directory listing, Win32 and POSIX
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_save.c     # save folder, mkdir, sync, replace: Win32 and POSIX
@@ -1473,6 +1476,35 @@ foreach(t test_mod_surface test_mod_event test_mod_state)
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# The rest of the mod layer (docs/mod-implementation.md, section 6, steps 6
+# and 7).  test_mod_manifest drives the manifest's parse, the namespace, the
+# declared check and the override grammar; test_mod_savedata drives the
+# envelope, the versions and the write discipline; test_mod_loader loads a
+# real library.
+#
+# The library the loader's test loads is built from the test's own file: with
+# BW_MOD_TEST_LIBRARY defined it is a tiny shared library that binds one
+# handler to one event and records what it was handed (docs/mod-abi.md,
+# section 1).  It links against nothing: a mod reaches the port through the
+# host table alone.
+add_library(test_mod_lib MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_loader.c)
+target_compile_definitions(test_mod_lib PRIVATE BW_MOD_TEST_LIBRARY=1)
+target_include_directories(test_mod_lib PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+
+foreach(t test_mod_loader test_mod_manifest test_mod_savedata)
+    add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
+    target_include_directories(${t} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(${t} PRIVATE eidos)
+endforeach()
+add_dependencies(test_mod_loader test_mod_lib)
+# The loader's test needs the library it loads, so the path is the one the
+# build made, the way tests/test_view.c is given the viewer it drives.
+add_test(NAME test_mod_loader COMMAND test_mod_loader $<TARGET_FILE:test_mod_lib>)
+add_test(NAME test_mod_manifest COMMAND test_mod_manifest)
+add_test(NAME test_mod_savedata COMMAND test_mod_savedata)
 
 # The registry's overlap check panics, and a panic aborts the process, so it
 # is exercised in a run of its own that passes only if the panic happened.

@@ -138,6 +138,21 @@ enum {
 };
 
 /*
+ * The port's own state file header version.  It is bumped when the header's
+ * layout changes; a file with an older version is read with that version's
+ * layout and written in this one at the next store (docs/mod-state.md,
+ * section 5).
+ */
+#define BW_MOD_STATE_VERSION 1u
+
+/*
+ * The state file header's size on the disk, and the largest payload a mod
+ * may store.  A bigger store is refused with a report.
+ */
+#define BW_MOD_STATE_HEADER_SIZE 24u
+#define BW_MOD_SAVEDATA_MAX_PAYLOAD (4u * 1024u * 1024u)
+
+/*
  * The header of the port's own state file (docs/mod-state.md, section 1).
  * The port owns it and bumps `version` when the layout changes; the payload
  * after it belongs to the mod.

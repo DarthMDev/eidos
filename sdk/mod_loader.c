@@ -1,0 +1,997 @@
+/*
+ * sdk/mod_loader.c -- the loader: the mod's library, the host table, the
+ * handlers it binds, the overrides it installs and the way back down
+ * (docs/mod-implementation.md, section 3; docs/mod-abi.md, sections 1 and 3;
+ * docs/mod-overrides.md; docs/mod-state.md, section 2).
+ *
+ * What this file owns
+ * -------------------
+ *
+ * The loader opens a mod's library, checks the mod's versions, hands the
+ * mod the host table and takes it back down again.  The seven steps of
+ * docs/mod-implementation.md, section 3, are the steps of
+ * bw_mod_loader_load_all(), one mod at a time, in load order:
+ *
+ *   1. read the manifest and apply it: the api (and the port version, for
+ *      a mod with raw hooks) is checked there, and a mod that does not
+ *      match is refused and never loaded;
+ *   2. open the library: LoadLibraryW on Windows, dlopen elsewhere;
+ *   3. find eidos_mod_start and eidos_mod_stop in it;
+ *   4. call eidos_mod_start with the host table, and keep the state
+ *      pointer it returns;
+ *   5. bind the handlers the mod asked for, and install the manifest's
+ *      override lines.
+ *
+ * The way down (bw_mod_loader_stop_all, and bw_mod_loader_stop for one
+ * mod) is the order docs/mod-state.md, section 2, constraint 2, fixes: the
+ * mod's state is stored, the slots the mod installed are reverted to their
+ * originals, eidos_mod_stop runs, and the library is unloaded last.  The
+ * library is last because a code pointer into it is still live until then.
+ *
+ * The port calls
+ * --------------
+ *
+ *   bw_mod_loader_load_all()       load every mod with a `code` key
+ *   bw_mod_loader_stop_all()       stop and unload every loaded mod
+ *   bw_mod_loader_stop(i)          stop and unload one loaded mod
+ *   bw_mod_loader_count()          how many mods are loaded
+ *   bw_mod_loader_name_at(i)       a loaded mod's name
+ *   bw_mod_loader_namespace_at(i)  a loaded mod's state namespace
+ *
+ * The load point: the loader runs after the save is chosen and before the
+ * game runs (docs/mod-implementation.md, section 3).  The save matters,
+ * because a mod's own data lives in its state namespace, one file per
+ * save (docs/mod-state.md, section 1).  On exit, and when the player
+ * disables a mod, the port calls bw_mod_loader_stop_all() (or
+ * bw_mod_loader_stop()).
+ *
+ * The mod's own data and the way down
+ * -----------------------------------
+ *
+ * The mod owns its payload and stores it through the services table; the
+ * saved-data layer writes it at once when the mod stores it, and holds it
+ * until the game save ends when a save handoff is in progress.  The mod
+ * ABI has no flush call, so the port's save handoff
+ * (bw_mod_savedata_save_begin and bw_mod_savedata_save_done) is what
+ * writes a mod's payload together with the game save: the port runs it
+ * before it stops the mods.  The loader puts the mod's namespace in force
+ * around the calls it makes into the mod, so a state call the mod makes
+ * from its stop entry point reaches the mod's own file.
+ *
+ * A disabled mod and the event layer
+ * ----------------------------------
+ *
+ * The event layer holds the handlers a mod bound, and it has no call to
+ * drop the handlers of one mod.  A handler of a stopped mod still points
+ * into the library the loader has unloaded, so the port must reset the
+ * event layer (bw_mod_event_reset) and bind the port's own rows again
+ * (bw_mod_event_bind_all) before any event fires, and then load the mods
+ * that are still wanted (bw_mod_loader_load_all).  That is the rebuild the
+ * port does at the menu anyway (docs/mod-state.md, section 2, constraint
+ * 1); the loader does not reset the event layer itself, because the reset
+ * empties the binding table as well.
+ *
+ * What the loader needs from the other layers
+ * -------------------------------------------
+ *
+ * The manifest layer (sdk/mod_manifest.c) owns the manifest records.  The
+ * loader creates one per mod, parses the manifest into it and applies it,
+ * in that order, and reads the pieces it needs through the calls
+ * declared below.  The apply is where the versions are checked
+ * (docs/mod-state.md, section 3): a mod whose api does not match the
+ * port's, or whose port pin does not match, is refused there, with a
+ * message naming both numbers, and the loader does not load it.  The
+ * apply also leaves in the record the overrides whose (region, address)
+ * pair is a declared address; the ones that are not are reported there
+ * and skipped.
+ *
+ * The saved data (sdk/mod_savedata.c) owns the mod's own file.  The
+ * loader tells it which mod is calling (bw_mod_savedata_set_namespace)
+ * and which api is in force (bw_mod_savedata_set_api) around every call
+ * the port makes into a mod, and binds the five calls of the services
+ * table (bw_mod_savedata_load and its four siblings) into the mod's own
+ * table.  A service the port has not built is NULL, and a mod that calls
+ * one gets nothing rather than a crash.
+ *
+ * The event layer (sdk/mod_event.c) owns the dispatch.  The loader tells
+ * it which mod is registering, with bw_mod_event_set_registering_state,
+ * so a handler receives the state of its own mod and not another mod's.
+ * A mod binds its handlers from eidos_mod_start, before that call has
+ * returned its state pointer, so the loader holds the bindings until the
+ * state is known and registers them then, in the order the mod bound them.
+ *
+ * The slot registry (sdk/mod_slot.c) keeps one hook per (region, address)
+ * pair.  The loader installs with bw_mod_slot_install and reverts with the
+ * same call and a NULL override, which leaves the pair with the original
+ * the build published.
+ */
+#include "mod_api.h"
+#include "mod_event.h"
+#include "mod_loader.h"
+#include "mod_manifest.h"
+#include "mod_slot.h"
+#include "mod_state.h"
+#include "vfs.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
+/* ------------------------------------------------------------------ */
+/* What the other layers provide                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The manifest layer (sdk/mod_manifest.c).  The record is opaque here:
+ * the loader creates one per mod, parses the manifest into it, applies
+ * it, and reads the pieces it needs through these calls.  The manifest
+ * layer has no header yet, so the record is carried as a void *.
+ */
+extern void        bw_mod_manifest_set_port_version(const char *version);
+extern void       *bw_mod_manifest_new(const char *dir_name);
+extern void        bw_mod_manifest_delete(void *manifest);
+extern int         bw_mod_manifest_parse_dir(void *manifest, const char *root,
+                                              const char *dir_name);
+extern int         bw_mod_manifest_apply(void *manifest);
+extern u32         bw_mod_manifest_override_count(const void *manifest);
+extern const void *bw_mod_manifest_override_at(const void *manifest, u32 i);
+extern const char *bw_mod_manifest_name(const void *manifest);
+extern const char *bw_mod_manifest_code(const void *manifest);
+extern const char *bw_mod_manifest_state(const void *manifest);
+extern int         bw_mod_manifest_has_api(const void *manifest);
+extern void        bw_mod_manifest_applied_clear(void);
+
+/*
+ * The saved data (sdk/mod_savedata.c).  The five calls are the ones the
+ * services table carries (sdk/mod_state.h); the two setters tell the
+ * layer whose file a call is about.  The layer has no header yet, so the
+ * prototypes are here.
+ */
+extern void        bw_mod_savedata_set_namespace(const char *ns);
+extern const char *bw_mod_savedata_namespace(void);
+extern void        bw_mod_savedata_set_api(u32 api);
+extern s32         bw_mod_savedata_load(void *buf, u32 size);
+extern int         bw_mod_savedata_store(const void *buf, u32 size);
+extern int         bw_mod_savedata_clear(void);
+extern int         bw_mod_savedata_info(BwModStateHeader *out);
+extern int         bw_mod_savedata_dir(char *out, u32 out_size);
+
+/*
+ * One override row: sdk/mod_manifest.h carries it, and the manifest layer
+ * fills it.  The loader reads the region, the address and the symbol out of
+ * it to install the override.
+ */
+
+/*
+ * The port's own version, the one a mod with raw hooks is pinned to
+ * (docs/mod-overrides.md, "Version pinning").  The port has no version
+ * string of its own yet, so the loader carries one and hands it to the
+ * manifest layer, which does the check; the build may set another with
+ * -DBW_MOD_PORT_VERSION="...".
+ */
+#ifndef BW_MOD_PORT_VERSION
+#define BW_MOD_PORT_VERSION "0.0.0-dev"
+#endif
+
+/* ------------------------------------------------------------------ */
+/* The limits                                                          */
+/* ------------------------------------------------------------------ */
+
+/* How many mods with code the loader holds at once. */
+#define BW_MOD_LOADER_MAX 16
+
+/* How many manifest records the loader keeps (one per mod it applied). */
+#define BW_MOD_LOADER_APPLIED_MAX 32
+
+/* How many handlers one mod may bind. */
+#define BW_MOD_LOADER_BINDINGS_MAX 64
+
+/* How many events one mod may bind a handler to. */
+#define BW_MOD_LOADER_KINDS_MAX 64
+
+/* How many overrides one mod may install. */
+#define BW_MOD_LOADER_OVERRIDES_MAX 64
+
+/* The lengths of the port's own buffers. */
+#define BW_MOD_LOADER_NAME_MAX 96
+#define BW_MOD_LOADER_NS_MAX 96
+#define BW_MOD_LOADER_PATH_MAX 1200
+
+/* ------------------------------------------------------------------ */
+/* One loaded mod                                                      */
+/* ------------------------------------------------------------------ */
+
+/* The entry points a mod library exports (docs/mod-abi.md, section 1). */
+typedef int  (*BwModStartFn)(const BwModHost *host, void **mod_state);
+typedef void (*BwModStopFn)(void *mod_state);
+
+/* A handler a mod asked for. */
+typedef struct BwModLoaderBinding {
+    u32            kind;
+    BwEventHandler fn;
+} BwModLoaderBinding;
+
+/* An event a mod bound a handler to. */
+typedef struct BwModLoaderKind {
+    u32 kind;
+    int registered;   /* the dispatch holds the mod's entry for it */
+} BwModLoaderKind;
+
+/* A pair the mod installed, kept so the way down can revert it. */
+typedef struct BwModLoaderSlot {
+    unsigned int region;
+    unsigned int addr;
+    void        *fn;         /* the hook the mod installed */
+} BwModLoaderSlot;
+
+typedef struct BwModLoaderMod {
+    int           loaded;      /* the slot holds a mod with code */
+    u32           slot;        /* the slot's number */
+    char          name[BW_MOD_LOADER_NAME_MAX];
+    char          ns[BW_MOD_LOADER_NS_MAX];
+    char          path[BW_MOD_LOADER_PATH_MAX];
+    void         *manifest;    /* the manifest record (the loader keeps it) */
+    void         *library;     /* the handle: HMODULE or a dlopen handle */
+    BwModStartFn  start;
+    BwModStopFn   stop;
+    void         *state;       /* the state the start returned */
+    int           started;     /* the start ran and returned 0 */
+    u32           api;         /* the api in force for the mod */
+    BwModHost     host;
+    BwModServices services;
+    BwModLoaderBinding bindings[BW_MOD_LOADER_BINDINGS_MAX];
+    u32           binding_count;
+    BwModLoaderKind kinds[BW_MOD_LOADER_KINDS_MAX];
+    u32           kind_count;
+    BwModLoaderSlot overrides[BW_MOD_LOADER_OVERRIDES_MAX];
+    u32           override_count;
+} BwModLoaderMod;
+
+static BwModLoaderMod g_mods[BW_MOD_LOADER_MAX];
+static u32            g_count;      /* the loaded mods */
+
+/*
+ * The manifest records the loader keeps: one per mod it applied.  The
+ * manifest layer's applied list holds them as well (the interpreter and
+ * the settings surface read them), so they live until the loader
+ * releases them.
+ */
+static void *g_applied[BW_MOD_LOADER_APPLIED_MAX];
+static u32   g_applied_count;
+
+/*
+ * The api the saved-data layer was last told about.  The layer has no
+ * getter for it, so the loader keeps its own copy to put back.
+ */
+static u32 g_api_in_force = BW_MOD_API_VERSION;
+
+/* ------------------------------------------------------------------ */
+/* The per-mod calls                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The helpers the per-mod calls use; they are defined further down.
+ */
+static int loader_bind(int slot, u32 kind, BwEventHandler fn);
+static int loader_run(int slot, void *state, BwEvent *event);
+
+/*
+ * C has no closures, so each mod gets its own functions: the port tells
+ * which mod is calling by the function the mod called.  The slot number
+ * is the mod's place in the table, and it never moves: a mod that is
+ * stopped keeps its slot, so the functions it holds stay its own.
+ */
+#define BW_MOD_LOADER_SLOT(n)                                          \
+    static int loader_on_##n(u32 kind, BwEventHandler fn)              \
+    {                                                                   \
+        return loader_bind(n, kind, fn);                               \
+    }                                                                   \
+    static int loader_handler_##n(void *state, BwEvent *event)          \
+    {                                                                   \
+        return loader_run(n, state, event);                            \
+    }
+
+BW_MOD_LOADER_SLOT(0)
+BW_MOD_LOADER_SLOT(1)
+BW_MOD_LOADER_SLOT(2)
+BW_MOD_LOADER_SLOT(3)
+BW_MOD_LOADER_SLOT(4)
+BW_MOD_LOADER_SLOT(5)
+BW_MOD_LOADER_SLOT(6)
+BW_MOD_LOADER_SLOT(7)
+BW_MOD_LOADER_SLOT(8)
+BW_MOD_LOADER_SLOT(9)
+BW_MOD_LOADER_SLOT(10)
+BW_MOD_LOADER_SLOT(11)
+BW_MOD_LOADER_SLOT(12)
+BW_MOD_LOADER_SLOT(13)
+BW_MOD_LOADER_SLOT(14)
+BW_MOD_LOADER_SLOT(15)
+
+/* The registration call of each slot. */
+static int (*const g_on_table[BW_MOD_LOADER_MAX])(u32, BwEventHandler) = {
+    loader_on_0,  loader_on_1,  loader_on_2,  loader_on_3,
+    loader_on_4,  loader_on_5,  loader_on_6,  loader_on_7,
+    loader_on_8,  loader_on_9,  loader_on_10, loader_on_11,
+    loader_on_12, loader_on_13, loader_on_14, loader_on_15
+};
+
+/* The entry the dispatch holds for each slot. */
+static int (*const g_handler_table[BW_MOD_LOADER_MAX])(void *, BwEvent *) = {
+    loader_handler_0,  loader_handler_1,  loader_handler_2,
+    loader_handler_3,  loader_handler_4,  loader_handler_5,
+    loader_handler_6,  loader_handler_7,  loader_handler_8,
+    loader_handler_9,  loader_handler_10, loader_handler_11,
+    loader_handler_12, loader_handler_13, loader_handler_14,
+    loader_handler_15
+};
+
+/* ------------------------------------------------------------------ */
+/* The small helpers                                                   */
+/* ------------------------------------------------------------------ */
+
+/* Copy `src` into `dst`, cutting it at the buffer's end. */
+static void copy_str(char *dst, size_t size, const char *src)
+{
+    size_t n;
+
+    if (src == NULL) {
+        dst[0] = '\0';
+        return;
+    }
+    n = strlen(src);
+    if (n >= size) {
+        n = size - 1;
+    }
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+/* The mod's name for the reports: its name, or a stand-in. */
+static const char *mod_label(const char *name, const char *root)
+{
+    if (name != NULL && *name != '\0') {
+        return name;
+    }
+    if (root != NULL && *root != '\0') {
+        return root;
+    }
+    return "a mod";
+}
+
+/* ------------------------------------------------------------------ */
+/* The library                                                         */
+/* ------------------------------------------------------------------ */
+
+/* The handle: HMODULE on Windows, a dlopen handle elsewhere. */
+typedef void *BwModLibrary;
+
+/*
+ * Open the library.  The path is the port's own UTF-8 text, so it is
+ * converted to the wide string the Windows loader wants; a path that is
+ * not UTF-8 is read in the ANSI code page instead.
+ */
+static BwModLibrary library_open(const char *path)
+{
+#ifdef _WIN32
+    wchar_t wide[BW_MOD_LOADER_PATH_MAX];
+
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wide,
+                            (int)(sizeof(wide) / sizeof(wide[0]))) == 0) {
+        if (MultiByteToWideChar(CP_ACP, 0, path, -1, wide,
+                                (int)(sizeof(wide) / sizeof(wide[0]))) == 0) {
+            return NULL;
+        }
+    }
+    return (BwModLibrary)LoadLibraryW(wide);
+#else
+    int flags = RTLD_NOW;
+
+#ifdef RTLD_LOCAL
+    flags |= RTLD_LOCAL;
+#endif
+    return dlopen(path, flags);
+#endif
+}
+
+/* Close the library. */
+static void library_close(BwModLibrary library)
+{
+    if (library == NULL) {
+        return;
+    }
+#ifdef _WIN32
+    FreeLibrary((HMODULE)library);
+#else
+    dlclose(library);
+#endif
+}
+
+/*
+ * The address of an exported symbol, or NULL.  The result is a function
+ * pointer; it is carried as a void * and cast where it is used, because
+ * that is the one conversion every host allows.
+ */
+static void *library_symbol(BwModLibrary library, const char *name)
+{
+#ifdef _WIN32
+    return (void *)GetProcAddress((HMODULE)library, name);
+#else
+    return dlsym(library, name);
+#endif
+}
+
+/* ------------------------------------------------------------------ */
+/* The calls into a mod                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The saved-data layer knows whose file a state call is about by the
+ * namespace the port sets around every call it makes into a mod.  These
+ * two set it for one call and put back what was there.
+ */
+static void loader_enter_mod(BwModLoaderMod *m, const char **saved_ns,
+                             u32 *saved_api)
+{
+    *saved_ns = bw_mod_savedata_namespace();
+    *saved_api = g_api_in_force;
+    bw_mod_savedata_set_namespace(m->ns);
+    bw_mod_savedata_set_api(m->api);
+    g_api_in_force = m->api;
+}
+
+static void loader_leave_mod(const char *saved_ns, u32 saved_api)
+{
+    bw_mod_savedata_set_namespace(saved_ns);
+    bw_mod_savedata_set_api(saved_api);
+    g_api_in_force = saved_api;
+}
+
+/* ------------------------------------------------------------------ */
+/* The registration                                                    */
+/* ------------------------------------------------------------------ */
+
+/* The event a mod bound, or NULL when it did not bind that one yet. */
+static BwModLoaderKind *kind_find(BwModLoaderMod *m, u32 kind)
+{
+    u32 i;
+
+    for (i = 0; i < m->kind_count; i++) {
+        if (m->kinds[i].kind == kind) {
+            return &m->kinds[i];
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Hand the dispatch the mod's entry for one event.  The registering state
+ * is set around the call, so the handler the dispatch runs receives the
+ * state of this mod and not another mod's.
+ *
+ * The state is only known once the mod's start has returned, so a mod
+ * that binds its handlers from the start waits here until then.
+ */
+static void loader_register_kind(BwModLoaderMod *m, BwModLoaderKind *k)
+{
+    if (k->registered) {
+        return;
+    }
+    bw_mod_event_set_registering_state(m->state);
+    if (bw_mod_event_register(k->kind, g_handler_table[m->slot]) != 0) {
+        fprintf(stderr,
+                "eidos: mod %s: the handler for event %u was not bound\n",
+                m->name, (unsigned int)k->kind);
+    } else {
+        k->registered = 1;
+    }
+    bw_mod_event_set_registering_state(NULL);
+}
+
+/*
+ * A mod binds a handler to an event through the host table's `on`.
+ *
+ * The dispatch holds one entry per mod and per event, and that entry runs
+ * the mod's own handlers for the event.  The entry is the mod's, so the
+ * port knows which mod is calling: it tells the saved-data layer whose
+ * file a state call is about, and the handler receives the state the
+ * mod's start returned.
+ */
+static int loader_bind(int slot, u32 kind, BwEventHandler fn)
+{
+    BwModLoaderMod *m = &g_mods[slot];
+    BwModLoaderKind *k;
+
+    if (m->loaded == 0 || fn == NULL) {
+        return -1;
+    }
+    if (m->binding_count >= BW_MOD_LOADER_BINDINGS_MAX) {
+        fprintf(stderr, "eidos: mod %s: too many handlers\n", m->name);
+        return -1;
+    }
+    m->bindings[m->binding_count].kind = kind;
+    m->bindings[m->binding_count].fn = fn;
+    m->binding_count++;
+
+    k = kind_find(m, kind);
+    if (k == NULL) {
+        if (m->kind_count >= BW_MOD_LOADER_KINDS_MAX) {
+            fprintf(stderr, "eidos: mod %s: too many events\n", m->name);
+            return 0;
+        }
+        k = &m->kinds[m->kind_count++];
+        k->kind = kind;
+        k->registered = 0;
+    }
+    if (m->started) {
+        /* the state is known: the dispatch can take the entry now. */
+        loader_register_kind(m, k);
+    }
+    return 0;
+}
+
+/*
+ * The dispatch calls this: it runs the mod's own handlers for the event.
+ * A refusal from any of them refuses the event, and the others still run.
+ */
+static int loader_run(int slot, void *state, BwEvent *event)
+{
+    BwModLoaderMod *m = &g_mods[slot];
+    const char *saved_ns;
+    u32 saved_api;
+    int refused = 0;
+    u32 i;
+
+    if (event == NULL || m->loaded == 0) {
+        return 0;
+    }
+    loader_enter_mod(m, &saved_ns, &saved_api);
+    for (i = 0; i < m->binding_count; i++) {
+        if (m->bindings[i].kind != event->kind) {
+            continue;
+        }
+        if (m->bindings[i].fn(state, event) == BW_EVENT_REFUSE) {
+            refused = 1;
+        }
+    }
+    loader_leave_mod(saved_ns, saved_api);
+    return refused;
+}
+
+/* ------------------------------------------------------------------ */
+/* The overrides                                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Install the manifest's override lines.  The symbol is resolved in the
+ * loaded library, and the pair goes into the registry under the mod's
+ * name, so a later mod's pair on the same address is reported as
+ * shadowing this one (docs/mod-overrides.md, "Several mods on one
+ * function").
+ *
+ * The apply has already left in the record only the pairs whose address
+ * is declared; the ones that are not were reported there and skipped
+ * (docs/mod-state.md, section 4).
+ */
+static void loader_install_overrides(BwModLoaderMod *m)
+{
+    u32 count = bw_mod_manifest_override_count(m->manifest);
+    u32 i;
+
+    for (i = 0; i < count; i++) {
+        const BwModOverride *o;
+        void *fn;
+
+        o = (const BwModOverride *)
+            bw_mod_manifest_override_at(m->manifest, i);
+        if (o == NULL || o->symbol == NULL || *o->symbol == '\0') {
+            continue;
+        }
+        fn = library_symbol(m->library, o->symbol);
+        if (fn == NULL) {
+            fprintf(stderr, "eidos: mod %s: the library exports no %s\n",
+                    m->name, o->symbol);
+            continue;
+        }
+        if (m->override_count >= BW_MOD_LOADER_OVERRIDES_MAX) {
+            fprintf(stderr, "eidos: mod %s: too many overrides\n", m->name);
+            break;
+        }
+        if (bw_mod_slot_install(o->region, o->addr, fn, m->name) != 0) {
+            fprintf(stderr,
+                    "eidos: mod %s: the override %u:0x%08X could not be "
+                    "installed\n", m->name, o->region, o->addr);
+            continue;
+        }
+        m->overrides[m->override_count].region = o->region;
+        m->overrides[m->override_count].addr = o->addr;
+        m->overrides[m->override_count].fn = fn;
+        m->override_count++;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* The load                                                            */
+/* ------------------------------------------------------------------ */
+
+/* The free slot for a new mod, or -1. */
+static int loader_free_slot(void)
+{
+    u32 i;
+
+    for (i = 0; i < BW_MOD_LOADER_MAX; i++) {
+        if (g_mods[i].loaded == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+/*
+ * Keep a manifest record.  The manifest layer's applied list holds it as
+ * well, so it lives until the loader releases every record.
+ * Returns 0, or -1 when there is no room (the record is released and
+ * the applied list emptied with it).
+ */
+static int loader_keep_manifest(void *manifest)
+{
+    if (g_applied_count >= BW_MOD_LOADER_APPLIED_MAX) {
+        fprintf(stderr, "eidos: too many mods\n");
+        bw_mod_manifest_delete(manifest);
+        bw_mod_manifest_applied_clear();
+        return -1;
+    }
+    g_applied[g_applied_count++] = manifest;
+    return 0;
+}
+
+/*
+ * Load one mod: the mod at `index` of the mod list (sdk/vfs.h), which is
+ * the load order.  Returns 1 when the mod is loaded, 0 when it is not: a
+ * mod without a `code` key runs no native code, and a mod the manifest
+ * layer refused is not loaded.
+ */
+static int loader_load(u32 index)
+{
+    const char *root = bw_mod_root_at(index);
+    const char *dir_name = bw_mod_name_at(index);
+    const char *label;
+    const char *name;
+    const char *ns;
+    const char *code;
+    BwModLoaderMod *m;
+    BwModLibrary library;
+    void *manifest;
+    int slot;
+    int rc;
+
+    if (root == NULL) {
+        return 0;
+    }
+    label = mod_label(dir_name, root);
+    slot = loader_free_slot();
+    if (slot < 0) {
+        fprintf(stderr, "eidos: mod %s: too many mods with code\n", label);
+        return 0;
+    }
+    m = &g_mods[slot];
+    memset(m, 0, sizeof(*m));
+    m->slot = (u32)slot;
+
+    /* 1. the manifest: read it, and apply it.  The apply checks the
+     *    versions and refuses a mod that does not match the port's. */
+    manifest = bw_mod_manifest_new(dir_name);
+    if (manifest == NULL) {
+        fprintf(stderr, "eidos: mod %s: no room for the manifest\n", label);
+        return 0;
+    }
+    m->manifest = manifest;
+    if (bw_mod_manifest_parse_dir(manifest, root, dir_name) != 0) {
+        fprintf(stderr, "eidos: mod %s: the manifest could not be read\n",
+                label);
+    }
+    if (bw_mod_manifest_apply(manifest) != 0) {
+        /* The mod is refused: the manifest layer has reported it, with
+         * both numbers, and the mod is not loaded. */
+        bw_mod_manifest_delete(manifest);
+        m->manifest = NULL;
+        return 0;
+    }
+    if (loader_keep_manifest(manifest) != 0) {
+        m->manifest = NULL;
+        return 0;
+    }
+    name = bw_mod_manifest_name(manifest);
+    ns = bw_mod_manifest_state(manifest);
+    code = bw_mod_manifest_code(manifest);
+    copy_str(m->name, sizeof(m->name), mod_label(name, label));
+    copy_str(m->ns, sizeof(m->ns), ns != NULL ? ns : label);
+    m->api = BW_MOD_API_VERSION;
+    if (code == NULL || *code == '\0') {
+        /* A mod without a `code` key runs no native code; its rules and
+         * its data are the manifest layer's business. */
+        return 0;
+    }
+    if (!bw_mod_manifest_has_api(manifest)) {
+        /* A mod with code states the version it was built against, and the
+         * port refuses it when the number does not match.  A manifest with
+         * no api cannot be checked, and the rule is that the number cannot
+         * be forgotten (docs/mod-abi.md, section 3). */
+        fprintf(stderr, "eidos: mod %s: the manifest states no api version\n",
+                label);
+        bw_mod_manifest_delete(manifest);
+        m->manifest = NULL;
+        return 0;
+    }
+    if (root != NULL && *root != '\0') {
+        snprintf(m->path, sizeof(m->path), "%s/%s", root, code);
+    } else {
+        snprintf(m->path, sizeof(m->path), "%s", code);
+    }
+
+    /* 2. open the library. */
+    library = library_open(m->path);
+    if (library == NULL) {
+        fprintf(stderr, "eidos: mod %s: the library %s could not be opened\n",
+                m->name, m->path);
+        return 0;
+    }
+
+    /* 3. the entry points. */
+    m->library = library;
+    m->start = (BwModStartFn)library_symbol(library, "eidos_mod_start");
+    m->stop = (BwModStopFn)library_symbol(library, "eidos_mod_stop");
+    if (m->start == NULL || m->stop == NULL) {
+        fprintf(stderr,
+                "eidos: mod %s: the library exports no %s, so the mod is not "
+                "loaded\n", m->name,
+                m->start == NULL ? "eidos_mod_start" : "eidos_mod_stop");
+        library_close(library);
+        m->library = NULL;
+        m->start = NULL;
+        m->stop = NULL;
+        return 0;
+    }
+
+    /* The host table the mod is handed.  The services the port has not
+     * built are NULL: a mod that calls one gets nothing rather than a
+     * crash. */
+    m->loaded = 1;
+    m->host.api = BW_MOD_API_VERSION;
+    m->host.on = g_on_table[slot];
+    m->host.state = bw_mod_state_table();
+    m->host.services = &m->services;
+    m->services.state_load = bw_mod_savedata_load;
+    m->services.state_store = bw_mod_savedata_store;
+    m->services.state_clear = bw_mod_savedata_clear;
+    m->services.state_info = bw_mod_savedata_info;
+    m->services.state_dir = bw_mod_savedata_dir;
+
+    /* 4. the start: the mod binds its handlers through the host table. */
+    {
+        const char *saved_ns;
+        u32 saved_api;
+
+        loader_enter_mod(m, &saved_ns, &saved_api);
+        rc = m->start(&m->host, &m->state);
+        loader_leave_mod(saved_ns, saved_api);
+    }
+    if (rc != 0) {
+        fprintf(stderr,
+                "eidos: mod %s: the start entry point returned %d, so the mod "
+                "is not loaded\n", m->name, rc);
+        m->loaded = 0;
+        library_close(library);
+        m->library = NULL;
+        m->start = NULL;
+        m->stop = NULL;
+        m->state = NULL;
+        return 0;
+    }
+    m->started = 1;
+    {
+        u32 i;
+
+        /* The state is known now: the handlers the mod bound during its
+         * start go to the dispatch, with the registering state set
+         * around each call. */
+        for (i = 0; i < m->kind_count; i++) {
+            loader_register_kind(m, &m->kinds[i]);
+        }
+    }
+
+    /* 5. the overrides. */
+    loader_install_overrides(m);
+
+    g_count++;
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* The way down                                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Stop one mod and unload its library, in the order
+ * docs/mod-state.md, section 2, constraint 2, fixes: the slots the mod
+ * installed are reverted to their originals, the mod's stop entry point
+ * runs, and the library goes last.
+ */
+static void loader_stop(BwModLoaderMod *m)
+{
+    const char *saved_ns;
+    u32 saved_api;
+    u32 i;
+
+    /* 1. the slots the mod installed go back to their originals.  The
+     *    registry keeps one hook per pair, so a NULL override is the way
+     *    back to the original the build published.  A pair a later mod
+     *    has taken over is left alone: that hook is the live one, and
+     *    the earlier mod's shadowed report already named both.  The
+     *    pairs are reverted in the reverse order they were installed, so
+     *    a mod that shadowed an earlier one gives the pair back before
+     *    the earlier one does. */
+    for (i = m->override_count; i > 0; i--) {
+        if (bw_mod_slot_lookup(m->overrides[i - 1].region,
+                               m->overrides[i - 1].addr) !=
+            m->overrides[i - 1].fn) {
+            continue;
+        }
+        bw_mod_slot_install(m->overrides[i - 1].region,
+                            m->overrides[i - 1].addr, NULL, m->name);
+    }
+    m->override_count = 0;
+
+    /* 2. the mod's stop entry point.  The namespace is in force, so a
+     *    state call the mod makes here reaches the mod's own file: this
+     *    is where a mod flushes its data. */
+    if (m->started) {
+        loader_enter_mod(m, &saved_ns, &saved_api);
+        if (m->stop != NULL) {
+            m->stop(m->state);
+        }
+        loader_leave_mod(saved_ns, saved_api);
+        m->state = NULL;
+        m->started = 0;
+    }
+
+    /* 3. the library goes last: a code pointer into it is still live
+     *    until now. */
+    if (m->library != NULL) {
+        library_close(m->library);
+        m->library = NULL;
+    }
+    m->start = NULL;
+    m->stop = NULL;
+    m->loaded = 0;
+    m->binding_count = 0;
+    m->kind_count = 0;
+}
+
+/* Release every manifest record the loader keeps. */
+static void loader_release_manifests(void)
+{
+    u32 i;
+
+    for (i = 0; i < g_applied_count; i++) {
+        bw_mod_manifest_delete(g_applied[i]);
+        g_applied[i] = NULL;
+    }
+    g_applied_count = 0;
+    /* The applied manifests are the records the loader released. */
+    bw_mod_manifest_applied_clear();
+}
+
+/* ------------------------------------------------------------------ */
+/* The port's calls                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Load every mod with a `code` key, in load order.  The port calls this
+ * after the save is chosen and before the game runs.  Returns how many
+ * mods were loaded.
+ */
+int bw_mod_loader_load_all(void)
+{
+    u32 count = bw_mod_count();
+    u32 i;
+    int loaded = 0;
+
+    /* The port's own version, for the pin a mod with raw hooks carries. */
+    bw_mod_manifest_set_port_version(BW_MOD_PORT_VERSION);
+
+    for (i = 0; i < count; i++) {
+        loaded += loader_load(i);
+    }
+    return loaded;
+}
+
+/*
+ * Stop and unload every loaded mod, the last loaded first.  The port
+ * calls this on exit, and after the player disables a mod.
+ */
+void bw_mod_loader_stop_all(void)
+{
+    u32 i;
+
+    for (i = BW_MOD_LOADER_MAX; i > 0; i--) {
+        if (g_mods[i - 1].loaded) {
+            loader_stop(&g_mods[i - 1]);
+        }
+    }
+    loader_release_manifests();
+    g_count = 0;
+}
+
+/*
+ * Stop and unload one loaded mod, the one at `index` in load order.  This
+ * is the path the player takes when they disable a mod; the port resets
+ * the event layer and loads the mods that are still wanted afterwards.
+ * Returns 0, or -1 when there is no such mod.
+ */
+int bw_mod_loader_stop(u32 index)
+{
+    u32 i;
+    u32 seen = 0;
+
+    for (i = 0; i < BW_MOD_LOADER_MAX; i++) {
+        if (!g_mods[i].loaded) {
+            continue;
+        }
+        if (seen == index) {
+            loader_stop(&g_mods[i]);
+            loader_release_manifests();
+            g_count--;
+            return 0;
+        }
+        seen++;
+    }
+    return -1;
+}
+
+/* How many mods are loaded. */
+u32 bw_mod_loader_count(void)
+{
+    return g_count;
+}
+
+/* The name of the loaded mod at `index`, in load order, or NULL. */
+const char *bw_mod_loader_name_at(u32 index)
+{
+    u32 i;
+    u32 seen = 0;
+
+    for (i = 0; i < BW_MOD_LOADER_MAX; i++) {
+        if (!g_mods[i].loaded) {
+            continue;
+        }
+        if (seen == index) {
+            return g_mods[i].name;
+        }
+        seen++;
+    }
+    return NULL;
+}
+
+/* The state namespace of the loaded mod at `index`, or NULL. */
+const char *bw_mod_loader_namespace_at(u32 index)
+{
+    u32 i;
+    u32 seen = 0;
+
+    for (i = 0; i < BW_MOD_LOADER_MAX; i++) {
+        if (!g_mods[i].loaded) {
+            continue;
+        }
+        if (seen == index) {
+            return g_mods[i].ns;
+        }
+        seen++;
+    }
+    return NULL;
+}

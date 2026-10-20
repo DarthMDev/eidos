@@ -13,17 +13,17 @@
   "implicit_decls": 0,
   "link_failed_targets": 0,
   "matched_total": 1374,
-  "note": "the events and the state API in sdk/: the dispatch, the state calls, the slots that fire the events, and the session and items areas",
+  "note": "the loader path: the manifest, the loader, a mod's own saved data, and the declared set at run time",
   "shim_replaced": 238,
   "stubbed_asm": 17,
   "stubbed_open": 4,
   "tests": {
-    "failed": 1,
-    "passed": 63,
-    "total": 64
+    "failed": 0,
+    "passed": 67,
+    "total": 67
   },
   "tree": "src/game",
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 13
+  "wave": 14
 }

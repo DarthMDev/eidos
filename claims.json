@@ -1,3 +1,44 @@
 {
-  "claims": {}
+  "claims": {
+    "W14-BLD": {
+      "note": "the build wiring and the loader's tests",
+      "paths": [
+        "CMakeLists.txt",
+        "tests/test_mod_loader.c",
+        "tests/test_mod_manifest.c",
+        "tests/test_mod_savedata.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W14-DATA": {
+      "note": "the mod's own saved data: the file, the header, the versions",
+      "paths": [
+        "sdk/mod_savedata.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W14-DECL": {
+      "note": "the declared set at run time, for the manifest's check",
+      "paths": [
+        "sdk/mod_slot.c",
+        "tools/bootlink.py",
+        "tools/ovlink.py"
+      ],
+      "started": "2026-10-20"
+    },
+    "W14-LOAD": {
+      "note": "the loader: the library, the host table, the handlers",
+      "paths": [
+        "sdk/mod_loader.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W14-MANIFEST": {
+      "note": "the manifest record, the namespace, the declared check, the apply",
+      "paths": [
+        "sdk/mod_manifest.c"
+      ],
+      "started": "2026-10-20"
+    }
+  }
 }

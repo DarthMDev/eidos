@@ -54,6 +54,13 @@ from the port's own C:
     files of step 1 with no sdk/asm/ replacement yet become stubs that
     panic with their address and name when called.
 
+The declared set (mod/declared_set.txt) is emitted as well: one table of
+the whole set, the arm9 rows and the overlay rows together, beside the slot
+publications in boot_link.c, and bw_boot_link_init registers it
+(docs/mod-state.md, section 4).  The table is the run-time answer to the
+manifest's check, so it carries every row, not only the rows this link
+defines.
+
 Two modes:
 
     bootlink.py plan --aletheia-root R --seed S ... --exclude-file F
@@ -852,6 +859,26 @@ def read_declared_set(region=None):
     return rows
 
 
+# The regions of the declared set (sdk/mod_slot.h): the ARM9's static
+# module, whose value is the largest, so a table sorted by region keeps
+# the overlay rows first, and an overlay's own id.
+ARM9_REGION = 0xFFFFFFFF
+
+
+def region_expr(region):
+    """(the C expression for a declared set's region token, the region's
+    value) for a token the port knows, (None, None) for one it does not.
+    `arm9` is the ARM9's static module, `ovNNN` the overlay with that id
+    (sdk/mod_slot.h)."""
+    if region == "arm9":
+        return "BW_MOD_REGION_ARM9", ARM9_REGION
+    m = re.match(r"^ov0*(\d+)$", region)
+    if m is None:
+        return None, None
+    oid = int(m.group(1))
+    return "BW_MOD_REGION_OVL(%d)" % oid, oid
+
+
 def definition_signature(path, name):
     """(return type, [param types]) of `name` as the file at `path` defines
     it, normalised by tools/ovlink.py's signature (the call write_thunk
@@ -1009,6 +1036,22 @@ def generate(args):
             "sig": sig,
             "events": events,
         }
+
+    # The declared set, the whole of it (docs/mod-state.md, section 4): the
+    # arm9 rows and the overlay rows together.  The table answers the
+    # manifest's check for every region, so it does not depend on what this
+    # link carries, nor on what has loaded: a row the link does not define
+    # has no slot, and an overlay's slot does not exist until that overlay
+    # loads, but the address is declared either way.
+    declared = []              # (region value, region expression, address)
+    declared_unknown = []      # (name, address, region token)
+    for addr, dname, region, events in read_declared_set():
+        expr, value = region_expr(region)
+        if expr is None:
+            declared_unknown.append((dname, addr, region))
+            continue
+        declared.append((value, expr, addr))
+    declared.sort(key=lambda row: (row[0], row[2]))
 
     # Every data spelling the boot uses, by address, so one object stands
     # for one DS address.
@@ -1281,7 +1324,7 @@ def generate(args):
         write_if_changed(os.path.join(incdir, header_name(unit.path)), "\n".join(lines) + "\n")
 
     write_link_c(os.path.join(out, "boot_link.c"), consts, pinned, views, missing_funcs,
-                 arm9_slots, veneer_funcs)
+                 arm9_slots, veneer_funcs, declared)
     # Data the data header does not bind and nothing defines has no
     # storage: the link would fail on it, so the generator does, by name.
     unbound = sorted((canonical[a], a) for a in data_names
@@ -1302,7 +1345,11 @@ def generate(args):
               "mod slots: %d arm9 emitted (%d with an event), %d declared rows skipped"
               % (len(arm9_slots),
                  sum(1 for s in arm9_slots.values() if s["events"]),
-                 len(slot_skipped))]
+                 len(slot_skipped)),
+              "declared set: %d rows in the table (%d arm9, %d overlay)"
+              % (len(declared),
+                 sum(1 for row in declared if row[0] == ARM9_REGION),
+                 sum(1 for row in declared if row[0] != ARM9_REGION))]
     for name, a, b in dups:
         report.append("DUPLICATE %s: %s and %s" % (name, a, b))
     report.append("")
@@ -1316,6 +1363,11 @@ def generate(args):
         report.append("  SKIPPED %-28s 0x%08X %s" % (dname, addr, why))
     for dname, addr, note in slot_notes:
         report.append("  NOTE %-30s 0x%08X %s" % (dname, addr, note))
+    if declared_unknown:
+        report.append("")
+        report.append("declared rows with a region the port does not know:")
+        for dname, addr, region in declared_unknown:
+            report.append("  %-36s 0x%08X %s" % (dname, addr, region))
     report.append("")
     report.append("implicit declarations:")
     for unit in units:
@@ -1345,6 +1397,9 @@ def generate(args):
     for dname, addr, note in slot_notes:
         print("bootlink.py: %s (0x%08X): %s" % (dname, addr, note),
               file=sys.stderr)
+    for dname, addr, region in declared_unknown:
+        print("bootlink.py: %s (0x%08X): unknown region %s: the row is not "
+              "declared" % (dname, addr, region), file=sys.stderr)
     return 1 if dups or unbound else 0
 
 
@@ -1436,9 +1491,10 @@ def veneer_forwarder(name, target, sig):
 
 
 def write_link_c(path, consts, pinned, views, missing_funcs, slots=None,
-                 veneers=None):
+                 veneers=None, declared=None):
     slots = slots or {}
     veneers = veneers or {}
+    declared = declared or []
     lines = [LINK_C_HEAD]
     lines.append("/* ---- link-time constants ---- */\n")
     runtime = []               # (name, initial value), set at start-up
@@ -1466,7 +1522,24 @@ def write_link_c(path, consts, pinned, views, missing_funcs, slots=None,
             ret, params = slots[addr]["sig"]
             lines.append(ovlink.proto_decl(ret, slots[addr]["original"], params))
         lines.append("")
+    if declared:
+        lines.append("/* ---- the declared set: every row of mod/declared_set.txt ---- */\n")
+        lines.append("/* The manifest's check asks this table whether a mod's override")
+        lines.append(" * names a declared address (docs/mod-state.md, section 4).  It")
+        lines.append(" * carries the whole set, the arm9 rows and the overlay rows")
+        lines.append(" * together: a row this link does not carry has no slot, and an")
+        lines.append(" * overlay's slot does not exist until that overlay loads, but the")
+        lines.append(" * address is declared either way. */")
+        lines.append("static const BwModDeclared bw_declared_rows[] = {")
+        for _value, expr, addr in declared:
+            lines.append("    { %s, 0x%08Xu }," % (expr, addr))
+        lines.append("};")
+        lines.append("")
     lines.append("void bw_boot_link_init(void)\n{")
+    # The declared set first: a mod loads before any overlay does, and the
+    # manifest's check asks the set as the mod loads.
+    if declared:
+        lines.append("    bw_mod_declare_table(bw_declared_rows, %du);" % len(declared))
     # Addresses first: a second view of a pinned object copies its pointer.
     for name, value in sorted(runtime, key=lambda r: r[1].startswith("bw_lc_")):
         lines.append("    bw_lc_%s = %s;" % (name, value))

@@ -66,6 +66,7 @@
  */
 
 #include "mod_hooks.h"
+#include "mod_loader.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1383,6 +1384,19 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
            (unsigned long)bw_data_scanned());
     fflush(stdout);
     bw_boot_link_init();
+    /* The mods: the loader runs after the save is chosen and before the game
+     * runs (docs/mod-implementation.md, section 3).  The declared table the
+     * manifest's address check asks is registered by bw_boot_link_init, so
+     * the loader comes after it.  With no mod root there is nothing to
+     * load. */
+    {
+        int loaded = bw_mod_loader_load_all();
+
+        if (loaded > 0) {
+            printf("eidos_boot: %d mod(s) loaded\n", loaded);
+            fflush(stdout);
+        }
+    }
     commit_main_ram();
 
     eidos_frame_init(&g_run.loop, &hooks, g_run.top, g_run.bottom);
