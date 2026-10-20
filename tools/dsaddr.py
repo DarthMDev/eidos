@@ -1607,9 +1607,50 @@ def main(argv=None) -> int:
             # mwcc's hand-written va_start/va_arg (gamecut.fix_va_macros)
             source = gamecut.fix_va_macros(source)
             _rewrite_local_headers(src_path, a.output, set())
+            text = _rewrite_with_defines(source, name, src_path)
+            _write(a.output, text)
+            return 0
     text, _, _ = rewrite(source, name)
     _write(a.output, text)
     return 0
+
+
+_NUM_DEFINE_RE = re.compile(r"(?m)^[ \t]*#[ \t]*define[ \t]+[A-Za-z_]\w*[ \t]+\(?\s*0[xX][0-9A-Fa-f]+[uUlL]*\s*\)?[ \t]*$")
+_PREFIX_BEGIN = "/* tools/dsaddr.py: address constants of the included headers */\n"
+_PREFIX_END = "/* tools/dsaddr.py: end of the included constants */\n"
+
+
+def _header_defines(path, seen):
+    """The `#define NAME 0x...` lines of the headers `path` includes with
+    quotes, recursively (src/game/sdk_ioreg.h's REG_DISPCNT_ADDR), so a cast
+    of such a name to a pointer (`(*(vu32 *)REG_DISPCNT_ADDR)`, in the unit
+    or in sdk_ioreg_reg.h) is seen as the fixed address it is."""
+    out = []
+    base = os.path.dirname(os.path.abspath(path))
+    for inc in _LOCAL_INCLUDE_RE.findall(_read(path)):
+        hp = os.path.normpath(os.path.join(base, inc))
+        if hp in seen or not os.path.isfile(hp):
+            continue
+        seen.add(hp)
+        text = _read(hp)
+        out.extend(m.group(0) for m in _NUM_DEFINE_RE.finditer(text))
+        out.extend(_header_defines(hp, seen))
+    return out
+
+
+def _rewrite_with_defines(text, name, path):
+    """rewrite(text) with the address constants of `path`'s headers known;
+    the constants themselves are not part of the result."""
+    defs = _header_defines(path, set())
+    if not defs:
+        return rewrite(text, name)[0]
+    prefix = _PREFIX_BEGIN + "\n".join(defs) + "\n" + _PREFIX_END
+    out, _, _ = rewrite(prefix + text, name)
+    i = out.find(_PREFIX_BEGIN)
+    j = out.find(_PREFIX_END)
+    if i < 0 or j < i:
+        return rewrite(text, name)[0]
+    return out[:i] + out[j + len(_PREFIX_END):]
 
 
 _LOCAL_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
@@ -1633,11 +1674,33 @@ def _rewrite_local_headers(src_path, out_path, seen):
             continue
         seen.add(hp)
         oh = os.path.normpath(os.path.join(out_dir, inc))
-        text, rewrites, _ = rewrite(_read(hp), hp)
+        own = _read(hp)
+        text = _rewrite_with_defines(own, hp, hp)
+        rewrites = text != own
         nested = _rewrite_local_headers(hp, oh, seen)
         if rewrites or nested:
+            # The copy's own quoted includes: one the copy tree holds now
+            # resolves next to it; any other names the original by its full
+            # path, which the copy's directory would not find
+            # (sdk_ioreg_reg.h's "sdk_ioreg.h").
+            hdir, odir = os.path.dirname(hp), os.path.dirname(oh)
+
+            def _abs(m):
+                if os.path.isfile(os.path.join(odir, m.group(1))):
+                    return m.group(0)
+                full = os.path.normpath(os.path.join(hdir, m.group(1))).replace("\\", "/")
+                return m.group(0).replace('"%s"' % m.group(1), '"%s"' % full)
+            text = _LOCAL_INCLUDE_RE.sub(_abs, text)
             _write_atomic(oh, text)
             wrote_any = True
+        elif os.path.isfile(oh) and os.path.normcase(oh) != os.path.normcase(hp):
+            # A copy an earlier aletheia revision needed (the header held an
+            # address then, ov102/irc_screen_types.h): it would shadow the
+            # header the unit includes now.
+            try:
+                os.remove(oh)
+            except OSError:
+                pass
     return wrote_any
 
 

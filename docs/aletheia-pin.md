@@ -8,19 +8,16 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `5fba411aa6c39143fc4e2aad84ac29fcd705600c`
-- Date: 2026-10-20 04:56:05 +0100
-- Subject: pm: 0x027313AC is PMi_GetBatteryLevelCore (u32 (u16 *levelBuf),
-  SDK form); arm9/pm.c called it PMi_GetACAdapterCore; aliascheck resolves
-  every extern through function_addrs.tsv.  Two commits before it is wave
-  20 phase 1 (ARM9 types and per-file headers, missing returns, every
-  function has an address).
+- Revision: `999783ad9ded29326c183c89f2af52102bf6dcbe`
+- Date: 2026-10-20 19:49:48 +0100
+- Subject: Wave 20 phase 2: overlay types and per-file headers; host build
+  compiles; original bugs archived
 
-At this pin ov016 does not compile: two of its task functions still have a
-second name with another prototype (DWCi_TSKlSetParam called as
-DWCi_TSKlChangeFunc, DWCi_TSKlDeleteByIndex as DWCi_TSKlDeleteEx).  aletheia
-settles them in wave 20 phase 2; until then configure with an
-EIDOS_OVERLAYS list that leaves 16 out.
+At this pin every overlay compiles (EIDOS_OVERLAYS=ALL).  The functions
+that fall off their end return the DS value under `#ifndef __MWERKS__`
+(aletheia docs/ORIGINAL_BUGS.tsv), so tools/gamereturns.txt is empty, and
+every variadic function takes the host <stdarg.h> through
+src/game/sdk_stdarg.h.
 
 The port compiles this revision's `src/game` (EIDOS_SOURCE_TREE=game, the
 default, docs/game-tree.md).  tools/gametree.py takes each function's

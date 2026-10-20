@@ -35,9 +35,55 @@ import sys
 IDENT = re.compile(r"[A-Za-z_]\w*")
 
 
+_PP_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elif|else|endif)\b[ \t]*(.*)$")
+
+
+def host_branches(text):
+    """`text` with the mwcc-only branches of `#ifdef __MWERKS__` and
+    `#ifndef __MWERKS__` blocks blanked (same length, so positions in it are positions in `text`), as
+    the host compiler sees it.  aletheia writes host forms beside the DS
+    ones this way (btlv_core.c gives one `if (...) {` per branch), and a
+    reader that keeps both branches miscounts the braces."""
+    if "__MWERKS__" not in text:
+        return text
+    lines = text.split("\n")
+    # A stack of [is_mwerks_block, keep_current_branch, keep_outer]
+    stack = []
+    keep = True
+    for i, line in enumerate(lines):
+        m = _PP_LINE.match(line)
+        if m:
+            d, rest = m.group(1), m.group(2).strip()
+            if d in ("ifdef", "ifndef", "if"):
+                mw = d in ("ifdef", "ifndef") and rest.split()[:1] == ["__MWERKS__"]
+                if mw:
+                    branch = d == "ifndef"
+                    stack.append([True, branch, keep])
+                    keep = keep and branch
+                    lines[i] = " " * len(line)
+                    continue
+                stack.append([False, True, keep])
+            elif d in ("else", "elif") and stack and stack[-1][0]:
+                stack[-1][1] = not stack[-1][1]
+                keep = stack[-1][2] and stack[-1][1]
+                lines[i] = " " * len(line)
+                continue
+            elif d == "endif" and stack:
+                top = stack.pop()
+                if top[0]:
+                    keep = top[2]
+                    lines[i] = " " * len(line)
+                    continue
+        if not keep:
+            lines[i] = " " * len(line)
+    return "\n".join(lines)
+
+
 def _mask(text):
     """`text` with comments, strings and character constants blanked (same
-    length, newlines kept), and preprocessor lines blanked."""
+    length, newlines kept), and preprocessor lines blanked; the mwcc-only
+    branches too (host_branches)."""
+    text = host_branches(text)
     out = list(text)
     i, n = 0, len(text)
     line_start = True

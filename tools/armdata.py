@@ -284,6 +284,7 @@ class SourceFile:
     def __init__(self, path: str, text: str, matched: bool):
         import gamecut
         text = gamecut.knr_to_ansi(text)     # old-style definitions, see gamecut
+        text = gamecut.host_branches(text)   # the host side of #ifdef __MWERKS__
         self.path = path
         self.matched = matched
         self.symbols = {}         # name -> (addr, kind, region, align)

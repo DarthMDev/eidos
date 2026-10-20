@@ -289,6 +289,7 @@ class Scan:
     def __init__(self, path, text):
         import gamecut
         text = gamecut.knr_to_ansi(text)     # old-style definitions, see gamecut
+        text = gamecut.host_branches(text)   # the host side of #ifdef __MWERKS__
         self.path = path
         self.symbols = {}          # name -> (addr, kind)
         self.defined = set()       # functions and objects with a body or storage here
@@ -309,6 +310,22 @@ class Scan:
         code = strip_source(text)
         self.has_asm = bool(ASM_BODY.search(code))
         self.literals = set(int(v, 16) for v in LITERAL_CAST.findall(code))
+        # Tagged struct and union bodies (ov093's `union SickCont { ... };`,
+        # no typedef), as typedef-shaped text under a key no name can have,
+        # so _norm_type can tell a one-word aggregate passed by value.
+        for m in re.finditer(r"\b(struct|union)\s+([A-Za-z_]\w*)\s*\{", code):
+            depth, i = 0, m.end() - 1
+            while i < len(code):
+                if code[i] == "{":
+                    depth += 1
+                elif code[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            key = " %s %s" % (m.group(1), m.group(2))
+            self.typedefs.setdefault(key, "typedef %s %s %s" % (
+                m.group(1), m.group(2), code[m.end() - 1:i + 1]))
         # Types from the headers the file includes (src/game's types.h).
         for n, t in include_typedefs(path, text).items():
             self.typedefs.setdefault(n, t)
@@ -1537,12 +1554,21 @@ class Link:
             for n, a in self.al.src_names.get(u.rel, []):
                 if owner.get(n) is u and n in sc.func_defs:
                     st.at.setdefault(a, n)
+        # A port patch defines a function src/game lists under another file
+        # (stubs/ov/patch_ov021_scrcmd_msgwin.c's SCRCMD_MSGWIN_CmdInfoSysWinMsg):
+        # its address is the one the overlay's own table gives the name.
+        by_name = {}
+        for ad, names in self.al.ov_names.get(ov.id, {}).items():
+            for nm in names:
+                by_name.setdefault(nm, ad)
         for n, u in sorted(owner.items()):
             if n not in u.scan.func_defs:
                 continue
             a = armdata.name_address(n)
             if a is not None and ov.owns(a):
                 st.at.setdefault(a, n)
+            elif n in by_name and ov.owns(by_name[n]) and by_name[n] not in st.at:
+                st.at[by_name[n]] = n
             else:
                 for ad, rg in self.al.sdk_by_name.get(n, []):
                     if rg == ov.tag:
@@ -2200,9 +2226,31 @@ def write_unit_header(link, u, ov_header, path):
             # prototype here would conflict with that declaration.  Same
             # reading tools/bootlink.py does for the boot's units.
             continue
+        if n not in u.cuts and ((u.scan is not None and n in u.scan.func_defs)
+                                or n in _defined_in(u.path)):
+            # Defined in this file: its own definition is its prototype, and
+            # an old-style one here would conflict with it
+            # (btlv_core.c's BTLV_CORE_StartPrintMessage is void).
+            continue
         rt = u.protos[n]
         lines.append("%s %s();" % (rt, n))
     write_if_changed(path, "\n".join(lines) + "\n")
+
+
+_DEFINED_IN = {}
+
+
+def _defined_in(path):
+    """The functions a source file defines, by tools/gamecut.py's reading
+    (brace matching over the masked text): a Scan can lose its place in a
+    long unit (ov093/btlv_core.c) and miss the later definitions."""
+    if path not in _DEFINED_IN:
+        import gamecut
+        try:
+            _DEFINED_IN[path] = {f[0] for f in gamecut.functions(read_text(path))}
+        except OSError:
+            _DEFINED_IN[path] = set()
+    return _DEFINED_IN[path]
 
 
 def c_str(s):

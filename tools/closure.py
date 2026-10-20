@@ -300,6 +300,7 @@ class SourceScan:
     def __init__(self, text):
         import gamecut
         text = gamecut.knr_to_ansi(text)     # old-style definitions, see gamecut
+        text = gamecut.host_branches(text)   # the host side of #ifdef __MWERKS__
         self.symbols = self._parse_symbols(text)
         self.defined = set()       # functions and objects with a body here
         self.statics = set()       # file-local names (static)
