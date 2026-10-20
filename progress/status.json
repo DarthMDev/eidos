@@ -1,6 +1,6 @@
 {
   "asm_bodies": 125,
-  "boot_matched": 430,
+  "boot_matched": 433,
   "clashes": 0,
   "compile_errors": 0,
   "compiled_for_host": 429,
@@ -8,22 +8,22 @@
   "errors_conflicting": 0,
   "errors_implicit": 0,
   "errors_other": 0,
-  "failed_targets": 1,
+  "failed_targets": 0,
   "host_surface_pct": 31.22,
   "implicit_decls": 0,
-  "link_failed_targets": 1,
+  "link_failed_targets": 0,
   "matched_total": 1374,
-  "note": "the naming fix, the script VMs' stand-in, the message window hooks, and the timer, random and export services; the link misses two functions the new aletheia headers renamed",
-  "shim_replaced": 238,
+  "note": "the port against the new tree: the spelling header follows the tree's content, the renaming survives the new header style, and the boot's closure carries the state API's accessors",
+  "shim_replaced": 239,
   "stubbed_asm": 17,
   "stubbed_open": 4,
   "tests": {
-    "failed": 2,
-    "passed": 72,
+    "failed": 0,
+    "passed": 74,
     "total": 74
   },
   "tree": "src/game",
-  "undefined_refs": 4,
-  "undefined_symbols": 2,
-  "wave": 17
+  "undefined_refs": 0,
+  "undefined_symbols": 0,
+  "wave": 18
 }

@@ -75,23 +75,52 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 # src/game names many functions otherwise than src/matched did; the port's
 # own C keeps the old spellings and is compiled with a header of #defines to
-# the src/game names (tools/gamespell.py).  Written when the aletheia
-# checkout changes; delete it to write it again.
+# the src/game names (tools/gamespell.py).  The header follows the tree's
+# content, not its path: the same checkout can hold another revision, and a
+# revision renames the functions the port calls, so a header written for one
+# of them leaves the port's own copy of a function under a name nothing
+# calls.  gamespell.py stamps the header with a fingerprint of everything it
+# was made from (the tree's files, the port's own sources,
+# tools/gamespell_extra.txt and the tool itself) and --stamp prints the
+# fingerprint of the same inputs now, so the header is written again exactly
+# when one of them changed.  The write is the slow part (it walks the tree's
+# src/matched), so it must not run when nothing changed.
 if(EIDOS_SOURCE_TREE STREQUAL "game")
     set(EIDOS_GAMESPELL_H ${CMAKE_BINARY_DIR}/gamespell.h)
-    if(NOT EXISTS ${EIDOS_GAMESPELL_H}
-       OR NOT "${EIDOS_GAMESPELL_ROOT}" STREQUAL "${ALETHEIA_ROOT}"
-       OR ${CMAKE_CURRENT_SOURCE_DIR}/tools/gamespell_extra.txt IS_NEWER_THAN ${EIDOS_GAMESPELL_H})
+    set(_gs_dirs ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/stubs
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/demo)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gamespell.py
+                --stamp ${ALETHEIA_ROOT} -o ${EIDOS_GAMESPELL_H} ${_gs_dirs}
+        RESULT_VARIABLE _gs_rc
+        OUTPUT_VARIABLE _gs_stamp
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT _gs_rc EQUAL 0)
+        message(FATAL_ERROR "tools/gamespell.py --stamp failed (${_gs_rc})")
+    endif()
+    set(_gs_rewrite FALSE)
+    if(NOT EXISTS ${EIDOS_GAMESPELL_H})
+        set(_gs_rewrite TRUE)
+    else()
+        # What the header says it was made from, against what the same
+        # inputs say now.
+        file(READ ${EIDOS_GAMESPELL_H} _gs_head)
+        string(REGEX MATCH "/\\* inputs: ([0-9a-f]+) \\*/" _gs_match "${_gs_head}")
+        if(NOT "${CMAKE_MATCH_1}" STREQUAL "${_gs_stamp}")
+            set(_gs_rewrite TRUE)
+        endif()
+        if(${CMAKE_CURRENT_SOURCE_DIR}/tools/gamespell_extra.txt IS_NEWER_THAN ${EIDOS_GAMESPELL_H})
+            set(_gs_rewrite TRUE)
+        endif()
+    endif()
+    if(_gs_rewrite)
         execute_process(
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gamespell.py
-                    ${ALETHEIA_ROOT} -o ${EIDOS_GAMESPELL_H}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/stubs
-                    ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/demo
+                    ${ALETHEIA_ROOT} -o ${EIDOS_GAMESPELL_H} ${_gs_dirs}
             RESULT_VARIABLE _gs_rc)
         if(NOT _gs_rc EQUAL 0)
             message(FATAL_ERROR "tools/gamespell.py failed (${_gs_rc})")
         endif()
-        set(EIDOS_GAMESPELL_ROOT "${ALETHEIA_ROOT}" CACHE INTERNAL "")
     endif()
     add_compile_options("SHELL:-include ${EIDOS_GAMESPELL_H}")
     # Game bytes some src/game files include from build/gen/ (tools/aletheiagen.py).

@@ -917,6 +917,23 @@ def generate(args):
         with open(args.gamespell, encoding="utf-8") as fh:
             for m in re.finditer(r"^#define\s+(\w+)\s+(\w+)\s*$", fh.read(), re.M):
                 spellings[m.group(1)] = m.group(2)
+
+    def rename_to(unit, name, target):
+        """Rename `name` to `target` in the unit's generated header.
+
+        The gamespell header (forced in before the unit's own text) already
+        renames the port's old spelling to the tree's name.  Where it maps
+        `target` back to `name`, the two would cancel: the port's own file
+        would call the port's old name, while the port's copy of the game's
+        function carries the tree's name (the gamespell header renamed its
+        definition too), and nothing would define the name the call
+        reaches.  Such a rename is left out: the two names are one symbol
+        already.
+        """
+        if spellings.get(target) == name:
+            return
+        unit.renames[name] = target
+
     units = []
     game_cuts = {}
     if closure.SOURCE_TREE == "game":
@@ -1100,7 +1117,7 @@ def generate(args):
                     if addr is not None and name not in unit.scan.defined:
                         own = idx.owner_name(idx.sources[unit.rel], addr)
                     if own and own != name:
-                        unit.renames[name] = own
+                        rename_to(unit, name, own)
                     continue
                 out.append((name, addr, kind, klass))
             return out
@@ -1138,7 +1155,7 @@ def generate(args):
                     and defined.get(arm9_slots[addr]["original"]) != unit.path:
                 # A declared ARM9 address: the caller goes through the slot.
                 # The defining unit keeps its own name and gets no rename.
-                unit.renames[name] = arm9_slots[addr]["name"]
+                rename_to(unit, name, arm9_slots[addr]["name"])
                 continue
             if closure.is_link_constant(name, addr, kind):
                 if addr is None:
@@ -1157,15 +1174,15 @@ def generate(args):
                         and func_at[addr] != name:
                     daddr = defined_addr(idx, rel_to_root(defined[name]), name)
                     if daddr is not None and daddr != addr:
-                        unit.renames[name] = func_at[addr]
+                        rename_to(unit, name, func_at[addr])
                 continue
             is_data = kind == "data" or klass == "data"
             if not is_data and addr is not None and addr in func_at:
-                unit.renames[name] = func_at[addr]
+                rename_to(unit, name, func_at[addr])
                 continue
             if not is_data and addr in VENEERS and VENEERS[addr] in func_at:
                 # A linker veneer is another address of its target.
-                unit.renames[name] = func_at[VENEERS[addr]]
+                rename_to(unit, name, func_at[VENEERS[addr]])
                 continue
             if not is_data and klass != "data":
                 if addr is not None and DTCM_LO <= addr < DTCM_HI:
@@ -1225,7 +1242,7 @@ def generate(args):
     for unit, name, addr in missing_refs:
         target = stub_name[addr if addr is not None else name]
         if target != name:
-            unit.renames[name] = target
+            rename_to(unit, name, target)
 
     views = {}                 # second spelling in one file -> canonical
     # One spelling per DS address: the one a shim or data source defines,
@@ -1256,9 +1273,9 @@ def generate(args):
         if target in pinned:
             unit.consts.add(target)
             if target != name:
-                unit.renames[name] = target
+                rename_to(unit, name, target)
         elif target != name:
-            unit.renames[name] = target
+            rename_to(unit, name, target)
 
     # Implicit calls: a non-prototype declaration of what the call reaches.
     heads = {}

@@ -18,6 +18,19 @@ The cut keeps the line count: the body's lines become empty lines, so a
 `#line` directive and a compiler's diagnostics still name the original line.
 Comments, strings and preprocessor lines are left as they are.
 
+Two things in a unit's own text are read and copied differently, because
+the port renames names itself (its overlay's namespace, a slot, a private
+copy) and the unit's text must not take the port's rename away:
+
+  - the mwcc-only branches, which the host build does not compile
+    (`host_branches`): a reader that keeps the DS branch sees code the host
+    compiler never sees; and
+  - the tree's per-file header pairs, `#define X X_header` and the
+    `#undef X` that ends it (`header_renames`): a unit that declares a name
+    itself renames the header's declaration of it, so that the two
+    declarations do not fight.  The port renames the name itself, so the
+    pair is the header's spelling and not a name the unit owns.
+
 Usage:
     gamecut.py IN.c -o OUT.c [--drop NAME ...] [--drop-list FILE] [--asm]
     gamecut.py --list IN.c          print each top-level function and whether
@@ -37,15 +50,77 @@ IDENT = re.compile(r"[A-Za-z_]\w*")
 
 _PP_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elif|else|endif)\b[ \t]*(.*)$")
 
+# The tree's per-file header style: a unit that declares a name itself with
+# a prototype of its own renames the header's declaration of that name to
+# `<name>_header`, so that the two declarations do not fight.
+_HEADER_DEFINE = re.compile(
+    r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+\1_header\b")
+_UNDEF_NAME = re.compile(r"^[ \t]*#[ \t]*undef[ \t]+([A-Za-z_]\w*)\b")
+
+
+def _header_pair_lines(lines, pair):
+    """The line numbers of the tree's per-file header pairs in `lines`: the
+    `#define X X_header` line, and with `pair` the `#undef X` line that
+    ends it."""
+    out = set()
+    open_names = {}
+    for i, line in enumerate(lines):
+        m = _HEADER_DEFINE.match(line)
+        if m:
+            out.add(i)
+            open_names[m.group(1)] = i
+            continue
+        if pair:
+            m = _UNDEF_NAME.match(line)
+            if m and m.group(1) in open_names:
+                out.add(i)
+                del open_names[m.group(1)]
+    return out
+
+
+def header_renames(text, pair=False):
+    """`text` with the tree's per-file header renaming blanked (the line
+    count stays, so positions in it are positions in `text`).
+
+    aletheia's per-file headers (docs/game-tree.md) let a unit declare a
+    name itself with a prototype of its own: the unit renames the header's
+    declaration of that name to `<name>_header` for the DS build, so that
+    the two declarations of the name do not fight:
+
+        #define X X_header
+        #include "the header"
+        #undef X
+        void X(...);
+
+    The port renames the name itself (its overlay's namespace, a slot, a
+    private copy), so the pair is the header's own spelling of the name and
+    not a name the unit owns.  A reader that takes X for a macro of the unit
+    loses the name: the port then neither renames it nor gives it a
+    trampoline, and the call is left with a bare name that nothing defines.
+    So the `#define X X_header` line goes from the port's view of a unit
+    (`host_branches`), and with `pair` the whole pair goes from the port's
+    copy of one (`cut`), where the port's own rename of the name is then
+    the only renaming in force at the header's declaration and at the call
+    sites.
+    """
+    lines = text.split("\n")
+    for i in _header_pair_lines(lines, pair):
+        lines[i] = " " * len(lines[i])
+    return "\n".join(lines)
+
 
 def host_branches(text):
     """`text` with the mwcc-only branches of `#ifdef __MWERKS__` and
     `#ifndef __MWERKS__` blocks blanked (same length, so positions in it are positions in `text`), as
     the host compiler sees it.  aletheia writes host forms beside the DS
     ones this way (btlv_core.c gives one `if (...) {` per branch), and a
-    reader that keeps both branches miscounts the braces."""
+    reader that keeps both branches miscounts the braces.
+
+    The tree's per-file header pairs go too (`header_renames`): the name a
+    unit renames the header's declaration of is not a macro of the unit, and
+    the port renames that name itself."""
     if "__MWERKS__" not in text:
-        return text
+        return header_renames(text)
     lines = text.split("\n")
     # A stack of [is_mwerks_block, keep_current_branch, keep_outer]
     stack = []
@@ -76,6 +151,8 @@ def host_branches(text):
                     continue
         if not keep:
             lines[i] = " " * len(line)
+    for i in _header_pair_lines(lines, False):
+        lines[i] = " " * len(lines[i])
     return "\n".join(lines)
 
 
@@ -247,6 +324,10 @@ def cut(text, drop, cut_asm, drop_decls=False):
         # declarations here lose `static` too.
         out = re.sub(r"(?m)^([ \t]*)static[ \t]+(?=[^;{}\n]*\b%s[ \t]*\([^;{}]*\)[ \t]*;)"
                      % re.escape(name), r"\1", out)
+    # The tree's per-file header pair goes too (header_renames): the port
+    # renames the name itself, so the header's declaration and the call
+    # must both see the port's name.
+    out = header_renames(out, True)
     return out, cut_names
 
 

@@ -8,7 +8,10 @@
 # What happens, in order:
 #
 #   configure  tools/bootlink.py plan walks tools/closure.py's closure from
-#              NitroMain's callees (EIDOS_BOOT_SEEDS), drops the files listed
+#              NitroMain's callees (EIDOS_BOOT_SEEDS), adds the game units
+#              the port's own sources call (EIDOS_BOOT_PORT_CALLS: the
+#              boot's port code and the library's mod layer, so the state
+#              API's accessors are in the closure), drops the files listed
 #              in EIDOS_BOOT_SHIM_REPLACED (checked against what the shims
 #              really define: a clash missing from the list fails the
 #              configure), drops the mwcc `asm` files (an sdk/asm/<file>.c
@@ -411,6 +414,61 @@ if(NOT EIDOS_HEAP_MATCHED)
         ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060E30.c)
 endif()
 
+# ---------------------------------------------------------------------------
+# The port's own calls into the game
+# ---------------------------------------------------------------------------
+#
+# The plan reads the port's own sources and adds the game units they call
+# (tools/bootlink.py's plan step: port_references), so the closure carries
+# what the port's code reaches.  The boot's own port code is in the list
+# above; the eidos library's mod layer is the port's own code too, and the
+# state API (sdk/mod_state.c) is a thin wrapper over the game's own
+# accessors: the units that define them must be in the closure, or a state
+# call has nothing to call (docs/mod-implementation.md, "What the areas owe
+# the boot").  The library's files are compiled by the library, not by the
+# boot, so they are listed for the walk alone: the plan reads them, the
+# boot does not compile them a second time.
+set(EIDOS_BOOT_PORT_CALLS ${EIDOS_BOOT_PORT_SOURCES})
+
+# The state API's accessors that live in the game's own overlays: the
+# battle's record (src/game/ov093/btl_pokeparam.c: BTL_POKEPARAM_GetValue,
+# BTL_POKEPARAM_ZeroHp, BTL_POKEPARAM_SetStat, BTL_POKEPARAM_AddHp,
+# BTL_POKEPARAM_SubHp, BTL_POKEPARAM_SetItem, BTL_POKEPARAM_GetItem,
+# BTL_POKEPARAM_GetSpecies, BTL_POKEPARAM_GetTypes), the battle's sides
+# (src/game/ov093/btl_main.c: BTL_SIDE_GetPokeAtPos) and the field player
+# (src/game/ov021/field_player.c: FIELD_PLAYER_GetPos).
+#
+# src/game only: there the closure's own rule keeps an overlay's unit out
+# of the ARM9 link (tools/closure.py: an ARM9 unit calling into an overlay
+# goes through ovlink's trampoline to the overlay's own compiled copy), and
+# the exclusion list below is what applies that rule to the units the walk
+# finds.  In the matched tree the overlay's files are one function each and
+# the rule does not hold, so the walk there would put the overlay's code in
+# the ARM9 link; that tree is the older one and is left as it was.
+if(EIDOS_SOURCE_TREE STREQUAL "game")
+    list(APPEND EIDOS_BOOT_PORT_CALLS
+        ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_state.c)
+    # The units are named as seeds as well, so the boot's seed list says
+    # which units the state API's accessors live in.
+    list(APPEND EIDOS_BOOT_SEEDS
+        src/game/ov093/btl_pokeparam.c  # BTL_POKEPARAM_*, the battle's record
+        src/game/ov093/btl_main.c       # BTL_SIDE_GetPokeAtPos, the battle's sides
+        src/game/ov021/field_player.c   # FIELD_PLAYER_GetPos, the field player
+    )
+    # An overlay's unit is not compiled into the ARM9 link: the overlay's
+    # own compiled copy is what the boot's link uses for it (the overlay's
+    # window, cmake/overlays.cmake), and a second copy in the ARM9 link
+    # has no storage for the window's data (tools/bootlink.py's generator
+    # reports "no storage for data") and duplicates the plain names
+    # ovlink's trampolines already define.  The closure carries the unit;
+    # the ARM9 link does not compile it.
+    list(APPEND EIDOS_BOOT_SHIM_REPLACED
+        src/game/ov093/btl_pokeparam.c
+        src/game/ov093/btl_main.c
+        src/game/ov021/field_player.c
+    )
+endif()
+
 # --- configure: the plan ----------------------------------------------------
 
 file(MAKE_DIRECTORY ${EIDOS_BOOT_DIR})
@@ -431,6 +489,12 @@ string(REPLACE ";" "\n" _boot_lib_txt "${BW_MATCHED_ORIGINALS}")
 file(WRITE ${EIDOS_BOOT_DIR}/library_matched.txt "${_boot_lib_txt}\n")
 string(REPLACE ";" "\n" _boot_port_txt "${EIDOS_BOOT_PORT_SOURCES}")
 file(WRITE ${EIDOS_BOOT_DIR}/port_sources.txt "${_boot_port_txt}\n")
+# The plan's walk over the port's own calls into the game: the boot's port
+# code and the library's mod layer (EIDOS_BOOT_PORT_CALLS).  The plan reads
+# these files and adds the game units they call; it does not compile them
+# (the boot compiles EIDOS_BOOT_PORT_SOURCES, below).
+string(REPLACE ";" "\n" _boot_calls_txt "${EIDOS_BOOT_PORT_CALLS}")
+file(WRITE ${EIDOS_BOOT_DIR}/port_calls.txt "${_boot_calls_txt}\n")
 
 # sdk/ decides some names with `#if EIDOS_HEAP_MATCHED`; the planner and
 # the generator are told the value this build compiles them with.
@@ -459,7 +523,7 @@ execute_process(
             --exclude-file ${EIDOS_BOOT_DIR}/shim_replaced.txt
             --shim-sources ${EIDOS_BOOT_DIR}/shim_sources.txt
             --shim-sources ${EIDOS_BOOT_DIR}/port_sources.txt
-            --port-sources ${EIDOS_BOOT_DIR}/port_sources.txt
+            --port-sources ${EIDOS_BOOT_DIR}/port_calls.txt
             --define EIDOS_HEAP_MATCHED=${_boot_heap_matched}
             --library-matched ${EIDOS_BOOT_DIR}/library_matched.txt
             --asm-dir ${CMAKE_CURRENT_SOURCE_DIR}/sdk/asm
