@@ -17,3 +17,4 @@ The figures come from the configure's own plan and the build log.
 
 Waves 3 and 4 have no row. The log has no record for either.
 | 11 | 2026-10-16 | 17.07% | 5725 | 0 | 0 | the member-address stubs: the boot runs past frame 2 |
+| 12 | 2026-10-20 | 31.22% | 429 | 0 | 0 | src/game: the boot and the overlays compile aletheia's merged units, and the host surface is measured against the tree the build used |

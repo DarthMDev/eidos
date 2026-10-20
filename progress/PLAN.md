@@ -52,7 +52,12 @@ the host build actually compiles, and whether it builds:
 | 7 | leftover doc hygiene: reframe the "Open decisions" section of `docs/mod-interface.md` as work, qualify the unlabelled cross-repo doc references (they point into the aletheia checkout, not this repository), and fix `tools/overlay_table.py`'s `--aletheia-root` default, which points at a `../aletheia` that does not exist in this layout | `docs/mod-interface.md`, `README.md`, `docs/settings-design.md`, `sdk/fs.c`, `stubs/reimpl_02045A98.c`, `tools/overlay_table.py` |
 | 8 | close the four contract gaps the tooling side found: publish the declared set as a real artifact rather than a superset, add a rule surface to the manifest and the contract, name the game state fields and accessors a rule may touch (player money is the worked example and has no field or address anywhere), and say where the packed form is read | `docs/mod-interface.md`, `docs/modding.md`, `tools/` |
 | 9 | the seam itself: emit a slot for each address in the declared set in `tools/bootlink.py` and `tools/ovlink.py`, and the registry that answers it in `sdk/`, so a dropped-in mod can replace or wrap a function at run time. The evidence is `progress/SEAM_COST.md`: 44 slots and about 73 redirects, against about 8,600 slots and 2 to 3 MB for a uniform scheme | `tools/bootlink.py`, `tools/ovlink.py`, `sdk/` |
+| 10 | the runtime made healthy: the name-collision segfaults, the duplicate stub, the map file and the boot | `sdk/`, `stubs/` |
+| 11 | the member-address stubs: the boot runs past frame 2 | `stubs/`, `cmake/` |
+| 12 | `src/game`: the boot and the overlays compile aletheia's merged units, one per original source, instead of the per-function ones; the NEW GAME run reaches the field map | `tools/`, `cmake/`, `CMakeLists.txt` |
+| 13 | the events and state API in `sdk/`: the ABI headers, the dispatch core, the slots that fire the events, the state calls and the first area tables | `sdk/`, `tools/bootlink.py`, `tools/ovlink.py`, `CMakeLists.txt`, `tests/` |
 
-Cross-cutting, no wave of its own: configure takes about 11 minutes because
-`closure.py` and `bootlink.py` plan over 33,541 sources on every run.  Worth
-caching the plan.
+Cross-cutting, no wave of its own: configure took about 11 minutes because
+`closure.py` and `bootlink.py` plan over 33,541 sources on every run.
+`tools/alcache.py` caches what the generators read out of aletheia and each
+file's parse, so a configure is about 2 minutes on a warm cache.

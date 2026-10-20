@@ -1,27 +1,28 @@
 {
-  "asm_bodies": 150,
-  "boot_matched": 6077,
+  "asm_bodies": null,
+  "boot_matched": 430,
   "clashes": 0,
   "compile_errors": 0,
-  "compiled_for_host": 5725,
+  "compiled_for_host": 429,
   "configure": "pass",
   "errors_conflicting": 0,
   "errors_implicit": 0,
   "errors_other": 0,
   "failed_targets": 0,
-  "host_surface_pct": 17.07,
-  "implicit_decls": 202,
+  "host_surface_pct": 31.22,
+  "implicit_decls": 0,
   "link_failed_targets": 0,
-  "matched_total": 33544,
-  "note": "the member-address stubs: the boot runs past frame 2",
-  "shim_replaced": 122,
-  "stubbed_asm": 38,
-  "stubbed_open": 26,
+  "matched_total": 1374,
+  "note": "src/game: the boot and the overlays compile aletheia's merged units, and the host surface is measured against the tree the build used",
+  "shim_replaced": null,
+  "stubbed_asm": 17,
+  "stubbed_open": 6,
   "tests": {
     "failed": 0,
-    "passed": 0
+    "passed": 61
   },
+  "tree": "src/game",
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 11
+  "wave": 12
 }

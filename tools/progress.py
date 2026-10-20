@@ -60,10 +60,14 @@ def boot_plan(build):
     report = os.path.join(build, "boot", "gen", "boot_link_report.txt")
     out = {}
     text = "\n".join(read_lines(plan))
-    m = re.search(r"closure from (\d+) seeds: (\d+) matched translation units", text)
+    m = re.search(r"closure from (\d+) seeds: (\d+) (\S+) translation units", text)
     if m:
         out["seeds"] = int(m.group(1))
         out["boot_matched"] = int(m.group(2))
+        # The tree the plan was made in: src/game merges the matched files,
+        # so the unit counts of the two trees are not comparable and the
+        # surface is measured against the tree the build used.
+        out["tree"] = m.group(3)
     for key, pat in (("shim_replaced", r"replaced by a port shim \(cmake/boot.cmake\): (\d+)"),
                      ("in_library", r"already in the eidos library: (\d+)"),
                      ("asm_bodies", r"mwcc asm bodies: (\d+)"),
@@ -87,10 +91,19 @@ def boot_plan(build):
     return out
 
 
-def matched_total(aletheia_root):
-    """How many matched sources aletheia's manifest names."""
+def matched_total(aletheia_root, tree="matched"):
+    """How many translation units the tree holds.
+
+    `tree` is "matched" (src/matched, one file per original source) or
+    "game" (src/game, the merged units the port compiles by default).  The
+    two trees merge the same functions into different numbers of files, so
+    the host surface is only meaningful against the tree the build used.
+    """
     import closure
     closure.ROOT = os.path.abspath(aletheia_root)
+    # The plan names the tree "src/game" or "matched"; closure.py knows it
+    # as "game" or "matched".
+    closure.SOURCE_TREE = "game" if str(tree).endswith("game") else "matched"
     idx = closure.Index()
     return len(idx.sources)
 
@@ -135,18 +148,27 @@ def build_errors(log):
 
 
 def ctest_summary(build):
-    """The last ctest summary on disk, if one is there."""
+    """The last ctest summary on disk, if one is there.
+
+    Two formats: the log ctest writes itself (Testing/Temporary/
+    LastTest.log) says "Test Passed." or "Test Failed." under each test,
+    and the console listing says "N/M Test #K: name ... Passed".
+    """
     for name in ("Testing/Temporary/LastTest.log", "LastTest.log"):
         path = os.path.join(build, name)
         if not os.path.exists(path):
             continue
         passed = failed = 0
         for line in read_lines(path):
-            m = re.match(r"(\d+)/(\d+) Test\s+#\d+: (\S+)", line)
-            if m and "Passed" in line:
+            if line.startswith("Test Passed."):
                 passed += 1
-            elif m and "Failed" in line:
+            elif line.startswith("Test Failed."):
                 failed += 1
+            elif re.match(r"\d+/\d+ Test\s+#\d+:", line):
+                if "Passed" in line:
+                    passed += 1
+                elif "Failed" in line:
+                    failed += 1
         return {"passed": passed, "failed": failed}
     return None
 
@@ -162,7 +184,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     plan = boot_plan(args.build)
-    total = matched_total(args.aletheia_root)
+    total = matched_total(args.aletheia_root, plan.get("tree", "matched"))
     errs = build_errors(args.log)
     tests = ctest_summary(args.build)
     compiled = plan.get("compiled", 0)
@@ -172,6 +194,7 @@ def main(argv=None):
         "wave": args.wave,
         "note": args.note,
         "configure": "pass" if plan.get("boot_matched") is not None else "unknown",
+        "tree": plan.get("tree"),
         "matched_total": total,
         "boot_matched": plan.get("boot_matched"),
         "compiled_for_host": compiled,
