@@ -83,6 +83,7 @@ SYMBOLS_HDR = re.compile(r"^\s*\*?\s*symbols:\s*$")
 CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 MEMBER = re.compile(r"(?:\.|->)\s*[A-Za-z_]\w*")
 ASM_BODY = re.compile(r"\b(?:asm|__asm)\b")
+EXTERN_C_BLOCK = re.compile(r"extern\s+\"C\"\s*\{")
 ATTRIBUTE = re.compile(r"\b__attribute__\s*\(")
 TAG_BODY = re.compile(r"\b(struct|union|enum)\b(\s+[A-Za-z_]\w*)?\s*\{")
 TAG_NAME = re.compile(r"\b(struct|union|enum)\s+(?!_tag\b)[A-Za-z_]\w*")
@@ -169,6 +170,17 @@ def strip_source(text):
             j = text.find("\n", i)
             i = n if j < 0 else j
         elif c in "\"'":
+            # `extern "C" {` and `asm("...")`: the quotes are a header name or
+            # an assembler name, not a string literal.  Blanking them would
+            # leave `extern "" {` and the scanner would read the rest of the
+            # file as a block, and every declaration in it would be lost.
+            head = text[max(0, i - 16):i]
+            if re.search(r"\b(extern|asm)\s+$", head):
+                j = text.find(c, i + 1)
+                j = n if j < 0 else j + 1
+                out.append(text[i:j])
+                i = j
+                continue
             j = i + 1
             while j < n and text[j] != c and text[j] != "\n":
                 j += 2 if text[j] == "\\" else 1
@@ -300,6 +312,16 @@ class SourceScan:
         self.locals = set()        # parameters and local function pointers
         self.heads = {}            # defined function -> its declarator text
         code = strip_source(text)
+        # The C++ linkage wrapper: `extern "C" {` ... `}`.  The declarations
+        # inside it are the file's own, and the scanner reads a top-level
+        # block as a function body, so the wrapper is taken off first.  The
+        # port's own headers use it; the game's sources are C and do not.
+        while True:
+            m = EXTERN_C_BLOCK.search(code)
+            if not m:
+                break
+            j = _matching(code, m.end() - 1, "{", "}")
+            code = code[:m.start()] + code[m.end():j] + code[j + 1:]
         self.has_asm = bool(ASM_BODY.search(code))
         self._scan(code)
 

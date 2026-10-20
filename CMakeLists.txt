@@ -425,6 +425,8 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_field.c    # the world and the encounters' event rows
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_battle.c   # the battle area's event rows
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_message.c        # the message service (docs/mod-services.md)
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_timer.c         # the timer, the splits and the mod's own random source
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_export.c        # a Pokemon's export and import
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_manifest.c   # the run-time manifest: the record, the parse, the apply
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_savedata.c   # a mod's own saved data: the file, the envelope, the versions
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_loader.c     # the loader: the library, the host table, the handlers
@@ -520,6 +522,7 @@ set(BW_ASMSDK_BOOT_SOURCES
 set(BW_STUB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02045A98.c  # end-of-string code unit
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_0204960C.c  # archive stream seek
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_vm_control.c  # the script VMs' dispatch, with the port's hook
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02017E1C.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02017E40.c
     ${CMAKE_CURRENT_SOURCE_DIR}/stubs/stub_02018598.c
@@ -1481,9 +1484,12 @@ endforeach()
 # service's queue (docs/mod-services.md); test_mod_text checks the port's
 # text path, the sink the queued text is shown through; test_mod_script
 # checks the script command hooks (docs/mod-events.md, section 5);
-# test_mod_rule checks the rule interpreter (docs/mod-rules-language.md).
+# test_mod_rule checks the rule interpreter (docs/mod-rules-language.md);
+# test_mod_timer checks the timer, the splits and the mod's own random
+# source, and test_mod_export the export and import of a Pokemon
+# (docs/mod-services.md).
 foreach(t test_mod_surface test_mod_event test_mod_state test_mod_declare test_mod_messages
-          test_mod_text test_mod_script test_mod_rule)
+          test_mod_text test_mod_script test_mod_rule test_mod_timer test_mod_export)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)

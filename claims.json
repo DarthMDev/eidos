@@ -1,3 +1,43 @@
 {
-  "claims": {}
+  "claims": {
+    "W17-BLD": {
+      "note": "the build wiring and the tests",
+      "paths": [
+        "CMakeLists.txt",
+        "tests/test_mod_export.c",
+        "tests/test_mod_timer.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W17-HOOK": {
+      "note": "the port's hook into the game's message windows",
+      "paths": [
+        "stubs/ov/patch_ov021_scrcmd_msgwin.c",
+        "stubs/ov/patch_ov093_btlv_core.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W17-NAME": {
+      "note": "a name the unit declares with its own prototype keeps a name of its own",
+      "paths": [
+        "tools/ovlink.py"
+      ],
+      "started": "2026-10-20"
+    },
+    "W17-SVC": {
+      "note": "the timer, the splits, the seeded random, the Pokemon export and import",
+      "paths": [
+        "sdk/mod_export.c",
+        "sdk/mod_timer.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W17-VM": {
+      "note": "the script VMs' dispatch stand-in",
+      "paths": [
+        "stubs/reimpl_vm_control.c"
+      ],
+      "started": "2026-10-20"
+    }
+  }
 }

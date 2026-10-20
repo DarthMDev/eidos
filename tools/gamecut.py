@@ -194,7 +194,7 @@ def cut(text, drop, cut_asm, drop_decls=False):
         for name in drop:
             # File-scope prototypes start in column 0; a statement calling
             # the function is indented and has no type in front.
-            out = re.sub(r"(?m)^(?:extern[ 	]+)?(?:static[ 	]+)?[A-Za-z_][\w 	\*]*%s"
+            out = re.sub(r"(?m)^(?:extern[ 	]+)?(?:static[ 	]+)?[A-Za-z_][\w 	\*]*%s"
                          r"[ 	]*\([^;{}=]*\)[ 	]*;[ 	]*$" % re.escape(name), "", out)
     for name in set(cut_names):
         # A cut static function is defined in another unit now: its other

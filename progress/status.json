@@ -2,28 +2,28 @@
   "asm_bodies": 125,
   "boot_matched": 430,
   "clashes": 0,
-  "compile_errors": 1,
+  "compile_errors": 0,
   "compiled_for_host": 429,
   "configure": "pass",
-  "errors_conflicting": 1,
+  "errors_conflicting": 0,
   "errors_implicit": 0,
   "errors_other": 0,
   "failed_targets": 1,
   "host_surface_pct": 31.22,
   "implicit_decls": 0,
-  "link_failed_targets": 0,
+  "link_failed_targets": 1,
   "matched_total": 1374,
-  "note": "the text path, the script command hooks and the rule interpreter; one file of ov013 does not compile: the new aletheia headers give one function two spellings with different prototypes, and the port merges the spellings",
+  "note": "the naming fix, the script VMs' stand-in, the message window hooks, and the timer, random and export services; the link misses two functions the new aletheia headers renamed",
   "shim_replaced": 238,
   "stubbed_asm": 17,
   "stubbed_open": 4,
   "tests": {
-    "failed": 0,
+    "failed": 2,
     "passed": 72,
-    "total": 72
+    "total": 74
   },
   "tree": "src/game",
-  "undefined_refs": 0,
-  "undefined_symbols": 0,
-  "wave": 16
+  "undefined_refs": 4,
+  "undefined_symbols": 2,
+  "wave": 17
 }

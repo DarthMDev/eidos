@@ -27,6 +27,7 @@
  */
 #include "mod_event.h"
 #include "mod_context.h"
+#include "mod_export.h"
 #include "mod_state.h"
 #include "mod_slot.h"
 
@@ -470,6 +471,9 @@ static void bind_battle(struct BtlMain *main)
 
         if (setup->gameData != NULL) {
             bw_mod_state_set_game_data(setup->gameData);
+            /* The export service writes to the party, so it needs the same
+             * object (sdk/mod_export.h). */
+            bw_mod_export_set_game_data(setup->gameData);
         }
     }
 }

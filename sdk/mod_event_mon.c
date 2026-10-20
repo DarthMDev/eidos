@@ -43,6 +43,7 @@
  * (tools/gamespell.py), so one spelling links against either tree.
  */
 #include "mod_event.h"
+#include "mod_export.h"
 #include "mod_slot.h"
 #include "mod_state.h"
 
@@ -497,6 +498,9 @@ static void bind_game_data(void *gameData)
 {
     if (gameData != NULL) {
         bw_mod_state_set_game_data(gameData);
+        /* The export service writes to the party, so it needs the same
+         * object (sdk/mod_export.h). */
+        bw_mod_export_set_game_data(gameData);
     }
 }
 

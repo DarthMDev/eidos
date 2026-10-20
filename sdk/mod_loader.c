@@ -107,6 +107,7 @@
  */
 #include "mod_api.h"
 #include "mod_event.h"
+#include "mod_export.h"
 #include "mod_loader.h"
 #include "mod_manifest.h"
 #include "mod_message.h"
@@ -115,6 +116,7 @@
 #include "mod_slot.h"
 #include "mod_state.h"
 #include "mod_text.h"
+#include "mod_timer.h"
 #include "vfs.h"
 
 #include <stdio.h>
@@ -870,6 +872,16 @@ static int loader_load(u32 index)
      * refusal needs (docs/mod-services.md, "Messages"). */
     m->services.message = bw_mod_message_show;
     m->services.confirm = bw_mod_message_confirm;
+    /* The timer and the splits, the mod's own random source, and a
+     * Pokemon's export and import (docs/mod-services.md). */
+    m->services.timer_start = bw_mod_timer_start;
+    m->services.timer_stop  = bw_mod_timer_stop;
+    m->services.timer_ms    = bw_mod_timer_ms;
+    m->services.split       = bw_mod_timer_split;
+    m->services.rand_seed   = bw_mod_rand_seed;
+    m->services.rand_next   = bw_mod_rand_next;
+    m->services.mon_export  = bw_mod_mon_export;
+    m->services.mon_import  = bw_mod_mon_import;
     /* The rules' cells: the mod's own file under its namespace. */
     bw_mod_rule_set_cells_io(loader_cells_load, loader_cells_store);
 

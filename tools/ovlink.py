@@ -16,7 +16,11 @@ a set of overlays into one link anyway (docs/overlays.md is the design):
     (`#define func_02155244 ov010_func_02155244`).  The matched files are
     not edited (portability rule 1).  A spelling that differs from the
     defining file's (an SDK name for a func_ address) is renamed to the
-    definition by address, inside the overlay as across to ARM9.
+    definition by address, inside the overlay as across to ARM9.  A unit
+    that spells one function twice (the ARM9's name and its own alias)
+    declares that one name twice, and the two prototypes conflict: the
+    spelling the unit declares itself keeps a name of its own, and a
+    forwarder calls the target with the unit's own arguments.
 
  2. Calls into a window from outside it.  A name whose address lies in a
     window the referring code does not own (ARM9 code calling 0x021DFC20,
@@ -297,6 +301,7 @@ class Scan:
         self.typedefs = {}         # name -> the type text
         self.locals = set()
         self.heads = {}            # defined function -> its declarator text
+        self.decls = {}            # declared function -> its declaration text
         self.func_defs = set()     # names defined with a body
         self.block_protos = set()  # functions declared inside a body
         self.prototyped_static = set()
@@ -435,6 +440,9 @@ class Scan:
         is_typedef = "typedef" in head_words
         is_extern = "extern" in head_words
         is_static = "static" in head_words
+        # The declaration's type words, for a declarator that carries none
+        # (`extern void f(void), g(void);`): the type belongs to the first.
+        decl_type = None
         for piece in _split_top(decl, ","):
             parts = _split_top(piece, "=")
             declarator = parts[0]
@@ -474,6 +482,19 @@ class Scan:
                 self.declared.add(name)
                 if is_func:
                     self.prototyped.add(name)
+                    # The declaration's own text: the prototype the file
+                    # declares the name with.  A unit that declares a name
+                    # with its own prototype keeps it (Link._own_names).
+                    pre = IDENT.findall(_split_top(declarator, "(")[0])
+                    typew = [w for w in pre[:-1]
+                             if w not in ("extern", "static", "typedef", "inline",
+                                          "__inline", "register")]
+                    if typew and decl_type is None:
+                        decl_type = typew
+                    head = declarator
+                    if not typew and decl_type:
+                        head = " ".join(decl_type) + " " + declarator
+                    self.decls[name] = head
             else:
                 self.defined.add(name)
 
@@ -800,6 +821,12 @@ def proto_decl(ret, name, params):
     plist = ", ".join(params) or "void"
     sep = "" if ret.endswith("*") else " "
     return "%s%s%s(%s);" % (ret, sep, name, plist)
+
+
+def proto_text(sig):
+    """A normalised signature as the report spells it."""
+    ret, params = sig
+    return "%s (%s)" % (ret, ", ".join(params) or "void")
 
 
 # The event layer's limit: how many arguments a bound game function may
@@ -1142,6 +1169,11 @@ class Unit:
         self.builtins = set()
         self.builtins_declared = set()
         self.private = {}          # name -> this file's own copy's name
+        self.shares = {}           # name -> (private name, target, signature):
+                                   # this file's own name for a function it
+                                   # spells together with another name
+        self.inc_decls = set()     # names the headers this file includes
+                                   # declare
         self.literal_table = False
         self.header = None
         self.cuts = set()          # src/game: functions a port patch defines
@@ -1730,6 +1762,103 @@ class Link:
         # The declared addresses a non-owning caller goes through a slot for:
         # the overlay header renames the spelling to the slot.
         st.renames.update(st.slot_names)
+        self._own_names(st)
+
+    # -- the names a unit keeps for itself -----------------------------------
+
+    def own_signature(self, u, name):
+        """The normalised prototype of the unit's own declaration of a
+        name, or None when it does not normalise."""
+        head = u.scan.decls.get(name)
+        if head is None:
+            return None
+        return signature(head, name, u.scan.typedefs)
+
+    def host_signature(self, st, name):
+        """The normalised prototype of the host function a renamed name
+        reaches, or None: the overlay's own function, a link function, a
+        veneer forwarder."""
+        if name in self.veneer_fwd:
+            return self.veneer_fwd[name][1]
+        head = self.link_heads.get(name)
+        if head is not None:
+            return signature(head[0], name, head[1])
+        m = re.match(r"^%s_(.+)$" % re.escape(st.ov.tag), name)
+        if m:
+            unit = st.defs.get(m.group(1))
+            if unit is not None:
+                own = unit.scan.heads.get(m.group(1))
+                if own is not None:
+                    return signature(own, m.group(1), unit.scan.typedefs)
+        return None
+
+    def _own_names(self, st):
+        """A name the unit declares with its own prototype keeps a name of
+        its own when the name it would be merged with is declared
+        differently.
+
+        A unit may spell one function twice: the ARM9's name, which the
+        game's header declares, and the unit's own alias, which the unit
+        declares itself.  The port gives one address one name, so the two
+        declarations of that name would conflict (the same name, two
+        prototypes).  The spelling the unit declares itself keeps a name
+        of its own, private to the unit, and the port forwards it to the
+        target (write_dispatch): the unit's call still reaches the
+        function.
+
+        The headers' prototypes are not read (the scanner sees the unit's
+        own file only), so a spelling the unit does not declare itself
+        cannot be shown to agree with the unit's own: the unit's name is
+        the one that keeps its own."""
+        for u in st.units:
+            u.inc_decls = closure.included_declarations(
+                u.path, (os.path.join(closure.EIDOS_ROOT, "sdk"),))
+            scope = set(u.scan.prototyped) | u.inc_decls
+            groups = {}
+            for n in sorted(scope):
+                tgt = st.renames.get(n)
+                if tgt is None or tgt == n:
+                    continue
+                groups.setdefault(tgt, []).append(n)
+            for tgt, names in sorted(groups.items()):
+                if len(names) < 2:
+                    continue
+                sigs = {}
+                for m in names:
+                    sig = self.own_signature(u, m)
+                    if sig is not None:
+                        sigs[m] = sig
+                own = [n for n in names if n in u.scan.prototyped]
+                if not own:
+                    self.notes.append(
+                        "%s %s: %s and %s are one function, and the port does "
+                        "not read the headers' prototypes: a difference between "
+                        "their declarations would not be seen" % (
+                            st.ov.tag, u.rel, names[0], names[1]))
+                    continue
+                for n in own:
+                    if n in u.scan.func_defs:
+                        # The unit defines it: the definition is the
+                        # authority, and a name of its own would leave the
+                        # target undefined.
+                        self.notes.append(
+                            "%s %s: the unit defines %s, and %s is the name it "
+                            "is merged with: the port does not read the headers' "
+                            "prototypes, so a difference would not be seen" % (
+                                st.ov.tag, u.rel, n, tgt))
+                        continue
+                    sig = sigs.get(n)
+                    if sig is None:
+                        self.notes.append(
+                            "%s %s: the prototype of %s does not normalise: the "
+                            "name keeps the one it has" % (st.ov.tag, u.rel, n))
+                        continue
+                    others = [m for m in names if m != n]
+                    if all(m in sigs and sigs[m] == sig for m in others):
+                        continue        # every other declaration agrees
+                    u.shares[n] = ("%s__%s" % (self.own(st, n),
+                                               flat_name(os.path.basename(u.rel))),
+                                   tgt, sig)
 
     def declared_addr(self, st, name, sc):
         """The declared overlay address of `name`, or None.  The key is the
@@ -2035,6 +2164,15 @@ def write_unit_header(link, u, ov_header, path):
         lines.append("#undef %s" % n)
         lines.append("#define %s %s   /* another file of the overlay owns %s */"
                      % (n, u.private[n], n))
+    for n in sorted(u.shares):
+        # The unit declares this name with its own prototype, and the name it
+        # shares the target with is declared differently: the unit's own
+        # spelling keeps its own name, and the forwarder in ovl_dispatch.c
+        # calls the target (tools/ovlink.py, Link._own_names).
+        lines.append("#undef %s" % n)
+        lines.append("#define %s %s   /* the unit's own name for %s: its "
+                     "prototype differs from the name it shares */"
+                     % (n, u.shares[n][0], n))
     for n in sorted(st.slot_names):
         if st.defs.get(n) is u:
             # The overlay header renames a declared name to its slot for a
@@ -2055,7 +2193,7 @@ def write_unit_header(link, u, ov_header, path):
         lines.append(" * functions (tools/ovlink.py, step 6). */")
         lines.append("void *%s(unsigned int addr);" % fn)
         lines.append("#define bw_ds_ptr %s" % fn)
-    inc_decls = closure.included_declarations(u.path)
+    inc_decls = u.inc_decls
     for n in sorted(u.protos):
         if n in inc_decls:
             # The file's own `#include` header declares this name; the
@@ -2360,6 +2498,46 @@ def write_dispatch(link, path, set_name):
             w("    %s%s(%s);" % ("" if ret == "void" else "return ", tname, args))
             w("}")
             w("")
+    # The names a unit keeps for itself: a unit that spells one function
+    # twice (the ARM9's name and its own alias) would get one name for both,
+    # and the two declarations of that name would conflict.  The unit's own
+    # name keeps its own, and this forwarder calls the target with the
+    # unit's own arguments (tools/ovlink.py, Link._own_names).
+    fwds = []
+    for oid in link.ids:
+        st = link.state[oid]
+        for u in st.units:
+            for n in sorted(u.shares):
+                private, target, sig = u.shares[n]
+                fwds.append((private, target, sig, st, u, n))
+    if fwds:
+        w("/* ---- the names a unit keeps for itself ---- */")
+        w("")
+        for private, target, sig, st, u, n in fwds:
+            ret, params = sig
+            # The target's own prototype, normalised; the alias's when the
+            # link does not say (a stub the overlay lacks): the call site's
+            # declaration is the authority for the arguments.
+            tsig = link.host_signature(st, target) or sig
+            tret, tparams = tsig
+            for tag in sorted({t for p in tparams + (tret,)
+                               for t in re.findall(r"\bstruct\s+([A-Za-z_]\w*)", p)}):
+                w("struct %s;" % tag)
+            w(proto_decl(tret, target, tparams))
+            w("%s;" % proto(ret, private, params))
+            w(proto(ret, private, params))
+            w("{")
+            call = ", ".join(
+                ("(%s)a%d" % (t, k)) if k < len(params) else "(%s)0" % t
+                for k, t in enumerate(tparams))
+            if ret == "void" or tret == "void":
+                w("    %s(%s);" % (target, call))
+                if ret != "void":
+                    w("    return 0;")
+            else:
+                w("    return (%s)%s(%s);" % (ret, target, call))
+            w("}")
+            w("")
     declared = {}
     body = []
     for name in sorted(link.tramps):
@@ -2644,12 +2822,14 @@ def write_report(link, path):
         for x in st.relocs:
             rk[x["kind"]] = rk.get(x["kind"], 0) + 1
         p("%s  0x%08X..0x%08X  units %d  excluded %d  defined %d  stubs %d  data %s  "
-          "relocs %s  code literals %d  implicit decls %d  private copies %d  slots %d" % (
+          "relocs %s  code literals %d  implicit decls %d  private copies %d  "
+          "own names %d  slots %d" % (
               st.ov.tag, st.ov.lo, st.ov.hi, len(st.units), len(st.excluded), len(st.at),
               len(st.stubs), " ".join("%s=%d" % kv for kv in sorted(kinds.items())) or "0",
               " ".join("%s=%d" % kv for kv in sorted(rk.items())) or "0",
               len(st.code_literals), sum(len(u.protos) for u in st.units),
-              sum(len(u.private) for u in st.units), len(st.mod_slots)))
+              sum(len(u.private) for u in st.units),
+              sum(len(u.shares) for u in st.units), len(st.mod_slots)))
     for oid in link.ids:
         st = link.state[oid]
         for rel, why in st.excluded:
@@ -2669,6 +2849,11 @@ def write_report(link, path):
             for n in sorted(u.private):
                 p("  %s private copy %s in %s (%s owns it)" % (
                     st.ov.tag, n, u.rel, st.defs[n].rel))
+            for n, (private, target, sig) in sorted(u.shares.items()):
+                p("  %s own name %s in %s: the unit declares it as %s, the name "
+                  "it shares is %s: %s keeps the unit's own and a forwarder "
+                  "calls the target" % (
+                      st.ov.tag, n, u.rel, proto_text(sig), target, private))
         for v, s in sorted(st.code_literals.items()):
             p("  %s code literal 0x%08X -> %s" % (st.ov.tag, v, s))
     for n in sorted(link.tramps):
