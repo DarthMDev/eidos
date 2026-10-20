@@ -151,6 +151,23 @@ def build_errors(log):
     return out
 
 
+def ctest_console_summary(path):
+    """The summary of a ctest console log.
+
+    The log ctest writes itself (Testing/Temporary/LastTest.log) holds one
+    run and is overwritten by the next, so a run of one test leaves only that
+    one test in it.  The console log keeps the whole run's summary line.
+    """
+    if not path or not os.path.exists(path):
+        return None
+    for line in read_lines(path):
+        m = re.search(r"(\d+)% tests passed, (\d+) tests failed out of (\d+)", line)
+        if m:
+            total, failed = int(m.group(3)), int(m.group(2))
+            return {"passed": total - failed, "failed": failed, "total": total}
+    return None
+
+
 def ctest_summary(build):
     """The last ctest summary on disk, if one is there.
 
@@ -182,6 +199,8 @@ def main(argv=None):
     ap.add_argument("--aletheia-root", default=os.path.join(ROOT, "..", "bw_decomp"))
     ap.add_argument("--build", default=os.path.join(ROOT, "build32"))
     ap.add_argument("--log", default=None, help="a ninja build log to count errors from")
+    ap.add_argument("--ctest-log", default=None,
+                    help="a ctest console log to take the test summary from")
     ap.add_argument("--wave", type=int, default=None)
     ap.add_argument("--note", default="")
     ap.add_argument("--json", default=None)
@@ -190,7 +209,7 @@ def main(argv=None):
     plan = boot_plan(args.build)
     total = matched_total(args.aletheia_root, plan.get("tree", "matched"))
     errs = build_errors(args.log)
-    tests = ctest_summary(args.build)
+    tests = ctest_console_summary(args.ctest_log) or ctest_summary(args.build)
     compiled = plan.get("compiled", 0)
     surface = (100.0 * compiled / total) if total else 0.0
 
