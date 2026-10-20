@@ -20,3 +20,4 @@ Waves 3 and 4 have no row. The log has no record for either.
 | 12 | 2026-10-20 | 31.22% | 429 | 0 | 0 | src/game: the boot and the overlays compile aletheia's merged units, and the host surface is measured against the tree the build used |
 | 13 | 2026-10-20 | 31.22% | 429 | 0 | 0 | the events and the state API in sdk/: the dispatch, the state calls, the slots that fire the events, and the session and items areas |
 | 14 | 2026-10-20 | 31.22% | 429 | 0 | 0 | the loader path: the manifest, the loader, a mod's own saved data, and the declared set at run time |
+| 15 | 2026-10-20 | 31.22% | 429 | 0 | 0 | the rest of the event areas (pokemon, world, battle) and the message service |

@@ -421,6 +421,10 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_state.c     # the state calls over the game's accessors
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_session.c  # the session and save events
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_items.c    # the item, money and heal events
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_mon.c      # the pokemon area's event rows
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_field.c    # the world and the encounters' event rows
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event_battle.c   # the battle area's event rows
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_message.c        # the message service (docs/mod-services.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_manifest.c   # the run-time manifest: the record, the parse, the apply
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_savedata.c   # a mod's own saved data: the file, the envelope, the versions
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_loader.c     # the loader: the library, the host table, the handlers
@@ -1468,8 +1472,11 @@ endforeach()
 # compares it with the number stored beside the version in sdk/mod_api.h
 # (docs/mod-abi.md, section 3); test_mod_event drives the dispatch with a
 # fake binding and two handlers; test_mod_state reads the state API a mod
-# binds to (sdk/mod_state.h) and the contract its calls keep.
-foreach(t test_mod_surface test_mod_event test_mod_state)
+# binds to (sdk/mod_state.h) and the contract its calls keep;
+# test_mod_declare checks the declared set at run time
+# (docs/mod-state.md, section 4); test_mod_messages checks the message
+# service's queue (docs/mod-services.md).
+foreach(t test_mod_surface test_mod_event test_mod_state test_mod_declare test_mod_messages)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)

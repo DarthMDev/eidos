@@ -1,3 +1,42 @@
 {
-  "claims": {}
+  "claims": {
+    "W15-BATTLE": {
+      "note": "the battle area's rows",
+      "paths": [
+        "sdk/mod_event_battle.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W15-BLD": {
+      "note": "the build wiring and the two tests",
+      "paths": [
+        "CMakeLists.txt",
+        "tests/test_mod_declare.c",
+        "tests/test_mod_messages.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W15-FIELD": {
+      "note": "the world and encounter areas' rows",
+      "paths": [
+        "sdk/mod_event_field.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W15-MON": {
+      "note": "the pokemon area's rows",
+      "paths": [
+        "sdk/mod_event_mon.c"
+      ],
+      "started": "2026-10-20"
+    },
+    "W15-MSG": {
+      "note": "the message service: the text on screen",
+      "paths": [
+        "sdk/mod_message.c",
+        "sdk/mod_message.h"
+      ],
+      "started": "2026-10-20"
+    }
+  }
 }

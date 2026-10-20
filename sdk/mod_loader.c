@@ -109,6 +109,7 @@
 #include "mod_event.h"
 #include "mod_loader.h"
 #include "mod_manifest.h"
+#include "mod_message.h"
 #include "mod_slot.h"
 #include "mod_state.h"
 #include "vfs.h"
@@ -771,6 +772,10 @@ static int loader_load(u32 index)
     m->services.state_clear = bw_mod_savedata_clear;
     m->services.state_info = bw_mod_savedata_info;
     m->services.state_dir = bw_mod_savedata_dir;
+    /* The messages: the first of the port's services, and the one every
+     * refusal needs (docs/mod-services.md, "Messages"). */
+    m->services.message = bw_mod_message_show;
+    m->services.confirm = bw_mod_message_confirm;
 
     /* 4. the start: the mod binds its handlers through the host table. */
     {

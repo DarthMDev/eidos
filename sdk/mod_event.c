@@ -559,6 +559,9 @@ void bw_mod_event_reset(void)
  */
 extern const BwEventBinding *bw_event_bindings_session(u32 *count);
 extern const BwEventBinding *bw_event_bindings_items(u32 *count);
+extern const BwEventBinding *bw_event_bindings_mon(u32 *count);
+extern const BwEventBinding *bw_event_bindings_field(u32 *count);
+extern const BwEventBinding *bw_event_bindings_battle(u32 *count);
 
 void bw_mod_event_bind_all(void)
 {
@@ -571,6 +574,21 @@ void bw_mod_event_bind_all(void)
     }
     n = 0;
     rows = bw_event_bindings_items(&n);
+    if (rows != NULL && n > 0) {
+        bw_mod_event_bind_area(rows, n);
+    }
+    n = 0;
+    rows = bw_event_bindings_mon(&n);
+    if (rows != NULL && n > 0) {
+        bw_mod_event_bind_area(rows, n);
+    }
+    n = 0;
+    rows = bw_event_bindings_field(&n);
+    if (rows != NULL && n > 0) {
+        bw_mod_event_bind_area(rows, n);
+    }
+    n = 0;
+    rows = bw_event_bindings_battle(&n);
     if (rows != NULL && n > 0) {
         bw_mod_event_bind_area(rows, n);
     }
