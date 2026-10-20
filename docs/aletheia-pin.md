@@ -13,7 +13,11 @@ This file records that revision.
 - Subject: Wave 20 phase 2: overlay types and per-file headers; host build
   compiles; original bugs archived
 
-At this pin every overlay compiles (EIDOS_OVERLAYS=ALL).  The functions
+At this pin every overlay but ov214 compiles: ov214 has a data object
+named `site`, and eidos's data-name macro rewrites the parameter of that
+name in arm9/gfl_heap_wrap.h.  aletheia gives such generic globals module
+names next; until then configure with an EIDOS_OVERLAYS list that leaves
+214 out.  The functions
 that fall off their end return the DS value under `#ifndef __MWERKS__`
 (aletheia docs/ORIGINAL_BUGS.tsv), so tools/gamereturns.txt is empty, and
 every variadic function takes the host <stdarg.h> through
