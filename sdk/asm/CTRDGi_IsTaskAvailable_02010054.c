@@ -29,3 +29,12 @@ u32 sub_02010054(void)
 {
     return CTRDGi_IsTaskAvailable_02010054();
 }
+
+/* src/game's name (arm9/net_err.c: 1 once the network error screen has its
+ * backup buffers, gNetErrWork at 0x0214617C).  The boot cuts that unit's
+ * definition because this file stands at its address, so its callers need
+ * the name here. */
+u32 GFL_NET_ERR_IsActive(void)
+{
+    return CTRDGi_IsTaskAvailable_02010054();
+}

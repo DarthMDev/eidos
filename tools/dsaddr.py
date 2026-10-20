@@ -1604,9 +1604,55 @@ def main(argv=None) -> int:
                 spath[:spath.rindex("/src/game/")]))
             # functions that fall off their end (tools/gamereturns.txt)
             source = gamecut.add_returns(source, gamecut.returns_table())
+            _rewrite_local_headers(src_path, a.output, set())
     text, _, _ = rewrite(source, name)
     _write(a.output, text)
     return 0
+
+
+_LOCAL_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
+
+
+def _rewrite_local_headers(src_path, out_path, seen):
+    """Rewrite the quoted headers of a src/game unit that hold fixed DS
+    addresses (nns_g3d_sbc_types.h's GXFIFO, `*(volatile u32 *)0x04000400`)
+    to the copy's tree, at the path the include names relative to the copy.
+    A quoted include looks in the including file's directory first, so the
+    copy compiles against them and the hardware writes reach bw_ds_ptr;
+    otherwise they land in plain memory and the 3D engine never sees them.
+    A header on the way to one is copied too.  Returns True when the header
+    at out_path was written."""
+    src_dir = os.path.dirname(os.path.abspath(src_path))
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    wrote_any = False
+    for inc in _LOCAL_INCLUDE_RE.findall(_read(src_path)):
+        hp = os.path.normpath(os.path.join(src_dir, inc))
+        if hp in seen or not os.path.isfile(hp):
+            continue
+        seen.add(hp)
+        oh = os.path.normpath(os.path.join(out_dir, inc))
+        text, rewrites, _ = rewrite(_read(hp), hp)
+        nested = _rewrite_local_headers(hp, oh, seen)
+        if rewrites or nested:
+            _write_atomic(oh, text)
+            wrote_any = True
+    return wrote_any
+
+
+def _write_atomic(path, text):
+    """_write for a file several dsaddr.py runs may produce at once."""
+    data = text.encode("latin-1")
+    try:
+        with open(path, "rb") as f:
+            if f.read() == data:
+                return
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
 
 
 if __name__ == "__main__":

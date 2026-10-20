@@ -22,9 +22,9 @@
  * The hook calls matter beyond the check: in a battle, bodies 1 and 3 run
  * EVENT_BATTLE_IntegrityProbeA and B, which draw four GF_STANDARD_Rand
  * values, so leaving them out would put the random sequence off a
- * console's.  The third argument is never read.  With src/game compiled
- * (docs/game-tree.md) the bodies are C and only the call stubs are the
- * port's; this file then goes.
+ * console's.  The third argument is never read.  src/game has the bodies as
+ * C (region ov230d), but their checks read the cartridge and the console,
+ * which the port does not have, so the stand-ins stay.
  */
 
 typedef unsigned int u32;
@@ -66,3 +66,19 @@ u32 func_021883CC(void (*hook)(void), void (*arg)(void), u32 unused)
     (void)unused;
     return ((Ov230Hook)hook)((void *)arg);
 }
+
+/*
+ * The overlay's static initialisers, which FS_StartOverlay runs when the
+ * new game's first map loads it: LOADER_ENTRY_Start (0x021889B0) and the
+ * four passes it reaches, LOADER_ENTRY_DecryptCallStubs0 (0x02188408),
+ * LOADER_ENTRY_DecryptCallDispatch (0x02188CB0),
+ * LOADER_ENTRY_DecryptCallStubs2 (0x02189448) and LOADER_ENTRY_DecryptCipher
+ * (0x02189908).  On the DS they decrypt the sealed code in place.  The
+ * port's code is native and was never encrypted, so they do nothing; without
+ * them the start of a new game stopped on "function not in this build".
+ */
+void func_021889B0(void) {}
+void func_02188408(void) {}
+void func_02188CB0(void) {}
+void func_02189448(void) {}
+void func_02189908(void) {}

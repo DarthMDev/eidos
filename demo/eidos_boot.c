@@ -293,6 +293,7 @@ typedef struct BootRun {
     u64 limit;         /* frames to run before the clean exit            */
     u64 vblanks;       /* vblank interrupts raised                       */
     u32 skipped;       /* presents skipped in a row (badly behind)       */
+    u64 ff_shown_ns;   /* fast forward: when a frame was last shown      */
     u64 audio_rem;     /* the output-frame remainder, in clock units     */
     u8 *top;
     u8 *bottom;
@@ -1136,6 +1137,26 @@ static void boot_audio_push(BootRun *run)
         done += AUDIO_CHUNK_FRAMES;
     }
 }
+
+/*
+ * Fast forward's sound: every frame's share is rendered, so the music and
+ * the effects advance with the game, and queued while the device holds less
+ * than the latency.  The device plays without a gap; what it cannot take in
+ * real time is dropped.
+ */
+static void boot_audio_fast(BootRun *run)
+{
+    static s16 buf[2u * 1024u];
+    u32 n = boot_audio_frames(run);
+
+    if (n > 1024u) {
+        n = 1024u;
+    }
+    bw_snd_render(buf, n);
+    if (eidos_platform_audio_queued(run->plat) < AUDIO_LATENCY_FRAMES) {
+        eidos_platform_queue_audio(run->plat, buf, n);
+    }
+}
 #endif
 
 /* The halt hook: one frame of time passing. */
@@ -1192,13 +1213,17 @@ static void boot_frame(void *user)
         t_ph = eidos_prof_begin();
         /* Badly behind (two frames or more): skip showing this frame, at
          * most three in a row; the game's steps are never skipped.  Fast
-         * forward (Tab) shows one frame in `speed`. */
-        if (speed > 1 && eidos_frame_count(&run->loop) % (u64)speed != 0) {
+         * forward (Tab) shows a frame whenever a display period has passed
+         * since the last one, so the window keeps its frame rate whatever
+         * speed the host reaches. */
+        if (speed > 1 && eidos_platform_now_ns(run->plat) - run->ff_shown_ns
+                             < eidos_frame_period_ns()) {
             run->skipped = 0;
         } else if (eidos_platform_lag_frames(run->plat) >= 2u && run->skipped < 3u) {
             run->skipped++;
         } else {
             run->skipped = 0;
+            run->ff_shown_ns = eidos_platform_now_ns(run->plat);
             if (run->hi_n != 0u) {
                 eidos_platform_present_nn(run->plat, run->hi_top,
                                           (int)run->hi_sn[0], run->hi_bottom,
@@ -1206,11 +1231,11 @@ static void boot_frame(void *user)
             }
         }
         eidos_prof_end(EIDOS_PROF_PRESENT, t_ph);
-        /* Fast forward is silent: the sound advances with the game's
-         * frames (the no-device path below), none of it is queued. */
-        audio_device = speed > 1 ? 0 : eidos_platform_audio_open(run->plat);
+        audio_device = eidos_platform_audio_open(run->plat);
         t_ph = eidos_prof_begin();
-        if (audio_device) {
+        if (audio_device && speed > 1) {
+            boot_audio_fast(run);
+        } else if (audio_device) {
             boot_audio_push(run);
         }
         eidos_prof_end(EIDOS_PROF_AUDIO, t_ph);
