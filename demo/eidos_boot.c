@@ -294,6 +294,9 @@ typedef struct BootRun {
     u64 vblanks;       /* vblank interrupts raised                       */
     u32 skipped;       /* presents skipped in a row (badly behind)       */
     u64 ff_shown_ns;   /* fast forward: when a frame was last shown      */
+    int ff_skip;       /* fast forward: this frame is neither drawn nor shown */
+    u32 ff_since;      /* fast forward: frames since one was shown        */
+    int raster_skip;   /* the 3D raster skip boot_render chose for drawn frames */
     u64 audio_rem;     /* the output-frame remainder, in clock units     */
     u8 *top;
     u8 *bottom;
@@ -991,6 +994,11 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
 
     (void)top;
     (void)bottom;
+#if EIDOS_BOOT_SDL
+    if (run->ff_skip) {
+        return;     /* fast forward: this frame is not shown (boot_frame) */
+    }
+#endif
     /*
      * The 3D renders at the scale set before its swap, so a change shows one
      * frame late.  With the GPU rasteriser the CPU renders the 3D at 1x only
@@ -1007,6 +1015,7 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
 
         g3d_hw_snapshot_enable(gpu);
         g3d_hw_skip_raster(skip);
+        run->raster_skip = skip;
         if (skip) {
             g3d_hw_set_scale(1u);
         } else {
@@ -1213,6 +1222,24 @@ static void boot_frame(void *user)
     if (g_trace_on) {
         g3d_hw_trace(eidos_frame_count(&run->loop) + 1u == g_trace_frame);
     }
+#if EIDOS_BOOT_SDL
+    /* Fast forward (Tab): one frame in `speed` is drawn and shown, the rest
+     * neither, so the game's own work is most of what runs; drawing a frame
+     * costs more than running one, more so at higher resolutions.  A frame is
+     * shown sooner when 100 ms have passed, so the window never stalls.  Not
+     * while the display capture is on: it reads the drawn frame back into
+     * VRAM for the game. */
+    {
+        int ff = run->plat != NULL ? eidos_platform_fast_forward(run->plat) : 1;
+
+        run->ff_skip = ff > 1 && run->ff_since + 1u < (u32)ff
+            && eidos_platform_now_ns(run->plat) - run->ff_shown_ns < 100000000ull
+            && (bw_io_read32(0x04000064u) & 0x80000000u) == 0u;
+        run->ff_since = run->ff_skip ? run->ff_since + 1u : 0u;
+    }
+    g3d_hw_skip_raster(run->ff_skip ? 1 : run->raster_skip);
+    g3d_hw_skip_frame(run->ff_skip);
+#endif
     eidos_frame_run_one(&run->loop);
     eidos_prof_end(EIDOS_PROF_STEP, t_step + g_render_ns);
     g_frames_seen++;
@@ -1239,8 +1266,7 @@ static void boot_frame(void *user)
          * forward (Tab) shows a frame whenever a display period has passed
          * since the last one, so the window keeps its frame rate whatever
          * speed the host reaches. */
-        if (speed > 1 && eidos_platform_now_ns(run->plat) - run->ff_shown_ns
-                             < eidos_frame_period_ns()) {
+        if (run->ff_skip) {
             run->skipped = 0;
         } else if (eidos_platform_lag_frames(run->plat) >= 2u && run->skipped < 3u) {
             run->skipped++;

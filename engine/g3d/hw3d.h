@@ -173,6 +173,9 @@ void g3d_hw_gpu_features(u32 snap_mask);
  * GPU renderer draws them from the snapshot and g3d_hw_frame() goes stale.
  * Frames the snapshot marks unsupported (G3D_SNAP_*) need it back. */
 void g3d_hw_skip_raster(int on);
+/* Fast forward: the frames in between are not shown, so neither their
+ * vertices nor their raster are worked out; matrices still are. */
+void g3d_hw_skip_frame(int on);
 void g3d_hw_snapshot_enable(int on);
 const G3dSnapshot *g3d_hw_snapshot(void);
 u32       g3d_hw_unsupported(void);

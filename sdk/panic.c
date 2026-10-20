@@ -18,17 +18,30 @@
 
 void bw_panic(const char *what, u32 address, const char *detail)
 {
+    char msg[512];
+    const char *sep = detail != NULL && *detail != '\0' ? ": " : "";
+
     fflush(stdout);
     if (address != 0) {
-        fprintf(stderr, "bw-port: PANIC in %s at 0x%08lX",
-                what != NULL ? what : "?", (unsigned long)address);
+        snprintf(msg, sizeof msg, "bw-port: PANIC in %s at 0x%08lX%s%s",
+                 what != NULL ? what : "?", (unsigned long)address, sep,
+                 detail != NULL ? detail : "");
     } else {
-        fprintf(stderr, "bw-port: PANIC in %s", what != NULL ? what : "?");
+        snprintf(msg, sizeof msg, "bw-port: PANIC in %s%s%s",
+                 what != NULL ? what : "?", sep, detail != NULL ? detail : "");
     }
-    if (detail != NULL && *detail != '\0') {
-        fprintf(stderr, ": %s", detail);
+    fprintf(stderr, "%s\n", msg);
+    if (bw_plat_crash_installed()) {
+        /* A double-clicked game's console closes with it: the message also
+         * goes to eidos_crash.log beside the game, as a crash's report does
+         * (sdk/plat_crash.c). */
+        FILE *f = fopen("eidos_crash.log", "w");
+
+        if (f != NULL) {
+            fprintf(f, "%s\n", msg);
+            fclose(f);
+        }
     }
-    fputc('\n', stderr);
     bw_plat_crash_context_run();
     if (bw_plat_crash_installed()) {
         bw_plat_backtrace();

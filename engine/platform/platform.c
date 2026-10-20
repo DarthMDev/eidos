@@ -439,7 +439,19 @@ int eidos_platform_fast_forward(const EidosPlatform *p)
     /* SDL keeps the state of the window with keyboard focus only, so the
      * key does nothing while another program has the focus. */
     keys = SDL_GetKeyboardState(NULL);
-    return keys != NULL && keys[SDL_SCANCODE_TAB] ? EIDOS_FAST_FORWARD : 1;
+    if (keys != NULL && keys[SDL_SCANCODE_TAB]) {
+        return EIDOS_FAST_FORWARD;
+    }
+    /* EIDOS_FAST_FORWARD=1 holds it down for a whole run (tests, timing). */
+    {
+        static int env = -1;
+
+        if (env < 0) {
+            const char *v = getenv("EIDOS_FAST_FORWARD");
+            env = v != NULL && *v != '\0' && strcmp(v, "0") != 0;
+        }
+        return env ? EIDOS_FAST_FORWARD : 1;
+    }
 }
 
 void eidos_platform_wait_frame(EidosPlatform *p)

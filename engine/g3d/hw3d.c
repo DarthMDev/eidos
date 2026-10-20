@@ -864,6 +864,7 @@ static int g_snap_valid;
 static u32 g_snap_cap_ptex;
 
 static int g_skip_raster;
+static int g_skip_frame;
 static u32 g_gpu_features;
 
 void g3d_hw_gpu_features(u32 snap_mask)
@@ -874,6 +875,11 @@ void g3d_hw_gpu_features(u32 snap_mask)
 void g3d_hw_skip_raster(int on)
 {
     g_skip_raster = on != 0;
+}
+
+void g3d_hw_skip_frame(int on)
+{
+    g_skip_frame = on != 0;
 }
 
 void g3d_hw_snapshot_enable(int on)
@@ -1142,6 +1148,11 @@ static void render_frame(void)
             }
         }
     }
+    if (g_skip_frame) {
+        /* Not shown (fast forward): the previous frame stays. */
+        cache_clear();
+        return;
+    }
     if (g_snap_on) {
         unsigned long long ts = eidos_prof_begin();
 
@@ -1388,7 +1399,11 @@ static void exec(u32 op, const u32 *par)
         }
     }
 
-    exec_cmd(op, par);
+    /* A frame nobody sees (fast forward) needs the matrices, which the game
+     * reads back (the billboards' clip matrix), not its vertices. */
+    if (!(g_skip_frame && op >= 0x20u && op <= 0x28u)) {
+        exec_cmd(op, par);
+    }
     eidos_prof_end(EIDOS_PROF_GEOM, t0);
 }
 
