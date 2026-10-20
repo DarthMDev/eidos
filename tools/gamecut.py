@@ -267,6 +267,33 @@ def fix_returns(text, table):
                   r"([ \t]+)([A-Za-z_]\w*)(?=[ \t]*\([^;{}]*\)[ \t]*;)", one, text)
 
 
+def returns_table(path=None):
+    """{name: C expression} from tools/gamereturns.txt: the value a src/game
+    function that falls off its end returns on the DS (what r0 holds there),
+    for the functions aletheia keeps without a final return because writing
+    it changes the bytes (aletheia's docs/DEBT.tsv, missing-return)."""
+    import os
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "gamereturns.txt")
+    out = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.split("#", 1)[0].strip()
+                if line:
+                    name, _, expr = line.partition(" ")
+                    out[name] = expr.strip()
+    return out
+
+
+def add_returns(text, table):
+    """`text` with `return EXPR;` before the closing brace of each function
+    of `table` it defines.  The line count stays the same."""
+    for name, _hs, _bo, be, _a in reversed(functions(text)):
+        if name in table:
+            text = text[:be - 1] + "return %s; " % table[name] + text[be - 1:]
+    return text
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("input")

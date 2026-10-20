@@ -1602,6 +1602,8 @@ def main(argv=None) -> int:
             # declarations that widen an 8/16-bit return (gamecut.fix_returns)
             source = gamecut.fix_returns(source, gamecut.narrow_returns(
                 spath[:spath.rindex("/src/game/")]))
+            # functions that fall off their end (tools/gamereturns.txt)
+            source = gamecut.add_returns(source, gamecut.returns_table())
     text, _, _ = rewrite(source, name)
     _write(a.output, text)
     return 0

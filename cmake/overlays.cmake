@@ -246,13 +246,14 @@ function(eidos_overlays name)
         set(cut_dep)
         if(rel MATCHES "^src/game/")
             set(cut_args --cut-asm)
+            set(cut_dep ${EIDOS_GAMECUT_TOOL} ${EIDOS_GAMERETURNS})
             # A port patch (stubs/ov/patch_*) defines some of the unit's
             # functions: tools/ovlink.py lists them in a fourth field.
             list(LENGTH parts nparts)
             if(nparts GREATER 3)
                 list(GET parts 3 cut_file)
                 list(APPEND cut_args --cut-list ${cut_file} --cut-decls)
-                set(cut_dep ${cut_file})
+                list(APPEND cut_dep ${cut_file})
             endif()
         endif()
         add_custom_command(

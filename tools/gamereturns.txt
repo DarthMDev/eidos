@@ -1,0 +1,18 @@
+# The value a src/game function returns on the DS when it falls off its end.
+# aletheia keeps these functions without a final return, because writing one
+# changes the bytes (aletheia docs/DEBT.tsv, missing-return).  On the DS the
+# caller reads whatever r0 holds; on x86 it would read garbage.  The compile
+# copy gets `return EXPR;` before the closing brace (tools/gamecut.py
+# add_returns, applied by tools/dsaddr.py).
+#
+# name  expression (in the function's own terms)
+
+ZONEDATA_GetChangedZoneId       key             # no swap entry: the id unchanged
+GPOWER_ApplyCaptureRate         rate            # no capture power active: the rate unchanged
+BTLV_EFFVM_EvalCondition        (int)work       # key above 57: r0 is the first argument
+TR_AI_GetPosition               (u8)(int)ai     # kind above 3: r0 is the first argument
+DWCi_RAKUlGetState              0               # state above 7: r0 as the caller had it
+SAVE_CONTROL_StartSave          0               # a leftover pointer (save data or UI context); no caller reads it
+ISS_SWITCH_SET_UpdateSwitches   0               # leftover of void ISS_SWITCH_Main; no caller reads it
+MCSS_SetAnimCallback            (int)&work->animCtrl  # r0 = the animation NNS_G2dSetCellAnimationParam got
+ZKNSEARCH_MAIN_ShowResultActors 0               # leftover of a void actor call; no caller reads it

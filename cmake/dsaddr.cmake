@@ -28,6 +28,8 @@ set(EIDOS_DSADDR_TOOL ${CMAKE_CURRENT_LIST_DIR}/../tools/dsaddr.py)
 get_filename_component(EIDOS_DSADDR_TOOL "${EIDOS_DSADDR_TOOL}" ABSOLUTE)
 set(EIDOS_DSADDR_DIR ${CMAKE_BINARY_DIR}/dsaddr)
 get_filename_component(EIDOS_GAMECUT_TOOL "${CMAKE_CURRENT_LIST_DIR}/../tools/gamecut.py" ABSOLUTE)
+# The final returns the copies get (tools/gamereturns.txt, gamecut add_returns).
+get_filename_component(EIDOS_GAMERETURNS "${CMAKE_CURRENT_LIST_DIR}/../tools/gamereturns.txt" ABSOLUTE)
 
 # eidos_dsaddr_path(<var> <source>): the build-tree copy of <source>.
 function(eidos_dsaddr_path var src)
@@ -66,7 +68,7 @@ function(eidos_dsaddr out_var)
         set(cut_deps)
         if(shown MATCHES "^src/game/")
             list(APPEND cut_args --cut-asm)
-            list(APPEND cut_deps ${EIDOS_GAMECUT_TOOL})
+            list(APPEND cut_deps ${EIDOS_GAMECUT_TOOL} ${EIDOS_GAMERETURNS})
             if(EIDOS_GAME_CUT_LIST)
                 list(APPEND cut_args --cut-list ${EIDOS_GAME_CUT_LIST})
                 list(APPEND cut_deps ${EIDOS_GAME_CUT_LIST})
