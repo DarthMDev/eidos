@@ -30,6 +30,7 @@
  * end of each named frame, to DIR/eidos_boot_frame<N>.png (DIR defaults to
  * the current directory), with or without a window.
  *
+ * Started with no arguments it opens the window, as a double click does.
  * After N frames (default 600 headless; a window runs until closed) it prints a summary and exits 0.  A panic on
  * the way (a stub reached, an overlay not in this build) ends the run with
  * the panic's message and a failure status, which is how the boot's test
@@ -1443,6 +1444,11 @@ int main(int argc, char **argv)
         }
     }
 
+    /* Started with no arguments (a double click): the player wants to
+     * play, so the window opens.  Tests and tools always pass arguments. */
+    if (argc == 1) {
+        window = 1;
+    }
     if (window && !frames_given) {
         frames = ~0ull; /* a window runs until it is closed */
     }
