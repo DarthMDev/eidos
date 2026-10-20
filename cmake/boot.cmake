@@ -387,6 +387,13 @@ if(EIDOS_SOURCE_TREE STREQUAL "game")
     # (its tables name linker symbols as initialisers); sdk/ starts the game.
     list(APPEND EIDOS_BOOT_SHIM_REPLACED src/game/arm9/crt0.c)
     list(APPEND EIDOS_BOOT_PORT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/stubs/game_crt0.c)
+    # Stand-ins for src/matched's gaps that src/game closed: unit_members.c
+    # forwards address spellings to members the old manifests did not list
+    # (in src/game its func_02048AE8 is renamed onto itself and recurses),
+    # and reimpl_02050DB8.c passes an argument src/game's particle.c passes.
+    list(REMOVE_ITEM EIDOS_BOOT_PORT_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/stubs/unit_members.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02050DB8.c)
 endif()
 if(NOT EIDOS_TCBL_MATCHED)
     # stubs/reimpl_ for the nine tcbl files (CMakeLists.txt, "Pointer

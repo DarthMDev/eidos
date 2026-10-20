@@ -68,10 +68,20 @@ the plan for that move and its state.
   header maps them (tools/gamespell.py, `gamespell.h`, and
   tools/gamespell_extra.txt for names src/matched no longer has).  The boot
   generator applies the same map.
-- **Addresses.** A src/game unit lists its functions in no address order;
-  every member's address comes from the manifests (tools/gametree.py).
-  Functions the manifests do not list yet get a row in
-  tools/gametree_extra.txt until aletheia records them.
+- **Addresses.** A src/game unit lists its functions in no address order.
+  Each function's address comes from aletheia's `layout/function_addrs.tsv`,
+  and failing that from the manifests (tools/gametree.py).
+  tools/gametree_extra.txt can add a row that neither has.
+- **Narrow returns.** mwcc extends an 8- or 16-bit return value in the
+  callee, so on the DS a caller that declares the function `u32` still reads
+  the right value.  GCC on x86 leaves the upper bits of eax undefined: ov021
+  declared `u32 EVENTDATA_SYSTEM_SearchBgEventScriptIdTalk` (defined `u16`),
+  saw 0xFFFF ("no script") as a script id and crashed.  The compile copy
+  declares the definition's type instead (tools/gamecut.py `fix_returns`).
+- **Missing returns.** A non-void function that falls off its end returns
+  what r0 holds on the DS and garbage on x86 (ZONEDATA_GetChangedZoneId, so
+  a new game started on a random map).  aletheia adds the explicit return;
+  GCC's `-Wreturn-type` finds them.
 - **Scanner forms.** Old-style (K&R) definitions, types from included
   headers (`../types.h`), `static` from an earlier declaration, `ovNNN_id`
   pasted by a macro, linker symbols in static initialisers.

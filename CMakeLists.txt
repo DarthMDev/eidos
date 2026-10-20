@@ -234,6 +234,34 @@ else()
     if(WIN32)
         add_compile_options(-mno-ms-bitfields)
     endif()
+    # The same for a 64-bit member's alignment: MinGW aligns long long and
+    # double to 8 in a struct, mwccarm to 4 (aletheia's src/game size checks:
+    # BattleRecSave is 0x18A4 on the DS, 0x18A8 under MinGW's default).  The
+    # files that hand structs to the C runtime, Win32 or SDL (struct stat,
+    # struct statvfs, LARGE_INTEGER, SDL_Event) keep the native alignment;
+    # they share no 64-bit member with the game.  The installer's fsutil.c
+    # is one of them: it reads a file's size through fstat, and a struct
+    # stat laid out the DS way puts st_size four bytes off the one the
+    # runtime wrote (a 256 MiB cartridge read as 2^60 bytes).
+    if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        add_compile_options(-mno-align-double)
+        file(GLOB _eidos_native_align
+             ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/*.c
+             ${CMAKE_CURRENT_SOURCE_DIR}/install/*.c
+             ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_*.c)
+        # The tests that include install/install.h or install/setup.h share
+        # its u64 members (BwSha1.length) with the installer, so they take
+        # its alignment.  The other tests share structs with the engine and
+        # keep the DS one (test_audio crashed with the native alignment).
+        list(APPEND _eidos_native_align
+             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dataroot.c
+             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract.c
+             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_picker.c
+             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_settings.c
+             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_wizard.c)
+        set_source_files_properties(${_eidos_native_align} PROPERTIES
+            COMPILE_OPTIONS -malign-double)
+    endif()
     # The matched sources are written to reproduce mwccarm's output, not to
     # please a modern warning set.  They are compiled with the same warnings
     # as the port's own code, but the ones that are inherent to the style are

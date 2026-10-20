@@ -74,6 +74,9 @@ void bw_cond_broadcast(BwCond *c)
 static DWORD WINAPI bw_thread_entry(LPVOID p)
 {
     BwThread *t = (BwThread *)p;
+    ULONG guarantee = 64 * 1024;    /* the crash report's room on an overflow */
+
+    SetThreadStackGuarantee(&guarantee);
     t->fn(t->arg);
     return 0;
 }

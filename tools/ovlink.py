@@ -1428,15 +1428,51 @@ class Link:
             return self.own(st, n)
         return self.stub_name(st, addr)
 
+    def _game_calls(self, sc, implicit):
+        """Names the file calls without declaring that the layout knows as
+        game code.
+
+        src/game's units are merged: one file carries the functions of
+        several matched ones, and its own prototype block does not declare
+        every name its body calls (ov088's save_control_intr.c calls
+        SAVE_CONTROL_CancelSave 0x020071A8 without declaring it).  The unit's
+        own `symbols:` block carries the address, so the call is a game call
+        the port has to declare.  tools/closure.py reads the same block the
+        same way on the boot side (SourceScan.references), and a host
+        compiler rejects an implicit declaration.
+
+        Only ARM9 code counts here: an overlay's own functions are resolved
+        against the overlay's definitions, and a name the layout does not know
+        is not the port's to declare.
+        """
+        extra = set()
+        for n in sc.called:
+            if n in implicit or n in sc.declared or n in sc.block_protos:
+                continue
+            if n in sc.locals or n in sc.defined or n in sc.statics \
+                    or n in sc.macros or n in sc.typedefs:
+                continue
+            sym = sc.symbols.get(n)
+            if sym is None:
+                continue
+            if not sc.is_code(n):
+                continue
+            addr = sym[0] & ~1
+            if addr in self.al.arm9_at:
+                extra.add(n)
+        return extra
+
     def _resolve(self, st):
         ov = st.ov
         for u in st.units:
             sc = u.scan
             refs, implicit = sc.references(self.universe)
+            implicit = set(implicit) | self._game_calls(sc, set(implicit))
+            refs = set(refs) | implicit
             # An overlay id a macro pastes together (`ov##n##_id`, so the
             # scanner sees only the declaration): resolve every declared one.
-            refs = set(refs) | {n for n in sc.declared
-                                if re.match(r"^ov\d{3}_id$", n) and n not in sc.defined}
+            refs = refs | {n for n in sc.declared
+                           if re.match(r"^ov\d{3}_id$", n) and n not in sc.defined}
             # Everything this file exports is the overlay's.
             for n in sc.exported():
                 st.renames[n] = self.own(st, n)
@@ -1579,7 +1615,7 @@ class Link:
             decl = self.declared.get(st.ov.tag, {})
             for addr in sorted(decl):
                 dname = decl[addr]
-                dn, sig = self.target_signature(st, addr)
+                dn, sig = self.target_signature(st, addr, dname)
                 if dn is not None:
                     if sig is None:
                         # The definition's prototype does not normalise: a
@@ -1597,6 +1633,11 @@ class Link:
                 else:
                     self.notes.append("%s: declared 0x%08X (%s) is not in the link"
                                       % (st.ov.tag, addr, dname))
+                    # No slot: a caller already routed to it calls the
+                    # function itself again.
+                    slot = self.slot_name(st, addr)
+                    for n in [k for k, v in st.slot_names.items() if v == slot]:
+                        del st.slot_names[n]
                     continue
                 st.mod_slots.append({
                     "name": self.slot_name(st, addr),
@@ -1772,8 +1813,13 @@ class Link:
 
     # -- trampolines ---------------------------------------------------------
 
-    def target_signature(self, st, addr):
+    def target_signature(self, st, addr, dname=None):
         n = st.at.get(addr)
+        if n is None and dname in st.defs:
+            # The declared row's own name, defined here but with no address
+            # in the manifests yet (a src/game function its header does not
+            # list): the row names it.
+            n = dname
         if n is None:
             return None, None
         sc = st.defs[n].scan
@@ -2172,7 +2218,10 @@ def write_dispatch(link, path, set_name):
                 continue
             dn, s = link.target_signature(st, addr)
             targets.append((c, link.own_code(st, addr) if dn else None, s))
-            if s is not None and sig is None:
+            if s is not None and (sig is None or dn == name):
+                # The overlay that defines the trampoline's own name gives
+                # the prototype (SAVE_OUTSIDE_IsCorrupt is ov228's; ov183
+                # has another function at 0x021DFE98).
                 sig = s
         decl = link.declared_by_addr.get(addr)
         if decl is not None:

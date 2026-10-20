@@ -8,13 +8,15 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `25c15c1610e2b022a5323b413f04b1f6625a1ac1`
-- Date: 2026-10-19 22:49:37 +0100
-- Subject: Wave 20 phase 0: shared type headers (types.h, sdk_*.h),
-  duplicate-type and header tools, 48 second names fixed
+- Revision: `4ee960765e4eac924744aa97899ac38581fe1a81`
+- Date: 2026-10-20 01:17:40 +0100
+- Subject: layout/function_addrs.tsv: address of every function src/game
+  defines (35,181 rows, static ones included), from tools/funcaddrs.py
 
 The port compiles this revision's `src/game` (EIDOS_SOURCE_TREE=game, the
-default, docs/game-tree.md).  The previous pin, `e06766e42c` (cleanup wave
+default, docs/game-tree.md).  tools/gametree.py takes each function's
+address from `layout/function_addrs.tsv`, so the manifest gaps that
+tools/gametree_extra.txt used to fill are gone.  The previous pin, `e06766e42c` (cleanup wave
 10), is the last one the `src/matched` build was run against; at the new pin
 some tests name src/matched functions by their wave 19 names (TP_, MIC_,
 RtcSendPxiCommand), so `matched` is kept for comparison runs against that

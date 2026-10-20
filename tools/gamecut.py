@@ -204,6 +204,69 @@ def cut(text, drop, cut_asm, drop_decls=False):
     return out, cut_names
 
 
+# A function src/game defines with an 8- or 16-bit return type, and another
+# unit declares with a 32-bit one (ov021/field_event_check.c's `extern u32
+# EVENTDATA_SYSTEM_SearchBgEventScriptIdTalk`, defined `u16` in ov010).  mwcc
+# extends the value in r0 in the callee, so on the DS the caller reads the
+# whole register safely.  GCC on x86 leaves the upper bits of eax undefined,
+# and `scriptId != 0xFFFF` then fails for "no script".  The copy the port
+# compiles declares the narrow type, which gives the caller the DS value.
+_NARROW = {
+    "u8": "unsigned char", "unsigned char": "unsigned char",
+    "s8": "signed char", "signed char": "signed char",
+    "u16": "unsigned short", "unsigned short": "unsigned short",
+    "unsigned short int": "unsigned short",
+    "s16": "short", "short": "short", "signed short": "short", "short int": "short",
+}
+_WIDE = {"int", "signed", "signed int", "unsigned", "unsigned int", "long", "unsigned long",
+         "u32", "s32", "BOOL", "fx32"}
+_DEF_TYPE = re.compile(r"^\s*(?:static\s+)?(?:inline\s+)?((?:const\s+)?[A-Za-z_][\w ]*?)\s+([A-Za-z_]\w*)\s*\($")
+
+
+def narrow_returns(root):
+    """{name: C type} of every non-static src/game function with an 8- or
+    16-bit return type, kept by tools/alcache.py while src/game is unchanged.
+    A name defined with two different types (in two overlays) is left out."""
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import alcache
+
+    def build():
+        seen, bad = {}, set()
+        base = os.path.join(root, "src", "game")
+        for dirpath, _dirs, files in os.walk(base):
+            for f in files:
+                if not f.endswith(".c"):
+                    continue
+                with open(os.path.join(dirpath, f), encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                for name, hs, bo, _be, _a in functions(text):
+                    head = re.sub(r"\s+", " ", text[hs:bo])
+                    m = _DEF_TYPE.match(head[:head.find("(") + 1]) if "(" in head else None
+                    if not m or m.group(2) != name or head.lstrip().startswith("static"):
+                        continue
+                    t = _NARROW.get(m.group(1).strip())
+                    if t is None:
+                        continue
+                    if seen.get(name, t) != t:
+                        bad.add(name)
+                    seen[name] = t
+        return {k: v for k, v in seen.items() if k not in bad}
+    return alcache.memo(root, "gamecut.narrow_returns", ("src/game",), build)
+
+
+def fix_returns(text, table):
+    """`text` with each file-scope declaration that gives a function of
+    `table` a 32-bit integer return type changed to the definition's type."""
+    def one(m):
+        t = re.sub(r"\s+", " ", m.group(3))
+        if t not in _WIDE or m.group(5) not in table:
+            return m.group(0)
+        return m.group(1) + (m.group(2) or "") + table[m.group(5)] + m.group(4) + m.group(5)
+    return re.sub(r"(?m)^([ \t]*)(extern[ \t]+)?((?:unsigned|signed|[A-Za-z_]\w*)(?:[ \t]+(?:int|long))?)"
+                  r"([ \t]+)([A-Za-z_]\w*)(?=[ \t]*\([^;{}]*\)[ \t]*;)", one, text)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("input")
@@ -239,7 +302,9 @@ if __name__ == "__main__":
 KNR_DEF = re.compile(
     r"(?m)^([A-Za-z_][\w \t\*]*?\b[A-Za-z_]\w*)[ \t]*"
     r"\(([A-Za-z_]\w*(?:[ \t]*,[ \t]*[A-Za-z_]\w*)*)\)[ \t]*\n"
-    r"((?:[ \t]*[A-Za-z_][^;{}()\n]*;[ \t]*\n)+)([ \t]*)\{")
+    # the parameter declarations, blank lines allowed between them
+    # (ov218/un_select.c's UN_SELECT_DrawFrameListRow)
+    r"((?:[ \t]*\n)*(?:[ \t]*[A-Za-z_][^;{}()\n]*;[ \t]*\n(?:[ \t]*\n)*)+)([ \t]*)\{")
 
 
 def knr_to_ansi(text):

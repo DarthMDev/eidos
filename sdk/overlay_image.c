@@ -340,6 +340,12 @@ BwDataFn bw_ovl_code_entry(u32 value)
                  * pair (mod_slot.h): it wins over the table entry. */
                 return (BwDataFn)h;
             }
+            if (bw_overlay_is_loaded(o->id)) {
+                /* Overlays share windows, so another overlay may have a
+                 * function at this address too (0x021BE53C is ov204's and
+                 * ov099's): the one resident now is the one the DS runs. */
+                return o->entries[lo].fn;
+            }
             if (found != NULL) {
                 return NULL;        /* two overlays: needs a trampoline */
             }

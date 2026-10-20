@@ -186,10 +186,32 @@ def _extra_rows():
     return out
 
 
+def _function_addrs(root):
+    """{source: [(name, address)]} of every non-static function
+    layout/function_addrs.tsv lists (aletheia's tools/funcaddrs.py: each
+    function src/game defines, its address read from the object and checked
+    against the image).  Empty when the checkout predates the table."""
+    out = {}
+    path = os.path.join(root, "layout", "function_addrs.tsv")
+    if not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as fh:
+        head = fh.readline().rstrip("\n").split("\t")
+        col = {k: i for i, k in enumerate(head)}
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if len(f) < len(head) or f[col["static"]] == "yes":
+                continue
+            out.setdefault(f[col["file"]], []).append(
+                (f[col["name"]], int(f[col["address"]], 16)))
+    return out
+
+
 def _entries(root, extra=None):
     by_name = _manifest_addresses(root)
     sdk = _symbol_table(root, os.path.join("layout", "symbols_sdk.txt"))
     rt = _symbol_table(root, os.path.join("layout", "runtime_arm9.txt"))
+    faddrs = _function_addrs(root)
     out = []
     for rel in source_files(root):
         with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh:
@@ -206,6 +228,15 @@ def _entries(root, extra=None):
             if a is None and not region.startswith("ov"):
                 a = sdk.get(f, rt.get(f))
             addrs.append(a)
+        # layout/function_addrs.tsv: every function the file defines, with the
+        # address its object gives (checked against the image), so it wins
+        # over the manifests, and adds a defined name the header does not list.
+        for f, a in faddrs.get(rel, []):
+            if f in funcs:
+                addrs[funcs.index(f)] = a
+            else:
+                funcs.append(f)
+                addrs.append(a)
         for f, a in (extra or {}).get(rel, []):
             if f in funcs:
                 if addrs[funcs.index(f)] is None:

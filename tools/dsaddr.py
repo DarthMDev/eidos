@@ -1597,6 +1597,11 @@ def main(argv=None) -> int:
                     if os.path.normcase(os.path.abspath(path)).replace("\\", "/") == key:
                         drop.update(n for n in names.split(",") if n)
         source, _cut = gamecut.cut(source, drop, a.cut_asm, a.cut_decls)
+        spath = os.path.abspath(src_path).replace("\\", "/")
+        if "/src/game/" in spath:
+            # declarations that widen an 8/16-bit return (gamecut.fix_returns)
+            source = gamecut.fix_returns(source, gamecut.narrow_returns(
+                spath[:spath.rindex("/src/game/")]))
     text, _, _ = rewrite(source, name)
     _write(a.output, text)
     return 0

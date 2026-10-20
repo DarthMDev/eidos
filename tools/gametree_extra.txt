@@ -1,5 +1,4 @@
 # tools/gametree.py: src/game functions aletheia's headers and manifests do
 # not list yet, with their addresses (reported to aletheia; a row goes when
 # its manifest has it).  One `unit name address` per line.
-src/game/ov204/intro_graphic.c  INTRO_GRAPHIC_CmdSetArg     0x021BE308   # handler table entry 0x021BE315
-src/game/ov204/intro_graphic.c  INTRO_GRAPHIC_CmdWaitFrame  0x021BE314
+

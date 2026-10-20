@@ -204,6 +204,11 @@ void bw_plat_crash_code_resolver(BwCodeResolver resolve)
 
 void bw_plat_crash_install(void)
 {
+    /* Room for the report on a stack overflow, which otherwise kills the
+     * process before the filter can run (the stack is gone). */
+    ULONG guarantee = 64 * 1024;
+
+    SetThreadStackGuarantee(&guarantee);
     SetUnhandledExceptionFilter(bw_crash_filter);
     bw_crash_on = 1;
 }
