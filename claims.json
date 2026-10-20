@@ -1,28 +1,3 @@
 {
-  "claims": {
-    "W18-CLOS": {
-      "note": "the boot's closure carries the state API's battle half and the field player",
-      "paths": [
-        "cmake/boot.cmake"
-      ],
-      "started": "2026-10-20"
-    },
-    "W18-RENAME": {
-      "note": "the port's renaming must survive the game's file-level header style",
-      "paths": [
-        "tools/closure.py",
-        "tools/gamecut.py",
-        "tools/ovlink.py"
-      ],
-      "started": "2026-10-20"
-    },
-    "W18-SPELL": {
-      "note": "the spelling header is regenerated when the tree changes, not when the path does",
-      "paths": [
-        "CMakeLists.txt",
-        "tools/gamespell.py"
-      ],
-      "started": "2026-10-20"
-    }
-  }
+  "claims": {}
 }
