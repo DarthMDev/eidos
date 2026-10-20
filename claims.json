@@ -1,36 +1,3 @@
 {
-  "claims": {
-    "W16-BLD": {
-      "note": "the build wiring and the tests",
-      "paths": [
-        "CMakeLists.txt",
-        "tests/test_mod_rule.c",
-        "tests/test_mod_script.c",
-        "tests/test_mod_text.c"
-      ],
-      "started": "2026-10-20"
-    },
-    "W16-RULE": {
-      "note": "the rule interpreter",
-      "paths": [
-        "sdk/mod_rule.c"
-      ],
-      "started": "2026-10-20"
-    },
-    "W16-SCRIPT": {
-      "note": "the script command hooks: the field VM and the battle effect VM",
-      "paths": [
-        "sdk/mod_script.c"
-      ],
-      "started": "2026-10-20"
-    },
-    "W16-TEXT": {
-      "note": "the port's text path: the sink that shows a queued message",
-      "paths": [
-        "sdk/mod_text.c",
-        "sdk/mod_text.h"
-      ],
-      "started": "2026-10-20"
-    }
-  }
+  "claims": {}
 }
