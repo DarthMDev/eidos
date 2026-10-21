@@ -56,6 +56,14 @@ a set of overlays into one link anyway (docs/overlays.md is the design):
     in place of bw_ds_ptr that answers the host function for those
     addresses and bw_ds_ptr for everything else.
 
+  7. A declared function the unit that defines it calls.  The call binds by
+     name and does not pass the slot (docs/mod-interface.md, section 2), so
+     the row's event does not fire there.  The definition is cut out of that
+     unit (the cut the port already uses for the functions it supplies
+     itself, tools/gamecut.py) and put in a unit of its own, and the unit's
+     calls reach the slot like every other caller's do.  The text is the
+     game's own.
+
 Run once at configure time (cmake/overlays.cmake):
 
     python tools/ovlink.py --aletheia-root R --overlays "9;10;88" \\
@@ -251,6 +259,91 @@ _SCANS = alcache.ParseCache("ovlink-scan", [os.path.abspath(__file__), armdata._
 
 _INCLUDE_RE = re.compile(r'^[ 	]*#[ 	]*include[ 	]+"([^"]+)"', re.M)
 _INC_TYPEDEFS = {}
+
+
+def _headers_need_rewrite(paths):
+    """Whether one of the headers, or of the headers it includes, is a
+    header the build rewrites.
+
+    A header that holds a fixed DS address is copied next to the copy of
+    the unit that includes it and rewritten there (tools/dsaddr.py,
+    _rewrite_local_headers).  The moved unit names the tree's headers by
+    their own path, so it must not name such a header: the rewrite would
+    land in the tree, which the port never edits."""
+    import dsaddr
+    seen = set()
+    stack = list(paths)
+    while stack:
+        path = stack.pop()
+        key = os.path.normcase(os.path.abspath(path))
+        if key in seen or not os.path.isfile(path):
+            continue
+        seen.add(key)
+        text = read_text(path)
+        try:
+            rewrites, _residue = dsaddr.analyse(text)
+        except Exception:               # a header the tool cannot read
+            rewrites = []
+        if rewrites:
+            return True
+        base = os.path.dirname(os.path.abspath(path))
+        for inc in _INCLUDE_RE.findall(text):
+            stack.append(os.path.normpath(os.path.join(base, inc)))
+    return False
+
+
+def unit_prelude(path, text, upto):
+    """The part of a unit that its own text needs: the headers it includes
+    and the typedefs it declares, in the order the unit has them.
+
+    A unit that is moved out is compiled on its own, so it must carry what
+    its own unit had: the tree's style puts a typedef between two includes
+    (the SDK's OSIntrMode before the header that uses it), and dropping it
+    leaves the moved unit without the type.
+
+    The headers are named by their own path in the tree, as the moved unit
+    is compiled in the build directory.  Returns None when a header the unit
+    includes is not in the tree.
+    """
+    base = os.path.dirname(os.path.abspath(path))
+    out = []
+    i = 0
+    while i < upto:
+        m = re.match(r"[ \t]*typedef\b", text[i:])
+        if m:
+            # The declaration ends at the semicolon that closes it, which
+            # for a struct is not the first one (the tree's own style puts
+            # the body on one line).
+            j = i
+            depth = 0
+            while j < upto:
+                c = text[j]
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                elif c == ";" and depth <= 0:
+                    break
+                j += 1
+            if j >= upto or j >= len(text) or text[j] != ";":
+                break
+            out.append(text[i:j + 1].strip())
+            i = j + 1
+            continue
+        m = re.match(r'[ \t]*#[ \t]*include[ \t]+"([^"]+)"', text[i:])
+        if m:
+            inc = m.group(1)
+            hp = os.path.normpath(os.path.join(base, inc))
+            if not os.path.isfile(hp):
+                return None
+            out.append('#include "%s"' % hp.replace("\\", "/"))
+            i += m.end()
+            continue
+        j = text.find("\n", i)
+        if j < 0:
+            break
+        i = j + 1
+    return out
 
 
 def include_typedefs(path, text):
@@ -1333,6 +1426,7 @@ class OvState:
         self.unresolved = {}
         self.slot_names = {}       # declared name -> the slot it goes through
         self.mod_slots = []        # declared rows: {addr, declared, original, sig}
+        self.moves = []            # declared functions moved out of their unit
 
 
 # The ARM9 static module's load address (layout.json's arm9.load_address,
@@ -1555,6 +1649,14 @@ class Link:
                 st.units.append(Unit(oid, rel, path, sc))
             self._port_standins(oid, st)
             self._owners(st)
+            self._mod_moves(st) if getattr(self.args, "mod_moves", False) else None
+            # A move changes what a unit owns: the function is now a unit of
+            # its own, and the names the moved text uses are the original
+            # unit's own no more, so they become the overlay's names and
+            # every unit that calls them reaches the renamed ones.  The
+            # ownership is worked out again, and the overlay's header (which
+            # is written later) then carries the right renames.
+            self._owners(st)
             for k in range(ov.sinit_count):
                 addrs = overlay_table.KNOWN_SINIT.get(oid, [])
                 if k < len(addrs):
@@ -1642,6 +1744,163 @@ class Link:
             rel = "port/ov/" + fname
             st.units.append(Unit(oid, rel, path, sc))
             st.standins.append(path)
+
+    # -- the declared functions whose own unit calls them -------------------
+
+    def _mod_moves(self, st):
+        """The declared functions whose own unit calls them.
+
+        A call inside the unit that defines the function binds by name and
+        does not pass the slot (docs/mod-interface.md, section 2), so the
+        event the row carries does not fire there, and a raw hook on the row
+        misses those calls.  The port's own answer for a merged unit is the
+        one it uses when the port supplies a function of one (docs/game-tree.md):
+        the definition is cut out of the unit's copy and put in a unit of its
+        own, and the unit's calls reach the slot like every other caller's
+        do.
+
+        The moved text is the game's own (the cut copy the build compiles),
+        and it is compiled as a unit of the overlay, so the game's code keeps
+        its own names and the port's code does not collide with them.  A
+        function that uses what only its own unit has (a file-local helper or
+        object, a name the unit owns for itself) is left where it is: the
+        port reports it, and the row keeps the limit it had.
+        """
+        decl = self.declared.get(st.ov.tag, {})
+        for _round in range(len(decl) + 1):
+            # A round moves what it can; the next round sees the units the
+            # last one changed (a call that left the unit that held it), so
+            # the row that still has a call inside its own unit is moved too.
+            moved = 0
+            for addr in sorted(decl):
+                dname = decl[addr]
+                u = st.defs.get(dname)
+                if u is None:
+                    continue          # the row's function is not in this link
+                if dname not in u.scan.called:
+                    continue          # the unit does not call it: nothing to fix
+                if dname in u.cuts:
+                    continue          # a port patch defines it
+                if dname in u.scan.statics:
+                    continue
+                if self._move_function(st, u, dname, addr):
+                    moved += 1
+            if not moved:
+                break
+
+    def _move_function(self, st, u, name, addr):
+        """Cut `name` out of `u`'s copy and put it in a unit of its own.
+
+        The cut is the port's own (tools/gamecut.py, the cut list cmake/
+        overlays.cmake passes to tools/dsaddr.py): the unit's copy loses the
+        definition, and the unit's calls to the name reach the slot.  The
+        moved text is written into a file of the build directory and listed
+        as one more unit of the overlay, so it is compiled under the
+        overlay's names like any other.
+
+        Returns True when the function was moved."""
+        import gamecut
+        if not os.path.exists(u.path):
+            return False
+        text = read_text(u.path)
+        cut_text, _cut = gamecut.cut(text, u.cuts, True, True)
+        body = None
+        for fname, hs, bo, be, is_asm in gamecut.functions(cut_text):
+            if fname != name:
+                continue
+            if is_asm:
+                self.notes.append(
+                    "%s: %s (0x%08X) has an mwcc asm body: the call inside its "
+                    "own unit does not pass the slot" % (st.ov.tag, name, addr))
+                return False
+            body = cut_text[hs:be]
+            line = cut_text.count("\n", 0, hs) + 1
+            break
+        if body is None:
+            return False
+        used = set(IDENT.findall(body))
+        clash = sorted((used & u.scan.statics) | set(u.private) | set(u.shares))
+        if clash:
+            self.notes.append(
+                "%s: %s (0x%08X) uses %s, which only its own unit has: the call "
+                "inside that unit does not pass the slot"
+                % (st.ov.tag, name, addr, ", ".join(clash)))
+            return False
+        incs = self._unit_includes(u, cut_text)
+        if incs is None:
+            return False
+        if _headers_need_rewrite(incs):
+            # The build rewrites a header that holds a fixed DS address, and
+            # it writes the rewrite next to the copy it compiles.  The moved
+            # unit names the tree's headers by their own path, so the
+            # rewrite would land in the tree: the function stays where it is.
+            self.notes.append(
+                "%s: %s (0x%08X) needs a header the build rewrites: the call "
+                "inside its own unit does not pass the slot"
+                % (st.ov.tag, name, addr))
+            return False
+        # The moved unit carries the unit's own headers and typedefs, in the
+        # order the unit has them: a typedef the unit declares before the
+        # header that uses it (the SDK's OSIntrMode) is part of what the
+        # moved text needs.
+        prelude = unit_prelude(u.path, cut_text, hs)
+        if prelude is None:
+            return False
+        out_dir = os.path.join(os.path.abspath(self.args.out_dir), "gen")
+        os.makedirs(out_dir, exist_ok=True)
+        fname = "%s_%s.c" % (st.ov.tag, name)
+        path = os.path.join(out_dir, fname)
+        rel = "port/ov/" + fname
+        lines = [
+            "/*",
+            " * %s" % GEN,
+            " *",
+            " * The game's own %s, moved out of %s." % (name, u.rel),
+            " *",
+            " * A call inside the unit that defines a declared function binds by",
+            " * name and does not pass the slot, so the row's event does not fire",
+            " * there (docs/mod-interface.md, section 2).  The definition is cut",
+            " * out of that unit and put here, and the unit's calls reach the",
+            " * slot like every other caller's do.  The text is the game's own.",
+            " */",
+            "",
+        ]
+        for prelude_line in prelude:
+            lines.append(prelude_line)
+        lines.append("")
+        # The diagnostics name the game's own file and line (the port's
+        # rule for a matched source: tools/dsaddr.py).
+        lines.append('#line %d "%s"' % (line, u.path.replace("\\", "/")))
+        lines.append(body)
+        write_if_changed(path, "\n".join(lines) + "\n")
+        unit = Unit(st.ov.id, rel, path, Scan(path, read_text(path)))
+        st.units.append(unit)
+        st.defs[name] = unit
+        u.private.pop(name, None)
+        # The unit's copy loses the definition (and the file-scope prototype
+        # of it), so the build cuts it the way the port's own patches are cut.
+        u.cuts.add(name)
+        cut_text, _cut = gamecut.cut(text, u.cuts, True, True)
+        u.scan = Scan(u.path, cut_text)
+        st.moves.append((name, addr, u.rel, rel))
+        return True
+
+    def _unit_includes(self, u, text):
+        """The quoted headers `u` includes, by their own path, or None when
+        one of them is not in the tree.
+
+        The moved unit is compiled in the build directory, so it names the
+        tree's headers by their own path: the tree's headers are the ones
+        the unit's copy compiles against, and the build's copy of a header
+        that holds a fixed DS address is the one the port rewrites."""
+        base = os.path.dirname(os.path.abspath(u.path))
+        out = []
+        for inc in _INCLUDE_RE.findall(text):
+            hp = os.path.normpath(os.path.join(base, inc))
+            if not os.path.isfile(hp):
+                return None
+            out.append(hp.replace("\\", "/"))
+        return out
 
     def _owners(self, st):
         """One definition per name.  Some matched files define, besides the
@@ -3184,6 +3443,11 @@ def write_report(link, path):
             p("  %s slot %s 0x%08X (%s -> %s%s)" % (
                 st.ov.tag, s["name"], s["addr"], s["declared"], s["original"],
                 (", events " + ",".join(s["events"])) if s.get("events") else ""))
+    for oid in link.ids:
+        st = link.state[oid]
+        for name, addr, rel, moved in st.moves:
+            p("  %s moved %s 0x%08X out of %s into %s: the unit's own calls "
+              "reach the slot" % (st.ov.tag, name, addr, rel, moved))
     for name, ttype in link.game_types():
         p("  game type %s: %s" % (name, ttype))
     for line in link.notes:
@@ -3221,6 +3485,11 @@ def main(argv=None):
                          "veneers the listing would label (optional)")
     ap.add_argument("--define", action="append", default=[],
                     help="NAME=VALUE a port source is compiled with (repeatable)")
+    ap.add_argument("--mod-moves", action="store_true",
+                    help="move a declared function out of the unit that calls "
+                         "it, so the call reaches the slot (docs/mod-interface.md, "
+                         "section 2).  Off until the moved unit carries the "
+                         "unit's own enums and data references as well.")
     args = ap.parse_args(argv)
     for d in args.define:
         k, _, v = d.partition("=")

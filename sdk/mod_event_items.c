@@ -210,6 +210,21 @@ BW_PORT_STATIC_ASSERT(shop_price, sizeof(void *) != 4 ||
                       offsetof(BwPortShopWork, price) == 0x200u);
 BW_PORT_STATIC_ASSERT(shop_state, sizeof(void *) != 4 ||
                       offsetof(BwPortShopWork, state) == 0x000u);
+BW_PORT_STATIC_ASSERT(shop_next_state, sizeof(void *) != 4 ||
+                      offsetof(BwPortShopWork, nextState) == 0x001u);
+BW_PORT_STATIC_ASSERT(shop_items, sizeof(void *) != 4 ||
+                      offsetof(BwPortShopWork, items) == 0x020u);
+/*
+ * The size of the view is the game's at either pointer width: the offsets
+ * the tree's own header documents are the DS ones, and the view's members
+ * are the game's own types, so the record is the same size on both.
+ */
+BW_PORT_STATIC_ASSERT(shop_work_size, sizeof(BwPortShopWork) ==
+                      (sizeof(void *) == 4 ? 0x20Cu : 0x270u));
+/*
+ * The item row holds no pointer, so its size is the game's at every width.
+ */
+BW_PORT_STATIC_ASSERT(shop_item_size, sizeof(BwPortShopItem) == 8u);
 
 /*
  * The script command's own work, copied member for member from the game's
@@ -219,6 +234,9 @@ BW_PORT_STATIC_ASSERT(shop_state, sizeof(void *) != 4 ||
  * script VM, so the port reads it through this view.  The common work's
  * first three members are the script work, the game system and the game
  * data, and the port needs the third.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortScrcmdParam {
     u16   scriptId;
@@ -245,8 +263,22 @@ typedef struct BwPortScrcmdWork {
 
 BW_PORT_STATIC_ASSERT(scrcmd_common_game_data, sizeof(void *) != 4 ||
                       offsetof(BwPortScrcmdCommon, gameData) == 0x008u);
+BW_PORT_STATIC_ASSERT(scrcmd_common_script_work, sizeof(void *) != 4 ||
+                      offsetof(BwPortScrcmdCommon, scriptWork) == 0x000u);
+BW_PORT_STATIC_ASSERT(scrcmd_common_size, sizeof(BwPortScrcmdCommon) ==
+                      (sizeof(void *) == 4 ? 0x00Cu : 0x018u));
+BW_PORT_STATIC_ASSERT(scrcmd_param_script_id, sizeof(void *) != 4 ||
+                      offsetof(BwPortScrcmdParam, scriptId) == 0x000u);
+BW_PORT_STATIC_ASSERT(scrcmd_param_script_work, sizeof(void *) != 4 ||
+                      offsetof(BwPortScrcmdParam, scriptWork) == 0x00Cu);
+BW_PORT_STATIC_ASSERT(scrcmd_param_size, sizeof(BwPortScrcmdParam) ==
+                      (sizeof(void *) == 4 ? 0x010u : 0x018u));
+BW_PORT_STATIC_ASSERT(scrcmd_work_msg_data, sizeof(void *) != 4 ||
+                      offsetof(BwPortScrcmdWork, msgData) == 0x014u);
 BW_PORT_STATIC_ASSERT(scrcmd_work_common, sizeof(void *) != 4 ||
                       offsetof(BwPortScrcmdWork, common) == 0x020u);
+BW_PORT_STATIC_ASSERT(scrcmd_work_size, sizeof(BwPortScrcmdWork) ==
+                      (sizeof(void *) == 4 ? 0x024u : 0x040u));
 
 /* ------------------------------------------------------------------ */
 /* The game's own constants                                            */

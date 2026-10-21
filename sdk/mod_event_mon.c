@@ -167,6 +167,9 @@ extern u16 *ZONEDATA_GetEventWorkAddress(struct EventWork *ev, u32 workId)
  * of this area take it as their second argument: the game data and the
  * script work live in its common block, and the script's own variables are
  * in the script work's local work.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortScrcmdCommon {
     void *scriptWork;   /* 0x00 */
@@ -196,6 +199,20 @@ typedef struct BwPortScrcmdWork {
 
 BW_PORT_STATIC_ASSERT(scrcmd_common, sizeof(void *) != 4 ||
                       offsetof(BwPortScrcmdWork, common) == 0x20u);
+BW_PORT_STATIC_ASSERT(scrcmd_work_msg_data, sizeof(void *) != 4 ||
+                      offsetof(BwPortScrcmdWork, msgData) == 0x014u);
+BW_PORT_STATIC_ASSERT(scrcmd_work_size, sizeof(BwPortScrcmdWork) ==
+                      (sizeof(void *) == 4 ? 0x024u : 0x040u));
+BW_PORT_STATIC_ASSERT(scrcmd_common_game_data, sizeof(void *) != 4 ||
+                      offsetof(BwPortScrcmdCommon, gameData) == 0x008u);
+BW_PORT_STATIC_ASSERT(scrcmd_common_script_work, sizeof(void *) != 4 ||
+                      offsetof(BwPortScrcmdCommon, scriptWork) == 0x000u);
+BW_PORT_STATIC_ASSERT(scrcmd_common_size, sizeof(BwPortScrcmdCommon) ==
+                      (sizeof(void *) == 4 ? 0x00Cu : 0x018u));
+BW_PORT_STATIC_ASSERT(scrcmd_param_script_id, sizeof(void *) != 4 ||
+                      offsetof(BwPortScrcmdParam, scriptId) == 0x000u);
+BW_PORT_STATIC_ASSERT(scrcmd_param_size, sizeof(BwPortScrcmdParam) ==
+                      (sizeof(void *) == 4 ? 0x010u : 0x018u));
 
 /*
  * The script work's own head, copied from the game's header (aletheia
@@ -244,11 +261,28 @@ typedef struct BwPortScriptWork {
 
 BW_PORT_STATIC_ASSERT(script_local_work, sizeof(void *) != 4 ||
                       offsetof(BwPortScriptWork, localWorks) == 0x7Cu);
+BW_PORT_STATIC_ASSERT(script_work_field_param, sizeof(void *) != 4 ||
+                      offsetof(BwPortScriptWork, fieldParam) == 0x018u);
+BW_PORT_STATIC_ASSERT(script_work_trainers, sizeof(void *) != 4 ||
+                      offsetof(BwPortScriptWork, trainers) == 0x044u);
+BW_PORT_STATIC_ASSERT(script_work_size, sizeof(BwPortScriptWork) ==
+                      (sizeof(void *) == 4 ? 0x13Cu : 0x170u));
+BW_PORT_STATIC_ASSERT(script_field_param_size, sizeof(BwPortScriptFieldParam) ==
+                      (sizeof(void *) == 4 ? 0x008u : 0x010u));
+/*
+ * The trainer entry holds no pointer, so its size is the game's at every
+ * pointer width.
+ */
+BW_PORT_STATIC_ASSERT(script_trainer_entry_size,
+                      sizeof(BwPortScriptTrainerEntry) == 0x1Cu);
 
 /*
  * The script VM's own head, copied from the game's header (aletheia
  * src/game/arm9/script_vm_types.h).  The program counter is at +0x14: the
  * command's operands follow it, one halfword each.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortScriptVmParams {
     u16   stackCap;  /* 0x00 */
@@ -269,6 +303,12 @@ typedef struct BwPortScriptVm {
 
 BW_PORT_STATIC_ASSERT(script_vm_pc, sizeof(void *) != 4 ||
                       offsetof(BwPortScriptVm, pc) == 0x14u);
+BW_PORT_STATIC_ASSERT(script_vm_params, sizeof(void *) != 4 ||
+                      offsetof(BwPortScriptVm, params) == 0x000u);
+BW_PORT_STATIC_ASSERT(script_vm_size, sizeof(BwPortScriptVm) ==
+                      (sizeof(void *) == 4 ? 0x018u : 0x030u));
+BW_PORT_STATIC_ASSERT(script_vm_params_size, sizeof(BwPortScriptVmParams) ==
+                      (sizeof(void *) == 4 ? 0x00Cu : 0x018u));
 
 /*
  * The creation request the field script commands of this area share,
@@ -288,10 +328,17 @@ typedef struct BwPortPokemonSpec {
     int ballItem;       /* 0x20 */
 } BwPortPokemonSpec;
 
+BW_PORT_STATIC_ASSERT(spec_species, offsetof(BwPortPokemonSpec, species) == 0x04u);
+BW_PORT_STATIC_ASSERT(spec_level, offsetof(BwPortPokemonSpec, level) == 0x0Cu);
+BW_PORT_STATIC_ASSERT(spec_size, sizeof(BwPortPokemonSpec) == 0x24u);
+
 /*
  * The battle screen's own arguments and work, copied from the game's
  * header (aletheia src/game/ov092/event_battle_return.c).  The caught
  * Pokemon and the box it went to are in the work.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortCatchArgs {
     u32   wasAlreadyCaught; /* 0x00 */
@@ -322,11 +369,30 @@ BW_PORT_STATIC_ASSERT(battle_return_work, sizeof(void *) != 4 ||
                       offsetof(BwPortBattleReturnWork, boxFullMsg) == 0x2Cu);
 BW_PORT_STATIC_ASSERT(battle_return_box, sizeof(void *) != 4 ||
                       offsetof(BwPortBattleReturnWork, boxNo) == 0x30u);
+BW_PORT_STATIC_ASSERT(battle_return_caught_mon, sizeof(void *) != 4 ||
+                      offsetof(BwPortBattleReturnWork, caughtMon) == 0x008u);
+BW_PORT_STATIC_ASSERT(battle_return_catch_args, sizeof(void *) != 4 ||
+                      offsetof(BwPortBattleReturnWork, catchArgs) == 0x00Cu);
+BW_PORT_STATIC_ASSERT(battle_return_size, sizeof(BwPortBattleReturnWork) ==
+                      (sizeof(void *) == 4 ? 0x034u : 0x068u));
+BW_PORT_STATIC_ASSERT(catch_args_mon, sizeof(void *) != 4 ||
+                      offsetof(BwPortCatchArgs, mon) == 0x004u);
+BW_PORT_STATIC_ASSERT(catch_args_box_no, sizeof(void *) != 4 ||
+                      offsetof(BwPortCatchArgs, boxNo) == 0x014u);
+BW_PORT_STATIC_ASSERT(catch_args_size, sizeof(BwPortCatchArgs) ==
+                      (sizeof(void *) == 4 ? 0x020u : 0x040u));
+BW_PORT_STATIC_ASSERT(battle_return_args_game_data, sizeof(void *) != 4 ||
+                      offsetof(BwPortBattleReturnArgs, gameData) == 0x000u);
+BW_PORT_STATIC_ASSERT(battle_return_args_size, sizeof(BwPortBattleReturnArgs) ==
+                      (sizeof(void *) == 4 ? 0x008u : 0x010u));
 
 /*
  * The battle record's own head, copied from the game's header (aletheia
  * src/game/ov093/btl_pokeparam_types.h).  The experience and the level
  * the battle server works with are in it.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortBtlPokeParam {
     void *mon;          /* 0x00 */
@@ -346,10 +412,17 @@ BW_PORT_STATIC_ASSERT(btl_exp, sizeof(void *) != 4 ||
                       offsetof(BwPortBtlPokeParam, exp) == 0x08u);
 BW_PORT_STATIC_ASSERT(btl_level, sizeof(void *) != 4 ||
                       offsetof(BwPortBtlPokeParam, level) == 0x18u);
+BW_PORT_STATIC_ASSERT(btl_mon, sizeof(void *) != 4 ||
+                      offsetof(BwPortBtlPokeParam, mon) == 0x00u);
+BW_PORT_STATIC_ASSERT(btl_party_index, sizeof(void *) != 4 ||
+                      offsetof(BwPortBtlPokeParam, partyIndex) == 0x19u);
+BW_PORT_STATIC_ASSERT(btl_size, sizeof(BwPortBtlPokeParam) ==
+                      (sizeof(void *) == 4 ? 0x01Cu : 0x028u));
 
 /*
  * One entry of the battle server's experience share table, copied from the
- * game's header (aletheia src/game/ov093/btl_server_flow.c).
+ * game's header (aletheia src/game/ov093/btl_server_flow.c).  The entry
+ * holds no pointer, so its layout is the same at either width.
  */
 typedef struct BwPortExpShareRecord {
     u32 exp;           /* 0x00 */
@@ -357,14 +430,17 @@ typedef struct BwPortExpShareRecord {
     u8  pad05[7];      /* 0x05 */
 } BwPortExpShareRecord;
 
-BW_PORT_STATIC_ASSERT(exp_share, sizeof(void *) != 4 ||
-                      sizeof(BwPortExpShareRecord) == 12u);
+BW_PORT_STATIC_ASSERT(exp_share, sizeof(BwPortExpShareRecord) == 12u);
+BW_PORT_STATIC_ASSERT(exp_share_exp, offsetof(BwPortExpShareRecord, exp) == 0x00u);
 
 /*
  * The battle server flow's own head, copied from the game's header
  * (aletheia src/game/ov093/btl_server_flow_types.h).  Its second member is
  * the battle's main object, the one the port's state layer wants: the two
  * sides and their battle records live in it.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortBtlServerFlow {
     void *server;      /* 0x00 */
@@ -373,16 +449,25 @@ typedef struct BwPortBtlServerFlow {
 
 BW_PORT_STATIC_ASSERT(flow_main_module, sizeof(void *) != 4 ||
                       offsetof(BwPortBtlServerFlow, mainModule) == 0x04u);
+BW_PORT_STATIC_ASSERT(flow_server, sizeof(void *) != 4 ||
+                      offsetof(BwPortBtlServerFlow, server) == 0x00u);
+BW_PORT_STATIC_ASSERT(flow_size, sizeof(BwPortBtlServerFlow) ==
+                      (sizeof(void *) == 4 ? 0x008u : 0x010u));
 
 /*
  * One entry of a species' level-up table, copied from the game's header
  * (aletheia src/game/arm9/poke_tool.c).  The table is 0x68 bytes and ends
- * with the 0xFFFF/0xFFFF pair.
+ * with the 0xFFFF/0xFFFF pair.  The entry holds no pointer, so its layout
+ * is the same at either width.
  */
 typedef struct BwPortLevelUpMove {
     u16 move;   /* 0x00 */
     u16 level;  /* 0x02 */
 } BwPortLevelUpMove;
+
+BW_PORT_STATIC_ASSERT(level_up_move, offsetof(BwPortLevelUpMove, move) == 0x00u);
+BW_PORT_STATIC_ASSERT(level_up_level, offsetof(BwPortLevelUpMove, level) == 0x02u);
+BW_PORT_STATIC_ASSERT(level_up_size, sizeof(BwPortLevelUpMove) == 4u);
 
 #define BW_PORT_LEARNSET_SIZE 0x68u
 
@@ -390,6 +475,9 @@ typedef struct BwPortLevelUpMove {
  * The box screen's own task, copied from the game's header (aletheia
  * src/game/ov170/box2_types.h).  The current box, the held slot and the
  * work block are the ones the PC's own code reads.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortBoxParam {
     void *gameData;   /* 0x00 */
@@ -451,6 +539,26 @@ BW_PORT_STATIC_ASSERT(box_work, sizeof(void *) != 4 ||
                       offsetof(BwPortBoxTask, work) == 0x2Cu);
 BW_PORT_STATIC_ASSERT(box_seq, sizeof(void *) != 4 ||
                       offsetof(BwPortBoxWork, seq) == 0x58u);
+BW_PORT_STATIC_ASSERT(box_task_params, sizeof(void *) != 4 ||
+                      offsetof(BwPortBoxTask, params) == 0x00u);
+BW_PORT_STATIC_ASSERT(box_task_size, sizeof(BwPortBoxTask) ==
+                      (sizeof(void *) == 4 ? 0x030u : 0x048u));
+BW_PORT_STATIC_ASSERT(box_work_oam_slots, sizeof(void *) != 4 ||
+                      offsetof(BwPortBoxWork, oamSlots) == 0x04u);
+BW_PORT_STATIC_ASSERT(box_work_size, sizeof(BwPortBoxWork) ==
+                      (sizeof(void *) == 4 ? 0x068u : 0x0C0u));
+BW_PORT_STATIC_ASSERT(box_seq_entry, sizeof(void *) != 4 ||
+                      offsetof(BwPortBoxSeq, entry) == 0x08u);
+BW_PORT_STATIC_ASSERT(box_seq_size, sizeof(BwPortBoxSeq) ==
+                      (sizeof(void *) == 4 ? 0x010u : 0x018u));
+BW_PORT_STATIC_ASSERT(box_obj_slot_size, sizeof(BwPortBoxObjSlot) ==
+                      (sizeof(void *) == 4 ? 0x008u : 0x010u));
+BW_PORT_STATIC_ASSERT(box_param_game_data, sizeof(void *) != 4 ||
+                      offsetof(BwPortBoxParam, gameData) == 0x00u);
+BW_PORT_STATIC_ASSERT(box_param_party, sizeof(void *) != 4 ||
+                      offsetof(BwPortBoxParam, party) == 0x08u);
+BW_PORT_STATIC_ASSERT(box_param_size, sizeof(BwPortBoxParam) ==
+                      (sizeof(void *) == 4 ? 0x00Cu : 0x018u));
 
 /*
  * The move the box screen is carrying out, copied from the game's header
@@ -458,6 +566,9 @@ BW_PORT_STATIC_ASSERT(box_seq, sizeof(void *) != 4 ||
  * move's ends: a number below 0x1E is a box slot, a number from 0x1E up is
  * a party slot, and a number from 0x24 up names a box of its own (the
  * number less 0x24).
+ *
+ * The move holds no pointer, so its layout is the game's at every pointer
+ * width and these hold at every width.
  */
 typedef struct BwPortBoxMove {
     u8  pad00[168];  /* 0x00: the seven movers */
@@ -466,6 +577,11 @@ typedef struct BwPortBoxMove {
     u32 b;           /* 0xB0: the move's second end */
     u32 req;         /* 0xB4 */
 } BwPortBoxMove;
+
+BW_PORT_STATIC_ASSERT(box_move_count, offsetof(BwPortBoxMove, count) == 0xA8u);
+BW_PORT_STATIC_ASSERT(box_move_a, offsetof(BwPortBoxMove, a) == 0xACu);
+BW_PORT_STATIC_ASSERT(box_move_b, offsetof(BwPortBoxMove, b) == 0xB0u);
+BW_PORT_STATIC_ASSERT(box_move_size, sizeof(BwPortBoxMove) == 0xB8u);
 
 /* The slot numbers the box screen uses. */
 #define BW_PORT_BOX_PARTY_BASE 0x1Eu   /* the first party slot */
@@ -480,6 +596,9 @@ typedef struct BwPortBoxMove {
  * the game's own header (aletheia src/game/ov091/pokelist_types.h).  It is
  * the record the party list screen and the field's party list share, and
  * it names the move the screen teaches and the item it teaches it with.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortPokelistRivalEntry {
     void *party;                      /* 0x00 */
@@ -517,8 +636,8 @@ typedef struct BwPortPokelistArg {
     u8    closeRequested;             /* 0x63 */
     int   battleKind;                 /* 0x64 */
     BwPortPokelistRivalEntry entries[3]; /* 0x68 */
-    u8    timerShown;                 /* 0x8C */
-    u8    timerRunning;               /* 0x90 */
+    int   timerShown;                 /* 0x8C */
+    int   timerRunning;               /* 0x90 */
     u8    timerExpired;               /* 0x94 */
     u8    pad95[3];
 } BwPortPokelistArg;
@@ -578,8 +697,8 @@ typedef struct BwPortPokelistWork {
     int   messageWaitKey;               /* 0x144 */
     void *messageDoneCallback;          /* 0x148 */
     void *menuChoiceCallback;           /* 0x14C */
-    void *messageWindow;                /* 0x150 */
-    void *contextMenu;                  /* 0x154 */
+    u32   messageWindow;                /* 0x150: a handle, not a pointer */
+    u32   contextMenu;                  /* 0x154: a handle, not a pointer */
     void *paletteFile;                  /* 0x158 */
     void *paletteData;                  /* 0x15C */
     void *plates[6];                    /* 0x160 */
@@ -622,6 +741,28 @@ typedef struct BwPortPokelistWork {
 
 BW_PORT_STATIC_ASSERT(pokelist_arg, sizeof(void *) != 4 ||
                       offsetof(BwPortPokelistWork, arg) == 0x280u);
+BW_PORT_STATIC_ASSERT(pokelist_work_size, sizeof(BwPortPokelistWork) ==
+                      (sizeof(void *) == 4 ? 0x284u : 0x300u));
+BW_PORT_STATIC_ASSERT(pokelist_arg_party, sizeof(void *) != 4 ||
+                      offsetof(BwPortPokelistArg, party) == 0x000u);
+BW_PORT_STATIC_ASSERT(pokelist_arg_mode, sizeof(void *) != 4 ||
+                      offsetof(BwPortPokelistArg, mode) == 0x034u);
+BW_PORT_STATIC_ASSERT(pokelist_arg_item_id, sizeof(void *) != 4 ||
+                      offsetof(BwPortPokelistArg, itemId) == 0x044u);
+BW_PORT_STATIC_ASSERT(pokelist_arg_move_id, sizeof(void *) != 4 ||
+                      offsetof(BwPortPokelistArg, moveId) == 0x046u);
+BW_PORT_STATIC_ASSERT(pokelist_arg_entries, sizeof(void *) != 4 ||
+                      offsetof(BwPortPokelistArg, entries) == 0x068u);
+BW_PORT_STATIC_ASSERT(pokelist_arg_timer_shown, sizeof(void *) != 4 ||
+                      offsetof(BwPortPokelistArg, timerShown) == 0x08Cu);
+BW_PORT_STATIC_ASSERT(pokelist_arg_timer_running, sizeof(void *) != 4 ||
+                      offsetof(BwPortPokelistArg, timerRunning) == 0x090u);
+BW_PORT_STATIC_ASSERT(pokelist_arg_timer_expired, sizeof(void *) != 4 ||
+                      offsetof(BwPortPokelistArg, timerExpired) == 0x094u);
+BW_PORT_STATIC_ASSERT(pokelist_arg_size, sizeof(BwPortPokelistArg) ==
+                      (sizeof(void *) == 4 ? 0x098u : 0x0D8u));
+BW_PORT_STATIC_ASSERT(pokelist_rival_entry_size, sizeof(BwPortPokelistRivalEntry) ==
+                      (sizeof(void *) == 4 ? 0x00Cu : 0x018u));
 
 /* The party screen's own modes the port reads (src/game/ov091/pokelist.c). */
 #define BW_PORT_PLIST_MODE_TEACH 6u  /* the machine teach: the item is the TM */
@@ -636,6 +777,9 @@ BW_PORT_STATIC_ASSERT(pokelist_arg, sizeof(void *) != 4 ||
  * src/game/ov173/poke_summary_types.h).  The block names the Pokemon, the
  * list of moves it can relearn and the row the player chose; the slot is
  * the screen's own count of the free slots.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortSummaryMon {
     void *party;               /* 0x00: the Pokemon */
@@ -657,6 +801,20 @@ typedef struct BwPortSummaryWork {
 
 BW_PORT_STATIC_ASSERT(summary_mon, sizeof(void *) != 4 ||
                       offsetof(BwPortSummaryMon, moveList) == 0x10u);
+BW_PORT_STATIC_ASSERT(summary_party, sizeof(void *) != 4 ||
+                      offsetof(BwPortSummaryMon, party) == 0x00u);
+BW_PORT_STATIC_ASSERT(summary_selected_index, sizeof(void *) != 4 ||
+                      offsetof(BwPortSummaryMon, selectedIndex) == 0x14u);
+BW_PORT_STATIC_ASSERT(summary_scroll_index, sizeof(void *) != 4 ||
+                      offsetof(BwPortSummaryMon, scrollIndex) == 0x16u);
+BW_PORT_STATIC_ASSERT(summary_variant, sizeof(void *) != 4 ||
+                      offsetof(BwPortSummaryMon, variant) == 0x1Bu);
+BW_PORT_STATIC_ASSERT(summary_size, sizeof(BwPortSummaryMon) ==
+                      (sizeof(void *) == 4 ? 0x01Cu : 0x028u));
+BW_PORT_STATIC_ASSERT(summary_work_mon, sizeof(void *) != 4 ||
+                      offsetof(BwPortSummaryWork, mon) == 0x000u);
+BW_PORT_STATIC_ASSERT(summary_work_size, sizeof(BwPortSummaryWork) ==
+                      (sizeof(void *) == 4 ? 0x004u : 0x008u));
 
 /* ------------------------------------------------------------------ */
 /* The helpers                                                         */

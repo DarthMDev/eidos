@@ -128,11 +128,20 @@ the overlay's own region: the overlay's layer asks for each word it rewrote
 after the mod list changes (`bw_ovl_resolve_code_pointers`,
 `sdk/overlay_image.c`).
 
-**What a slot does not catch.** A call from inside the defining unit binds by
-name and does not pass the slot, because a textual rename cannot tell a
-reference from the definition. For the functions the stable events bind this
-does not matter: each is called from other units. A raw hook on a function
-that its own unit also calls misses those calls.
+**What a slot does not catch.** A call from inside the unit that defines the
+function binds by name and does not pass the slot, because a textual rename
+cannot tell a reference from the definition. The port's answer is the one it
+already uses when the port supplies a function of its own
+(`docs/game-tree.md`): the definition is cut out of that unit and put in a
+unit of its own, and the unit then holds only callers, which reach the slot.
+The generators do this for every declared row whose function its own unit
+calls - in the battle server, twenty-one functions move out of the merged
+unit - and report each move. A function that uses something only its own
+unit has cannot move, and the generator says so and leaves the limit.
+
+A raw hook on a function that its own unit also calls therefore reaches the
+calls from the other units, and the ones inside its own unit only when the
+definition could be moved.
 
 **Checking the seam without a build.** The generators are standalone tools,
 so their output can be read without compiling:

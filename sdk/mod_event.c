@@ -352,6 +352,14 @@ int bw_mod_event_register(u32 kind, BwEventHandler fn)
     if (fn == NULL || kind == 0 || kind >= BW_MOD_EVENT_KINDS_MAX) {
         return -1;
     }
+    if (payload_size(kind) == 0) {
+        /* The port does not have this event: every event it has carries a
+         * payload of its own, and the two internal ids (the port's own
+         * "continue" and "refuse") carry none.  A handler for an event the
+         * port does not have would never fire, so it is refused here and
+         * the mod is told (sdk/mod_loader.c). */
+        return -1;
+    }
     if (g_handler_count >= BW_MOD_EVENT_HANDLERS_MAX) {
         return -1;
     }

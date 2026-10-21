@@ -213,11 +213,18 @@ BW_PORT_STATIC_ASSERT(flow_poke_con, sizeof(void *) != 4 ||
                       offsetof(BwPortFlowHead, pokeCon) == 0x008u);
 BW_PORT_STATIC_ASSERT(flow_cmd_queue, sizeof(void *) != 4 ||
                       offsetof(BwPortFlowHead, cmdQueue) == 0x00Cu);
+BW_PORT_STATIC_ASSERT(flow_turn_count, sizeof(void *) != 4 ||
+                      offsetof(BwPortFlowHead, turnCount) == 0x010u);
+BW_PORT_STATIC_ASSERT(flow_size, sizeof(BwPortFlowHead) ==
+                      (sizeof(void *) == 4 ? 0x01Cu : 0x030u));
 
 /*
  * The battle client: the battle's main module, the client's own side and
  * the Pokemon the client acts for (aletheia src/game/ov093/
  * btl_client_types.h).
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortClientHead {
     void *main;       /* 0x000: the battle's main module */
@@ -227,13 +234,20 @@ typedef struct BwPortClientHead {
 
 BW_PORT_STATIC_ASSERT(client_main, sizeof(void *) != 4 ||
                       offsetof(BwPortClientHead, main) == 0x000u);
+BW_PORT_STATIC_ASSERT(client_side, sizeof(void *) != 4 ||
+                      offsetof(BwPortClientHead, side) == 0x004u);
 BW_PORT_STATIC_ASSERT(client_active_mon, sizeof(void *) != 4 ||
                       offsetof(BwPortClientHead, activeMon) == 0x008u);
+BW_PORT_STATIC_ASSERT(client_size, sizeof(BwPortClientHead) ==
+                      (sizeof(void *) == 4 ? 0x00Cu : 0x018u));
 
 /*
  * The battle view core: the battle's main module and the client that owns
  * the view (aletheia src/game/ov093/btlv_core_types.h).  The game hands the
  * core to the bound function and to nothing else.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortCoreHead {
     void *context;   /* 0x000: the battle's main module */
@@ -245,12 +259,19 @@ BW_PORT_STATIC_ASSERT(core_context, sizeof(void *) != 4 ||
                       offsetof(BwPortCoreHead, context) == 0x000u);
 BW_PORT_STATIC_ASSERT(core_client, sizeof(void *) != 4 ||
                       offsetof(BwPortCoreHead, client) == 0x004u);
+BW_PORT_STATIC_ASSERT(core_mon_table, sizeof(void *) != 4 ||
+                      offsetof(BwPortCoreHead, monTable) == 0x008u);
+BW_PORT_STATIC_ASSERT(core_size, sizeof(BwPortCoreHead) ==
+                      (sizeof(void *) == 4 ? 0x00Cu : 0x018u));
 
 /*
  * The battle's main module: the battle setup and the two sides (aletheia
  * src/game/ov093/btl_main_types.h).  The port needs the sides to name the
  * battle record of a side and a position, and the trainer slots to name
  * the opposing trainers.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortSideSlot {
     void *items[6];   /* 0x00: the Pokemon of the slot */
@@ -293,12 +314,42 @@ BW_PORT_STATIC_ASSERT(main_sides, sizeof(void *) != 4 ||
                       offsetof(BwPortMain, sides) == 0x0C8u);
 BW_PORT_STATIC_ASSERT(main_trainers, sizeof(void *) != 4 ||
                       offsetof(BwPortMain, trainers) == 0x020u);
+BW_PORT_STATIC_ASSERT(main_clients, sizeof(void *) != 4 ||
+                      offsetof(BwPortMain, clients) == 0x010u);
+BW_PORT_STATIC_ASSERT(main_player_status, sizeof(void *) != 4 ||
+                      offsetof(BwPortMain, playerStatus) == 0x0C0u);
+BW_PORT_STATIC_ASSERT(main_size, sizeof(BwPortMain) ==
+                      (sizeof(void *) == 4 ? 0x298u : 0x4B0u));
+BW_PORT_STATIC_ASSERT(side_main, sizeof(void *) != 4 ||
+                      offsetof(BwPortSide, main) == 0x000u);
 BW_PORT_STATIC_ASSERT(side_slots, sizeof(void *) != 4 ||
                       offsetof(BwPortSide, slots) == 0x004u);
+BW_PORT_STATIC_ASSERT(side_parties, sizeof(void *) != 4 ||
+                      offsetof(BwPortSide, parties) == 0x074u);
 BW_PORT_STATIC_ASSERT(side_poke_params, sizeof(void *) != 4 ||
                       offsetof(BwPortSide, pokeParams) == 0x084u);
+BW_PORT_STATIC_ASSERT(side_index, sizeof(void *) != 4 ||
+                      offsetof(BwPortSide, sideIndex) == 0x0E4u);
+BW_PORT_STATIC_ASSERT(side_size, sizeof(BwPortSide) ==
+                      (sizeof(void *) == 4 ? 0x0E8u : 0x1D0u));
+BW_PORT_STATIC_ASSERT(side_slot_count, sizeof(void *) != 4 ||
+                      offsetof(BwPortSideSlot, count) == 0x018u);
+BW_PORT_STATIC_ASSERT(side_slot_size, sizeof(BwPortSideSlot) ==
+                      (sizeof(void *) == 4 ? 0x01Cu : 0x038u));
+BW_PORT_STATIC_ASSERT(trainer_handle, sizeof(void *) != 4 ||
+                      offsetof(BwPortTrainerSlot, handle) == 0x000u);
+BW_PORT_STATIC_ASSERT(trainer_name, sizeof(void *) != 4 ||
+                      offsetof(BwPortTrainerSlot, name) == 0x004u);
+BW_PORT_STATIC_ASSERT(trainer_type, sizeof(void *) != 4 ||
+                      offsetof(BwPortTrainerSlot, trainerType) == 0x008u);
 BW_PORT_STATIC_ASSERT(trainer_id, sizeof(void *) != 4 ||
                       offsetof(BwPortTrainerSlot, trainerId) == 0x0Au);
+BW_PORT_STATIC_ASSERT(trainer_ai_flags, sizeof(void *) != 4 ||
+                      offsetof(BwPortTrainerSlot, aiFlags) == 0x00Cu);
+BW_PORT_STATIC_ASSERT(trainer_items, sizeof(void *) != 4 ||
+                      offsetof(BwPortTrainerSlot, itemIds) == 0x010u);
+BW_PORT_STATIC_ASSERT(trainer_size, sizeof(BwPortTrainerSlot) ==
+                      (sizeof(void *) == 4 ? 0x028u : 0x030u));
 
 /*
  * The battle setup, the object the game builds the whole battle from
@@ -371,14 +422,44 @@ typedef struct BwPortSetup {
     u8                    turnCount;     /* 0x0B6 */
 } BwPortSetup;
 
+BW_PORT_STATIC_ASSERT(setup_competitor, sizeof(void *) != 4 ||
+                      offsetof(BwPortSetup, competitor) == 0x000u);
+BW_PORT_STATIC_ASSERT(setup_rule, sizeof(void *) != 4 ||
+                      offsetof(BwPortSetup, rule) == 0x004u);
+BW_PORT_STATIC_ASSERT(setup_field, sizeof(void *) != 4 ||
+                      offsetof(BwPortSetup, field) == 0x008u);
+BW_PORT_STATIC_ASSERT(setup_multi_mode, sizeof(void *) != 4 ||
+                      offsetof(BwPortSetup, multiMode) == 0x022u);
+BW_PORT_STATIC_ASSERT(setup_party, sizeof(void *) != 4 ||
+                      offsetof(BwPortSetup, party) == 0x024u);
+BW_PORT_STATIC_ASSERT(setup_player_status, sizeof(void *) != 4 ||
+                      offsetof(BwPortSetup, playerStatus) == 0x034u);
 BW_PORT_STATIC_ASSERT(setup_trainer_data, sizeof(void *) != 4 ||
                       offsetof(BwPortSetup, trainerData) == 0x048u);
+BW_PORT_STATIC_ASSERT(setup_game_data, sizeof(void *) != 4 ||
+                      offsetof(BwPortSetup, gameData) == 0x058u);
+BW_PORT_STATIC_ASSERT(setup_pms_work, sizeof(void *) != 4 ||
+                      offsetof(BwPortSetup, pmsWork) == 0x070u);
 BW_PORT_STATIC_ASSERT(setup_result, sizeof(void *) != 4 ||
                       offsetof(BwPortSetup, result) == 0x08Cu);
 BW_PORT_STATIC_ASSERT(setup_turn_count, sizeof(void *) != 4 ||
                       offsetof(BwPortSetup, turnCount) == 0x0B6u);
-BW_PORT_STATIC_ASSERT(setup_party, sizeof(void *) != 4 ||
-                      offsetof(BwPortSetup, party) == 0x024u);
+BW_PORT_STATIC_ASSERT(setup_size, sizeof(BwPortSetup) ==
+                      (sizeof(void *) == 4 ? 0x0B8u : 0x110u));
+/*
+ * The field situation and the trainer data hold no pointer of their own
+ * (the trainer data's name is one), so the situation's layout is the
+ * game's at every pointer width.
+ */
+BW_PORT_STATIC_ASSERT(setup_field_size, sizeof(BwPortFieldSituation) == 0x10u);
+BW_PORT_STATIC_ASSERT(setup_field_zone_id,
+                      offsetof(BwPortFieldSituation, zoneId) == 0x0Au);
+BW_PORT_STATIC_ASSERT(setup_trainer_id, sizeof(void *) != 4 ||
+                      offsetof(BwPortTrainerData, trainerId) == 0x000u);
+BW_PORT_STATIC_ASSERT(setup_trainer_name, sizeof(void *) != 4 ||
+                      offsetof(BwPortTrainerData, name) == 0x014u);
+BW_PORT_STATIC_ASSERT(setup_trainer_size, sizeof(BwPortTrainerData) ==
+                      (sizeof(void *) == 4 ? 0x028u : 0x030u));
 
 /*
  * The move record the server hands to the bound functions: the move's id
@@ -397,9 +478,16 @@ typedef struct BwPortMoveRecord {
     u32 w10;      /* 0x10 */
 } BwPortMoveRecord;
 
+BW_PORT_STATIC_ASSERT(move_id, offsetof(BwPortMoveRecord, moveId) == 0x00u);
+BW_PORT_STATIC_ASSERT(move_type, offsetof(BwPortMoveRecord, b6) == 0x06u);
+BW_PORT_STATIC_ASSERT(move_size, sizeof(BwPortMoveRecord) == 0x14u);
+
 /*
  * The context the end of the battle carries: the game data and the battle
  * setup (aletheia src/game/ov010/event_battle.c, the BattleEndCtx view).
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortBattleEndCtx {
     u32  unused00;    /* 0x00 */
@@ -411,6 +499,8 @@ BW_PORT_STATIC_ASSERT(battle_end_game_data, sizeof(void *) != 4 ||
                       offsetof(BwPortBattleEndCtx, btlSetupObj) == 0x004u);
 BW_PORT_STATIC_ASSERT(battle_end_setup, sizeof(void *) != 4 ||
                       offsetof(BwPortBattleEndCtx, btlSetup) == 0x008u);
+BW_PORT_STATIC_ASSERT(battle_end_size, sizeof(BwPortBattleEndCtx) ==
+                      (sizeof(void *) == 4 ? 0x00Cu : 0x018u));
 
 /* ------------------------------------------------------------------ */
 /* The game's own constants                                            */

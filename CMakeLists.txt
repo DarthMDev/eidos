@@ -1596,6 +1596,24 @@ add_test(NAME test_mod_loader COMMAND test_mod_loader $<TARGET_FILE:test_mod_lib
 add_test(NAME test_mod_manifest COMMAND test_mod_manifest)
 add_test(NAME test_mod_savedata COMMAND test_mod_savedata)
 
+# test_mod_endtoend walks the whole mod path at once: a real library, a real
+# manifest, the port's own loader and a real event reaching a handler through
+# the port's own dispatch.  The library it loads is built from the test's own
+# file, the way test_mod_loader's is: with BW_MOD_TEST_LIBRARY defined it is
+# a tiny shared library that binds a handler to an event and records what it
+# was handed.
+add_library(test_mod_e2e_lib MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_endtoend.c)
+target_compile_definitions(test_mod_e2e_lib PRIVATE BW_MOD_TEST_LIBRARY=1)
+target_include_directories(test_mod_e2e_lib PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+
+add_executable(test_mod_endtoend ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_endtoend.c)
+target_include_directories(test_mod_endtoend PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_mod_endtoend PRIVATE eidos)
+add_dependencies(test_mod_endtoend test_mod_e2e_lib)
+add_test(NAME test_mod_endtoend COMMAND test_mod_endtoend $<TARGET_FILE:test_mod_e2e_lib>)
+
 # The registry's overlap check panics, and a panic aborts the process, so it
 # is exercised in a run of its own that passes only if the panic happened.
 add_test(NAME test_dsmem_overlap COMMAND ${CMAKE_COMMAND}

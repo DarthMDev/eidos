@@ -85,6 +85,9 @@ struct BwVecFx32 {
  * record in its own search and hands it to the script work, and it
  * publishes no accessor for the trainer id or the distance, so the port
  * reads them through a view of the record.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 struct BwPortTrainerEyeHit {
     void *trainer;      /* 0x00: the field model of the trainer */
@@ -224,12 +227,24 @@ typedef struct BwPortFieldEventInput {
 
 BW_PORT_STATIC_ASSERT(input_player, sizeof(void *) != 4 ||
                       offsetof(BwPortFieldEventInput, player) == 0x18u);
+BW_PORT_STATIC_ASSERT(input_move_state, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldEventInput, moveState) == 0x1Cu);
+BW_PORT_STATIC_ASSERT(input_move_mode, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldEventInput, moveMode) == 0x20u);
 BW_PORT_STATIC_ASSERT(input_facing, sizeof(void *) != 4 ||
                       offsetof(BwPortFieldEventInput, facingDir) == 0x24u);
+BW_PORT_STATIC_ASSERT(input_key_trg, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldEventInput, keyTrg) == 0x28u);
 BW_PORT_STATIC_ASSERT(input_key_cont, sizeof(void *) != 4 ||
                       offsetof(BwPortFieldEventInput, keyCont) == 0x2Cu);
+BW_PORT_STATIC_ASSERT(input_held_dir, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldEventInput, heldDir) == 0x30u);
+BW_PORT_STATIC_ASSERT(input_tile_attr, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldEventInput, tileAttr) == 0x38u);
 BW_PORT_STATIC_ASSERT(input_flags, sizeof(void *) != 4 ||
                       offsetof(BwPortFieldEventInput, flags) == 0x3Cu);
+BW_PORT_STATIC_ASSERT(input_size, sizeof(BwPortFieldEventInput) ==
+                      (sizeof(void *) == 4 ? 0x40u : 0x060u));
 
 /*
  * A place on a map, copied from the game's own header (aletheia
@@ -239,12 +254,12 @@ BW_PORT_STATIC_ASSERT(input_flags, sizeof(void *) != 4 ||
  * host, and the view keeps the same size at either pointer width.
  */
 typedef struct BwPortLocation {
-    int   type;           /* 0x00: 1 = a direct position, 2 = a rail one */
+    u32   type;           /* 0x00: 1 = a direct position, 2 = a rail one */
     u16   zoneId;         /* 0x04 */
     s16   exitId;         /* 0x06 */
     s16   dir;            /* 0x08 */
     u16   exitOffset;     /* 0x0A */
-    int   posType;        /* 0x0C */
+    u32   posType;        /* 0x0C */
     union {
         struct BwVecFx32 vec;
         u8              rail[8];
@@ -255,6 +270,9 @@ typedef struct BwPortLocation {
  * The work of one map change, copied from the same header.  The view stops
  * at the destination: the port reads the zone the change leaves and the
  * destination it applies, and nothing else of the record.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortMapChangeWork {
     void            *gameSystem;    /* 0x00 */
@@ -272,10 +290,28 @@ typedef struct BwPortChangeFieldWork {
 
 BW_PORT_STATIC_ASSERT(change_destination, sizeof(void *) != 4 ||
                       offsetof(BwPortMapChangeWork, destination) == 0x10u);
-BW_PORT_STATIC_ASSERT(location_pos, sizeof(void *) != 4 ||
-                      offsetof(BwPortLocation, pos) == 0x10u);
-BW_PORT_STATIC_ASSERT(location_size, sizeof(void *) != 4 ||
-                      sizeof(BwPortLocation) == 0x1Cu);
+BW_PORT_STATIC_ASSERT(change_current_zone, sizeof(void *) != 4 ||
+                      offsetof(BwPortMapChangeWork, currentZoneId) == 0x00Cu);
+BW_PORT_STATIC_ASSERT(change_size, sizeof(BwPortMapChangeWork) ==
+                      (sizeof(void *) == 4 ? 0x2Cu : 0x038u));
+BW_PORT_STATIC_ASSERT(change_field_map_change, sizeof(void *) != 4 ||
+                      offsetof(BwPortChangeFieldWork, mapChange) == 0x000u);
+BW_PORT_STATIC_ASSERT(change_field_work_size, sizeof(BwPortChangeFieldWork) ==
+                      (sizeof(void *) == 4 ? 0x004u : 0x008u));
+/*
+ * The location holds no pointer, so its layout is the game's at every
+ * pointer width and these hold at every width.
+ */
+BW_PORT_STATIC_ASSERT(location_size, sizeof(BwPortLocation) == 0x1Cu);
+BW_PORT_STATIC_ASSERT(location_type, offsetof(BwPortLocation, type) == 0x000u);
+BW_PORT_STATIC_ASSERT(location_zone_id, offsetof(BwPortLocation, zoneId) == 0x004u);
+BW_PORT_STATIC_ASSERT(location_exit_id, offsetof(BwPortLocation, exitId) == 0x006u);
+BW_PORT_STATIC_ASSERT(location_dir, offsetof(BwPortLocation, dir) == 0x008u);
+BW_PORT_STATIC_ASSERT(location_exit_offset,
+                      offsetof(BwPortLocation, exitOffset) == 0x00Au);
+BW_PORT_STATIC_ASSERT(location_pos_type,
+                      offsetof(BwPortLocation, posType) == 0x00Cu);
+BW_PORT_STATIC_ASSERT(location_pos, offsetof(BwPortLocation, pos) == 0x10u);
 
 /*
  * A trainer that sees the player: the game's own header, copied above
@@ -287,14 +323,25 @@ BW_PORT_STATIC_ASSERT(hit_trainer, sizeof(void *) != 4 ||
                       offsetof(struct BwPortTrainerEyeHit, trainer) == 0x00u);
 BW_PORT_STATIC_ASSERT(hit_distance, sizeof(void *) != 4 ||
                       offsetof(struct BwPortTrainerEyeHit, distance) == 0x04u);
+BW_PORT_STATIC_ASSERT(hit_direction, sizeof(void *) != 4 ||
+                      offsetof(struct BwPortTrainerEyeHit, direction) == 0x08u);
+BW_PORT_STATIC_ASSERT(hit_event_id, sizeof(void *) != 4 ||
+                      offsetof(struct BwPortTrainerEyeHit, eventId) == 0x0Cu);
 BW_PORT_STATIC_ASSERT(hit_trainer_id, sizeof(void *) != 4 ||
                       offsetof(struct BwPortTrainerEyeHit, trainerId) == 0x10u);
+BW_PORT_STATIC_ASSERT(hit_kind, sizeof(void *) != 4 ||
+                      offsetof(struct BwPortTrainerEyeHit, hitKind) == 0x14u);
+BW_PORT_STATIC_ASSERT(hit_size, sizeof(struct BwPortTrainerEyeHit) ==
+                      (sizeof(void *) == 4 ? 0x18u : 0x20u));
 
 /*
  * One slot of the field menu, copied from the game's own header (aletheia
  * src/game/ov021/field_menu.c).  The slot holds the button it shows and
  * the actor that draws the icon; the port reads the button to name the
  * entries the menu shows.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortFieldMenuItem {
     int   inUse;         /* 0x00 */
@@ -308,7 +355,11 @@ typedef struct BwPortFieldMenuItem {
     void *actor;         /* 0x18 */
 } BwPortFieldMenuItem;
 
-/* The menu's own work (0x138 bytes in the game). */
+/* The menu's own work (0x138 bytes in the game); the view stops at the
+ * slots, which are the last of it the port reads.
+ *
+ * The offsets the game's own header documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide. */
 typedef struct BwPortFieldMenu {
     u16                heapId;         /* 0x00 */
     u16                subHeapId;      /* 0x02 */
@@ -333,15 +384,40 @@ typedef struct BwPortFieldMenu {
 
 BW_PORT_STATIC_ASSERT(menu_items, sizeof(void *) != 4 ||
                       offsetof(BwPortFieldMenu, items) == 0x34u);
+BW_PORT_STATIC_ASSERT(menu_zone_id, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldMenu, zoneId) == 0x1Cu);
+BW_PORT_STATIC_ASSERT(menu_cursor_dirty, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldMenu, cursorDirty) == 0x24u);
+BW_PORT_STATIC_ASSERT(menu_chosen_button, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldMenu, chosenButton) == 0x30u);
+BW_PORT_STATIC_ASSERT(menu_size, sizeof(BwPortFieldMenu) ==
+                      (sizeof(void *) == 4 ? 0x0F8u : 0x160u));
+BW_PORT_STATIC_ASSERT(menu_item_in_use, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldMenuItem, inUse) == 0x00u);
+BW_PORT_STATIC_ASSERT(menu_item_bmp_win, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldMenuItem, bmpWin) == 0x04u);
 BW_PORT_STATIC_ASSERT(menu_item_button, sizeof(void *) != 4 ||
                       offsetof(BwPortFieldMenuItem, buttonId) == 0x08u);
+BW_PORT_STATIC_ASSERT(menu_item_char_res, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldMenuItem, charRes) == 0x0Cu);
+BW_PORT_STATIC_ASSERT(menu_item_cell_res, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldMenuItem, cellRes) == 0x10u);
+BW_PORT_STATIC_ASSERT(menu_item_cursor_x, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldMenuItem, cursorX) == 0x14u);
+BW_PORT_STATIC_ASSERT(menu_item_cursor_y, sizeof(void *) != 4 ||
+                      offsetof(BwPortFieldMenuItem, cursorY) == 0x15u);
 BW_PORT_STATIC_ASSERT(menu_item_actor, sizeof(void *) != 4 ||
                       offsetof(BwPortFieldMenuItem, actor) == 0x18u);
+BW_PORT_STATIC_ASSERT(menu_item_size, sizeof(BwPortFieldMenuItem) ==
+                      (sizeof(void *) == 4 ? 0x1Cu : 0x028u));
 
 /*
  * One slot of a wild encounter table, copied from the game's own header
  * (aletheia src/game/ov021/field_encount_types.h): the species, the form,
  * and the level range the slot rolls in.
+ *
+ * The table holds no pointer, so its layout is the game's at every pointer
+ * width and these hold at every width.
  */
 typedef struct BwPortEncountSlot {
     u16 species : 11;
@@ -354,6 +430,9 @@ typedef struct BwPortEncountSlot {
  * The wild encounter table of one zone, copied from the same header.  The
  * ground tables hold the types 0 to 2, the water tables the types 3 and 4
  * and the fishing tables the types 5 and 6.
+ *
+ * The table holds no pointer, so its layout is the game's at every pointer
+ * width and these hold at every width.
  */
 typedef struct BwPortEncountData {
     u8                  rate[7];       /* 0x00: one rate per encounter type */
@@ -364,17 +443,19 @@ typedef struct BwPortEncountData {
     BwPortEncountSlot   fishing[2][5]; /* 0xC0 */
 } BwPortEncountData;
 
-BW_PORT_STATIC_ASSERT(encount_ground, sizeof(void *) != 4 ||
-                      offsetof(BwPortEncountData, ground) == 0x08u);
-BW_PORT_STATIC_ASSERT(encount_water, sizeof(void *) != 4 ||
-                      offsetof(BwPortEncountData, water) == 0x98u);
-BW_PORT_STATIC_ASSERT(encount_fishing, sizeof(void *) != 4 ||
-                      offsetof(BwPortEncountData, fishing) == 0xC0u);
+BW_PORT_STATIC_ASSERT(encount_slot_size, sizeof(BwPortEncountSlot) == 4u);
+BW_PORT_STATIC_ASSERT(encount_ground, offsetof(BwPortEncountData, ground) == 0x08u);
+BW_PORT_STATIC_ASSERT(encount_water, offsetof(BwPortEncountData, water) == 0x98u);
+BW_PORT_STATIC_ASSERT(encount_fishing, offsetof(BwPortEncountData, fishing) == 0xC0u);
+BW_PORT_STATIC_ASSERT(encount_data_size, sizeof(BwPortEncountData) == 0xE8u);
 
 /*
  * The encounter parameters, copied from the game's own source (aletheia
  * src/game/ov021/field_encount.c): the type of the encounter, the table
  * the slots came from and the flags the setup reads.
+ *
+ * The offsets the game's own source documents are the DS ones, so they are
+ * checked below only where the pointers are four bytes wide.
  */
 typedef struct BwPortEncountParam {
     void *gameData;       /* 0x00 */
@@ -414,15 +495,28 @@ typedef struct BwPortEncountParam {
 
 BW_PORT_STATIC_ASSERT(encount_param_type, sizeof(void *) != 4 ||
                       offsetof(BwPortEncountParam, encountType) == 0x08u);
+BW_PORT_STATIC_ASSERT(encount_param_trigger, sizeof(void *) != 4 ||
+                      offsetof(BwPortEncountParam, triggerMode) == 0x0Cu);
 BW_PORT_STATIC_ASSERT(encount_param_kind, sizeof(void *) != 4 ||
                       offsetof(BwPortEncountParam, slotTableKind) == 0x10u);
-BW_PORT_STATIC_ASSERT(encount_param_flags, sizeof(void *) != 4 ||
-                      sizeof(BwPortEncountParam) == 0x2Cu);
+BW_PORT_STATIC_ASSERT(encount_param_slot_count, sizeof(void *) != 4 ||
+                      offsetof(BwPortEncountParam, slotCount) == 0x14u);
+BW_PORT_STATIC_ASSERT(encount_param_lead_species, sizeof(void *) != 4 ||
+                      offsetof(BwPortEncountParam, leadSpecies) == 0x16u);
+BW_PORT_STATIC_ASSERT(encount_param_owner, sizeof(void *) != 4 ||
+                      offsetof(BwPortEncountParam, ownerId) == 0x20u);
+BW_PORT_STATIC_ASSERT(encount_param_my_status, sizeof(void *) != 4 ||
+                      offsetof(BwPortEncountParam, myStatus) == 0x24u);
+BW_PORT_STATIC_ASSERT(encount_param_flags, sizeof(BwPortEncountParam) ==
+                      (sizeof(void *) == 4 ? 0x2Cu : 0x040u));
 
 /*
  * One generated wild Pokemon, copied from the game's own source (aletheia
  * src/game/ov021/field_encount.c): the species, the level and the shiny
  * mode the setup reads.
+ *
+ * The record holds no pointer, so its layout is the game's at every pointer
+ * width and these hold at every width.
  */
 typedef struct BwPortEncountMon {
     u16 species;        /* 0x00 */
@@ -436,12 +530,11 @@ typedef struct BwPortEncountMon {
     u8  reserved11[3];  /* 0x11 */
 } BwPortEncountMon;
 
-BW_PORT_STATIC_ASSERT(encount_mon_species, sizeof(void *) != 4 ||
-                      offsetof(BwPortEncountMon, species) == 0x00u);
-BW_PORT_STATIC_ASSERT(encount_mon_level, sizeof(void *) != 4 ||
-                      offsetof(BwPortEncountMon, level) == 0x04u);
-BW_PORT_STATIC_ASSERT(encount_mon_shiny, sizeof(void *) != 4 ||
-                      offsetof(BwPortEncountMon, shinyMode) == 0x06u);
+BW_PORT_STATIC_ASSERT(encount_mon_species, offsetof(BwPortEncountMon, species) == 0x00u);
+BW_PORT_STATIC_ASSERT(encount_mon_held_item, offsetof(BwPortEncountMon, heldItem) == 0x02u);
+BW_PORT_STATIC_ASSERT(encount_mon_level, offsetof(BwPortEncountMon, level) == 0x04u);
+BW_PORT_STATIC_ASSERT(encount_mon_shiny, offsetof(BwPortEncountMon, shinyMode) == 0x06u);
+BW_PORT_STATIC_ASSERT(encount_mon_size, sizeof(BwPortEncountMon) == 0x14u);
 
 /*
  * The head of the battle setup, copied from the game's own header
@@ -449,14 +542,18 @@ BW_PORT_STATIC_ASSERT(encount_mon_shiny, sizeof(void *) != 4 ||
  * competitor to tell a wild battle from a trainer one; the party of the
  * opponent comes from the game's own accessor, so nothing else of the
  * record is needed.
+ *
+ * The head holds no pointer, so its layout is the game's at every pointer
+ * width and these hold at every width.
  */
 typedef struct BwPortBattleSetup {
     u32 competitor;     /* 0x00: 0 a wild battle, 1 a trainer one */
     u32 rule;           /* 0x04 */
 } BwPortBattleSetup;
 
-BW_PORT_STATIC_ASSERT(setup_competitor, sizeof(void *) != 4 ||
-                      offsetof(BwPortBattleSetup, competitor) == 0x00u);
+BW_PORT_STATIC_ASSERT(setup_competitor, offsetof(BwPortBattleSetup, competitor) == 0x00u);
+BW_PORT_STATIC_ASSERT(setup_rule, offsetof(BwPortBattleSetup, rule) == 0x04u);
+BW_PORT_STATIC_ASSERT(setup_size, sizeof(BwPortBattleSetup) == 8u);
 
 /* ------------------------------------------------------------------ */
 /* The port's own constants                                            */
