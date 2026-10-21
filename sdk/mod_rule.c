@@ -39,8 +39,13 @@
  *   - the state calls (sdk/mod_state.h): every state value a rule reads or
  *     writes goes through the port's own table, never around it;
  *   - the message service (sdk/mod_message.h): the `message` action;
- *   - the peer sessions: not built.  The `send` action is a call that is
- *     reported as unavailable until the service is there.
+ *   - the peer sessions (sdk/mod_net.h): the `send` action.  The rule
+ *     layer reaches the session service through the seam the port
+ *     installs (bw_mod_rule_set_send); with no seam it calls the session
+ *     service's own call, so the action reaches the service either way;
+ *   - the saved-data layer's namespace (sdk/mod_savedata.c): the mod that
+ *     is calling.  The session service keys a message by it, so the rule
+ *     layer sets it around the send.
  *
  * The port-internal API
  * ---------------------
@@ -84,11 +89,15 @@
  *     too, and the rules are bound again when the mods are loaded again;
  *   - the mod's cells are stored through the saved-data layer: the port
  *     installs the two calls of bw_mod_rule_set_cells_io, and they reach
- *     the mod's own file under the mod's namespace.
+ *     the cells' own file, under a namespace derived from the mod's own;
+ *   - the peer send: the port installs its own call with
+ *     bw_mod_rule_set_send when it wants its own policy; the rule layer
+ *     calls the session service itself when there is none.
  */
 #include "mod_api.h"
 #include "mod_event.h"
 #include "mod_message.h"
+#include "mod_net.h"
 #include "mod_rule.h"
 #include "mod_state.h"
 
@@ -97,6 +106,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+ * The saved-data layer's namespace seam.
+ *
+ * The layer has no header of its own yet, so the prototypes are here (the
+ * session service does the same, sdk/mod_net.c).  The namespace is the mod
+ * that is calling: the loader sets it around every call it makes into a
+ * mod, and the session service keys a message by it.
+ */
+extern void        bw_mod_savedata_set_namespace(const char *ns);
+extern const char *bw_mod_savedata_namespace(void);
 
 /* ------------------------------------------------------------------ */
 /* The limits                                                          */
@@ -155,6 +175,19 @@
 
 /* How many mods' cells the port holds at once. */
 #define BW_RULE_OWNERS_MAX      16u
+
+/*
+ * The longest namespace the saved-data layer accepts (sdk/mod_savedata.c):
+ * one path component, and at most 64 characters.
+ */
+#define BW_RULE_NS_MAX          64u
+
+/*
+ * The suffix the cells' own namespace carries.  The cells live in a file of
+ * their own, under a namespace derived from the mod's, so that a rule that
+ * writes a cell never writes over the mod's own payload.
+ */
+#define BW_RULE_CELLS_SUFFIX    "-rules"
 
 /*
  * The step budget of the language document, section 4: a step is one
@@ -867,7 +900,7 @@ typedef struct BwRule {
     const BwRuleEvent *event;  /* the event's row */
     char          name[BW_RULE_NAME_MAX];
     char          label[BW_RULE_NAME_MAX];
-    char          ns[BW_RULE_NAME_MAX];
+    char          ns[BW_RULE_NS_MAX + 1u];   /* the mod's namespace */
     char         *text;       /* the file's text: the names point into it */
     char        **strings;    /* the copies the rule keeps */
     u32           string_count;
@@ -879,8 +912,10 @@ typedef struct BwRule {
     u32           guard_count;
     BwRuleAction  actions[BW_RULE_ACTIONS_MAX];
     u32           action_count;
+    int           uses_cells;    /* the rule reads or writes a cell */
     int           budget_reported;
     int           runtime_reported;
+    int           send_reported;  /* the send's own report is done */
 } BwRule;
 
 /* The bound rules, in load order. */
@@ -912,10 +947,12 @@ typedef struct BwRuleCell {
 
 /* The cells of one mod, under its state namespace. */
 typedef struct BwRuleOwner {
-    char       ns[BW_RULE_NAME_MAX];
+    char       ns[BW_RULE_NS_MAX + 1u];         /* the mod's namespace */
+    char       file_ns[BW_RULE_NS_MAX + 1u];     /* the cells' own namespace */
     BwRuleCell cells[BW_RULE_CELLS_MAX];
     u32        cell_count;
     int        loaded;
+    int        own_file;    /* the cells' file is the rule layer's own */
     int        reported;
 } BwRuleOwner;
 
@@ -1535,6 +1572,7 @@ static int parse_name(BwRuleParse *p)
         if (node < 0) {
             return -1;
         }
+        p->rule->uses_cells = 1;
         p->rule->nodes[node].text = rule_string(p->rule, p->tok.text);
         if (p->rule->nodes[node].text == NULL) {
             parse_error(p, p->err_line, "no room for the cell's name");
@@ -2073,6 +2111,7 @@ static int parse_target(BwRuleParse *p, BwRuleTarget *t)
             parse_error(p, p->err_line, "no room for the cell's name");
             return -1;
         }
+        p->rule->uses_cells = 1;
         if (p_advance(p) != 0) {
             return -1;
         }
@@ -2223,7 +2262,8 @@ static int parse_action(BwRuleParse *p, const char *keyword)
         }
         if (r->nodes[expr].type != BW_RULE_T_TEXT &&
             r->nodes[expr].type != BW_RULE_T_INT) {
-            parse_error(p, p->err_line, "the value must be a text");
+            parse_error(p, p->err_line, "the value must be a text or a "
+                        "number");
             return -1;
         }
         a->op = strcmp(keyword, "message") == 0 ? BW_RULE_ACT_MESSAGE
@@ -2603,6 +2643,42 @@ fail:
 /* The cells                                                          */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The namespace the cells' own file lives under.
+ *
+ * The mod's own file holds the mod's own payload (docs/mod-state.md,
+ * section 1), and the rule layer must not write over it: one file per mod
+ * is the only isolation the port can give, and a rule that wrote a cell
+ * would take the mod's own data with it.  So the cells live in a file of
+ * their own, under a namespace derived from the mod's, which the
+ * saved-data layer turns into its own folder and its own file.  That file
+ * is named after the game save, so the cells still follow the game save
+ * (the language document, section 5).
+ *
+ * The name is the mod's namespace with the suffix, cut so that it stays
+ * inside the length the saved-data layer accepts.
+ */
+static void cells_namespace(char *out, size_t size, const char *ns)
+{
+    size_t n;
+    size_t keep;
+
+    if (size == 0) {
+        return;
+    }
+    n = strlen(ns);
+    keep = (size_t)BW_RULE_NS_MAX - (sizeof(BW_RULE_CELLS_SUFFIX) - 1u);
+    if (n > keep) {
+        n = keep;
+    }
+    if (n + sizeof(BW_RULE_CELLS_SUFFIX) > size) {
+        n = (size > sizeof(BW_RULE_CELLS_SUFFIX))
+                ? size - sizeof(BW_RULE_CELLS_SUFFIX) : 0u;
+    }
+    memcpy(out, ns, n);
+    memcpy(out + n, BW_RULE_CELLS_SUFFIX, sizeof(BW_RULE_CELLS_SUFFIX));
+}
+
 /* The owner of the cells: the mod with this namespace. */
 static BwRuleOwner *owner_get(const char *ns)
 {
@@ -2620,6 +2696,7 @@ static BwRuleOwner *owner_get(const char *ns)
     o = &g_owners[g_owner_count++];
     memset(o, 0, sizeof(*o));
     copy_str(o->ns, sizeof o->ns, ns);
+    cells_namespace(o->file_ns, sizeof o->file_ns, ns);
     return o;
 }
 
@@ -2728,7 +2805,7 @@ static int cell_write(BwRuleOwner *owner, const char *name, int keyed,
     return 0;
 }
 
-/* The cells' own file: the payload the port stores under the mod's
+/* The cells' own file: the payload the port stores under the cells'
  * namespace. */
 static void cells_store(BwRuleOwner *owner)
 {
@@ -2738,6 +2815,12 @@ static void cells_store(BwRuleOwner *owner)
     u32 i;
 
     if (owner == NULL || g_cells_store == NULL) {
+        return;
+    }
+    if (!owner->own_file) {
+        /* The file holds something that is not the rule layer's, so the
+         * cells are not written over it (docs/mod-state.md, section 1:
+         * the file boundary is the only isolation the port can give). */
         return;
     }
     for (i = 0; i < owner->cell_count; i++) {
@@ -2772,7 +2855,7 @@ static void cells_store(BwRuleOwner *owner)
             off += 4u;
         }
     }
-    (void)g_cells_store(owner->ns, buf, off);
+    (void)g_cells_store(owner->file_ns, buf, off);
     free(buf);
 }
 
@@ -2790,10 +2873,14 @@ static void cells_load(BwRuleOwner *owner)
     }
     owner->loaded = 1;
     if (g_cells_load == NULL) {
+        /* The port has given the layer no file for the cells, so the
+         * cells live in memory for the run and the file is not ours to
+         * write. */
+        owner->own_file = 0;
         if (!g_cells_reported) {
             g_cells_reported = 1;
             rule_report(owner->ns, NULL, 0,
-                        "the mod's cells are not saved: the port has no store "
+                        "the mod's cells are not saved: the port has no file "
                         "for them");
         }
         return;
@@ -2802,23 +2889,27 @@ static void cells_load(BwRuleOwner *owner)
     if (buf == NULL) {
         return;
     }
-    got = g_cells_load(owner->ns, buf, BW_RULE_CELLS_BUF_MAX);
+    got = g_cells_load(owner->file_ns, buf, BW_RULE_CELLS_BUF_MAX);
     if (got <= 0 || (u32)got < 12u) {
+        /* No file yet: the cells' file is ours to make. */
+        owner->own_file = 1;
         free(buf);
         return;
     }
     if (memcmp(buf, BW_RULE_CELLS_MAGIC, 4) != 0) {
-        /* The payload is the mod's own, not the rule layer's: the cells
-         * stay in memory, and the port is told once. */
+        /* The payload is not the rule layer's: the cells stay in memory,
+         * the file is not ours, and the port is told once. */
+        owner->own_file = 0;
         if (!owner->reported) {
             owner->reported = 1;
             rule_report(owner->ns, NULL, 0,
-                        "the mod's own data is in its file, so the rule's "
-                        "cells are not saved");
+                        "the cells' file holds data that is not the rule "
+                        "layer's, so the mod's cells are not saved");
         }
         free(buf);
         return;
     }
+    owner->own_file = 1;
     if (bw_rd32(buf + 4) != BW_RULE_CELLS_VERSION) {
         free(buf);
         return;
@@ -3671,6 +3762,98 @@ static const char *value_text(const BwRuleValue *v, char *buf, size_t size)
     return buf;
 }
 
+/* ------------------------------------------------------------------ */
+/* The peer send                                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The `send` action: the value goes to the peers of the current session
+ * (the language document, section 2; docs/mod-services.md, "Peer
+ * sessions").
+ *
+ * The key is the mod's namespace.  The session service keys a message by
+ * the mod that is calling (sdk/mod_net.c reads the namespace the
+ * saved-data layer has in force), so the rule layer sets that namespace
+ * to the rule's own around the send and puts back what was there.  The
+ * mod with the same namespace on the other side is then the one that
+ * receives the message, so the two sides agree as long as they use the
+ * same namespace for the mod.
+ *
+ * The value is the text of the expression: a text goes as it is, and a
+ * number as its digits.  A message is up to 4 KB of the mod's own bytes
+ * (docs/mod-services.md), so a value that is longer is not sent.
+ *
+ * The action never fails the rule: a rule cannot fail while it runs (the
+ * language document, section 4), so the port says what it could not do,
+ * once, and the rule goes on.
+ */
+
+/* The send call the rule layer uses when the port has installed none: the
+ * session service's own call, the one the services table carries
+ * (sdk/mod_net.h). */
+static int rule_send_default(const char *value)
+{
+    return bw_mod_net_session_send(0u, value, (u32)strlen(value));
+}
+
+/* The send's own report: once per rule, and the rule goes on. */
+static void send_problem(BwRuleVm *vm, const char *what)
+{
+    if (vm->rule->send_reported) {
+        return;
+    }
+    vm->rule->send_reported = 1;
+    rule_report(vm->rule->label, vm->rule->name, 0, "%s", what);
+}
+
+/* The send action. */
+static void action_send(BwRuleVm *vm, const BwRuleValue *value)
+{
+    int (*send)(const char *value);
+    const char *text;
+    const char *saved;
+    char buf[32];
+    size_t len;
+    int rc;
+
+    text = value_text(value, buf, sizeof buf);
+    len = strlen(text);
+    if (len > (size_t)BW_MOD_NET_MESSAGE_MAX) {
+        send_problem(vm, "the value is longer than a session message, so it "
+                         "was not sent");
+        return;
+    }
+    if (vm->rule->ns[0] == '\0') {
+        send_problem(vm, "the rule has no namespace, so the value could not "
+                         "be keyed for the peers");
+        return;
+    }
+    send = (g_send != NULL) ? g_send : rule_send_default;
+
+    /* The key: the namespace of the mod the rule belongs to, for the time
+     * the send takes. */
+    saved = bw_mod_savedata_namespace();
+    bw_mod_savedata_set_namespace(vm->rule->ns);
+    if (strcmp(bw_mod_savedata_namespace(), vm->rule->ns) != 0) {
+        /* The layer refused the name, so the message would carry no key
+         * and no mod on the other side would take it. */
+        bw_mod_savedata_set_namespace(saved);
+        send_problem(vm, "the mod's namespace is not usable, so the value "
+                         "could not be keyed for the peers");
+        return;
+    }
+    rc = send(text);
+    bw_mod_savedata_set_namespace(saved);
+    if (rc != 0) {
+        if (rc == BW_MOD_NET_E_NO_SESSION) {
+            send_problem(vm, "there is no peer session, so the value was not "
+                             "sent");
+        } else {
+            send_problem(vm, "the peer session did not take the value");
+        }
+    }
+}
+
 /* Run one action. */
 static int do_action(BwRuleVm *vm, const BwRuleAction *a)
 {
@@ -3738,18 +3921,7 @@ static int do_action(BwRuleVm *vm, const BwRuleAction *a)
         if (eval_node(vm, a->expr, &value) != 0) {
             return -1;
         }
-        if (g_send == NULL) {
-            if (!vm->rule->runtime_reported) {
-                vm->rule->runtime_reported = 1;
-                rule_report(vm->rule->label, vm->rule->name, 0,
-                            "the peer session service is not built, so the "
-                            "value was not sent");
-            }
-            return 0;
-        }
-        if (g_send(value_text(&value, buf, sizeof buf)) != 0) {
-            return -1;
-        }
+        action_send(vm, &value);
         return 0;
 
     default:
@@ -3787,6 +3959,13 @@ static int run_rule(BwRule *rule, BwEvent *event)
     vm.steps = 0;
     vm.budget = 0;
     vm.refused = 0;
+
+    /* The cells are read before the rule looks at them: the load happens
+     * at bind time, and this is the backstop for a rule bound without
+     * one. */
+    if (vm.owner != NULL && rule->uses_cells) {
+        cells_load(vm.owner);
+    }
 
     for (i = 0; i < rule->guard_count; i++) {
         BwRuleValue v;
@@ -3971,8 +4150,9 @@ int bw_mod_rule_bind(u32 kind, const char *path, const char *ns,
         return -1;
     }
 
-    /* The rule's own cells: they are read once, when the rule is bound. */
-    if (rule->ns[0] != '\0') {
+    /* The rule's own cells: they are read once, when the rule is bound.
+     * Only a rule that uses a cell touches the cells' file. */
+    if (rule->uses_cells && rule->ns[0] != '\0') {
         BwRuleOwner *owner = owner_get(rule->ns);
 
         if (owner != NULL) {

@@ -33,9 +33,12 @@
 #include "cp.h"
 #include "dsmem.h"
 #include "firmware.h"
+#include "mod_avatar.h"
 #include "mod_context.h"
 #include "mod_event.h"
 #include "mod_export.h"
+#include "mod_frame.h"
+#include "mod_handoff.h"
 #include "mod_message.h"
 #include "mod_net.h"
 #include "mod_rule.h"
@@ -75,6 +78,9 @@ void bw_port_reset(void)
     bw_mod_timer_reset();
     bw_mod_export_reset();
     bw_mod_net_reset();
+    bw_mod_frame_reset();
+    bw_mod_avatar_reset();
+    bw_mod_handoff_reset();
 
     bw_pxi_set_irq_sink(bw_os_raise_irq);
     bw_os_set_cpu_step(bw_arm7_step);

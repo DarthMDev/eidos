@@ -1232,6 +1232,15 @@ static int rx_fill(void)
     if (t->recv == NULL) {
         return -1;
     }
+    if (g_rx.pos > 0) {
+        /* Drop what has been read: the buffer never grew, but the bytes
+         * that are parsed leave the front of it behind, and without this
+         * the buffer fills up and the session ends (a few kilobytes of
+         * frames were the whole session's life). */
+        memmove(g_rx.buf, g_rx.buf + g_rx.pos, g_rx.len - g_rx.pos);
+        g_rx.len -= g_rx.pos;
+        g_rx.pos = 0;
+    }
     if (g_rx.len >= sizeof(g_rx.buf)) {
         return -1;                      /* a frame bigger than the buffer */
     }

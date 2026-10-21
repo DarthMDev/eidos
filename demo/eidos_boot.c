@@ -65,6 +65,7 @@
  * not in main().
  */
 
+#include "mod_frame.h"
 #include "mod_hooks.h"
 #include "mod_loader.h"
 #include <stdio.h>
@@ -1241,6 +1242,10 @@ static void boot_frame(void *user)
 #endif
     eidos_frame_run_one(&run->loop);
     eidos_prof_end(EIDOS_PROF_STEP, t_step + g_render_ns);
+    /* The mod layer's frame tick: the mods' own frame handlers and the
+     * network's, once a frame, after the game's own frame work and in the
+     * game's thread (the halt hook runs on the game's idle thread). */
+    bw_mod_frame_tick();
     g_frames_seen++;
     boot_capture_step(run);
     {

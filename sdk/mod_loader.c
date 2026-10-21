@@ -106,8 +106,11 @@
  * the build published.
  */
 #include "mod_api.h"
+#include "mod_avatar.h"
 #include "mod_event.h"
 #include "mod_export.h"
+#include "mod_frame.h"
+#include "mod_handoff.h"
 #include "mod_loader.h"
 #include "mod_manifest.h"
 #include "mod_message.h"
@@ -170,6 +173,9 @@ extern int         bw_mod_savedata_clear(void);
 extern int         bw_mod_savedata_info(BwModStateHeader *out);
 extern int         bw_mod_savedata_dir(char *out, u32 out_size);
 extern int         bw_mod_savedata_in_step(void);
+
+/* The run restart (sdk/mod_restart.c). */
+extern void        bw_mod_restart(u32 flags);
 
 /*
  * One override row: sdk/mod_manifest.h carries it, and the manifest layer
@@ -898,6 +904,17 @@ static int loader_load(u32 index)
     m->services.on_session    = bw_mod_net_on_session;
     m->services.on_command    = bw_mod_net_on_command;
     m->services.publish       = bw_mod_net_publish;
+    /* The frame tick: the mod that binds a frame handler is the one whose
+     * namespace is in force, the way the network's calls find their
+     * caller. */
+    m->services.on_frame      = bw_mod_frame_on_frame;
+    /* The field avatars, the run restart and the save handoff. */
+    m->services.avatar_create = bw_mod_avatar_create;
+    m->services.avatar_move   = bw_mod_avatar_move;
+    m->services.avatar_delete = bw_mod_avatar_delete;
+    m->services.run_restart   = bw_mod_restart;
+    m->services.save_send     = bw_mod_handoff_send;
+    m->services.on_save_received = bw_mod_handoff_on_save;
     /* The rules' cells: the mod's own file under its namespace. */
     bw_mod_rule_set_cells_io(loader_cells_load, loader_cells_store);
 

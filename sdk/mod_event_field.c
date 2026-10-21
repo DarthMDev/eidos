@@ -31,6 +31,7 @@
  * into nothing.
  */
 #include "mod_event.h"
+#include "mod_avatar.h"
 #include "mod_context.h"
 #include "mod_slot.h"
 #include "mod_state.h"
@@ -744,6 +745,11 @@ static void build_route_change(const BwEventCall *call, BwEventPayload *out)
     bw_mod_field_context.zone = zone;
     bw_mod_field_context.prev_zone = prev_zone;
     bw_mod_field_context.season = season;
+
+    /* The avatars belong to the zone: the old ones are gone before the
+     * mod's handlers run, so a mod recreates the ones it wants in the new
+     * zone (docs/mod-services.md, "Field avatars"). */
+    bw_mod_avatar_reset();
 }
 
 /*
