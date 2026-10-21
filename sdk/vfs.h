@@ -4,7 +4,7 @@
  * sdk/port.h declares the two roots and the path resolution every loader
  * uses (bw_set_data_root, bw_set_mod_root, bw_data_path); this header is the
  * rest of the file layer: several mods in a load order, and the merged view
- * of an archive some of whose members a mod replaces or adds.  README.md,
+ * of an archive some of whose members a mod replaces or adds.  docs/files.md,
  * "The file layer", is the user-facing description of the mod tree.
  *
  * The model, in one paragraph.  There is one base layer (the data root) and

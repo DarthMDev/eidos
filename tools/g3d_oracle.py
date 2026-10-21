@@ -28,7 +28,7 @@ exactly and compare in the units the engine actually computes in.
     # shape <shape_index> <tex_name|-> <tex_w> <tex_h> <n_verts> <n_faces>
 
 It also records, per model and over the whole a/0/1/4 texture archive,
-which GX texture formats actually occur, which is the survey the README's
+which GX texture formats actually occur, which is the survey docs/engine-3d.md's
 engine/g3d section quotes.
 
 Nothing about the geometry is recomputed here.  The OBJ is the oracle; the

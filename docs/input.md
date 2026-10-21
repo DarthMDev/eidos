@@ -105,7 +105,7 @@ overflow results. `bw_port_reset` installs it.
 
 ## The host side (`engine/platform/`)
 
-- **Keyboard**: the scancode table in README.md, "The platform layer".
+- **Keyboard**: the scancode table in docs/runtime.md, "The platform layer".
 - **Gamepads**: SDL's game controller API, every pad in SDL's database, read
   through `EidosPadBinding` tables (button, or an axis past half its
   travel). The default is positional: SDL is told to report positions on

@@ -40,7 +40,7 @@ byte offset; the other five (`sub_02030F50`, `sub_02030F70`,
 and `+0x10` as pointers where `sub_0203101C` and `sub_020310C4`, which are in
 every configuration, declare them as `u32`: one struct on the DS and on any
 ILP32 target, two different ones on LP64. OFF does the reverse, which is the
-state README.md's "Why nine matched files are out of the LP64 build"
+state docs/runtime.md's "Why nine matched files are out of the LP64 build"
 describes. The symbols are the same either way,
 so nothing else in the build knows which it got. Turning the option on for a
 target whose pointers are 8 bytes is a configure-time fatal error rather than
@@ -181,7 +181,7 @@ padding.
 re-examined, and 4,766 of them carry explicit padding, which as argued above is
 not a rule violation to be corrected but missing knowledge to be acquired.
 Every change to a matched source costs a full DS re-verify in the same commit
-(README.md, portability rule 1), so this is not a mechanical sweep; it is
+(docs/building.md, portability rule 1), so this is not a mechanical sweep; it is
 thousands of re-verifies on files that are already EXACT and already correct.
 ILP32 as the reference implies zero aletheia work, and it retires the one
 concession the port has already made: the four accessors come back into the

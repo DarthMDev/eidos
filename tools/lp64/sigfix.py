@@ -13,7 +13,7 @@ never read.  A wasm call is type-checked: wasm-ld replaces every direct call
 whose wasm signature differs from the definition's with a stub that traps,
 and warns "function signature mismatch".
 
-The port may not edit the matched files (README.md, portability rule 1), so
+The port may not edit the matched files (docs/building.md, portability rule 1), so
 the fix lives in the build, the same way `-Dg_02146B64=sRootList` already
 does: for each calling translation unit whose declaration disagrees, compile
 it with `-D<func>=<func>__as_<sig>` and link a generated adapter

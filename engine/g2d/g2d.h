@@ -440,7 +440,7 @@ void g2d_bg_tile(const G2dNcgr *ncgr, u32 tile_index, int hflip, int vflip,
  * dimensions.  It is what the asset lane's renderer does, and it is the
  * only reading available for the many NSCR resources whose declared size
  * is not a hardware screen size at all (a/1/4/3#22 is 512x192).  See the
- * README's discrepancy note.
+ * docs/engine-2d.md's discrepancy note.
  */
 #define G2D_BG_SIZE_FLAT    0x100u
 
@@ -464,7 +464,7 @@ void g2d_bg_map_tiles(u32 size_code, u32 *tiles_wide, u32 *tiles_high);
  * NSCR on disk.  The flag is ignored for G2D_BG_SIZE_FLAT, which is
  * row-major by construction, and the two readings coincide for every size
  * except 512x256 and 512x512.  Which one an NSCR file on disk is actually
- * in is not settled by the evidence this repository has; see README.md.
+ * in is not settled by the evidence this repository has; see docs/engine-2d.md.
  */
 #define G2D_BG_ORDER_VRAM      0u
 #define G2D_BG_ORDER_ROW_MAJOR 1u

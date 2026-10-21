@@ -8,7 +8,7 @@
  * unrelated memory without a trace.  Committing 16 MiB up front for the few
  * pages the game touches outside its registered globals is wasteful, so the
  * block is reserved and committed in pieces.  That needs the operating
- * system, and this is the one file that talks to it (README.md, "Portability
+ * system, and this is the one file that talks to it (docs/building.md, "Portability
  * rules": OS calls live behind one small file with an #ifdef per family).
  *
  *   Win32   VirtualAlloc(MEM_RESERVE), then MEM_COMMIT per piece on demand.

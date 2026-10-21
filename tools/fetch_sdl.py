@@ -8,7 +8,7 @@ the keyboard, the audio device and the frame pacer.  Everything else in this
 repository, the engine library and every test but test_view, builds and runs
 without it, so SDL2 is an optional dependency and this script is optional
 too.  On Linux and macOS the system package is the normal way to get it
-(README.md, "SDL2 on every platform"); this script is for the toolchains that
+(docs/building.md, "SDL2 on every platform"); this script is for the toolchains that
 have no package manager behind them, and for any host as a last resort.
 
 Three flavours of the same pinned release, all from the libsdl-org GitHub

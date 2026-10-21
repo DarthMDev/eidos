@@ -39,7 +39,7 @@
  * constraints: at most 0x48 bytes, and no more than 4-byte alignment,
  * because the game's structs are 4-aligned and a host FILE * wants 8.  So
  * the record stores an *index* into a table of open host files, never a
- * pointer (README.md, portability rule 5), and the same struct works at
+ * pointer (docs/building.md, portability rule 5), and the same struct works at
  * either pointer width.
  *
  * What one record can stand for:

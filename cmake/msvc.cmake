@@ -62,7 +62,7 @@ endif()
 # declared locally with the prototype that call site needs, a parameter the
 # body does not use keeps the DS calling convention, and a local that is never
 # read is sometimes what fixed mwccarm's register allocation.  The matched
-# files themselves are never edited (README.md, "Portability rules").
+# files themselves are never edited (docs/building.md, "Portability rules").
 if(EIDOS_CLANG_CL)
     set(EIDOS_MATCHED_COMPILE_OPTIONS
         "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")

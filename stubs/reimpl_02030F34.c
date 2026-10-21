@@ -25,7 +25,7 @@
  * This is the same class of problem as reimpl_02030EF0.c and is the reason
  * four otherwise EXACT files are out of the build: a matched function that
  * reaches a field of a *pointer-bearing* game struct through a DS byte
- * offset has no host reading.  README.md, "Why nine matched files are out of
+ * offset has no host reading.  docs/runtime.md, "Why nine matched files are out of
  * the build", records it for the aletheia side; nothing about the DS bytes
  * is wrong, and nothing in this port may change them.
  *

@@ -102,7 +102,7 @@ const BwOverlayDesc  *bw_overlay_desc(u32 id);
  * "Every known function" is every function aletheia's metadata names in the
  * overlay: the matched ones, the overlay's SDK symbols, the functions its
  * matched sources call inside its own range, and its static initialisers.
- * It is a lower bound on the overlay's real function list; see README.md,
+ * It is a lower bound on the overlay's real function list; see docs/files.md,
  * "Overlays".
  */
 enum { BW_OVL_PRESENT = 0, BW_OVL_ABSENT = 1, BW_OVL_UNKNOWN = 2, BW_OVL_NO_SUCH = 3 };

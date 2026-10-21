@@ -21,7 +21,7 @@
  *     hardware size at all (a/1/4/3#22 is 512x192 and a/0/3/3#29 is
  *     448x192).  The two readings coincide for every size except
  *     512x256 and 512x512; G2D_BG_SIZE_FLAT selects the row-major one
- *     and is what the oracle comparison uses.  See README.md.
+ *     and is what the oracle comparison uses.  See docs/engine-2d.md.
  *
  * Every read goes through bw_rd16/bw_rd32 (portability rule 4).
  */

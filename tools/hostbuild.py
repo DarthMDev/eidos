@@ -2,7 +2,7 @@
 """
 hostbuild.py -- build and run the port tests without CMake.
 
-CMake is the supported build (CMakeLists.txt, and README.md tells you how).
+CMake is the supported build (CMakeLists.txt, and docs/building.md tells you how).
 This script exists for two cases CMake does not cover:
 
   * a machine with a C compiler but no CMake, which is where this lane was
@@ -51,7 +51,7 @@ def read_source_lists(aletheia_root, ilp32=False):
 
     The nine pointer-width-dependent tcbl sources live in their own two
     lists there, because which of them is compiled is decided by the target's
-    pointer width (README.md, "Pointer width, and the reference
+    pointer width (docs/building.md, "Pointer width, and the reference
     configuration").  `ilp32` makes the
     same choice CMake's EIDOS_TCBL_MATCHED does: the matched
     sources where a pointer is four bytes, the stubs/reimpl_ stand-ins

@@ -230,7 +230,7 @@ opens as `BW_DATA_ROOT`). It is re-derivable from the ROM, so it goes where
 an operating system keeps large local application data, never in a roaming,
 synced or backed-up location, and never in a cache directory the system may
 purge. The eidos home folder holds `extract/` and `config.txt`; the mod
-overlay root (see "The file layer" in the README) is meant to sit beside
+overlay root (see "The file layer" in docs/files.md) is meant to sit beside
 them as `mods/`.
 
 | Platform | eidos home (`bw_os_app_home`) | Notes |

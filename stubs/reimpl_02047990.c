@@ -42,7 +42,7 @@
  *   func_02047970.c spell theirs (byte padding to the fixed offsets).  Under
  *   the reference ILP32 configuration it agrees with every matched file that
  *   reaches the context; on LP64 it agrees with those two, which is the
- *   same caveat they carry (README.md, "Pointer width").
+ *   same caveat they carry (docs/building.md, "Pointer width").
  *
  * Port-side access
  *

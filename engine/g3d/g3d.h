@@ -50,7 +50,7 @@
  * compare against, and nothing here claims pixel-exactness with the
  * hardware.  Every rule it follows is either documented hardware
  * behaviour or is marked an approximation in raster.c's header and in
- * README.md's engine/g3d section.
+ * docs/engine-3d.md's engine/g3d section.
  */
 
 #ifndef EIDOS_ENGINE_G3D_H
@@ -163,7 +163,7 @@ const G3dMtx *g3d_mtx_stack_clip(G3dMtxStack *st);
  * GX texture formats, the TEXIMAGE_PARAM format field.  The survey
  * tools/g3d_oracle.py runs over a/0/1/4 (the shared terrain and building
  * texture archive every map model draws from) reports which of them
- * actually occur; see README.md.  All seven decode here anyway, because
+ * actually occur; see docs/engine-3d.md.  All seven decode here anyway, because
  * a decoder that only handles what one archive happens to use is a trap
  * for the next archive.
  */

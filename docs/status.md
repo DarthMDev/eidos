@@ -1,6 +1,6 @@
 # Port status: done, and what is left to port
 
-README.md's "Planned Milestones" is the detailed checklist, grouped by
+docs/milestones-detail.md's "Planned Milestones" is the detailed checklist, grouped by
 milestone. This file is the same work grouped by what it waits on. aletheia's
 decompilation is code complete: the whole game's code is matched (2,183,286
 of 2,183,302 bytes, 99.9993%), 35,520 functions with none missing and none
@@ -129,7 +129,7 @@ that changes it. Where an item is only partly done, it says which part.
   CRT dialogs are off in every MSVC executable (`sdk/plat_nodialog.c`).
   Still open: GCC and Clang on a real Linux machine (and macOS), which
   `tools/check.py` covers but nobody has run there yet. SDL2 is wired up
-  under MSVC too, through the `vc` devel zip (README "Building with MSVC").
+  under MSVC too, through the `vc` devel zip (docs/building.md "Building with MSVC").
 - **Milestone 5, oracle breadth**: more sequences in the audio oracle is
   mechanical coverage, not accuracy.
 - **Milestone 8+**: high-resolution/widescreen rendering, packaging.

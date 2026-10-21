@@ -5,7 +5,7 @@
  * NOT in the port library's source list: its closure pulls in the record's
  * encryption layer (func_02018D10 / func_02018D6C) and the two big field
  * dispatchers, and building a valid encrypted record is a milestone of its
- * own.  See README.md, "What is substituted, and why".
+ * own.  See docs/building.md, "What is substituted, and why".
  *
  * Until then the port ships this stub, and tests/test_stats.c supplies
  * its own definition, which displaces this archive member at link time.

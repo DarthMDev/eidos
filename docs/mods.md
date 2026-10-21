@@ -2,7 +2,7 @@
 
 This is the user-facing guide to the data layer: how to lay a mod over the
 game's own extracted files, and what a mod can replace. The design account is
-README.md, "The file layer"; `docs/modding.md` is the overview of the whole mod
+docs/files.md, "The file layer"; `docs/modding.md` is the overview of the whole mod
 surface. Every rule below is attributed to the code that enforces it.
 
 A mod is a directory laid out like the data root. The port reads the data
@@ -169,7 +169,7 @@ How the pieces combine (`sdk/vfs.c`, `bw_vfs_build_merged` and `collect`):
   the base end and a mod's index that no mod fills is an empty member.
 - A directory at a path where no layer holds a regular file is just a
   directory, not a new archive. A brand-new archive ships as a whole NARC
-  (`bw_vfs_build_merged` returns 0; README.md, "The file layer").
+  (`bw_vfs_build_merged` returns 0; docs/files.md, "The file layer").
 - The base file must be a NARC. Members over a file that is not a NARC are
   an error, reported on stderr (`parse_narc`).
 
@@ -178,7 +178,7 @@ as a whole NARC in memory, laid out the way the cartridge's are (header,
 BTAF, BTNF, GMIF, 4-byte member alignment padded with `0xFF`), and the FS
 shim serves it as a memory file. The matched readers that read the NARC's
 own header and tables cannot tell a merged archive from a shipped one
-(`sdk/vfs_narc.c`, file header; README.md, "The file layer"). Repacking any
+(`sdk/vfs_narc.c`, file header; docs/files.md, "The file layer"). Repacking any
 real archive from its own tables reproduces it byte for byte
 (`bw_narc_pack`; `tests/test_vfs_members.c`).
 
@@ -257,7 +257,7 @@ The results:
 
 Keep the member files in the game's own format (an NCGR, a compressed blob,
 a data record). Converting from a readable format is a tool's job, not the
-file layer's (README.md, "The file layer").
+file layer's (docs/files.md, "The file layer").
 
 ## What the tests verify
 
@@ -330,6 +330,6 @@ Not yet covered by either test:
 - The ROM FAT the boot copies (`FS_LoadArchiveTables`) still holds the
   cartridge sizes, and a strict sub-range of an archive opened by ROM offset
   keeps the cartridge layout's offsets. No matched caller does either with
-  an archive (README.md, "The file layer").
+  an archive (docs/files.md, "The file layer").
 - Paths are narrow strings throughout, as `fopen` takes them; `sdk/plat_dir.c`
   is the one platform file that tells a file from a directory and lists one.

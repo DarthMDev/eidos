@@ -35,7 +35,7 @@
  *     differ from another translation unit's declaration is outside what C99
  *     guarantees; it links and behaves correctly on every toolchain this port
  *     targets, and the alternative (editing the matched file) is forbidden.
- *     Recorded in README.md under "Known type mismatches".
+ *     Recorded in docs/building.md under "Known type mismatches".
  */
 
 #include <string.h>

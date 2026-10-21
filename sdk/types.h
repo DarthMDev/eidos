@@ -18,7 +18,7 @@
  * the ARM ABI's `int`.  The DS is a 32-bit little-endian LP32 target; the
  * host may be LP64 or LLP64.  What survives the move unchanged is every
  * fixed-width scalar; what does not is anything whose size depends on a
- * pointer.  See README.md, "Portability rules".
+ * pointer.  See docs/building.md, "Portability rules".
  */
 
 #ifndef BW_PORT_TYPES_H
@@ -38,7 +38,7 @@ typedef int64_t  s64;
 
 /*
  * Plain char is signed, as it is under the pinned DS compiler (`-char
- * signed`).  The build asks for it on every compiler (README.md, "Portability
+ * signed`).  The build asks for it on every compiler (docs/building.md, "Portability
  * rules", rule 6); this fails to compile, with a negative array size, on a
  * configuration that did not get it.
  */

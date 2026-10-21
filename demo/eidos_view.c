@@ -91,7 +91,7 @@
  * show its backdrop shows the 3D one instead.  That is the arrangement a
  * DS game uses when BG0 carries the 3D output at the lowest priority.
  * What it is not is a general BG0-is-3D hook inside g2d's own per-pixel
- * stack; README.md's engine/g3d section says what that still needs.
+ * stack; docs/engine-3d.md's engine/g3d section says what that still needs.
  */
 #define MAP_ARCHIVE "a/0/0/8"
 #define MAP_TEXTURES "a/0/1/4"

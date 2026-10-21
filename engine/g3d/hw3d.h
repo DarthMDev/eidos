@@ -84,7 +84,7 @@ void g3d_hw_port_write(u32 addr, u32 value);
  * pointer into the register file at 0x04000400..0x0400043F (what a
  * rewritten `&reg_G3X_GXFIFO` is), or the raw DS value itself, which is
  * what a matched call site passes when its address is a macro or an
- * integer rather than a literal cast (README: dsaddr's residue).  A shim
+ * integer rather than a literal cast (docs/building.md: dsaddr's residue).  A shim
  * that answers yes calls g3d_hw_claim(dst) before sending, so the access
  * that produced the pointer is not mistaken for a store.
  */

@@ -4,7 +4,7 @@
  *
  * The SDK surface itself (FS_OpenFile, FS_ReadFile, ...) is declared by the
  * matched sources that call it, each in its own spelling; this header is for
- * port code.  docs/boot.md and README.md, "The file layer", are the design.
+ * port code.  docs/boot.md and docs/files.md, "The file layer", are the design.
  */
 
 #ifndef BW_PORT_FS_H

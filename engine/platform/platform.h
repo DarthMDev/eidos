@@ -78,7 +78,7 @@ typedef struct EidosKeyBinding {
 } EidosKeyBinding;
 
 /*
- * The default table, documented in README.md:
+ * The default table, documented in docs/runtime.md:
  *
  *     d-pad        the arrow keys
  *     A            X          B            Z

@@ -6,7 +6,7 @@
  * 0x0202FC48 and the expanded heap under it, and where EIDOS_HEAP_MATCHED is
  * on (32-bit pointers, the reference configuration) the matched source is
  * compiled in this file's place.  On an LP64 host the expanded heap cannot
- * run (README.md, "The heap environment"), so this stays that host's heap
+ * run (docs/runtime.md, "The heap environment"), so this stays that host's heap
  * floor.  The text below is from before the constructor was matched and
  * records why the stand-in was written the way it was.
  *

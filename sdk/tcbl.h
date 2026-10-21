@@ -30,7 +30,7 @@
  * nothing of the task-callback list is a reimplementation.**  On an LP64
  * host nine of the twelve are the port's own, and that is a finding rather
  * than a preference.  See "Why nine matched files are out of the LP64 build"
- * in README.md; the short form is below, because the struct in this header
+ * in docs/runtime.md; the short form is below, because the struct in this header
  * is the direct consequence.
  *
  * ---------------------------------------------------------------------

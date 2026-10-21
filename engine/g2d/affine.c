@@ -57,7 +57,7 @@
  * floor-truncating shift, so the source coordinate it lands on can be one
  * texel away from rig.py's on pixels near a texel boundary.  Where the
  * two differ the engine is the reference, because the hardware is: see
- * README.md.  rig.py is not modified.
+ * docs/engine-2d.md.  rig.py is not modified.
  *
  * Nothing here is derived from any other decompilation, port or emulator;
  * the parameter semantics are public NDS hardware documentation and the

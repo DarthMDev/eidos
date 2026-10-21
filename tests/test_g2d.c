@@ -45,7 +45,7 @@ static const int k_species[] = { 25, 6, 94, 150 };
  * table, an 8.8 matrix, a floor-truncating shift) and rig.py transforms in
  * double precision and rounds to nearest, so the two can land on different
  * texels along a boundary.  The engine is the reference where they differ
- * (README.md), so the check is that the pose renders at all and that the
+ * (docs/engine-2d.md), so the check is that the pose renders at all and that the
  * divergence from the oracle is small and reported, not that it is zero.
  */
 static const int k_affine_species[] = { 50, 88 };
@@ -189,7 +189,7 @@ static int compare_species(BwArcFile *arc, const char *oracle_dir, int species)
  * canvas whose size differs from the oracle's by more than a couple of
  * pixels, or a pose that differs on more than a small share of its
  * pixels, is a real disagreement and fails; anything smaller is the
- * fixed-point difference the README documents.
+ * fixed-point difference docs/engine-2d.md documents.
  */
 static int compare_affine_species(BwArcFile *arc, const char *oracle_dir,
                                   int species)
