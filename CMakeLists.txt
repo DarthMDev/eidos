@@ -2377,6 +2377,21 @@ else()
         "-Wl,-Map,${CMAKE_BINARY_DIR}/eidos_boot.map")
 endif()
 
+# A fixed image base on Windows.  The DS address space sits at its own
+# addresses (main RAM at host 0x02000000, sdk/dsmem.c); with address space
+# layout randomisation the loader may put the 17 MB executable across that
+# range, and the boot then falls back to movable blocks, which the game's raw
+# DS pointers do not survive (a crash at frame 0 on some starts).  Without it
+# the image stays at its preferred base (0x400000 for a 32-bit image), below
+# the DS range.
+if(WIN32)
+    if(MSVC)
+        target_link_options(eidos_boot PRIVATE "/DYNAMICBASE:NO")
+    else()
+        target_link_options(eidos_boot PRIVATE "-Wl,--disable-dynamicbase")
+    endif()
+endif()
+
 # --- Overlays compiled into eidos_boot (docs/overlays.md) --------------------
 #
 # EIDOS_OVERLAYS names the overlays tools/ovlink.py compiles into eidos_boot:

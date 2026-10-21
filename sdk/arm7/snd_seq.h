@@ -143,7 +143,8 @@ void bw_sndseq_unlock(u32 channels);
 u32  bw_sndseq_locked(void);
 void bw_sndseq_stop_unlocked(u32 channels);
 /* Seq, bank or wave data in [lo, hi) is about to be reused: stop what
- * reads it.  kind 0 sequence, 1 bank, 2 wave.                             */
+ * reads it.  kind 0 sequence, 1 bank (the players stop), 2 wave (only the
+ * channels playing from it stop; the players go on).                     */
 void bw_sndseq_invalidate(int kind, uintptr_t lo, uintptr_t hi);
 
 /* Inspection.                                                             */

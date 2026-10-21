@@ -492,6 +492,20 @@ void eidos_platform_wait_frame(EidosPlatform *p)
     if (p == NULL) {
         return;
     }
+    {
+        /* EIDOS_NOWAIT=1: no pacing at all, every frame drawn and shown,
+         * so a run's wall time is what its frames cost (a benchmark). */
+        static int nowait = -1;
+
+        if (nowait < 0) {
+            const char *v = getenv("EIDOS_NOWAIT");
+
+            nowait = v != NULL && *v != '\0' && strcmp(v, "0") != 0;
+        }
+        if (nowait) {
+            return;
+        }
+    }
     /* Fast forward: the period is the factor times shorter (with
      * EIDOS_FAST_FORWARD_MAX the host is always behind, so it never waits). */
     period = (u64)EIDOS_DS_FRAME_CLOCKS * 1000000000ull

@@ -825,10 +825,13 @@ static void boot_gpu3d(BootRun *run, int behind_done)
         }
         /* What 2D the game blends over the 3D (the battle's message box):
          * the screen with an opaque black 3D layer, beside the one with the
-         * sentinel.  Only when the screen was composed with the sentinel. */
+         * sentinel.  Only when the screen was composed with the sentinel,
+         * and only when a 2D pixel can blend over the 3D at all: BG0 (the 3D
+         * layer) is one of BLDCNT's second targets.  Otherwise it is a
+         * second compose of the main screen every frame for nothing. */
         const u8 *zero = NULL;
 
-        if (!run->gpu_real) {
+        if (!run->gpu_real && (bw_io_read16(0x04000050u) & 0x0100u) != 0u) {
             if (run->black3d == NULL) {
                 u32 k;
 
@@ -1772,6 +1775,7 @@ int main(int argc, char **argv)
     }
 #endif
     bw_plat_crash_install();
+    bw_plat_sampler_start();
 #if EIDOS_BOOT
     bw_plat_crash_code_resolver(boot_resolve_code);
 #endif

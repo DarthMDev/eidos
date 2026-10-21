@@ -167,6 +167,50 @@ static const char *k_fse =
     "    }\n"
     "}\n";
 
+/* Fog, over the frame after the edge marking (raster.c, g3d_target_fog, is
+ * the reference).  The ID buffer's bit 6 is the pixel's fog flag; the depth
+ * texture holds the depth in the DS's 15-bit units times 1/32768 (z/w as
+ * gl_FragCoord.z, or w / 2^24 for a w-buffered frame).  The colour target is
+ * premultiplied, so the straight colour is taken back out, blended, and
+ * multiplied again; a clear-plane pixel of alpha 0 blends from the clear
+ * colour. */
+static const char *k_fsf =
+    "#version 330 core\n"
+    "uniform sampler2D u_col;\n"
+    "uniform usampler2D u_id;\n"
+    "uniform sampler2D u_dep;\n"
+    "uniform vec4 u_fog;\n"
+    "uniform float u_table[32];\n"
+    "uniform float u_offset;\n"
+    "uniform float u_step;\n"
+    "uniform int u_aonly;\n"
+    "uniform vec3 u_clear;\n"
+    "out vec4 o;\n"
+    "void main() {\n"
+    "    ivec2 p = ivec2(gl_FragCoord.xy);\n"
+    "    vec4 c = texelFetch(u_col, p, 0);\n"
+    "    uint id = texelFetch(u_id, p, 0).r;\n"
+    "    o = c;\n"
+    "    if ((id & 0x40u) == 0u) { return; }\n"
+    "    float d = min(floor(texelFetch(u_dep, p, 0).r * 32768.0), 32767.0);\n"
+    "    float den;\n"
+    "    if (u_step <= 0.0) { den = d > u_offset ? u_table[31] : u_table[0]; }\n"
+    "    else if (d <= u_offset + u_step) { den = u_table[0]; }\n"
+    "    else if (d >= u_offset + u_step * 32.0) { den = u_table[31]; }\n"
+    "    else {\n"
+    "        float rel = d - u_offset - u_step;\n"
+    "        int k = int(floor(rel / u_step));\n"
+    "        float f = rel - float(k) * u_step;\n"
+    "        den = floor((u_table[k] * (u_step - f) + u_table[k + 1] * f) / u_step);\n"
+    "    }\n"
+    "    if (den >= 127.0) { den = 128.0; }\n"
+    "    vec3 sc = c.a > 0.0 ? c.rgb / c.a : ((id & 0x80u) == 0u ? u_clear : vec3(0.0));\n"
+    "    float a5 = floor(c.a * 31.0 + 0.5);\n"
+    "    float na = floor((u_fog.a * 31.0 * den + a5 * (128.0 - den)) / 128.0) / 31.0;\n"
+    "    vec3 nc = u_aonly == 1 ? sc : (u_fog.rgb * den + sc * (128.0 - den)) / 128.0;\n"
+    "    o = vec4(nc * na, na);\n"
+    "}\n";
+
 static u8 c5to8(u32 v)
 {
     v &= 31u;
@@ -208,6 +252,19 @@ int eidos_gl3d_init(EidosGl *g)
         g->ue_cdep = g->glGetUniformLocation(g->pedge, "u_cdep");
         g->ue_edge = g->glGetUniformLocation(g->pedge, "u_edge");
     }
+    /* Fog likewise (the fog pass reads the same three targets). */
+    g->pfog = eidos_gl_compile_program(g, k_vse, k_fsf);
+    if (g->pfog != 0) {
+        g->uf_col = g->glGetUniformLocation(g->pfog, "u_col");
+        g->uf_id = g->glGetUniformLocation(g->pfog, "u_id");
+        g->uf_dep = g->glGetUniformLocation(g->pfog, "u_dep");
+        g->uf_fog = g->glGetUniformLocation(g->pfog, "u_fog");
+        g->uf_table = g->glGetUniformLocation(g->pfog, "u_table");
+        g->uf_offset = g->glGetUniformLocation(g->pfog, "u_offset");
+        g->uf_step = g->glGetUniformLocation(g->pfog, "u_step");
+        g->uf_aonly = g->glGetUniformLocation(g->pfog, "u_aonly");
+        g->uf_clear = g->glGetUniformLocation(g->pfog, "u_clear");
+    }
     g->glGenFramebuffers(1, &g->fb[0].fbo);
     g->glGenFramebuffers(1, &g->fb[1].fbo);
     g->glGenVertexArrays(1, &g->vao3);
@@ -216,7 +273,8 @@ int eidos_gl3d_init(EidosGl *g)
     if (glGetError() != GL_NO_ERROR) {
         return -1;
     }
-    g3d_hw_gpu_features(g->pedge != 0 ? G3D_SNAP_EDGE : 0u);
+    g3d_hw_gpu_features((g->pedge != 0 ? G3D_SNAP_EDGE : 0u)
+                        | (g->pfog != 0 ? G3D_SNAP_FOG : 0u));
     return 0;
 }
 
@@ -245,6 +303,7 @@ void eidos_gl3d_destroy(EidosGl *g)
             g->glDeleteFramebuffers(1, &f->ms_fbo);
             g->glDeleteRenderbuffers(1, &f->ms_color);
             g->glDeleteRenderbuffers(1, &f->ms_depth);
+            g->glDeleteRenderbuffers(1, &f->ms_id);
         }
     }
     if (g->vbo3 != 0) {
@@ -258,6 +317,9 @@ void eidos_gl3d_destroy(EidosGl *g)
     }
     if (g->pedge != 0) {
         g->glDeleteProgram(g->pedge);
+    }
+    if (g->pfog != 0) {
+        g->glDeleteProgram(g->pfog);
     }
     g3d_hw_gpu_features(0u);
     for (i = 0; i < g->n_gtex; i++) {
@@ -385,6 +447,58 @@ static void edge_pass(EidosGl *g, GlFb *f, const G3dSnapshot *s, int w,
     (void)fbo_attach(g, f);
 }
 
+/* The fog pass: the frame's colour, ID and depth in, the fogged frame out
+ * into color2, which then becomes the frame's colour (k_fsf). */
+static void fog_pass(EidosGl *g, GlFb *f, const G3dSnapshot *s)
+{
+    GLfloat table[32];
+    GLuint t;
+    u32 fc = s->fog_color, cc = s->clear_color;
+    u32 shift = (s->disp3dcnt >> 8) & 0xFu;
+    int k;
+
+    for (k = 0; k < 32; k++) {
+        table[k] = (GLfloat)s->fog_table[k];
+    }
+    g->glBindFramebuffer(GL_FRAMEBUFFER, f->post_fbo);
+    glViewport(0, 0, f->w, f->h);
+    g->glUseProgram(g->pfog);
+    g->glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, f->color);
+    g->glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, f->pid);
+    g->glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, f->depth);
+    g->glUniform1i(g->uf_col, 0);
+    g->glUniform1i(g->uf_id, 1);
+    g->glUniform1i(g->uf_dep, 2);
+    g->glUniform4f(g->uf_fog, (float)c5to8(fc) / 255.f,
+                   (float)c5to8(fc >> 5) / 255.f, (float)c5to8(fc >> 10) / 255.f,
+                   (float)((fc >> 16) & 0x1Fu) / 31.f);
+    g->glUniform1fv(g->uf_table, 32, table);
+    g->glUniform1f(g->uf_offset, (GLfloat)(s->fog_offset & 0x7FFFu));
+    g->glUniform1f(g->uf_step, shift > 10u ? 0.f : (GLfloat)(0x400u >> shift));
+    g->glUniform1i(g->uf_aonly, (s->disp3dcnt & 0x40u) != 0);
+    {
+        GLfloat clear[3];
+
+        clear[0] = (float)c5to8(cc) / 255.f;
+        clear[1] = (float)c5to8(cc >> 5) / 255.f;
+        clear[2] = (float)c5to8(cc >> 10) / 255.f;
+        g->glUniform3fv(g->uf_clear, 1, clear);
+    }
+    g->glBindVertexArray(g->vao3);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    g->glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    g->glActiveTexture(GL_TEXTURE0);
+    t = f->color;
+    f->color = f->color2;
+    f->color2 = t;
+    (void)fbo_attach(g, f);
+}
+
 /*
  * DISP3DCNT bit 4 turns on the hardware's edge anti-aliasing.  The GPU's
  * equivalent is multisampling: render into a 4-sample target and resolve it
@@ -403,15 +517,26 @@ static int msaa_target(EidosGl *g, GlFb *f, int w, int h)
         g->glGenFramebuffers(1, &f->ms_fbo);
         g->glGenRenderbuffers(1, &f->ms_color);
         g->glGenRenderbuffers(1, &f->ms_depth);
+        g->glGenRenderbuffers(1, &f->ms_id);
     }
     if (f->ms_w != w || f->ms_h != h) {
         g->glBindRenderbuffer(GL_RENDERBUFFER, f->ms_color);
         g->glRenderbufferStorageMultisample(GL_RENDERBUFFER, MSAA_SAMPLES, GL_RGBA8, w, h);
         g->glBindRenderbuffer(GL_RENDERBUFFER, f->ms_depth);
         g->glRenderbufferStorageMultisample(GL_RENDERBUFFER, MSAA_SAMPLES, GL_DEPTH24_STENCIL8, w, h);
+        /* the ID buffer too, so that edge marking and fog, which read it,
+         * can run on an anti-aliased frame (resolved from sample 0) */
+        g->glBindRenderbuffer(GL_RENDERBUFFER, f->ms_id);
+        g->glRenderbufferStorageMultisample(GL_RENDERBUFFER, MSAA_SAMPLES, GL_R8UI, w, h);
         g->glBindFramebuffer(GL_FRAMEBUFFER, f->ms_fbo);
         g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, f->ms_color);
+        g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_RENDERBUFFER, f->ms_id);
         g->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, f->ms_depth);
+        {
+            static const GLenum both[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+
+            g->glDrawBuffers(2, both);
+        }
         f->ms_w = w;
         f->ms_h = h;
     }
@@ -435,6 +560,12 @@ static unsigned tex_key(const G3dSnapTex *t)
 
     h = (h ^ t->w) * 16777619u;
     h = (h ^ t->h) * 16777619u;
+    if (t->content != 0) {
+        /* the snapshot knows what the texels came from: no need to read them */
+        h = (h ^ (unsigned)t->content) * 16777619u;
+        h = (h ^ (unsigned)(t->content >> 32)) * 16777619u;
+        return h != 0 ? h : 1u;
+    }
     for (i = 0; t->rgba != NULL && i < n / 4u; i++) {
         h = (h ^ w[i]) * 16777619u;
     }
@@ -444,17 +575,88 @@ static unsigned tex_key(const G3dSnapTex *t)
 /* Render the snapshot at w x h into the framebuffer; the colour texture is
  * then eidos_gl_3d_texture(g).  Returns 0, or -1 if the GPU path cannot
  * draw this frame. */
+/* One run of polygons that share their state (render_into). */
+typedef struct Gl3dRun {
+    int deq, mask, xlu_depth, mode, toon, a5, front, back;
+    int textured, slot, wrap, id, two_pass;
+    int fog;           /* POLYGON_ATTR bit 15: ID buffer bit 6           */
+} Gl3dRun;
+
+static void draw_run(EidosGl *g, const G3dSnapshot *s, const Gl3dRun *d,
+                     unsigned first, unsigned verts, int *prev_depth_eq,
+                     int *prev_mask, s32 *bound_tex)
+{
+    GLint xid = (GLint)(0x40 | d->id);
+    GLint uid = (GLint)(0x80 | (d->fog ? 0x40 : 0) | d->id);
+
+    if (d->deq != *prev_depth_eq) {
+        glDepthFunc(d->deq ? GL_LEQUAL : GL_LESS);
+        *prev_depth_eq = d->deq;
+    }
+    if (d->mask != *prev_mask) {
+        glDepthMask(d->mask ? GL_TRUE : GL_FALSE);
+        *prev_mask = d->mask;
+    }
+    g->glUniform1i(g->u_mode, (GLint)d->mode);
+    g->glUniform1i(g->u_toon, (GLint)d->toon);
+    g->glUniform1i(g->u_alpha5, (GLint)d->a5);
+    g->glUniform1i(g->u_front, (GLint)d->front);
+    g->glUniform1i(g->u_back, (GLint)d->back);
+    if (d->textured) {
+        if (*bound_tex != d->slot) {
+            glBindTexture(GL_TEXTURE_2D, g->gtex[d->slot]);
+            *bound_tex = d->slot;
+        }
+        g->glUniform1i(g->u_tex3, 1);
+        g->glUniform2i(g->u_texsize3, (GLint)s->tex[d->slot].w,
+                       (GLint)s->tex[d->slot].h);
+        g->glUniform4i(g->u_wrap, (GLint)(d->wrap & 1), (GLint)((d->wrap >> 1) & 1),
+                       (GLint)((d->wrap >> 2) & 1), (GLint)((d->wrap >> 3) & 1));
+    } else {
+        g->glUniform1i(g->u_tex3, 0);
+    }
+    g->glUniform1i(g->u_id, uid);
+    if (d->two_pass) {
+        /* An opaque polygon whose texture has partly transparent
+         * texels: the hardware decides per pixel from the final alpha,
+         * so the opaque texels write depth and the translucent ones
+         * do not (unless bit 11 says so).  One draw cannot do both:
+         * two passes can. */
+        glDepthMask(GL_TRUE);
+        glStencilFunc(GL_ALWAYS, 0, 0xFFu);
+        g->glUniform1i(g->u_pass, 1);
+        g->glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
+        glDepthMask(d->xlu_depth ? GL_TRUE : GL_FALSE);
+        glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
+        g->glUniform1i(g->u_pass, 2);
+        /* a translucent pixel keeps the ID beneath it */
+        g->glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
+        g->glUniform1i(g->u_pass, 0);
+        *prev_mask = d->xlu_depth;
+    } else {
+        if (d->a5 >= 31) {
+            glStencilFunc(GL_ALWAYS, 0, 0xFFu);
+        } else {
+            glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
+        }
+        g->glColorMaski(1, d->a5 >= 31, d->a5 >= 31, d->a5 >= 31, d->a5 >= 31);
+        glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
+    }
+}
+
 static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
 {
     unsigned i, nv = 0;
     size_t need;
     u32 cc, alpha;
     u8 cr, cg, cb;
-    int bound_tex = -2;
+    s32 bound_tex = -2;
     int prev_depth_eq = -1, prev_mask = -1;
     GLfloat toon[96];
     unsigned long long t_up, t_dr;
-    int use_ms, edges;
+    int use_ms, edges, fog;
     double cdepth;
 
     if (g == NULL || !g->have3d || s == NULL || w < 1 || h < 1) {
@@ -552,7 +754,8 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     /* Edge marking needs the ID buffer, which the multisampled target does
      * not carry; at a large size the resolution smooths the edges anyway. */
     edges = (s->disp3dcnt & 0x20u) != 0 && g->pedge != 0;
-    use_ms = !edges && (s->disp3dcnt & 0x10u) != 0 && msaa_target(g, fb, w, h);
+    fog = (s->disp3dcnt & 0x80u) != 0 && g->pfog != 0;
+    use_ms = (s->disp3dcnt & 0x10u) != 0 && msaa_target(g, fb, w, h);
     if (!use_ms) {
         g->glBindFramebuffer(GL_FRAMEBUFFER, fb->fbo);
     }
@@ -579,11 +782,9 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     glClearDepth(cdepth);
     glStencilMask(0xFFu);
     glClearStencil(0);
-    if (use_ms) {
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    } else {
+    {
         /* the ID buffer is an integer target: cleared on its own, to the
-         * clear plane's polygon ID */
+         * clear plane's polygon ID (multisampled or not) */
         GLfloat c4[4];
         GLuint id4[4] = { 0, 0, 0, 0 };
 
@@ -591,7 +792,7 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
         c4[1] = (float)cg / 255.f * (float)alpha / 255.f;
         c4[2] = (float)cb / 255.f * (float)alpha / 255.f;
         c4[3] = (float)alpha / 255.f;
-        id4[0] = (cc >> 24) & 0x3Fu;
+        id4[0] = ((cc >> 24) & 0x3Fu) | ((cc & 0x8000u) ? 0x40u : 0u);
         g->glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         g->glClearBufferfv(GL_COLOR, 0, c4);
         g->glClearBufferuiv(GL_COLOR, 1, id4);
@@ -638,91 +839,76 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
         g->glUniform1i(g->u_highlight, (GLint)s->highlight);
         g->glUniform1i(g->u_wbuf, (GLint)s->wbuffer);
 
-        for (i = 0; i < s->n_polys; i++) {
-            const G3dPoly *p = &s->polys[i];
-            u32 attr = p->attr, mode, a5, ti;
-            u32 verts;
-            s32 slot = s->poly_tex[i];
-            int deq, mask;
-            GLint xid;
+        {
+            /* Consecutive polygons with the same state are one draw: the
+             * hardware's order is the order of the vertices inside a draw
+             * as much as between draws (depth, blending and the stencil
+             * test see the same sequence), so the result is the same with
+             * a fraction of the calls.  A field frame has thousands of
+             * polygons and a few dozen states. */
+            Gl3dRun run, cur;
+            unsigned run_first = 0, run_verts = 0;
+            int have = 0;
 
-            if (p->count < 3u || p->count > 4u) {
-                continue;
-            }
-            verts = (p->count - 2u) * 3u;
-            if (attr == 0) {
-                attr = ATTR_DEFAULT;
-            }
-            mode = G3D_ATTR_MODE(attr);
-            a5 = G3D_ATTR_ALPHA(attr);
-            if (a5 == 0 || mode == G3D_POLY_MODE_SHADOW) {
-                first += verts;
-                continue;
-            }
-            ti = p->teximage;
-            deq = G3D_ATTR_DEPTH_EQ(attr) != 0;
-            if (deq != prev_depth_eq) {
-                glDepthFunc(deq ? GL_LEQUAL : GL_LESS);
-                prev_depth_eq = deq;
-            }
-            mask = (a5 >= 31u) || G3D_ATTR_XLU_DEPTH(attr);
-            if (mask != prev_mask) {
-                glDepthMask(mask ? GL_TRUE : GL_FALSE);
-                prev_mask = mask;
-            }
-            g->glUniform1i(g->u_mode, (GLint)(mode == G3D_POLY_MODE_DECAL ? 1
-                                      : mode == G3D_POLY_MODE_TOON ? 2 : 0));
-            g->glUniform1i(g->u_toon, mode == G3D_POLY_MODE_TOON ? 1 : 0);
-            g->glUniform1i(g->u_alpha5, (GLint)a5);
-            g->glUniform1i(g->u_front, G3D_ATTR_FRONT(attr) ? 1 : 0);
-            g->glUniform1i(g->u_back, G3D_ATTR_BACK(attr) ? 1 : 0);
-            if (slot >= 0 && (s->disp3dcnt & 1u)) {
-                if (bound_tex != slot) {
-                    glBindTexture(GL_TEXTURE_2D, g->gtex[slot]);
-                    bound_tex = slot;
+            memset(&run, 0, sizeof(run));
+            memset(&cur, 0, sizeof(cur));
+            for (i = 0; i < s->n_polys; i++) {
+                const G3dPoly *p = &s->polys[i];
+                u32 attr = p->attr, mode, a5, ti;
+                u32 verts;
+                s32 slot = s->poly_tex[i];
+
+                if (p->count < 3u || p->count > 4u) {
+                    continue;
                 }
-                g->glUniform1i(g->u_tex3, 1);
-                g->glUniform2i(g->u_texsize3, (GLint)s->tex[slot].w,
-                               (GLint)s->tex[slot].h);
-                g->glUniform4i(g->u_wrap, (GLint)G3D_TEX_REPEAT_S(ti),
-                               (GLint)G3D_TEX_REPEAT_T(ti),
-                               (GLint)G3D_TEX_FLIP_S(ti),
-                               (GLint)G3D_TEX_FLIP_T(ti));
-            } else {
-                g->glUniform1i(g->u_tex3, 0);
-            }
-            xid = (GLint)(0x40u | G3D_ATTR_ID(attr));
-            g->glUniform1i(g->u_id, (GLint)(0x80u | G3D_ATTR_ID(attr)));
-            if (a5 >= 31u && slot >= 0 && (s->disp3dcnt & 1u) && s->tex[slot].partial) {
-                /* An opaque polygon whose texture has partly transparent
-                 * texels: the hardware decides per pixel from the final alpha,
-                 * so the opaque texels write depth and the translucent ones
-                 * do not (unless bit 11 says so).  One draw cannot do both:
-                 * two passes can. */
-                glDepthMask(GL_TRUE);
-                glStencilFunc(GL_ALWAYS, 0, 0xFFu);
-                g->glUniform1i(g->u_pass, 1);
-                g->glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-                glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
-                glDepthMask(G3D_ATTR_XLU_DEPTH(attr) ? GL_TRUE : GL_FALSE);
-                glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
-                g->glUniform1i(g->u_pass, 2);
-                /* a translucent pixel keeps the ID beneath it */
-                g->glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-                glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
-                g->glUniform1i(g->u_pass, 0);
-                prev_mask = G3D_ATTR_XLU_DEPTH(attr) ? 1 : 0;
-            } else {
-                if (a5 >= 31u) {
-                    glStencilFunc(GL_ALWAYS, 0, 0xFFu);
+                verts = (p->count - 2u) * 3u;
+                if (attr == 0) {
+                    attr = ATTR_DEFAULT;
+                }
+                mode = G3D_ATTR_MODE(attr);
+                a5 = G3D_ATTR_ALPHA(attr);
+                if (a5 == 0 || mode == G3D_POLY_MODE_SHADOW) {
+                    first += verts;
+                    continue;
+                }
+                ti = p->teximage;
+                cur.deq = G3D_ATTR_DEPTH_EQ(attr) != 0;
+                cur.mask = (a5 >= 31u) || G3D_ATTR_XLU_DEPTH(attr);
+                cur.xlu_depth = G3D_ATTR_XLU_DEPTH(attr) != 0;
+                cur.mode = mode == G3D_POLY_MODE_DECAL ? 1
+                         : mode == G3D_POLY_MODE_TOON ? 2 : 0;
+                cur.toon = mode == G3D_POLY_MODE_TOON;
+                cur.a5 = (int)a5;
+                cur.front = G3D_ATTR_FRONT(attr) != 0;
+                cur.back = G3D_ATTR_BACK(attr) != 0;
+                cur.textured = slot >= 0 && (s->disp3dcnt & 1u);
+                cur.slot = cur.textured ? slot : -1;
+                cur.wrap = cur.textured ? (int)(G3D_TEX_REPEAT_S(ti) | (G3D_TEX_REPEAT_T(ti) << 1)
+                                                | (G3D_TEX_FLIP_S(ti) << 2) | (G3D_TEX_FLIP_T(ti) << 3)) : 0;
+                cur.id = (int)G3D_ATTR_ID(attr);
+                cur.two_pass = a5 >= 31u && cur.textured && s->tex[slot].partial;
+                cur.fog = G3D_ATTR_FOG(attr) != 0;
+                if (have && run_first + run_verts == first
+                    && memcmp(&run, &cur, sizeof(run)) == 0) {
+                    run_verts += verts;
                 } else {
-                    glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
+                    if (have) {
+                        draw_run(g, s, &run, run_first, run_verts, &prev_depth_eq,
+                                 &prev_mask, &bound_tex);
+                        drawn++;
+                    }
+                    run = cur;
+                    run_first = first;
+                    run_verts = verts;
+                    have = 1;
                 }
-                g->glColorMaski(1, a5 >= 31u, a5 >= 31u, a5 >= 31u, a5 >= 31u);
-                glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
+                first += verts;
             }
-            first += verts;
-            drawn++;
+            if (have) {
+                draw_run(g, s, &run, run_first, run_verts, &prev_depth_eq,
+                         &prev_mask, &bound_tex);
+                drawn++;
+            }
         }
         (void)drawn;
     }
@@ -731,21 +917,34 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     glDisable(GL_STENCIL_TEST);
     glDisable(GL_BLEND);
     g->glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    if (use_ms) {
+        /* resolve the samples into the frame's targets: the colour averaged,
+         * the ID buffer and the depth from one sample (integer and depth
+         * targets do not average), which the passes below read */
+        static const GLenum c0[1] = { GL_COLOR_ATTACHMENT0 };
+        static const GLenum c1[1] = { GL_COLOR_ATTACHMENT1 };
+        static const GLenum both[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+
+        g->glBindFramebuffer(GL_READ_FRAMEBUFFER, fb->ms_fbo);
+        g->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb->fbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        g->glDrawBuffers(1, c0);
+        g->glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        if (edges || fog) {
+            glReadBuffer(GL_COLOR_ATTACHMENT1);
+            g->glDrawBuffers(1, c1);
+            g->glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            g->glBlitFramebuffer(0, 0, w, h, 0, 0, w, h,
+                                 GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+        }
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        g->glDrawBuffers(2, both);
+    }
     if (edges) {
         edge_pass(g, fb, s, w, cdepth);
     }
-    if (use_ms) {
-        /* resolve the samples into the frame's texture */
-        g->glBindFramebuffer(GL_READ_FRAMEBUFFER, fb->ms_fbo);
-        static const GLenum c0[1] = { GL_COLOR_ATTACHMENT0 };
-        static const GLenum both[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-
-        g->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb->fbo);
-        /* the colour only: the ID buffer is an integer target, which a
-         * blit from a normalised one may not write */
-        g->glDrawBuffers(1, c0);
-        g->glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        g->glDrawBuffers(2, both);
+    if (fog) {
+        fog_pass(g, fb, s);
     }
     g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     eidos_prof_end(EIDOS_PROF_GLDRAW, t_dr);

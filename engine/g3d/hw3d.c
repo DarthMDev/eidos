@@ -205,6 +205,7 @@ typedef struct TexCacheEntry {
     u32 key_tex, key_pal;
     int ok;
     int borrowed;             /* tex.rgba belongs to the persistent store */
+    u64 hash;                 /* the decode's source bytes, hashed        */
     G3dTexture tex;
 } TexCacheEntry;
 
@@ -610,7 +611,7 @@ static void store_clear(void)
 }
 
 static int decode_vram_texture(G3dTexture *out, u32 tp, u32 pltt, u32 key_tex,
-                               u32 key_pal)
+                               u32 key_pal, u64 *hash_out)
 {
     u32 fmt = G3D_TEX_FORMAT(tp);
     u32 w = 8u << ((tp >> 20) & 7u), h = 8u << ((tp >> 23) & 7u);
@@ -656,6 +657,7 @@ static int decode_vram_texture(G3dTexture *out, u32 tp, u32 pltt, u32 key_tex,
     if (pal != NULL) {
         hash = hash_bytes(pal, pbytes, hash);
     }
+    *hash_out = hash;
     for (i = 0; i < g_n_store; i++) {
         TexStore *s = &g_store[i];
 
@@ -707,6 +709,9 @@ static int decode_vram_texture(G3dTexture *out, u32 tp, u32 pltt, u32 key_tex,
     return rc;
 }
 
+/* The hash of the texture lookup() last returned (the snapshot keeps it). */
+static u64 g_lookup_hash;
+
 static const G3dTexture *lookup(void *user, u32 poly_index)
 {
     const G3dPoly *poly = &g_hw.geom.polys[poly_index];
@@ -723,6 +728,7 @@ static const G3dTexture *lookup(void *user, u32 poly_index)
     for (i = 0; i < g_hw.n_cache; i++) {
         e = &g_hw.cache[i];
         if (e->key_tex == key_tex && e->key_pal == key_pal) {
+            g_lookup_hash = e->hash;
             return e->ok ? &e->tex : NULL;
         }
     }
@@ -741,7 +747,9 @@ static const G3dTexture *lookup(void *user, u32 poly_index)
     e->key_tex = key_tex;
     e->key_pal = key_pal;
     e->borrowed = 1;
-    e->ok = decode_vram_texture(&e->tex, tp, poly->pltt_base, key_tex, key_pal) == 0;
+    e->ok = decode_vram_texture(&e->tex, tp, poly->pltt_base, key_tex, key_pal,
+                                &e->hash) == 0;
+    g_lookup_hash = e->hash;
     return e->ok ? &e->tex : NULL;
 }
 
@@ -910,6 +918,10 @@ static int snap_grow(void **p, u32 *cap, u32 need, size_t elem)
     return 0;
 }
 
+/* build_snapshot's copies from the frame before, for reuse. */
+static G3dSnapTex *g_snap_pool;
+static u32 g_snap_n_pool, g_snap_cap_pool;
+
 static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
                            u32 unsup)
 {
@@ -920,8 +932,21 @@ static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
 
     g_snap_valid = 0;
     s->n_verts = s->n_idx = s->n_polys = 0;
+    /* Last frame's copies are kept for this one: a texture whose source is
+     * unchanged keeps its copy, so a frame copies only what is new. */
+    if (snap_grow((void **)&g_snap_pool, &g_snap_cap_pool, s->n_tex,
+                  sizeof(*g_snap_pool)) != 0) {
+        for (i = 0; i < s->n_tex; i++) {
+            free(s->tex[i].rgba);
+        }
+        g_snap_n_pool = 0;
+    } else {
+        for (i = 0; i < s->n_tex; i++) {
+            g_snap_pool[i] = s->tex[i];
+        }
+        g_snap_n_pool = s->n_tex;
+    }
     for (i = 0; i < s->n_tex; i++) {
-        free(s->tex[i].rgba);
         s->tex[i].rgba = NULL;
     }
     s->n_tex = 0;
@@ -961,12 +986,31 @@ static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
             }
             if (slot < 0) {
                 size_t bytes = (size_t)tx->width * tx->height * 4u;
+                u64 content = g_lookup_hash;
+                u32 q;
 
                 if (snap_grow((void **)&seen, &cap_seen, n_seen + 1u, sizeof(*seen)) != 0
                     || snap_grow((void **)&s->tex, &s->cap_tex, s->n_tex + 1u, sizeof(*s->tex)) != 0) {
                     free(seen);
                     return;
                 }
+                for (q = 0; content != 0 && q < g_snap_n_pool; q++) {
+                    G3dSnapTex *old = &g_snap_pool[q];
+
+                    if (old->rgba != NULL && old->content == content
+                        && old->w == tx->width && old->h == tx->height) {
+                        break;
+                    }
+                }
+                if (content != 0 && q < g_snap_n_pool) {
+                    s->tex[s->n_tex] = g_snap_pool[q];
+                    g_snap_pool[q].rgba = NULL;
+                    seen[n_seen++] = tx->rgba;
+                    slot = (s32)s->n_tex++;
+                    s->poly_tex[i] = slot;
+                    continue;
+                }
+                s->tex[s->n_tex].content = content;
                 s->tex[s->n_tex].rgba = (u8 *)malloc(bytes);
                 if (s->tex[s->n_tex].rgba == NULL) {
                     free(seen);
@@ -1001,6 +1045,11 @@ static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
         s->poly_tex[i] = slot;
     }
     free(seen);
+    for (i = 0; i < g_snap_n_pool; i++) {
+        free(g_snap_pool[i].rgba);
+        g_snap_pool[i].rgba = NULL;
+    }
+    g_snap_n_pool = 0;
     s->serial = g_hw.frames;
     s->disp3dcnt = d3;
     s->wbuffer = t->wbuffer;
@@ -1011,6 +1060,12 @@ static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
     memcpy(s->toon, g_hw.toon, sizeof(s->toon));
     for (i = 0; i < 8u; i++) {
         s->edge[i] = bw_io_read16(G3D_HW_EDGE_COLOR + i * 2u);
+    }
+    s->fog_color = bw_io_read32(G3D_HW_FOG_COLOR);
+    s->fog_offset = bw_io_read16(G3D_HW_FOG_OFFSET) & 0x7FFFu;
+    for (i = 0; i < 32u; i++) {
+        s->fog_table[i] = (u8)((bw_io_read16(G3D_HW_FOG_TABLE + (i & ~1u))
+                                >> ((i & 1u) * 8u)) & 0x7Fu);
     }
     s->unsupported = 0;
     if (d3 & 0x0020u) {

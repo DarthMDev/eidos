@@ -36,6 +36,7 @@
     X(PFNGLUNIFORM4FPROC, glUniform4f) \
     X(PFNGLUNIFORM4IPROC, glUniform4i) \
     X(PFNGLUNIFORM3FVPROC, glUniform3fv) \
+    X(PFNGLUNIFORM1FVPROC, glUniform1fv) \
     X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays) \
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray) \
     X(PFNGLDELETEVERTEXARRAYSPROC, glDeleteVertexArrays) \
@@ -68,7 +69,7 @@ typedef struct GlFb {
                                      else the clear plane's ID (edge marking) */
     GLuint post_fbo, color2;      /* the edge-marking pass writes here      */
     int w, h;
-    GLuint ms_fbo, ms_color, ms_depth;   /* the multisampled target (anti-aliasing) */
+    GLuint ms_fbo, ms_color, ms_depth, ms_id;   /* the multisampled target (anti-aliasing) */
     int ms_w, ms_h;
 } GlFb;
 
@@ -117,6 +118,9 @@ struct EidosGl {
           u_id;
     GLuint pedge;                  /* the edge-marking pass (0: unavailable) */
     GLint ue_col, ue_id, ue_dep, ue_step, ue_cid, ue_cdep, ue_edge;
+    GLuint pfog;                   /* the fog pass (0: unavailable)          */
+    GLint uf_col, uf_id, uf_dep, uf_fog, uf_table, uf_offset, uf_step,
+          uf_aonly, uf_clear;
     GlFb fb[2];                    /* 0: the display size, 1: DS size (readback) */
     unsigned read_serial;          /* snapshot serial last read back         */
     GLuint pbo;                    /* async readback target                  */

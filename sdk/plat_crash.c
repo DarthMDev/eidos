@@ -307,6 +307,105 @@ void bw_plat_watchdog(unsigned seconds, unsigned long long (*progress)(void))
     }
 }
 
+/* The sampling profiler (plat_crash.h). */
+static FILE *g_sample_out;
+
+static DWORD WINAPI bw_sampler_main(LPVOID arg)
+{
+    DWORD self = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    HANDLE th[64];
+    DWORD tid[64];
+    int nth = 0, k, tick = 0;
+
+    (void)arg;
+    fprintf(g_sample_out, "base %p\n", (void *)GetModuleHandleA(NULL));
+    for (;;) {
+        if (tick++ % 500 == 0) {
+            HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            THREADENTRY32 te;
+
+            for (k = 0; k < nth; k++) {
+                CloseHandle(th[k]);
+            }
+            nth = 0;
+            te.dwSize = sizeof te;
+            if (snap != INVALID_HANDLE_VALUE && Thread32First(snap, &te)) {
+                do {
+                    if (te.th32OwnerProcessID == pid && te.th32ThreadID != self && nth < 64) {
+                        HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT
+                                              | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+                        if (h != NULL) {
+                            tid[nth] = te.th32ThreadID;
+                            th[nth++] = h;
+                        }
+                    }
+                } while (Thread32Next(snap, &te));
+            }
+            if (snap != INVALID_HANDLE_VALUE) {
+                CloseHandle(snap);
+            }
+        }
+        for (k = 0; k < nth; k++) {
+            CONTEXT c;
+            uintptr_t pc, fp;
+            int d;
+
+            if (SuspendThread(th[k]) == (DWORD)-1) {
+                continue;
+            }
+            memset(&c, 0, sizeof c);
+            c.ContextFlags = CONTEXT_FULL;
+            if (GetThreadContext(th[k], &c)) {
+                bw_crash_context(&c, &pc, &fp);
+                fprintf(g_sample_out, "%lu %lx", (unsigned long)tid[k], (unsigned long)pc);
+                for (d = 0; d < 12 && fp != 0; d++) {
+                    uintptr_t fr[2];
+                    SIZE_T got = 0;
+
+                    if (!ReadProcessMemory(GetCurrentProcess(), (void *)fp, fr, sizeof fr, &got)
+                        || got != sizeof fr || fr[0] <= fp) {
+                        break;
+                    }
+                    fprintf(g_sample_out, " %lx", (unsigned long)fr[1]);
+                    fp = fr[0];
+                }
+                fputc('\n', g_sample_out);
+            }
+            ResumeThread(th[k]);
+        }
+        Sleep(1);
+    }
+    return 0;
+}
+
+static void bw_sampler_flush(void)
+{
+    if (g_sample_out != NULL) {
+        fflush(g_sample_out);
+    }
+}
+
+void bw_plat_sampler_start(void)
+{
+    const char *path = getenv("EIDOS_SAMPLE");
+    HANDLE h;
+
+    if (path == NULL || g_sample_out != NULL) {
+        return;
+    }
+    g_sample_out = fopen(path, "w");
+    if (g_sample_out == NULL) {
+        return;
+    }
+    setvbuf(g_sample_out, NULL, _IOFBF, 1 << 20);
+    atexit(bw_sampler_flush);
+    h = CreateThread(NULL, 0, bw_sampler_main, NULL, 0, NULL);
+    if (h != NULL) {
+        SetThreadPriority(h, THREAD_PRIORITY_TIME_CRITICAL);
+        CloseHandle(h);
+    }
+}
+
 void bw_plat_backtrace(void)
 {
     void *frames[48];
@@ -397,6 +496,10 @@ void bw_plat_watchdog(unsigned seconds, unsigned long long (*progress)(void))
     if (pthread_create(&t, NULL, bw_watchdog_main, NULL) == 0) {
         pthread_detach(t);
     }
+}
+
+void bw_plat_sampler_start(void)
+{
 }
 
 void bw_plat_crash_install(void)

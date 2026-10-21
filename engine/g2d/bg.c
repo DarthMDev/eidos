@@ -1026,13 +1026,46 @@ typedef struct ComposeCtx {
     u8 *rgba;
 } ComposeCtx;
 
+/* The plan for one row: the OBJ steps of OBJs that do not cross row y are
+ * dropped (they cannot hit any pixel of it), the rest is kept in order, so
+ * the walk is the same with only the OBJs that can answer.  A frame has up
+ * to 128 OBJs and a row crosses a handful. */
+static u32 row_plan(const G2dFrameDesc *desc, const PlanStep *plan, u32 np,
+                    s32 y, PlanStep *out)
+{
+    u32 k, n = 0;
+
+    for (k = 0; k < np; k++) {
+        if (plan[k].kind == PLAN_OBJ) {
+            const G2dObjEntry *obj = &desc->objs[plan[k].idx];
+
+            if (obj->pose == NULL || obj->pose->indices == NULL
+                || y < obj->y || y - obj->y >= (s32)obj->pose->height) {
+                continue;
+            }
+        }
+        out[n++] = plan[k];
+    }
+    return n;
+}
+
 static void compose_rows(const ComposeCtx *c, u32 y0, u32 y1)
 {
     const G2dFrameDesc *desc = c->desc;
     u32 x, y, sx, sy;
     u32 n3 = c->n3, w_out = c->w_out;
+    const PlanStep *plan = c->plan;
+    u32 np = c->np;
+    PlanStep *rp = (PlanStep *)malloc((np ? np : 1u) * sizeof(*rp));
+    ComposeCtx row = *c;
 
+    if (rp == NULL) {
+        return;
+    }
+    c = &row;
+    row.plan = rp;
     for (y = y0; y < y1; y++) {
+        row.np = row_plan(desc, plan, np, (s32)y, rp);
         for (x = 0; x < c->width; x++) {
             u8 base[4], base6[3];
             int have_base = 0;
@@ -1072,6 +1105,7 @@ static void compose_rows(const ComposeCtx *c, u32 y0, u32 y1)
             }
         }
     }
+    free(rp);
 }
 
 #define COMPOSE_BANDS 4u

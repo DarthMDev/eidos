@@ -136,6 +136,9 @@ typedef struct G3dSnapTex {
     u32 w, h;
     u8 *rgba;               /* owned copy, w*h*4 */
     u8 partial;             /* some texel's 5-bit alpha is 1..30          */
+    u64 content;            /* what the texels were decoded from (hash),
+                             * the same from frame to frame while the
+                             * texture is; 0 when unknown              */
 } G3dSnapTex;
 
 typedef struct G3dSnapshot {
@@ -155,6 +158,9 @@ typedef struct G3dSnapshot {
     u32 unsupported;        /* G3D_SNAP_* the GPU path cannot honour      */
     u8  toon[32 * 3];       /* R,G,B per entry                            */
     u16 edge[8];            /* EDGE_COLOR, BGR555, one per 8 polygon IDs  */
+    u32 fog_color;          /* FOG_COLOR: BGR555, alpha in bits 16-20     */
+    u32 fog_offset;         /* FOG_OFFSET, 15 bits                        */
+    u8  fog_table[32];      /* FOG_TABLE, 7-bit densities                 */
 } G3dSnapshot;
 
 /* Frame features the GPU renderer does not do yet (a frame using one is

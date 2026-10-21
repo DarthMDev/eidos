@@ -1504,19 +1504,23 @@ static int overlaps(const u8 *a, size_t n, uintptr_t lo, uintptr_t hi)
 
 void bw_sndseq_invalidate(int kind, uintptr_t lo, uintptr_t hi)
 {
-    int i, k;
-    for (i = 0; i < PLAYERS; i++) {
+    int i;
+    /* Sequence and bank data: the players that read it stop.  Wave data:
+     * only the channels playing from it stop, as the SDK's wave
+     * invalidation does; the player goes on.  The game relies on that: a
+     * fanfare pauses the BGM, drops the BGM's wave archives from the sound
+     * heap to make room, and loads them back before it resumes the BGM.
+     * Stopping the paused player there left the BGM's handle on a sequence
+     * that had ended, so the BGM never came back after the fanfare. */
+    for (i = 0; kind != 2 && i < PLAYERS; i++) {
         Player *p = &g.pl[i];
         int hit = 0;
         if (!p->prepared && !p->active)
             continue;
         if (kind == 0)
             hit = overlaps(p->seq.data, p->seq.size, lo, hi);
-        else if (kind == 1)
-            hit = overlaps(p->bank.sbnk.data, p->bank.sbnk.size, lo, hi);
         else
-            for (k = 0; k < 4; k++)
-                hit |= overlaps(p->bank.arc[k].data, p->bank.arc[k].size, lo, hi);
+            hit = overlaps(p->bank.sbnk.data, p->bank.sbnk.size, lo, hi);
         if (hit)
             player_stop_now(p, 0);
     }

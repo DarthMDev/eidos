@@ -43,6 +43,17 @@ void bw_plat_backtrace(void);
 void bw_plat_watchdog(unsigned seconds, unsigned long long (*progress)(void));
 
 /*
+ * A sampling profiler for the port's own performance work: with
+ * EIDOS_SAMPLE=<file> set, a host thread stops every other thread once a
+ * millisecond and writes its pc and frame-pointer chain to the file, one
+ * line per thread ("tid pc ret ret ..."), after a "base <image base>" line.
+ * Mapping the addresses through the executable's symbols gives where the
+ * time goes.  Win32 only; elsewhere and without the variable it does
+ * nothing.
+ */
+void bw_plat_sampler_start(void);
+
+/*
  * A program's own lines for every report (a crash, a panic, the
  * watchdog): `fn` runs after the report's first line and prints where the
  * program stood (eidos_boot: the frame count and the resident overlays).
