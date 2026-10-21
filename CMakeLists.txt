@@ -1661,7 +1661,8 @@ target_include_directories(test_api_layout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/s
 target_link_libraries(test_api_layout PRIVATE eidos)
 add_test(NAME test_api_layout COMMAND test_api_layout)
 add_test(NAME apigen_check
-         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/apigen.py --check)
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/apigen.py --check
+                 --aletheia ${ALETHEIA_ROOT})
 # Loading an overlay whose code is not in the build must stop at the load and
 # say which overlay and which function.  The process aborts, so the check
 # runs through tests/expect_panic.cmake (see its header for why).

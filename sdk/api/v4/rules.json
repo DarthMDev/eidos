@@ -2,6 +2,7 @@
   "api": 4,
   "language": 1,
   "actions": [
+    "refuse",
     "set <target> <expr>",
     "add <target> <expr>",
     "sub <target> <expr>",
@@ -17,373 +18,435 @@
       "name": "money",
       "subscript": null,
       "readable": true,
-      "writable": true
+      "writable": true,
+      "writable_declared": true
     },
     {
       "name": "badges",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "badge",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "zone",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "party_count",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "species",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "level",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "hp",
       "subscript": "mon",
       "readable": true,
-      "writable": true
+      "writable": true,
+      "writable_declared": true
     },
     {
       "name": "max_hp",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "type1",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "type2",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "shiny",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "held_item",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "species_type1",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "species_type2",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "species_bst",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "caught",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "item_count",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "personality",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "ot_id",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "exp",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "friendship",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "ability",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "move1",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "move2",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "move3",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "move4",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "is_egg",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "gender",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "form",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "nature",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "has_nickname",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "fateful",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "origin_game",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "met_location",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "ball",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "met_level",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "place",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "side",
       "subscript": "mon",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "species_stage",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "gender_ratio",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "egg_group1",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "egg_group2",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "growth",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "catch_rate",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "species_base",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "area",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "area_of",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "wild_battle",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "battle_trainer",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "battle_trainer2",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "play_seconds",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "owned",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "party_max_level",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "party_alive",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "party_has_type",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "item_pocket",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "move_type",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "move_power",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "move_class",
       "subscript": "int",
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     },
     {
       "name": "battle_style",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": true
     },
     {
       "name": "in_battle",
       "subscript": null,
       "readable": true,
-      "writable": false
+      "writable": false,
+      "writable_declared": false
     }
   ],
   "names": [

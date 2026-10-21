@@ -5,13 +5,17 @@ Reads the mod ABI headers (sdk/mod_api.h, sdk/mod_state.h), the rule
 language's name tables (sdk/mod_rule.c), the hookable set
 (mod/declared_set.txt) and the settings grammar, and writes:
 
-  sdk/api/v<N>/events.json     every event: id, name, refusable, payload
-                               fields (C type, offset, size, writable)
+  sdk/api/v<N>/events.json     every event: id, name, refusable, where it
+                               fires, what a refusal does, what can be
+                               changed, the payload fields (C type, offset,
+                               size, writable, the rule name, the meaning)
   sdk/api/v<N>/state.json      the state table: calls in table order
   sdk/api/v<N>/services.json   the services table: calls in table order
   sdk/api/v<N>/enums.json      every named constant of the two headers
   sdk/api/v<N>/hooks.json      the declared set: address, name, region,
-                               the events bound there
+                               the events bound there, the prototype
+  sdk/api/v<N>/core.json       the wasm core imports (log, on, override,
+                               script, memory access)
   sdk/api/v<N>/settings.json   the kinds a settings declaration has
   sdk/api/v<N>/rules.json      the rule language: actions, state field
                                names, event names and their fields
@@ -24,7 +28,12 @@ The JSON is the description other tools (kenon, a later Lua binding) read;
 the C headers stay the port's own source for now and the layout check
 keeps the two in step.
 
-usage: apigen.py [--check]   (--check: fail if the committed files differ)
+usage: apigen.py [--check] [--aletheia ROOT]
+
+  --check      fail if the committed files differ from the output
+  --aletheia   the aletheia checkout or export the build uses: the hooks'
+               prototypes are read from its sources.  Without it the
+               prototypes of the committed hooks.json are kept.
 """
 
 import json
@@ -33,6 +42,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, 'tools'))
 
 PRIM = {
     'u8': (1, 1, 'uint8_t'), 's8': (1, 1, 'int8_t'),
@@ -78,11 +88,26 @@ def parse_defines(text, names):
 # ---------------------------------------------------------------------------
 # Structs
 
+STRUCT_DOCS = {}
+
+
+def struct_doc(text, start):
+    """The comment block right above a typedef, as one line of prose."""
+    head = text[:start].rstrip()
+    if not head.endswith('*/'):
+        return ''
+    i = head.rfind('/*')
+    body = head[i + 2:-2]
+    lines = [re.sub(r'^\s*\*\s?', '', l).strip() for l in body.split('\n')]
+    return ' '.join(l for l in lines if l)
+
+
 def parse_structs(text):
     """typedef struct Name { fields } Name;  ->  {Name: [(type, name, count,
     comment)]}.  Only plain data structs (no function pointers)."""
     structs = {}
     for m in re.finditer(r'typedef struct (\w+) \{\n(.*?)\n\} \1;', text, flags=re.S):
+        STRUCT_DOCS[m.group(1)] = struct_doc(text, m.start())
         name, body = m.group(1), m.group(2)
         if '(*' in body:
             continue
@@ -122,10 +147,14 @@ def layout(structs, defines):
             if count is not None:
                 n = int(count, 0) if count[0].isdigit() else defines[count]
             off = (off + al - 1) // al * al
+            doc = comment
+            if doc.startswith('*mod'):
+                doc = doc[4:].lstrip(':').strip()
             res.append({'name': fname, 'type': ftype, 'offset': off,
                         'size': size * n, 'count': n if count is not None else None,
                         'writable': comment.startswith('*mod'),
-                        'doc': comment})
+                        'rule_name': fname[:-1] if fname.endswith('_') else fname,
+                        'doc': doc})
             off += size * n
             align = max(align, al)
         size = (off + align - 1) // align * align
@@ -167,14 +196,17 @@ def parse_rules(rule_c):
         events.append({'kind': m.group(1), 'name': m.group(2), 'refusable': m.group(3) == '1'})
     fields = []
     fm = re.search(r'static const BwRuleStateField g_state_fields\[\] = \{(.*?)\n\};', rule_c, flags=re.S)
-    for m in re.finditer(r'\.name = "(\w+)", \.kind = BW_RULE_SK_(\w+),\s*\.writable = \d,\s*'
+    for m in re.finditer(r'\.name = "(\w+)", \.kind = BW_RULE_SK_(\w+),\s*\.writable = (\d),\s*'
                          r'\.readable = (\d), \.writable_ok = (\d)', fm.group(1)):
         fields.append({'name': m.group(1),
                        'subscript': {'PLAIN': None, 'MON': 'mon', 'INT': 'int'}[m.group(2)],
-                       'readable': m.group(3) == '1', 'writable': m.group(4) == '1'})
+                       'readable': m.group(4) == '1',
+                       'writable': m.group(5) == '1',
+                       # declared writable, but the port does not write it yet
+                       'writable_declared': m.group(3) == '1'})
     actions = []
     am = re.search(r'enum \{\n(\s*BW_RULE_ACT_REFUSE.*?)\};', rule_c, flags=re.S)
-    for m in re.finditer(r'BW_RULE_ACT_\w+,?\s*/\* (.*?) \*/', am.group(1)):
+    for m in re.finditer(r'BW_RULE_ACT_\w+(?:\s*=\s*\d+)?,?\s*/\* (.*?) \*/', am.group(1)):
         actions.append(m.group(1))
     version = int(re.search(r'#define BW_RULE_LANGUAGE_VERSION (\d+)u', rule_c).group(1))
     return {'language': version, 'actions': actions, 'state_fields': fields,
@@ -220,6 +252,83 @@ def wasm_params(params):
     return out or ['void']
 
 
+# The wasm core imports: the calls of the host table (sdk/mod_api.h,
+# BwModHost) and the memory access of docs/mod-code-wasm.md.
+CORE = [
+    {'name': 'log', 'ret': 'void', 'params': ['const char *text', 'uint32_t len'],
+     'doc': 'a line in the mod log'},
+    {'name': 'on', 'ret': 'int32_t', 'params': ['uint32_t kind', 'uint32_t handler_index'],
+     'doc': 'bind a handler to an event; 0 or non-zero'},
+    {'name': 'script', 'ret': 'int32_t',
+     'params': ['uint32_t vm', 'uint32_t opcode', 'uint32_t handler_index'],
+     'doc': 'bind a handler to a script command (EIDOS_SCRIPT_VM_*)'},
+    {'name': 'override', 'ret': 'int32_t',
+     'params': ['uint32_t region', 'uint32_t addr', 'uint32_t handler_index'],
+     'doc': 'install a hook on a function of hooks.json'},
+    {'name': 'original', 'ret': 'int64_t', 'params': ['const uint32_t *args', 'uint32_t nargs'],
+     'doc': 'inside a hook: call the next link with these arguments'},
+    {'name': 'rd8', 'ret': 'uint32_t', 'params': ['uint32_t ds_addr'], 'doc': 'read game memory'},
+    {'name': 'rd16', 'ret': 'uint32_t', 'params': ['uint32_t ds_addr'], 'doc': 'read game memory'},
+    {'name': 'rd32', 'ret': 'uint32_t', 'params': ['uint32_t ds_addr'], 'doc': 'read game memory'},
+    {'name': 'wr8', 'ret': 'void', 'params': ['uint32_t ds_addr', 'uint32_t value'], 'doc': 'write game memory'},
+    {'name': 'wr16', 'ret': 'void', 'params': ['uint32_t ds_addr', 'uint32_t value'], 'doc': 'write game memory'},
+    {'name': 'wr32', 'ret': 'void', 'params': ['uint32_t ds_addr', 'uint32_t value'], 'doc': 'write game memory'},
+    {'name': 'read', 'ret': 'int32_t', 'params': ['uint32_t ds_addr', 'void *dst', 'uint32_t len'],
+     'doc': 'copy game memory into the mod; 0, or non-zero out of bounds'},
+    {'name': 'write', 'ret': 'int32_t', 'params': ['uint32_t ds_addr', 'const void *src', 'uint32_t len'],
+     'doc': 'copy mod memory into the game; 0, or non-zero out of bounds'},
+]
+
+
+def read_event_table():
+    """docs/mod-events.md, section 1: per event, where it fires, what a
+    refusal does and what a handler can change."""
+    out = {}
+    for line in read('docs/mod-events.md').split('\n'):
+        m = re.match(r'^\| `([\w.]+)` \| (.*)\|\s*$', line)
+        if not m:
+            continue
+        cols = [c.strip() for c in m.group(2).split(' | ')]
+        if len(cols) < 4:
+            continue
+        clean = [None if c in ('-', '') else c for c in cols]
+        out[m.group(1)] = {'where': clean[0], 'region': clean[1],
+                           'refuse': clean[2], 'modify': clean[3]}
+    return out
+
+
+def hook_prototypes(aletheia, hooks):
+    """Each hook's prototype from the aletheia sources, by ovlink's own
+    normaliser (the one the slots are generated with)."""
+    import ovlink
+    files = {}
+    tsv = os.path.join(aletheia, 'layout', 'function_addrs.tsv')
+    with open(tsv, encoding='utf-8') as f:
+        for line in f:
+            c = line.rstrip('\n').split('\t')
+            if len(c) >= 6 and c[0] != 'region':
+                files[(c[0], int(c[1], 16))] = (c[2], c[5])
+    scans = {}
+    for h in hooks:
+        # By address: a row's name can lag behind aletheia's renames.
+        found = files.get((h['region'], int(h['address'], 16)))
+        if found is None:
+            continue
+        name, path = found
+        full = os.path.join(aletheia, path)
+        if full not in scans:
+            try:
+                scans[full] = ovlink.Scan(full, ovlink.read_text(full))
+            except OSError:
+                scans[full] = None
+        sc = scans[full]
+        if sc is None or name not in sc.heads:
+            continue
+        sig = ovlink.signature(sc.heads[name], name, sc.typedefs)
+        if sig is not None:
+            h['prototype'] = '%s %s(%s)' % (sig[0], name, ', '.join(sig[1]) or 'void')
+
+
 def wasm_header(api, enums, events, lay, state, services):
     L = []
     w = L.append
@@ -240,6 +349,7 @@ def wasm_header(api, enums, events, lay, state, services):
     w('#ifndef EIDOS_WASM_H')
     w('#define EIDOS_WASM_H')
     w('')
+    w('#include <stddef.h>')
     w('#include <stdint.h>')
     w('')
     w('#define EIDOS_API_VERSION %d' % api)
@@ -267,24 +377,18 @@ def wasm_header(api, enums, events, lay, state, services):
         for f in fields:
             t = PRIM[f['type']][2] if f['type'] in PRIM else 'Eidos' + f['type'][2:]
             arr = '[%d]' % f['count'] if f['count'] is not None else ''
-            doc = '  /* %s */' % f['doc'] if f['doc'] else ''
+            text = (('*mod: ' + f['doc']) if f['writable'] else f['doc']).replace('BW_', 'EIDOS_')
+            doc = '  /* %s */' % text if text else ''
             w('    %s %s%s;%s' % (t, f['name'], arr, doc))
         w('} %s;  /* %d bytes */' % (ename, size))
         w('')
     w('/* A handler: return EIDOS_EVENT_CONTINUE or EIDOS_EVENT_REFUSE. */')
     w('typedef int32_t (*EidosHandler)(EidosEvent *event);')
     w('')
-    w('/* The core imports. */')
-    w('EIDOS_IMPORT("log") void eidos_log(const char *text, uint32_t len);')
-    w('EIDOS_IMPORT("on") int32_t eidos_on(uint32_t kind, uint32_t handler_index);')
-    w('EIDOS_IMPORT("override") int32_t eidos_override(uint32_t region, uint32_t addr,')
-    w('                                                uint32_t handler_index);')
-    w('EIDOS_IMPORT("rd8") uint32_t eidos_rd8(uint32_t ds_addr);')
-    w('EIDOS_IMPORT("rd16") uint32_t eidos_rd16(uint32_t ds_addr);')
-    w('EIDOS_IMPORT("rd32") uint32_t eidos_rd32(uint32_t ds_addr);')
-    w('EIDOS_IMPORT("wr8") void eidos_wr8(uint32_t ds_addr, uint32_t value);')
-    w('EIDOS_IMPORT("wr16") void eidos_wr16(uint32_t ds_addr, uint32_t value);')
-    w('EIDOS_IMPORT("wr32") void eidos_wr32(uint32_t ds_addr, uint32_t value);')
+    w('/* The core imports (core.json). */')
+    for c in CORE:
+        w('EIDOS_IMPORT("%s") %s eidos_%s(%s);  /* %s */' % (
+            c['name'], c['ret'], c['name'], ', '.join(c['params']) or 'void', c['doc']))
     w('')
     for title, table in (('The state calls (BwModState).', state),
                          ('The services (BwModServices).', services)):
@@ -324,16 +428,20 @@ def generate():
     union = re.search(r'typedef union BwEventPayload \{(.*?)\} BwEventPayload;', event_h, flags=re.S).group(1)
     member_struct = dict((m.group(2), m.group(1)) for m in re.finditer(r'(Bw\w+)\s+(\w+);', union))
     events = []
+    table = read_event_table()
     for e in rules['events']:
         member = e['name'].replace('.', '_')
         sname = member_struct.get(member)
         if sname is None:
             raise SystemExit('apigen: no payload member for %s' % e['name'])
         size, _, fields = lay[sname]
+        info = table.get(e['name'], {})
         events.append({'id': enum_map[e['kind']], 'name': e['name'],
                        'refusable': e['refusable'], 'struct': sname, 'size': size,
-                       'fields': [dict((k, v) for k, v in f.items() if k != 'doc')
-                                  for f in fields if f['name'] != 'h']})
+                       'doc': STRUCT_DOCS.get(sname, ''),
+                       'where': info.get('where'), 'refuse': info.get('refuse'),
+                       'modify': info.get('modify'),
+                       'fields': [f for f in fields if f['name'] != 'h']})
     events.sort(key=lambda e: e['id'])
     rules_out = dict(rules)
     rules_out['events'] = [e['name'] for e in events]
@@ -347,7 +455,18 @@ def generate():
             continue
         cols = line.split('\t')
         hooks.append({'address': cols[0], 'name': cols[1], 'region': cols[2],
-                      'events': [x for x in (cols[3].split(',') if len(cols) > 3 else []) if x]})
+                      'events': [x for x in (cols[3].split(',') if len(cols) > 3 else []) if x],
+                      'prototype': None})
+    if ALETHEIA is not None:
+        hook_prototypes(ALETHEIA, hooks)
+    else:
+        old = os.path.join(ROOT, 'sdk/api/v%d/hooks.json' % api)
+        if os.path.exists(old):
+            with open(old, encoding='utf-8') as f:
+                kept = dict(((h['region'], h['address'], h['name']), h.get('prototype'))
+                            for h in json.load(f).get('hooks', []))
+            for h in hooks:
+                h['prototype'] = kept.get((h['region'], h['address'], h['name']))
 
     settings = {
         'line': 'option <key> <kind> "<label>" <value>',
@@ -380,6 +499,14 @@ def generate():
         d + '/services.json': js({'api': api, 'table': 'BwModServices', 'calls': services}),
         d + '/enums.json': js({'api': api, 'constants': [{'name': n, 'value': v} for n, v in enums]}),
         d + '/hooks.json': js({'api': api, 'hooks': hooks}),
+        d + '/core.json': js({'api': api, 'import_module': 'eidos', 'imports': CORE,
+                              'exports': [
+                                  {'name': 'eidos_mod_start', 'ret': 'int32_t',
+                                   'doc': '0 when the mod started'},
+                                  {'name': 'eidos_mod_stop', 'ret': 'void', 'doc': ''},
+                                  {'name': 'memory', 'doc': 'the linear memory'},
+                                  {'name': '__indirect_function_table',
+                                   'doc': 'the function table the handler indices point into'}]}),
         d + '/settings.json': js(dict({'api': api}, **settings)),
         d + '/rules.json': js(dict({'api': api}, **rules_out)),
         d + '/eidos_wasm.h': wasm_header(api, enums, events, lay, state, services),
@@ -387,8 +514,14 @@ def generate():
     }
 
 
+ALETHEIA = None
+
+
 def main():
+    global ALETHEIA
     check = '--check' in sys.argv[1:]
+    if '--aletheia' in sys.argv[1:]:
+        ALETHEIA = sys.argv[sys.argv.index('--aletheia') + 1]
     files = generate()
     stale = []
     for rel, text in files.items():
