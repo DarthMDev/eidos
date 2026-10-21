@@ -466,6 +466,13 @@ int bw_data_bind(const BwDataImage *img)
             }
             break;
         }
+        if (p == NULL && bw_ds_vram_window(n->addr)) {
+            /* Data that lives in a VRAM bank (overlay 95's tables in LCDC
+             * bank H), named by an overlay that loads while the bank is
+             * mapped elsewhere: the address is the bytes once it is back,
+             * as on the DS, where the name is only an address. */
+            p = (void *)(uintptr_t)n->addr;
+        }
         if (p == NULL) {
             snprintf(g_error, sizeof(g_error),
                      "%s: no DS region or object backs 0x%08lX",

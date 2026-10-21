@@ -95,6 +95,15 @@ int bw_ds_registered(u32 addr, u32 size);
 int bw_ds_identity(void);
 
 /*
+ * Non-zero when `addr` is in the VRAM window of an identity-mapped run:
+ * the host bytes at that address exist whatever the banks are mapped to
+ * now (they hold the bank when one is mapped there).  A name the game
+ * keeps for VRAM-resident data (overlay 95 runs from LCDC bank H) binds to
+ * that address even while nothing is mapped there.
+ */
+int bw_ds_vram_window(u32 addr);
+
+/*
  * Called first thing by a program that wants the identity mapping (before
  * it creates a window, a thread or anything else that maps memory): decide
  * the mapping now, and where the host process has already put something in
