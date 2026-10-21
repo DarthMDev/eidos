@@ -58,8 +58,8 @@
  * The hash of the frozen surface on each layout the port is built at.
  *
  *   pointers  hash
- *   4         0xAC40739Cu  the number in sdk/mod_api.h
- *   8         0x123BC017u
+ *   4         0x6CD31469u  the number in sdk/mod_api.h
+ *   8         0xC8C98F9Eu
  *
  * The 32-bit one is the number the header carries.  The other is the same
  * surface on the other layout: the three tables hold host pointers, so
@@ -68,11 +68,11 @@
  */
 static unsigned int expected_hash(void)
 {
-    return (sizeof(void *) == 4) ? 0xAC40739Cu : 0x123BC017u;
+    return (sizeof(void *) == 4) ? 0x6CD31469u : 0xC8C98F9Eu;
 }
 
 /* The number in sdk/mod_api.h: the frozen one, the 32-bit hash. */
-#define BW_SURFACE_HASH_FROZEN 0xAC40739Cu
+#define BW_SURFACE_HASH_FROZEN 0x6CD31469u
 
 /* The running hash. */
 static unsigned int h;
@@ -163,6 +163,7 @@ int main(void)
     EV(BW_EVENT_BATTLE_TRAINER_MON); EV(BW_EVENT_BATTLE_EXP);
     EV(BW_EVENT_ITEM_ADD); EV(BW_EVENT_ITEM_USE); EV(BW_EVENT_SHOP_BUY);
     EV(BW_EVENT_MONEY_CHANGE); EV(BW_EVENT_HEAL); EV(BW_EVENT_HEAL_HP); EV(BW_EVENT_MON_REVIVE);
+    EV(BW_EVENT_MON_CURE); EV(BW_EVENT_MON_PP); EV(BW_EVENT_MON_FORM);
     EV(BW_EVENT_BADGE_GET); EV(BW_EVENT_FLAG_SET); EV(BW_EVENT_DEX_REGISTER);
 #undef EV
 
@@ -191,6 +192,8 @@ int main(void)
     EN(BW_MONEY_OTHER); EN(BW_MONEY_SCRIPT); EN(BW_MONEY_PURCHASE);
     EN(BW_MONEY_SALE); EN(BW_MONEY_BATTLE);
     EN(BW_LEVELUP_BATTLE); EN(BW_LEVELUP_ITEM);
+    EN(BW_CURE_FIELD_ITEM); EN(BW_CURE_BATTLE); EN(BW_CURE_PARTY);
+    EN(BW_PP_FIELD_ITEM); EN(BW_PP_BATTLE); EN(BW_FORM_FIELD); EN(BW_FORM_BATTLE);
     EN(BW_ITEM_FROM_OTHER); EN(BW_ITEM_FROM_SCRIPT); EN(BW_ITEM_FROM_GIFT);
     EN(BW_ITEM_FROM_PURCHASE); EN(BW_ITEM_FROM_BATTLE); EN(BW_ITEM_FROM_RETURN);
     EN(BW_ITEM_FROM_REWARD);
@@ -309,6 +312,12 @@ int main(void)
        F(BwHealHp, amount), F(BwHealHp, source));
     PL(BwMonRevive, F(BwMonRevive, mon), F(BwMonRevive, hp), F(BwMonRevive, max_hp),
        F(BwMonRevive, item), F(BwMonRevive, move), F(BwMonRevive, source));
+    PL(BwMonCure, F(BwMonCure, mon), F(BwMonCure, status), F(BwMonCure, source),
+       F(BwMonCure, item));
+    PL(BwMonPp, F(BwMonPp, mon), F(BwMonPp, slot), F(BwMonPp, source),
+       F(BwMonPp, move), F(BwMonPp, amount));
+    PL(BwMonForm, F(BwMonForm, mon), F(BwMonForm, species), F(BwMonForm, from),
+       F(BwMonForm, to), F(BwMonForm, source));
     PL(BwBadgeGet, F(BwBadgeGet, badge), F(BwBadgeGet, count));
     PL(BwFlagSet, F(BwFlagSet, flag), F(BwFlagSet, value));
     PL(BwDexRegister, F(BwDexRegister, species), F(BwDexRegister, caught));

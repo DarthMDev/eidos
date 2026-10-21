@@ -60,7 +60,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0xAC40739Cu
+#define BW_MOD_API_HASH 0x6CD31469u
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
@@ -169,6 +169,9 @@ enum {
     BW_EVENT_MON_HELDITEM  = 51,
     BW_EVENT_EGG_HATCH     = 52,
     BW_EVENT_TRADE_INGAME  = 53,
+    BW_EVENT_MON_CURE      = 54,    /* version 4 */
+    BW_EVENT_MON_PP        = 55,    /* version 4 */
+    BW_EVENT_MON_FORM      = 56,    /* version 4 */
 
     /* battle */
     BW_EVENT_BATTLE_START  = 70,
@@ -278,6 +281,22 @@ enum {
 enum {
     BW_EXP_BATTLE  = 0,
     BW_EXP_DAYCARE = 1
+};
+
+/* What cures a status (mon.cure), restores PP (mon.pp) or changes a form
+ * (mon.form). */
+enum {
+    BW_CURE_FIELD_ITEM = 0,     /* an item on the party screen */
+    BW_CURE_BATTLE     = 1,     /* anything in a battle: item, move, ability, berry */
+    BW_CURE_PARTY      = 2      /* a party heal: a Centre or another script, a power */
+};
+enum {
+    BW_PP_FIELD_ITEM = 0,       /* an item on the party screen */
+    BW_PP_BATTLE     = 1        /* anything in a battle */
+};
+enum {
+    BW_FORM_FIELD  = 0,         /* outside a battle: an item, the season, a script */
+    BW_FORM_BATTLE = 1          /* in a battle: an ability, a move, a held item */
 };
 
 /* What raised the level (mon.levelup). */
@@ -488,6 +507,47 @@ typedef struct BwMonNickname {
     BwMonRef mon;
     u8  force;      /* *mod: 1 opens the prompt even when the game would skip it */
 } BwMonNickname;
+
+/*
+ * mon.cure (version 4): a status is about to be cured.  status is the
+ * game's own number: 1 paralysis, 2 sleep, 3 freeze, 4 burn, 5 poison; in
+ * a battle, 6 and up are the battle's own conditions (confusion and the
+ * others).  A refusal keeps the status (on the party screen the item is
+ * not used; in a battle the game's text may still say it was cured).
+ */
+typedef struct BwMonCure {
+    BwEvent h;
+    BwMonRef mon;
+    u8  status;
+    u8  source;     /* BW_CURE_* */
+    u16 item;       /* the item, or 0 */
+} BwMonCure;
+
+/*
+ * mon.pp (version 4): a move is about to get PP back.  amount is the PP it
+ * gets, before the cap at its max.  A refusal gives none.
+ */
+typedef struct BwMonPp {
+    BwEvent h;
+    BwMonRef mon;
+    u8  slot;       /* the move slot, 0 to 3 */
+    u8  source;     /* BW_PP_* */
+    u16 move;       /* the move, or 0 when the port cannot read it */
+    u16 amount;     /* *mod */
+} BwMonPp;
+
+/*
+ * mon.form (version 4): a Pokemon is about to change form.  A refusal keeps
+ * the form it has; `to` can be changed.
+ */
+typedef struct BwMonForm {
+    BwEvent h;
+    BwMonRef mon;
+    u16 species;
+    u8  from;
+    u8  to;         /* *mod */
+    u8  source;     /* BW_FORM_* */
+} BwMonForm;
 
 typedef struct BwMonEvolve {
     BwEvent h;

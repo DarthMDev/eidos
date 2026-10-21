@@ -683,6 +683,29 @@ static const BwRuleField g_f_heal[] = {
     BW_RULE_FIELD(BwHeal, mask, BW_RULE_FK_INT, BW_RULE_FF_MOD)
 };
 
+static const BwRuleField g_f_mon_cure[] = {
+    BW_RULE_FIELD(BwMonCure, mon, BW_RULE_FK_MON, 0),
+    BW_RULE_FIELD(BwMonCure, status, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonCure, source, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonCure, item, BW_RULE_FK_INT, 0)
+};
+
+static const BwRuleField g_f_mon_pp[] = {
+    BW_RULE_FIELD(BwMonPp, mon, BW_RULE_FK_MON, 0),
+    BW_RULE_FIELD(BwMonPp, slot, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonPp, source, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonPp, move, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonPp, amount, BW_RULE_FK_INT, BW_RULE_FF_MOD)
+};
+
+static const BwRuleField g_f_mon_form[] = {
+    BW_RULE_FIELD(BwMonForm, mon, BW_RULE_FK_MON, 0),
+    BW_RULE_FIELD(BwMonForm, species, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonForm, from, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonForm, to, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwMonForm, source, BW_RULE_FK_INT, 0)
+};
+
 static const BwRuleField g_f_mon_revive[] = {
     BW_RULE_FIELD(BwMonRevive, mon, BW_RULE_FK_MON, 0),
     BW_RULE_FIELD(BwMonRevive, hp, BW_RULE_FK_INT, BW_RULE_FF_MOD),
@@ -839,6 +862,12 @@ static const BwRuleEvent g_events[] = {
       .fields = g_f_heal_hp, .field_count = 5 },
     { .kind = BW_EVENT_MON_REVIVE, .name = "mon.revive", .refusable = 1,
       .fields = g_f_mon_revive, .field_count = 6 },
+    { .kind = BW_EVENT_MON_CURE, .name = "mon.cure", .refusable = 1,
+      .fields = g_f_mon_cure, .field_count = 4 },
+    { .kind = BW_EVENT_MON_PP, .name = "mon.pp", .refusable = 1,
+      .fields = g_f_mon_pp, .field_count = 5 },
+    { .kind = BW_EVENT_MON_FORM, .name = "mon.form", .refusable = 1,
+      .fields = g_f_mon_form, .field_count = 5 },
 
     { .kind = BW_EVENT_BADGE_GET, .name = "badge.get", .refusable = 0,
       .fields = g_f_badge_get, .field_count = 2 },

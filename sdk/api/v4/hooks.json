@@ -89,7 +89,9 @@
       "region": "arm9",
       "events": [
         "heal",
-        "mon.revive"
+        "mon.revive",
+        "heal.hp",
+        "mon.cure"
       ]
     },
     {
@@ -142,6 +144,14 @@
       "region": "arm9",
       "events": [
         "mon.create"
+      ]
+    },
+    {
+      "address": "0x02017988",
+      "name": "POKE_TOOL_ChangeForm",
+      "region": "arm9",
+      "events": [
+        "mon.form"
       ]
     },
     {
@@ -198,6 +208,14 @@
       "region": "arm9",
       "events": [
         "mon.evolve"
+      ]
+    },
+    {
+      "address": "0x0201B970",
+      "name": "POKE_TOOL_RestorePP",
+      "region": "arm9",
+      "events": [
+        "mon.pp"
       ]
     },
     {
@@ -418,7 +436,9 @@
       "region": "ov010",
       "events": [
         "heal",
-        "mon.revive"
+        "mon.revive",
+        "heal.hp",
+        "mon.cure"
       ]
     },
     {
@@ -1317,7 +1337,8 @@
       "region": "ov091",
       "events": [
         "item.use",
-        "mon.revive"
+        "mon.revive",
+        "mon.cure"
       ]
     },
     {
@@ -1454,6 +1475,22 @@
       "events": []
     },
     {
+      "address": "0x021C5620",
+      "name": "BTL_SERVER_FLOW_CureSick",
+      "region": "ov093",
+      "events": [
+        "mon.cure"
+      ]
+    },
+    {
+      "address": "0x021C6080",
+      "name": "BTL_SERVER_FLOW_RestoreMovePp",
+      "region": "ov093",
+      "events": [
+        "mon.pp"
+      ]
+    },
+    {
       "address": "0x021C6564",
       "name": "BTL_SERVER_FLOW_DispatchMoveDoneEvent",
       "region": "ov093",
@@ -1470,6 +1507,14 @@
       "name": "BTL_SERVER_FLOW_ProcHandExReviveAndSendIn",
       "region": "ov093",
       "events": []
+    },
+    {
+      "address": "0x021CA748",
+      "name": "BTL_SERVER_FLOW_ProcHandExChangeForm",
+      "region": "ov093",
+      "events": [
+        "mon.form"
+      ]
     },
     {
       "address": "0x021CB2D4",

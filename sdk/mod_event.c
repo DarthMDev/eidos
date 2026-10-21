@@ -229,6 +229,9 @@ static u32 payload_size(u32 kind)
     case BW_EVENT_HEAL:         return (u32)sizeof(BwHeal);
     case BW_EVENT_HEAL_HP:      return (u32)sizeof(BwHealHp);
     case BW_EVENT_MON_REVIVE:   return (u32)sizeof(BwMonRevive);
+    case BW_EVENT_MON_CURE:     return (u32)sizeof(BwMonCure);
+    case BW_EVENT_MON_PP:       return (u32)sizeof(BwMonPp);
+    case BW_EVENT_MON_FORM:     return (u32)sizeof(BwMonForm);
 
     case BW_EVENT_BADGE_GET:    return (u32)sizeof(BwBadgeGet);
     case BW_EVENT_FLAG_SET:     return (u32)sizeof(BwFlagSet);

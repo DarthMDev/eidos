@@ -30,7 +30,7 @@
 0x0200C29C	BEACON_SubPoints	arm9	money.change
 0x0200CDE0	ZUKAN_SAVE_RegisterCaught	arm9	dex.register
 0x0200CFA0	ZUKAN_SAVE_RegisterSeen	arm9	dex.register
-0x0201104C	GPOWER_UseHpRestore	arm9	heal,mon.revive
+0x0201104C	GPOWER_UseHpRestore	arm9	heal,mon.revive,heal.hp,mon.cure
 0x02012BF8	GAME_DATA_ContainsRecentId	arm9	
 0x02012C18	GAME_DATA_LoadFromSave	arm9	save.load
 0x02012F08	GAME_DATA_GetMiscSave	arm9	
@@ -38,6 +38,7 @@
 0x0201347C	BTL_SETUP_SetupWild	arm9	encounter.wild
 0x02014314	ZONEDATA_SetEventFlag	arm9	flag.set
 0x02017430	POKE_TOOL_CreateEx	arm9	mon.create
+0x02017988	POKE_TOOL_ChangeForm	arm9	mon.form
 0x020180F4	POKE_TOOL_PushMove	arm9	
 0x02018198	POKE_TOOL_RecoverAllPP	arm9	
 0x020181F4	POKE_TOOL_SetMoveSlot	arm9	
@@ -46,6 +47,7 @@
 0x0201A98C	POKEPARTY_Add	arm9	
 0x0201AB8C	POKEPARTY_SwapMembers	arm9	party.swap
 0x0201B2B0	SHINKA_CHECK_CheckEvolution	arm9	mon.evolve
+0x0201B970	POKE_TOOL_RestorePP	arm9	mon.pp
 0x0201BA34	POKE_TOOL_HealParty	arm9	
 0x0202627C	GAME_COMM_Update	arm9	
 0x02026388	GAME_COMM_CallHandler	arm9	
@@ -85,7 +87,7 @@
 0x0215B138	SCRCMD_WORK_CmdSetMiscByte	ov010	
 0x0215B328	SCRCMD_WORK_CmdSetEventFlagOffset	ov010	
 0x0215B350	SCRCMD_WORK_CmdResetEventFlagOffset	ov010	
-0x0215B5A8	SCRCMD_PROC_HealParty	ov010	heal,mon.revive
+0x0215B5A8	SCRCMD_PROC_HealParty	ov010	heal,mon.revive,heal.hp,mon.cure
 0x0215BB50	SCRCMD_PROC_AddMonToPartySimple	ov010	
 0x0215BBD0	SCRCMD_PROC_AddMonToPartyDetailed	ov010	
 0x0215BD2C	SCRCMD_PROC_SetMonMove	ov010	move.learn
@@ -233,7 +235,7 @@
 0x021BC2C8	PLIST_MENU_ShowItemUsedThenClose	ov091	
 0x021BC30C	PLIST_MENU_ShowItemUsedThenContinue	ov091	
 0x021BC350	PLIST_MENU_StartItemUse	ov091	
-0x021BDD78	PLIST_DEMO_CheckItemUsable	ov091	item.use,mon.revive
+0x021BDD78	PLIST_DEMO_CheckItemUsable	ov091	item.use,mon.revive,mon.cure
 0x021BE2B4	PLIST_DEMO_UseItemOnMon	ov091	mon.levelup
 0x021BE914	PLIST_DEMO_RestoreHp	ov091	heal.hp,mon.revive
 
@@ -257,9 +259,12 @@
 0x021C5200	BTL_SERVER_FLOW_ProcFaintRewards	ov093	
 0x021C5350	BTL_SERVER_FLOW_ApplyPartyExp	ov093	
 0x021C557C	BTL_SERVER_FLOW_CureMajorStatusWithMessage	ov093	
+0x021C5620	BTL_SERVER_FLOW_CureSick	ov093	mon.cure
+0x021C6080	BTL_SERVER_FLOW_RestoreMovePp	ov093	mon.pp
 0x021C6564	BTL_SERVER_FLOW_DispatchMoveDoneEvent	ov093	
 0x021C84D8	BTL_SERVER_FLOW_GetBattleResult	ov093	
 0x021CA270	BTL_SERVER_FLOW_ProcHandExReviveAndSendIn	ov093	
+0x021CA748	BTL_SERVER_FLOW_ProcHandExChangeForm	ov093	mon.form
 0x021CB2D4	BTL_SERVER_FLOW_CalcPartyExpShares	ov093	battle.exp,mon.exp
 0x021CB730	BTL_SERVER_FLOW_ProcBagItemUse	ov093	
 0x021CBA40	BTL_SERVER_FLOW_TryThrowBall	ov093	catch.attempt

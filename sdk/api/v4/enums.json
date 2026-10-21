@@ -150,6 +150,18 @@
       "value": 53
     },
     {
+      "name": "BW_EVENT_MON_CURE",
+      "value": 54
+    },
+    {
+      "name": "BW_EVENT_MON_PP",
+      "value": 55
+    },
+    {
+      "name": "BW_EVENT_MON_FORM",
+      "value": 56
+    },
+    {
       "name": "BW_EVENT_BATTLE_START",
       "value": 70
     },
@@ -399,6 +411,34 @@
     },
     {
       "name": "BW_EXP_DAYCARE",
+      "value": 1
+    },
+    {
+      "name": "BW_CURE_FIELD_ITEM",
+      "value": 0
+    },
+    {
+      "name": "BW_CURE_BATTLE",
+      "value": 1
+    },
+    {
+      "name": "BW_CURE_PARTY",
+      "value": 2
+    },
+    {
+      "name": "BW_PP_FIELD_ITEM",
+      "value": 0
+    },
+    {
+      "name": "BW_PP_BATTLE",
+      "value": 1
+    },
+    {
+      "name": "BW_FORM_FIELD",
+      "value": 0
+    },
+    {
+      "name": "BW_FORM_BATTLE",
       "value": 1
     },
     {

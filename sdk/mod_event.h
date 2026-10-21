@@ -121,6 +121,9 @@ typedef union BwEventPayload {
     BwHeal        heal;
     BwHealHp      heal_hp;
     BwMonRevive   mon_revive;
+    BwMonCure     mon_cure;
+    BwMonPp       mon_pp;
+    BwMonForm     mon_form;
 
     BwBadgeGet    badge_get;
     BwFlagSet     flag_set;

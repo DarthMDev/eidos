@@ -1094,6 +1094,145 @@
       ]
     },
     {
+      "id": 54,
+      "name": "mon.cure",
+      "refusable": true,
+      "struct": "BwMonCure",
+      "size": 20,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "status",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "source",
+          "type": "u8",
+          "offset": 17,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "item",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 55,
+      "name": "mon.pp",
+      "refusable": true,
+      "struct": "BwMonPp",
+      "size": 24,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "slot",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "source",
+          "type": "u8",
+          "offset": 17,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "move",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "amount",
+          "type": "u16",
+          "offset": 20,
+          "size": 2,
+          "count": null,
+          "writable": true
+        }
+      ]
+    },
+    {
+      "id": 56,
+      "name": "mon.form",
+      "refusable": true,
+      "struct": "BwMonForm",
+      "size": 24,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "from",
+          "type": "u8",
+          "offset": 18,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "to",
+          "type": "u8",
+          "offset": 19,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "source",
+          "type": "u8",
+          "offset": 20,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
       "id": 70,
       "name": "battle.start",
       "refusable": false,

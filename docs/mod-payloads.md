@@ -722,8 +722,8 @@ Where it fires and what a refusal does:
   (`BTL_SERVER_FLOW_ItemEffectRevive`). Refused, the effect has no effect
   and the bag keeps the item.
 - **A party heal** (a Centre or another script, the HP-restore power):
-  once for each fainted member before the heal. Refused, that member stays
-  fainted and the others are healed. The source is `_SCRIPT` for every
+  for each fainted member the heal brought back. Refused, that member stays
+  fainted (with the status it had) and the others keep their heal. The source is `_SCRIPT` for every
   script heal: the Centre's nurse runs the same script command, so the
   port cannot yet tell a Centre from another script.
 
@@ -739,10 +739,59 @@ Where it fires and what a refusal does:
 
 It fires for a Pokemon that has HP. A fainted Pokemon coming back is
 `mon.revive`. A party heal (a Centre or another script, the HP-restore
-power) fires it once for each member that has lost HP, with source
-`BW_HEAL_HP_PARTY` and the amount that fills it; refused, that member keeps
-the HP it had. `heal` is the whole party heal: refused, no member event
-fires and nobody is healed.
+power) fires it for each member the heal gave HP to, with source
+`BW_HEAL_HP_PARTY` and the HP it gave; refused, that member keeps the HP it
+had. `heal` is the whole party heal: refused, no member event fires and
+nobody is healed.
+
+**`mon.cure`** (version 4)
+
+A status is about to be cured. Refused, the Pokemon keeps it.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `mon` | BwMonRef | the Pokemon |
+| `status` | u8 | 1 paralysis, 2 sleep, 3 freeze, 4 burn, 5 poison; in a battle 6 and up are the battle's own conditions |
+| `source` | u8 | `BW_CURE_FIELD_ITEM`, `_BATTLE` (item, move, ability, berry), `_PARTY` (a party heal) |
+| `item` | u16 | the item, or 0 |
+
+Where: the party screen's item check (refused, the item stays; a Full
+Restore then does nothing, it is one item), `BTL_SERVER_FLOW_CureSick` in a
+battle (refused, the status stays; the game's text may still say it was
+cured), and each member a party heal cured.
+
+**`mon.pp`** (version 4)
+
+A move is about to get PP back. Refused, it gets none.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `mon` | BwMonRef | the Pokemon |
+| `slot` | u8 | the move slot, 0 to 3 |
+| `source` | u8 | `BW_PP_FIELD_ITEM` or `BW_PP_BATTLE` |
+| `move` | u16 | the move (0 in a battle for now) |
+| `amount` | u16, *mod* | the PP it gets, before the cap at its max |
+
+Where: `POKE_TOOL_RestorePP` (an Ether or an Elixir on the party screen,
+once per move; refused there, the item is still used) and
+`BTL_SERVER_FLOW_RestoreMovePp` in a battle. The PP a party heal restores
+is part of `heal` and has no member event.
+
+**`mon.form`** (version 4)
+
+A Pokemon is about to change form. Refused, it keeps its form; `to` can be
+changed.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `mon` | BwMonRef | the Pokemon |
+| `species` | u16 | its species |
+| `from` | u8 | the form it has |
+| `to` | u8, *mod* | the form it changes to |
+| `source` | u8 | `BW_FORM_FIELD` (an item, the season, a script) or `BW_FORM_BATTLE` (an ability, a move, a held item) |
+
+Where: `POKE_TOOL_ChangeForm` outside a battle and
+`BTL_SERVER_FLOW_ProcHandExChangeForm` in one.
 
 **What the items builder fills.** The items area's rows are in
 `sdk/mod_event_items.c`. `item.add` carries the item and the count from the

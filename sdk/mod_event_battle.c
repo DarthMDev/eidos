@@ -2186,7 +2186,122 @@ static void apply_revive_cmd(const BwEventPayload *unused, BwEventCall *call)
     }
 }
 
+/*
+ * mon.cure in a battle: BTL_SERVER_FLOW_CureSick (flow, poke, sickId,
+ * prev), which every cure of the battle server runs (an item, a move, an
+ * ability, a berry).  Refused, the status stays.
+ */
+static int when_battle_cure(const BwEventCall *call)
+{
+    return (int)call->a[2] != 0;
+}
+
+static void build_mon_cure_battle(const BwEventCall *call, BwEventPayload *out)
+{
+    const BwPortFlowHead *flow = (const BwPortFlowHead *)call->a[0];
+
+    memset(&out->mon_cure, 0, sizeof(out->mon_cure));
+    fill_battle_ref(&out->mon_cure.mon, (struct BtlPokeParam *)call->a[1],
+                    main_of_flow(call), flow != NULL ? flow->pokeCon : NULL);
+    out->mon_cure.status = (u8)call->a[2];
+    out->mon_cure.source = (u8)BW_CURE_BATTLE;
+}
+
+static void refuse_mon_cure_battle(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
+/*
+ * mon.pp in a battle: BTL_SERVER_FLOW_RestoreMovePp (flow, poke, slot,
+ * amount, real).  Refused, no PP comes back.
+ */
+static void build_mon_pp_battle(const BwEventCall *call, BwEventPayload *out)
+{
+    const BwPortFlowHead *flow = (const BwPortFlowHead *)call->a[0];
+
+    memset(&out->mon_pp, 0, sizeof(out->mon_pp));
+    fill_battle_ref(&out->mon_pp.mon, (struct BtlPokeParam *)call->a[1],
+                    main_of_flow(call), flow != NULL ? flow->pokeCon : NULL);
+    out->mon_pp.slot = (u8)call->a[2];
+    out->mon_pp.source = (u8)BW_PP_BATTLE;
+    out->mon_pp.amount = (u16)call->a[3];
+}
+
+static void apply_mon_pp_battle(const BwEventPayload *in, BwEventCall *call)
+{
+    call->a[3] = (uintptr_t)in->mon_pp.amount;
+}
+
+static void refuse_mon_pp_battle(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
+/*
+ * mon.form in a battle: BTL_SERVER_FLOW_ProcHandExChangeForm (flow, cmd),
+ * the form change of an ability, a move or a held item.  The command holds
+ * the Pokemon's id at +4 and the form at +5.  Refused, the command answers
+ * 0 and the form stays.
+ */
+typedef struct BwPortFormCmd {
+    u32 header;
+    u8  pokeId;     /* +4 */
+    u8  form;       /* +5 */
+} BwPortFormCmd;
+
+static void build_mon_form_battle(const BwEventCall *call, BwEventPayload *out)
+{
+    const BwPortFlowHead *flow = (const BwPortFlowHead *)call->a[0];
+    const BwPortFormCmd *cmd = (const BwPortFormCmd *)call->a[1];
+    struct BtlPokeParam *mon = NULL;
+
+    memset(&out->mon_form, 0, sizeof(out->mon_form));
+    out->mon_form.source = (u8)BW_FORM_BATTLE;
+    if (cmd == NULL) {
+        return;
+    }
+    if (flow != NULL && flow->pokeCon != NULL && BTL_SIDE_GetPokeByIdThunk != NULL) {
+        mon = BTL_SIDE_GetPokeByIdThunk(flow->pokeCon, (int)cmd->pokeId);
+    }
+    fill_battle_ref(&out->mon_form.mon, mon, main_of_flow(call),
+                    flow != NULL ? flow->pokeCon : NULL);
+    if (mon != NULL && BTL_POKEPARAM_GetValue != NULL) {
+        out->mon_form.from = (u8)BTL_POKEPARAM_GetValue(mon, 0x13);
+    }
+    if (mon != NULL && BTL_POKEPARAM_GetSpecies != NULL) {
+        out->mon_form.species = BTL_POKEPARAM_GetSpecies(mon);
+    }
+    out->mon_form.to = cmd->form;
+}
+
+static void apply_mon_form_battle(const BwEventPayload *in, BwEventCall *call)
+{
+    BwPortFormCmd *cmd = (BwPortFormCmd *)call->a[1];
+
+    if (cmd != NULL) {
+        cmd->form = in->mon_form.to;
+    }
+}
+
+static void refuse_mon_form_battle(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
 static const BwEventBinding g_battle_rows[] = {
+    { BW_MOD_REGION_OVL(93), 0x021C5620u, BW_EVENT_MON_CURE, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_mon_cure_battle, NULL, refuse_mon_cure_battle,
+      when_battle_cure },
+
+    { BW_MOD_REGION_OVL(93), 0x021C6080u, BW_EVENT_MON_PP, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_mon_pp_battle, apply_mon_pp_battle,
+      refuse_mon_pp_battle, NULL },
+
+    { BW_MOD_REGION_OVL(93), 0x021CA748u, BW_EVENT_MON_FORM, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_mon_form_battle, apply_mon_form_battle,
+      refuse_mon_form_battle, NULL },
+
     { BW_MOD_REGION_OVL(93), 0x021CC008u, BW_EVENT_MON_REVIVE, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_mon_revive_battle, apply_mon_revive_battle,
       refuse_mon_revive_battle, when_battle_fainted },

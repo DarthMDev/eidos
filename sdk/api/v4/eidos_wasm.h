@@ -62,6 +62,9 @@ enum {
     EIDOS_EVENT_MON_HELDITEM = 51,
     EIDOS_EVENT_EGG_HATCH = 52,
     EIDOS_EVENT_TRADE_INGAME = 53,
+    EIDOS_EVENT_MON_CURE = 54,
+    EIDOS_EVENT_MON_PP = 55,
+    EIDOS_EVENT_MON_FORM = 56,
     EIDOS_EVENT_BATTLE_START = 70,
     EIDOS_EVENT_BATTLE_ACTION = 71,
     EIDOS_EVENT_BATTLE_ITEM = 72,
@@ -125,6 +128,13 @@ enum {
     EIDOS_HEAL_POWER = 2,
     EIDOS_EXP_BATTLE = 0,
     EIDOS_EXP_DAYCARE = 1,
+    EIDOS_CURE_FIELD_ITEM = 0,
+    EIDOS_CURE_BATTLE = 1,
+    EIDOS_CURE_PARTY = 2,
+    EIDOS_PP_FIELD_ITEM = 0,
+    EIDOS_PP_BATTLE = 1,
+    EIDOS_FORM_FIELD = 0,
+    EIDOS_FORM_BATTLE = 1,
     EIDOS_LEVELUP_BATTLE = 0,
     EIDOS_LEVELUP_ITEM = 1,
     EIDOS_ITEM_FROM_OTHER = 0,
@@ -438,6 +448,32 @@ typedef struct EidosTradeIngame {
     EidosMonRef given;  /* the player's Pokemon */
     uint16_t received_species;  /* the species offered */
 } EidosTradeIngame;  /* 24 bytes */
+
+typedef struct EidosMonCure {
+    EidosEvent h;
+    EidosMonRef mon;
+    uint8_t status;
+    uint8_t source;  /* BW_CURE_* */
+    uint16_t item;  /* the item, or 0 */
+} EidosMonCure;  /* 20 bytes */
+
+typedef struct EidosMonPp {
+    EidosEvent h;
+    EidosMonRef mon;
+    uint8_t slot;  /* the move slot, 0 to 3 */
+    uint8_t source;  /* BW_PP_* */
+    uint16_t move;  /* the move, or 0 when the port cannot read it */
+    uint16_t amount;  /* *mod */
+} EidosMonPp;  /* 24 bytes */
+
+typedef struct EidosMonForm {
+    EidosEvent h;
+    EidosMonRef mon;
+    uint16_t species;
+    uint8_t from;
+    uint8_t to;  /* *mod */
+    uint8_t source;  /* BW_FORM_* */
+} EidosMonForm;  /* 24 bytes */
 
 typedef struct EidosBattleStart {
     EidosEvent h;

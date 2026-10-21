@@ -100,6 +100,18 @@ extern u32 FILE_UTIL_GetItemParam(u32 item, u32 sel, u32 heap) BW_PORT_WEAK;
 /* The Pokemon fields (POKE_TOOL_GetPartyValue). */
 #define BW_FIELD_HP     0xA0u
 #define BW_FIELD_MAX_HP 0xA1u
+#define BW_FIELD_STATUS 0x9Du
+#define BW_FIELD_SPECIES_ID 0x05u
+#define BW_FIELD_FORM_ID    0x6Fu
+
+/* The item ids of the five status cures (src/game/ov091/plist_demo_types.h),
+ * in the order of the game's status numbers 2 sleep, 5 poison, 4 burn,
+ * 3 freeze, 1 paralysis. */
+#define BW_ITEM_PARAM_CURES_SLEEP     18u
+#define BW_ITEM_PARAM_CURES_POISON    19u
+#define BW_ITEM_PARAM_CURES_BURN      20u
+#define BW_ITEM_PARAM_CURES_FREEZE    21u
+#define BW_ITEM_PARAM_CURES_PARALYSIS 22u
 
 /* ------------------------------------------------------------------ */
 /* The port's own views of the game's work blocks                     */
@@ -839,18 +851,21 @@ static void apply_restore_revive(const BwEventPayload *unused, BwEventCall *call
 
 /*
  * A party heal (a Centre or another script, the HP-restore power) as a
- * whole is the `heal` event.  Each member gets its own event too: a
- * fainted member mon.revive, a member that has lost HP heal.hp.  The
- * game's function heals the whole party at once, so the port asks before
- * it and, after it, writes each member's HP back to what the handlers
- * chose: the HP it had when a handler refused, the HP they set otherwise.
- * A refusal of `heal` itself stops the whole heal before any member event.
+ * whole is the `heal` event.  Each member gets its own event too, for
+ * what the heal did to it: mon.revive when it had fainted, heal.hp when it
+ * had lost HP, mon.cure when it had a status.  The game's function heals
+ * the members it chooses in one go (the power may heal only the first
+ * one), so the port notes each member before the call and, after it, asks
+ * about each change the call made and puts back what a handler refused:
+ * the 0 HP of a fainted member, the HP a member had, its status.  A refusal
+ * of `heal` itself stops the whole heal before any member event.
  */
 static struct {
     struct Party *party;
-    u8 count;
-    u8 asked;           /* bit i: an event fired for member i */
-    u16 hp[6];          /* the HP member i ends with */
+    u8  count;
+    u8  revive_source;
+    u16 hp[6];          /* member i's HP before the heal */
+    u32 status[6];      /* member i's status before the heal */
 } g_party_heal;
 
 static void party_heal_before(struct Party *party, u8 revive_source)
@@ -868,46 +883,13 @@ static void party_heal_before(struct Party *party, u8 revive_source)
     }
     g_party_heal.party = party;
     g_party_heal.count = (u8)count;
+    g_party_heal.revive_source = revive_source;
     for (i = 0; i < count; i++) {
         struct PokemonParam *mon = POKEPARTY_GetMember(party, i);
-        BwEventPayload p;
-        u32 hp, maxHp;
 
-        if (mon == NULL || POKE_TOOL_GetPartyValue(mon, 0x4Cu, 0) != 0u) {
-            continue;   /* an egg */
-        }
-        hp = POKE_TOOL_GetPartyValue(mon, BW_FIELD_HP, 0);
-        maxHp = POKE_TOOL_GetPartyValue(mon, BW_FIELD_MAX_HP, 0);
-        if (hp >= maxHp) {
-            continue;   /* nothing to heal */
-        }
-        memset(&p, 0, sizeof p);
-        g_party_heal.asked |= (u8)(1u << i);
-        if (hp == 0u) {
-            party_ref_of(&p.mon_revive.mon, mon);
-            p.mon_revive.max_hp = (u16)maxHp;
-            p.mon_revive.hp = (u16)maxHp;
-            p.mon_revive.source = revive_source;
-            if (bw_mod_event_fire(BW_EVENT_MON_REVIVE, &p)) {
-                g_party_heal.hp[i] = 0u;    /* it stays fainted */
-            } else {
-                u32 v = p.mon_revive.hp == 0u ? 1u : p.mon_revive.hp;
-
-                g_party_heal.hp[i] = (u16)(v > maxHp ? maxHp : v);
-            }
-        } else {
-            party_ref_of(&p.heal_hp.mon, mon);
-            p.heal_hp.hp = (u16)hp;
-            p.heal_hp.max_hp = (u16)maxHp;
-            p.heal_hp.amount = (u16)(maxHp - hp);
-            p.heal_hp.source = (u8)BW_HEAL_HP_PARTY;
-            if (bw_mod_event_fire(BW_EVENT_HEAL_HP, &p)) {
-                g_party_heal.hp[i] = (u16)hp;   /* it keeps the HP it had */
-            } else {
-                u32 v = hp + p.heal_hp.amount;
-
-                g_party_heal.hp[i] = (u16)(v > maxHp ? maxHp : v);
-            }
+        if (mon != NULL) {
+            g_party_heal.hp[i] = (u16)POKE_TOOL_GetPartyValue(mon, BW_FIELD_HP, 0);
+            g_party_heal.status[i] = POKE_TOOL_GetPartyValue(mon, BW_FIELD_STATUS, 0);
         }
     }
 }
@@ -920,14 +902,58 @@ static void party_heal_after(void)
         return;
     }
     for (i = 0; i < g_party_heal.count; i++) {
-        struct PokemonParam *mon;
+        struct PokemonParam *mon = POKEPARTY_GetMember(g_party_heal.party, i);
+        BwEventPayload p;
+        u32 before = g_party_heal.hp[i];
+        u32 hp, maxHp, status;
 
-        if ((g_party_heal.asked & (1u << i)) == 0u) {
-            continue;
+        if (mon == NULL || POKE_TOOL_GetPartyValue(mon, 0x4Cu, 0) != 0u) {
+            continue;   /* gone, or an egg */
         }
-        mon = POKEPARTY_GetMember(g_party_heal.party, i);
-        if (mon != NULL) {
-            POKE_TOOL_SetPartyValue(mon, BW_FIELD_HP, g_party_heal.hp[i]);
+        hp = POKE_TOOL_GetPartyValue(mon, BW_FIELD_HP, 0);
+        maxHp = POKE_TOOL_GetPartyValue(mon, BW_FIELD_MAX_HP, 0);
+        status = POKE_TOOL_GetPartyValue(mon, BW_FIELD_STATUS, 0);
+
+        if (before == 0u && hp != 0u) {
+            memset(&p, 0, sizeof p);
+            party_ref_of(&p.mon_revive.mon, mon);
+            p.mon_revive.max_hp = (u16)maxHp;
+            p.mon_revive.hp = (u16)hp;
+            p.mon_revive.source = g_party_heal.revive_source;
+            if (bw_mod_event_fire(BW_EVENT_MON_REVIVE, &p)) {
+                /* It stays fainted, with the status it had. */
+                POKE_TOOL_SetPartyValue(mon, BW_FIELD_HP, 0u);
+                POKE_TOOL_SetPartyValue(mon, BW_FIELD_STATUS, g_party_heal.status[i]);
+                continue;
+            }
+            if (p.mon_revive.hp != hp) {
+                u32 v = p.mon_revive.hp == 0u ? 1u : p.mon_revive.hp;
+
+                POKE_TOOL_SetPartyValue(mon, BW_FIELD_HP, v > maxHp ? maxHp : v);
+            }
+        } else if (before != 0u && hp > before) {
+            memset(&p, 0, sizeof p);
+            party_ref_of(&p.heal_hp.mon, mon);
+            p.heal_hp.hp = (u16)before;
+            p.heal_hp.max_hp = (u16)maxHp;
+            p.heal_hp.amount = (u16)(hp - before);
+            p.heal_hp.source = (u8)BW_HEAL_HP_PARTY;
+            if (bw_mod_event_fire(BW_EVENT_HEAL_HP, &p)) {
+                POKE_TOOL_SetPartyValue(mon, BW_FIELD_HP, before);
+            } else if (before + p.heal_hp.amount != hp) {
+                u32 v = before + p.heal_hp.amount;
+
+                POKE_TOOL_SetPartyValue(mon, BW_FIELD_HP, v > maxHp ? maxHp : v);
+            }
+        }
+        if (before != 0u && g_party_heal.status[i] != 0u && status == 0u) {
+            memset(&p, 0, sizeof p);
+            party_ref_of(&p.mon_cure.mon, mon);
+            p.mon_cure.status = (u8)g_party_heal.status[i];
+            p.mon_cure.source = (u8)BW_CURE_PARTY;
+            if (bw_mod_event_fire(BW_EVENT_MON_CURE, &p)) {
+                POKE_TOOL_SetPartyValue(mon, BW_FIELD_STATUS, g_party_heal.status[i]);
+            }
         }
     }
     g_party_heal.party = NULL;
@@ -1001,6 +1027,132 @@ static void apply_item_level_after(const BwEventPayload *unused, BwEventCall *ca
     (void)bw_mod_event_fire(BW_EVENT_MON_LEVELUP, &p);
 }
 
+/*
+ * mon.cure on the party screen: at the item check, when the item cures the
+ * status the Pokemon has.  Refused, the check answers no and the item stays
+ * (a Full Restore then heals nothing either: it is one item).
+ */
+static int item_cures_status(u32 item, u32 status)
+{
+    u32 sel;
+
+    switch (status) {
+    case 1u: sel = BW_ITEM_PARAM_CURES_PARALYSIS; break;
+    case 2u: sel = BW_ITEM_PARAM_CURES_SLEEP; break;
+    case 3u: sel = BW_ITEM_PARAM_CURES_FREEZE; break;
+    case 4u: sel = BW_ITEM_PARAM_CURES_BURN; break;
+    case 5u: sel = BW_ITEM_PARAM_CURES_POISON; break;
+    default: return 0;
+    }
+    return FILE_UTIL_GetItemParam != NULL &&
+           FILE_UTIL_GetItemParam(item, sel, BW_ITEM_HEAP) != 0u;
+}
+
+static int when_field_cure_check(const BwEventCall *call)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+
+    return mon != NULL && POKE_TOOL_GetPartyValue != NULL &&
+           POKE_TOOL_GetPartyValue(mon, BW_FIELD_HP, 0) != 0u &&
+           item_cures_status((u32)call->a[1],
+                             POKE_TOOL_GetPartyValue(mon, BW_FIELD_STATUS, 0));
+}
+
+static void build_mon_cure_field(const BwEventCall *call, BwEventPayload *out)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+
+    memset(&out->mon_cure, 0, sizeof(out->mon_cure));
+    party_ref_of(&out->mon_cure.mon, mon);
+    out->mon_cure.status = (u8)POKE_TOOL_GetPartyValue(mon, BW_FIELD_STATUS, 0);
+    out->mon_cure.source = (u8)BW_CURE_FIELD_ITEM;
+    out->mon_cure.item = (u16)call->a[1];
+}
+
+/* mon.cure at the check, refused: the item has no effect and stays. */
+static void refuse_mon_cure_field(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
+/*
+ * mon.pp on the party screen: POKE_TOOL_RestorePP (mon, slot, amount), the
+ * PP restore an Ether or an Elixir runs per move.  The game's amount 0x7F
+ * is "to the max"; the payload carries the PP that means.
+ */
+#define BW_FIELD_MOVE1_ID  0x36u
+#define BW_FIELD_PP1_ID    0x3Au
+#define BW_FIELD_MAXPP1_ID 0x42u
+
+static void build_mon_pp_field(const BwEventCall *call, BwEventPayload *out)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+    u32 slot = (u32)call->a[1];
+    u32 amount = (u32)call->a[2];
+
+    memset(&out->mon_pp, 0, sizeof(out->mon_pp));
+    party_ref_of(&out->mon_pp.mon, mon);
+    out->mon_pp.slot = (u8)slot;
+    out->mon_pp.source = (u8)BW_PP_FIELD_ITEM;
+    if (mon != NULL && POKE_TOOL_GetPartyValue != NULL && slot < 4u) {
+        out->mon_pp.move = (u16)POKE_TOOL_GetPartyValue(mon, BW_FIELD_MOVE1_ID + slot, 0);
+        if (amount == 0x7Fu) {
+            u32 cur = POKE_TOOL_GetPartyValue(mon, BW_FIELD_PP1_ID + slot, 0);
+            u32 max = POKE_TOOL_GetPartyValue(mon, BW_FIELD_MAXPP1_ID + slot, 0);
+
+            amount = max > cur ? max - cur : 0u;
+        }
+    }
+    out->mon_pp.amount = (u16)amount;
+}
+
+static void apply_mon_pp_field(const BwEventPayload *in, BwEventCall *call)
+{
+    /* 0x7F is the game's "to the max": a real amount stays below it. */
+    call->a[2] = (uintptr_t)(in->mon_pp.amount >= 0x7Fu ? 0x7Eu : in->mon_pp.amount);
+}
+
+/* mon.pp refused: no PP; the function answers 0, "no change". */
+static void refuse_mon_pp_field(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
+/*
+ * mon.form outside a battle: POKE_TOOL_ChangeForm (mon, form), which the
+ * form items, the seasons and the scripts all run.  It answers 1 when the
+ * form changed; refused, it answers 0 and the form stays.
+ */
+static int when_form_changes(const BwEventCall *call)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+
+    return mon != NULL && POKE_TOOL_GetPartyValue != NULL &&
+           POKE_TOOL_GetPartyValue(mon, BW_FIELD_FORM_ID, 0) != (u32)call->a[1];
+}
+
+static void build_mon_form_field(const BwEventCall *call, BwEventPayload *out)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+
+    memset(&out->mon_form, 0, sizeof(out->mon_form));
+    party_ref_of(&out->mon_form.mon, mon);
+    out->mon_form.species = (u16)POKE_TOOL_GetPartyValue(mon, BW_FIELD_SPECIES_ID, 0);
+    out->mon_form.from = (u8)POKE_TOOL_GetPartyValue(mon, BW_FIELD_FORM_ID, 0);
+    out->mon_form.to = (u8)call->a[1];
+    out->mon_form.source = (u8)BW_FORM_FIELD;
+}
+
+static void apply_mon_form_field(const BwEventPayload *in, BwEventCall *call)
+{
+    call->a[1] = (uintptr_t)in->mon_form.to;
+}
+
+static void refuse_mon_form_field(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* The rows                                                            */
 /* ------------------------------------------------------------------ */
@@ -1020,6 +1172,18 @@ static const BwEventBinding g_items_rows[] = {
     { BW_MOD_REGION_OVL(91), 0x021BDD78u, BW_EVENT_MON_REVIVE, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_mon_revive_field, apply_mon_revive_field,
       refuse_mon_revive_field, when_field_revive_check },
+
+    { BW_MOD_REGION_OVL(91), 0x021BDD78u, BW_EVENT_MON_CURE, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_mon_cure_field, NULL, refuse_mon_cure_field,
+      when_field_cure_check },
+
+    { BW_MOD_REGION_ARM9, 0x0201B970u, BW_EVENT_MON_PP, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_mon_pp_field, apply_mon_pp_field,
+      refuse_mon_pp_field, NULL },
+
+    { BW_MOD_REGION_ARM9, 0x02017988u, BW_EVENT_MON_FORM, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_mon_form_field, apply_mon_form_field,
+      refuse_mon_form_field, when_form_changes },
 
     { BW_MOD_REGION_OVL(91), 0x021BE2B4u, BW_EVENT_PORT, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, NULL, apply_item_level_before, NULL, NULL },
