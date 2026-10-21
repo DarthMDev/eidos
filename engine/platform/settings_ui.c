@@ -125,6 +125,10 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_MOD_OPTION2 "The choice is kept with its data."
 #define HELP_MOD_CLEAR1  "Delete the mod's saved data."
 #define HELP_MOD_CLEAR2  "The mod's own folder stays."
+#define HELP_MOD_RELOAD1 "Reads the mods folder again and"
+#define HELP_MOD_RELOAD2 "restarts every mod with its changes."
+#define HELP_MOD_FOLDER1 "Put mods here: a folder with an"
+#define HELP_MOD_FOLDER2 "eidos_mod.txt, or a .bw file."
 #define HELP_MOD_REVERT1 "The switches go back as they were."
 #define HELP_MOD_REVERT2 "The change applies when you leave."
 #define HELP_ORPHAN1     "A folder no installed mod claims."
@@ -221,6 +225,9 @@ static const ValueName k_choice_names[] = {
 /* The Mods and Network sections' own labels. */
 #define STR_MOD_CLEAR   "  Clear saved data"
 #define STR_MOD_REVERT  "Revert changes"
+#define STR_MOD_RELOAD  "Reload mods"
+#define STR_MOD_FOLDER  "Mods folder"
+#define STR_MOD_MISSING " (missing)"
 #define STR_ORPHAN      "orphan"
 #define STR_NET_RELAY   "Relay address"
 #define STR_NET_RPORT   "Relay port"
@@ -298,6 +305,8 @@ enum {
     ROW_MOD_OPTION,       /* a mod's own setting: arg the mod, arg2 it  */
     ROW_MOD_CLEAR,        /* "Clear saved data": arg is the mod          */
     ROW_MOD_REVERT,       /* the switches back to the port's list        */
+    ROW_MOD_RELOAD,       /* read the mods folder again, restart the mods */
+    ROW_MOD_FOLDER,       /* where the installed mods live (shown only)   */
     ROW_MOD_RESTART,      /* the run restart (the port's own)            */
     ROW_ORPHAN,           /* a saved-data folder no installed mod claims */
     ROW_NET_RELAY,        /* the relay's address (text)                  */
@@ -386,6 +395,11 @@ static void build_mods_rows(void)
     for (i = 0; i < bw_mod_menu_orphan_count(); i++) {
         add_row(ROW_ORPHAN, (int)i, 0);
     }
+    /* The installed mods folder and the reload: a mod dropped into the
+     * folder, or a mod whose files changed, is picked up without leaving
+     * the game. */
+    add_row(ROW_MOD_RELOAD, 0, 0);
+    add_row(ROW_MOD_FOLDER, 0, 0);
     add_row(ROW_MOD_REVERT, 0, 0);
     /* The run restart: the mod layer's own restart (sdk/mod_restart.c) is
      * the port's own restart, and the menu offers it beside the mod
@@ -654,6 +668,19 @@ void eidos_sui_leave(void)
         g.mods_open = 0;
     }
     eidos_settings_commit();
+}
+
+/*
+ * Reload: the mods folder is read again and the list applies at once (a
+ * mod whose files changed restarts), then the rows are built again, since
+ * mods may have come or gone.
+ */
+static int reload_mods(void)
+{
+    int rc = bw_mod_menu_reload();
+
+    build_rows_keep_cursor();
+    return EIDOS_SUI_REDRAW | (rc == 0 ? EIDOS_SUI_SFX_SELECT : EIDOS_SUI_SFX_BACK);
 }
 
 static void enter_section(int t)
@@ -1285,6 +1312,8 @@ static int sui_input(unsigned pressed, unsigned held)
             bw_mod_menu_revert();
             eidos_settings_panel_revert();
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        case ROW_MOD_RELOAD:
+            return reload_mods();
         case ROW_MOD_RESTART:
             /* The run ends: the player is asked first (the menu's own
              * question). */
@@ -1465,6 +1494,11 @@ int eidos_sui_touch(int row, int zone)
             bw_mod_menu_revert();
             eidos_settings_panel_revert();
             res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        break;
+    case ROW_MOD_RELOAD:
+        if (was) {
+            res = reload_mods();
         }
         break;
     case ROW_MOD_RESTART:
@@ -1686,8 +1720,15 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         put(value, nv, eidos_settings_panel_visible() ? STR_ON : STR_OFF);
         break;
     case ROW_MOD_SWITCH:
-        /* The mod's name and its switch. */
-        put(label, nl, bw_mod_menu_name_at((u32)r->arg));
+        /* The mod's name and its switch; a mod whose folder is gone says
+         * so, and stays off until it is back. */
+        if (bw_mod_menu_present_at((u32)r->arg)) {
+            put(label, nl, bw_mod_menu_name_at((u32)r->arg));
+        } else {
+            snprintf(buf, sizeof buf, "%s%s", bw_mod_menu_name_at((u32)r->arg),
+                     STR_MOD_MISSING);
+            put(label, nl, buf);
+        }
         put(value, nv, bw_mod_menu_enabled_at((u32)r->arg) ? STR_ON : STR_OFF);
         break;
     case ROW_MOD_OPTION:
@@ -1703,6 +1744,16 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         break;
     case ROW_MOD_REVERT:
         put(label, nl, STR_MOD_REVERT);
+        break;
+    case ROW_MOD_RELOAD:
+        put(label, nl, STR_MOD_RELOAD);
+        break;
+    case ROW_MOD_FOLDER:
+        put(label, nl, STR_MOD_FOLDER);
+        if (bw_mod_menu_installed_folder(buf, sizeof buf) != 0) {
+            buf[0] = '\0';
+        }
+        put(value, nv, buf);
         break;
     case ROW_MOD_RESTART:
         put(label, nl, STR_MOD_RESTART);
@@ -1929,6 +1980,14 @@ void eidos_sui_help_line(int i, char *out, int n)
         case ROW_MOD_CLEAR:
             l[0] = HELP_MOD_CLEAR1;
             l[1] = HELP_MOD_CLEAR2;
+            break;
+        case ROW_MOD_RELOAD:
+            l[0] = HELP_MOD_RELOAD1;
+            l[1] = HELP_MOD_RELOAD2;
+            break;
+        case ROW_MOD_FOLDER:
+            l[0] = HELP_MOD_FOLDER1;
+            l[1] = HELP_MOD_FOLDER2;
             break;
         case ROW_MOD_REVERT:
             l[0] = HELP_MOD_REVERT1;

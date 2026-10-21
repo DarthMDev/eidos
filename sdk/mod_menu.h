@@ -119,6 +119,23 @@ void bw_mod_menu_start(void);
  */
 void bw_mod_menu_open(void);
 
+/*
+ * The installed mods folder: EIDOS_MODS_DIR, or "mods" beside the save
+ * folder (<app data>/eidos/mods).  A folder in it with an eidos_mod.txt,
+ * or a `.bw` package, is a mod; one the player has not seen joins the
+ * list switched on.  0, or -1 when there is no such path.
+ */
+int bw_mod_menu_installed_folder(char *out, size_t size);
+
+/*
+ * Read the installed mods folder and every mod again and apply the list
+ * at once, even with no switch changed: a mod whose files changed is
+ * stopped and loaded again, and the cached merged archives are dropped.
+ * Game data already in memory (the map on screen) shows the change the
+ * next time the game loads it.  0, or -1 when a step failed.
+ */
+int bw_mod_menu_reload(void);
+
 /* Forget the model (the port's power-on).  The files on the disk are
  * untouched. */
 void bw_mod_menu_reset(void);

@@ -786,6 +786,39 @@ int main(void)
                     bw_mod_menu_present_at(i), 1);
     }
 
+    printf("the installed mods folder and the reload\n");
+    {
+        char folder[512];
+
+        /* The installed folder is "mods" beside the save folder. */
+        BW_REQUIRE("the installed folder has a path",
+                   bw_mod_menu_installed_folder(folder, sizeof folder) == 0);
+        BW_CHECK_EQ("it is beside the save folder",
+                    strcmp(folder, T_ROOT "/mods"), 0);
+        BW_REQUIRE("a mod is put in it",
+                   make_dirs(T_ROOT "/mods/zeta") == 0 &&
+                   write_file(T_ROOT "/mods/zeta/eidos_mod.txt",
+                              "name = Zeta\nstate = zeta\n") == 0 &&
+                   write_file(T_ROOT "/mods/notamod.txt", "x\n") == 0);
+        BW_REQUIRE("the reload runs", bw_mod_menu_reload() == 0);
+        index = (u32)index_of_ns("zeta");
+        BW_REQUIRE("the new mod is in the list", index < bw_mod_menu_count());
+        BW_CHECK_EQ("it joins switched on", bw_mod_menu_enabled_at(index), 1);
+        BW_CHECK_EQ("and running", bw_mod_menu_running_at(index), 1);
+        BW_CHECK_EQ("a loose file is not a mod", index_of_ns("notamod") < 0, 1);
+
+        remove(T_ROOT "/mods/zeta/eidos_mod.txt");
+        (void)BW_RMDIR(T_ROOT "/mods/zeta");
+        BW_REQUIRE("the reload runs again", bw_mod_menu_reload() == 0);
+        index = (u32)index_of_ns("zeta");
+        if (index < bw_mod_menu_count()) {
+            BW_CHECK_EQ("a removed mod shows as missing",
+                        bw_mod_menu_present_at(index), 0);
+        }
+        remove(T_ROOT "/mods/notamod.txt");
+        (void)BW_RMDIR(T_ROOT "/mods");
+    }
+
     bw_mod_menu_reset();
     bw_clear_mods();
     clean_tree();

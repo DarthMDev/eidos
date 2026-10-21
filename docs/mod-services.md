@@ -564,6 +564,17 @@ player makes there is written beside the mod's saved data.
 
 ## The mod menu
 
+**The installed mods folder.** The player installs a mod by putting it in
+`<app data>/eidos/mods` (`EIDOS_MODS_DIR` names another folder): a folder
+with an `eidos_mod.txt`, or a `.bw` package. A mod found there that the
+player has not seen yet joins the list switched on. The Mods section shows
+the folder's path and a **Reload mods** row: it reads the folder and every
+mod again and applies the list at once, so a mod dropped in, removed or
+changed is picked up without leaving the game (a mod whose files changed
+is stopped and loaded again, and the cached merged archives are dropped;
+game data already on screen shows the change the next time the game loads
+it). A mod whose folder is gone shows as missing and stays out of the list.
+
 The port's settings screen has a Mods section: the installed mods in load
 order, each with an on/off switch, its settings, "Clear saved data", and a
 "Restart the run" row. The order can be changed. Changes apply when the

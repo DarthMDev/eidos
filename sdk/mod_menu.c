@@ -108,6 +108,7 @@
 #include "mod_menu.h"
 #include "mod_rule.h"
 #include "mod_table.h"
+#include "mod_bw.h"
 #include "plat_dir.h"
 #include "save.h"
 #include "vfs.h"
@@ -245,6 +246,12 @@ static int g_player_order_base;
 
 /* The port's own record of the player's list is there. */
 static int g_have_record;
+
+/* How many mods the last scan of the installed mods folder found. */
+static u32 g_installed_found;
+
+/* The next apply runs even when no switch changed: a reload. */
+static int g_force_apply;
 
 /* The folders in the save directory that no mod claims. */
 static char g_orphans[BW_MOD_MENU_MAX][BW_MOD_MENU_NS_MAX];
@@ -1253,6 +1260,136 @@ static void model_sort(void)
  * list.  A mod the record does not name is one the player has not ordered:
  * the manifest's `order` key decides where it goes.
  */
+/*
+ * The installed mods folder: where the player puts mods.  EIDOS_MODS_DIR
+ * names it; otherwise it is "mods" beside the save folder
+ * (<app data>/eidos/mods next to <app data>/eidos/saves).  It is not
+ * <save dir>/mods, which holds the mods' own saved data.
+ */
+int bw_mod_menu_installed_folder(char *out, size_t size)
+{
+    const char *env = getenv("EIDOS_MODS_DIR");
+    const char *save;
+    size_t n;
+    int k;
+
+    if (out == NULL || size == 0) {
+        return -1;
+    }
+    if (env != NULL && env[0] != '\0') {
+        k = snprintf(out, size, "%s", env);
+        return (k < 0 || (size_t)k >= size) ? -1 : 0;
+    }
+    save = bw_save_dir();
+    if (save == NULL || save[0] == '\0') {
+        return -1;
+    }
+    n = strlen(save);
+    while (n > 0 && (save[n - 1] == '/' || save[n - 1] == '\\')) {
+        n--;
+    }
+    while (n > 0 && save[n - 1] != '/' && save[n - 1] != '\\') {
+        n--;
+    }
+    if (n == 0) {
+        return -1;
+    }
+    k = snprintf(out, size, "%.*smods", (int)n, save);
+    return (k < 0 || (size_t)k >= size) ? -1 : 0;
+}
+
+typedef struct BwModMenuInstalled {
+    const char *folder;
+    u32         found;
+} BwModMenuInstalled;
+
+/* Does `path` end with `.bw` (any case)? */
+static int is_bw_file(const char *path)
+{
+    size_t n = strlen(path);
+
+    return n > 3 && path[n - 3] == '.' &&
+           (path[n - 2] == 'b' || path[n - 2] == 'B') &&
+           (path[n - 1] == 'w' || path[n - 1] == 'W');
+}
+
+/*
+ * One entry of the installed folder: a folder with a manifest, or a `.bw`
+ * package (unpacked to the cache, whose folder is the root the file layer
+ * holds, sdk/vfs.c).  A mod the model does not hold yet joins it, on: a
+ * mod put in the folder is meant to run.  The player's record keeps the
+ * switch from then on.
+ */
+static int installed_entry(void *ctx, const char *name)
+{
+    BwModMenuInstalled *scan = (BwModMenuInstalled *)ctx;
+    char path[BW_MOD_MENU_PATH_MAX];
+    char root[BW_MOD_MENU_ROOT_MAX];
+    BwModMenuMod *m;
+    int n;
+
+    if (name[0] == '.') {
+        return 0;
+    }
+    n = snprintf(path, sizeof path, "%s/%s", scan->folder, name);
+    if (n < 0 || (size_t)n >= sizeof path) {
+        return 0;
+    }
+    if (bw_plat_path_kind(path) == BW_PATH_DIR) {
+        char manifest[BW_MOD_MENU_PATH_MAX];
+
+        n = snprintf(manifest, sizeof manifest, "%s/eidos_mod.txt", path);
+        if (n < 0 || (size_t)n >= sizeof manifest ||
+            bw_plat_path_kind(manifest) != BW_PATH_FILE) {
+            return 0;       /* a folder without a manifest is not a mod */
+        }
+        copy_str(root, sizeof root, path);
+    } else if (is_bw_file(path)) {
+        char err[160];
+
+        err[0] = '\0';
+        if (bw_mod_bw_cache_path(path, root, sizeof root) != 0 ||
+            bw_mod_bw_unpack(path, root, err, sizeof err) != 0) {
+            report(name, "the package could not be read: %s",
+                   err[0] != '\0' ? err : "no cache folder");
+            return 0;
+        }
+    } else {
+        return 0;
+    }
+    scan->found++;
+    if (model_find_root(root) != NULL) {
+        return 0;
+    }
+    m = model_add();
+    if (m == NULL) {
+        return 1;           /* the menu is full: stop */
+    }
+    copy_str(m->root, sizeof m->root, root);
+    copy_str(m->name, sizeof m->name, name);
+    m->running = 0;
+    m->enabled = 1;
+    m->present = 1;
+    m->player_pos = -1;
+    return 0;
+}
+
+static void scan_installed(void)
+{
+    char folder[BW_MOD_MENU_PATH_MAX];
+    BwModMenuInstalled scan;
+
+    g_installed_found = 0;
+    if (bw_mod_menu_installed_folder(folder, sizeof folder) != 0 ||
+        bw_plat_path_kind(folder) != BW_PATH_DIR) {
+        return;
+    }
+    scan.folder = folder;
+    scan.found = 0;
+    (void)bw_plat_list_dir(folder, installed_entry, &scan);
+    g_installed_found = scan.found;
+}
+
 static void model_build(void)
 {
     BwModMenuRow rows[BW_MOD_MENU_MAX];
@@ -1310,6 +1447,8 @@ static void model_build(void)
             g_player_order = 1;
         }
     }
+    /* The installed mods folder: the mods the player put there. */
+    scan_installed();
     /* Every mod's own manifest: the name, the namespace, the settings and
      * the order key come from it. */
     for (i = 0; i < g_count; i++) {
@@ -1371,7 +1510,7 @@ static int model_list_matches(void)
     for (i = 0; i < g_count; i++) {
         const char *root;
 
-        if (!g_mods[i].enabled) {
+        if (!g_mods[i].enabled || !g_mods[i].present) {
             continue;
         }
         if (n >= count) {
@@ -1403,15 +1542,15 @@ static int model_rebuild_roots(void)
     u32 i;
 
     for (i = 0; i < g_count; i++) {
-        if (!g_mods[i].enabled) {
-            continue;
+        if (!g_mods[i].enabled || !g_mods[i].present) {
+            continue;   /* off, or its folder is gone */
         }
         roots[n++] = g_mods[i].root;
     }
     if (!g_player_order) {
         bw_clear_mods();
         for (i = 0; i < g_count; i++) {
-            if (!g_mods[i].enabled) {
+            if (!g_mods[i].enabled || !g_mods[i].present) {
                 continue;
             }
             if (bw_add_mod_root(g_mods[i].root) != 0) {
@@ -1444,12 +1583,26 @@ void bw_mod_menu_open(void)
     model_build();
 }
 
+/*
+ * Reload: read the installed mods folder and every mod again, and run the
+ * whole apply even when no switch changed, so a mod whose files changed
+ * is stopped and loaded again and the cached merged archives are dropped.
+ * Switches the player changed and did not apply yet are dropped: the
+ * player's record is what stands.
+ */
+int bw_mod_menu_reload(void)
+{
+    model_build();
+    g_force_apply = 1;
+    return bw_mod_menu_apply();
+}
+
 void bw_mod_menu_start(void)
 {
     u32 i;
 
     model_build();
-    if (!g_have_record) {
+    if (!g_have_record && g_installed_found == 0) {
         /* No record of the player's own: the port's list stands as it is
          * (the environment's BW_MOD_ROOT, or what an explicit call set),
          * and with no mod root there is no state read and the state
@@ -1652,9 +1805,10 @@ int bw_mod_menu_apply(void)
     u32 i;
 
     model_ready();
-    if (!bw_mod_menu_dirty()) {
+    if (!g_force_apply && !bw_mod_menu_dirty()) {
         return 0;               /* nothing changed: the mods keep running */
     }
+    g_force_apply = 0;
 
     /*
      * 1. The mods' state is flushed before anything is stopped
