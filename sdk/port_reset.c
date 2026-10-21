@@ -86,6 +86,7 @@ void bw_port_reset(void)
     bw_os_reset();
     bw_pxi_reset();
     bw_cp_reset();
+    bw_card_spi_reset();
 
     /* The mod layer: no mod is loaded, no context carries over a run, no
      * game object stays bound, no message is waiting, no rule and no script

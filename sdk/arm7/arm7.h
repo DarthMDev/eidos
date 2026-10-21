@@ -81,6 +81,9 @@ void bw_arm7_rtc_init(void);
 void bw_arm7_tp_init(void);
 void bw_arm7_ctrdg_init(void);
 void bw_arm7_card_init(void);
+/* The card's SPI bus answers as a Black/White card's infrared chip does
+ * (sdk/arm7/card.c); installed at every reset. */
+void bw_card_spi_reset(void);
 void bw_arm7_fs_init(void);
 void bw_arm7_snd_init(void);
 void bw_arm7_nvram_init(void);
