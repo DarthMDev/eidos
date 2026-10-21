@@ -236,14 +236,15 @@ void (*panel_set)(u32 line, const char *text);   /* lines 0 to 15 */
 void (*panel_clear)(void);
 ```
 
-**The calls are bound; the panel is not shown yet.** The model is
+**Built.** The model is
 `sdk/mod_panel.c`: sixteen lines, a line set empty is cleared, the lines are
 kept per mod (the mod that calls is the one whose namespace is in force), and
 the port draws one panel. The picture is built (`engine/platform/mod_panel_draw.c`):
-the port's own font, drawn again only when the model changes. What is missing
-is the showing: the port's GPU presenter draws exactly two images today, so
-it needs a third texture and a third quad, and the window's arrangement has
-to grow by the panel's space (a hidden panel takes no space at all).
+the port's own font, drawn again only when the model changes, and uploaded
+only then. The presenter shows it as a third image beside the two screens,
+and the window's arrangement grows by the panel's space — the room exists
+exactly when there is a panel to show, so a player without mods sees no
+strip, and a hidden panel takes no space at all.
 
 The panel is drawn by the port outside the game's
 screens (to the side in the stacked layout, below in the side-by-side
@@ -284,8 +285,9 @@ writes them to a file at the end of the run: `<save dir>/splits/<namespace>.txt`
 plain text, a header line, the mod's namespace, and one line per split with
 the time in milliseconds and the name. The file is written whole and
 atomically, so a crash leaves the old file or the new one and never a torn
-one. The panel is not built, so the splits live in the timer's own list and
-the file is written when the port asks for it.
+one. The panel shows the running time and the splits: the port's own lines
+live beside a mod's own lines, and the port's line never takes a line the
+mod has used.
 
 ## Run restart
 

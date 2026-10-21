@@ -9,7 +9,7 @@
  * The model behind the small text panel the port draws beside the DS
  * screens: sixteen lines, each a string the port keeps and draws.  A mod
  * writes a line with panel_set and empties the panel with panel_clear; the
- * port's own drawing (engine/platform/mod_panel.c) reads the lines through
+ * port's own drawing (engine/platform/mod_panel_draw.c) reads the lines through
  * the calls at the bottom of sdk/mod_panel.h.
  *
  * The rules the model keeps
@@ -26,6 +26,14 @@
  *     it per mod: two mods that both fill the panel do not share one.
  *   - The port draws one panel: the one bw_mod_panel_select() names, or
  *     the first one that has a line in it when the port has named none.
+ *   - The mod's lines and the port's own lines are kept apart.  The mod's
+ *     lines are the mod's and the port's lines are the port's: the port's
+ *     own line is never drawn on a line the mod has used, so a mod's own
+ *     line is never overwritten, and the mod's own line never lands on
+ *     the port's own line either.  The port's own lines are the timer
+ *     line and the split lines (sdk/mod_timer.c).
+ *   - The picture is marked as changed only when a line really changed,
+ *     so the drawing is done again only then.
  *
  * The file
  * --------
@@ -70,14 +78,28 @@ extern const char *bw_mod_savedata_namespace(void);
 /* ------------------------------------------------------------------ */
 
 /*
- * One mod's panel: its namespace (the key) and its sixteen lines.  The
- * lines are kept as text, not as pointers: the port keeps them, and a mod
+ * One mod's panel: its namespace (the key), its sixteen lines and the
+ * port's own lines.
+ *
+ * The lines are kept as text, not as pointers: the port keeps them, and a mod
  * that goes away leaves its own panel behind until the reset.
+ *
+ * The port's own lines (the timer line, the split lines) are kept apart
+ * from the mod's lines, in their own array: the mod's lines are the mod's
+ * and the port's lines are the port's, and neither ever overwrites the
+ * other.  Each of the port's own lines is drawn on a line of the panel the
+ * mod has not used, and the model keeps which line that is, so the port's
+ * own lines hold their place while the mod's own lines come and go.
  */
 typedef struct BwModPanelState {
     char ns[BW_MOD_PANEL_NS_MAX + 1];
     int  used;
     char line[BW_MOD_PANEL_LINES][BW_MOD_PANEL_TEXT_MAX + 1];
+
+    /* The port's own lines: the timer line and the split lines. */
+    char port[BW_MOD_PANEL_LINES][BW_MOD_PANEL_TEXT_MAX + 1];
+    int  port_slot[BW_MOD_PANEL_LINES];  /* the line each one is drawn on */
+    u32  port_count;                     /* how many of them there are    */
 } BwModPanelState;
 
 static BwModPanelState g_panels[BW_MOD_PANEL_MAX];
@@ -91,8 +113,8 @@ static char g_shown[BW_MOD_PANEL_NS_MAX + 1];
 static int  g_shown_set;
 
 /*
- * A counter that grows every time a panel changes.  The drawing uses it
- * to know when its picture is out of date (engine/platform/mod_panel.c).
+ * A counter that grows every time a panel changes.  The drawing uses it to
+ * know when its picture is out of date (engine/platform/mod_panel_draw.c).
  */
 static u32 g_generation;
 
@@ -127,6 +149,32 @@ static void copy_text(char *dst, size_t size, const char *src)
     dst[n] = '\0';
 }
 
+/*
+ * Write a text into a line and say whether the line really changed.  A
+ * text that is empty (or no text at all) clears the line.
+ *
+ * The change is what the drawing's counter counts, so a line that is
+ * written again with the same text does not make the picture stale.
+ */
+static int put_text(char *dst, size_t size, const char *text)
+{
+    char tmp[BW_MOD_PANEL_TEXT_MAX + 1];
+    size_t n;
+    int changed;
+
+    copy_text(tmp, sizeof(tmp), text);
+    n = strlen(tmp);
+    if (n >= size) {
+        n = size - 1;
+        tmp[n] = '\0';
+    }
+    changed = (strcmp(dst, tmp) != 0);
+    if (changed) {
+        memcpy(dst, tmp, n + 1);
+    }
+    return changed;
+}
+
 /* The namespace of the mod that is calling, or "" when there is none (the
  * port itself is calling). */
 static const char *current_namespace(void)
@@ -134,6 +182,17 @@ static const char *current_namespace(void)
     const char *ns = bw_mod_savedata_namespace();
 
     return (ns != NULL) ? ns : "";
+}
+
+/* A panel with nothing in it: the port's own lines are not on any line. */
+static void panel_init(BwModPanelState *p)
+{
+    u32 i;
+
+    memset(p, 0, sizeof(*p));
+    for (i = 0; i < BW_MOD_PANEL_LINES; i++) {
+        p->port_slot[i] = -1;
+    }
 }
 
 /*
@@ -156,7 +215,7 @@ static BwModPanelState *state_for(const char *ns)
         if (g_panels[i].used) {
             continue;
         }
-        memset(&g_panels[i], 0, sizeof(g_panels[i]));
+        panel_init(&g_panels[i]);
         copy_text(g_panels[i].ns, sizeof(g_panels[i].ns), ns);
         g_panels[i].used = 1;
         return &g_panels[i];
@@ -180,16 +239,99 @@ static BwModPanelState *state_of(const char *ns)
     return NULL;
 }
 
-/* How many lines of a panel carry a text. */
-static u32 used_lines(const BwModPanelState *p)
+/*
+ * The port's own line that is drawn on the line `line` of the panel, or
+ * -1 when there is none.
+ */
+static int port_line_at(const BwModPanelState *p, u32 line)
 {
-    u32 i, n = 0;
+    u32 i;
+
+    for (i = 0; i < p->port_count; i++) {
+        if (p->port_slot[i] == (int)line) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+/*
+ * A line of the panel that neither the mod's own lines nor the port's own
+ * lines use, or -1 when the panel has none.
+ */
+static int free_line(const BwModPanelState *p)
+{
+    u32 line;
+
+    for (line = 0; line < BW_MOD_PANEL_LINES; line++) {
+        if (p->line[line][0] != '\0') {
+            continue;               /* the mod's own line */
+        }
+        if (port_line_at(p, line) >= 0) {
+            continue;               /* the port's own line */
+        }
+        return (int)line;
+    }
+    return -1;
+}
+
+/*
+ * The line the port's own line `index` is drawn on: the one it is already
+ * on when the mod has not used it, a free one otherwise, and -1 when the
+ * panel has no room for it.
+ */
+static int place_port_line(BwModPanelState *p, u32 index)
+{
+    int line;
+
+    if (index >= BW_MOD_PANEL_LINES) {
+        return -1;
+    }
+    line = p->port_slot[index];
+    if (line >= 0 && (u32)line < BW_MOD_PANEL_LINES &&
+        p->line[line][0] == '\0') {
+        return line;                /* the place it held is still free */
+    }
+    line = free_line(p);
+    if (line < 0) {
+        return -1;                  /* every line is the mod's */
+    }
+    p->port_slot[index] = line;
+    return line;
+}
+
+/*
+ * The text of one line of the drawn panel: the mod's own line when the
+ * mod uses that line, the port's own line when the port's own line is
+ * drawn there, and "" otherwise.
+ */
+static const char *drawn_line(const BwModPanelState *p, u32 line)
+{
+    int port;
+
+    if (p == NULL || line >= BW_MOD_PANEL_LINES) {
+        return "";
+    }
+    if (p->line[line][0] != '\0') {
+        return p->line[line];
+    }
+    port = port_line_at(p, line);
+    if (port >= 0) {
+        return p->port[port];
+    }
+    return "";
+}
+
+/* How many lines of a drawn panel carry a text. */
+static u32 drawn_used(const BwModPanelState *p)
+{
+    u32 line, n = 0;
 
     if (p == NULL) {
         return 0;
     }
-    for (i = 0; i < BW_MOD_PANEL_LINES; i++) {
-        if (p->line[i][0] != '\0') {
+    for (line = 0; line < BW_MOD_PANEL_LINES; line++) {
+        if (drawn_line(p, line)[0] != '\0') {
             n++;
         }
     }
@@ -199,6 +341,12 @@ static u32 used_lines(const BwModPanelState *p)
 /*
  * The panel the port draws: the one the port named, or the first panel
  * that has a line in it.  NULL when there is none.
+ *
+ * The port's own panel (the port's own namespace, the empty one) is the
+ * last one considered: the panels the mods fill are what the player sees,
+ * and the port's own panel, which holds the port's own run, is drawn when
+ * there is no other panel with a line in it.  The port names the panel it
+ * wants (bw_mod_panel_select) when it wants its own.
  */
 static BwModPanelState *shown_state(void)
 {
@@ -208,7 +356,16 @@ static BwModPanelState *shown_state(void)
         return state_of(g_shown);
     }
     for (i = 0; i < BW_MOD_PANEL_MAX; i++) {
-        if (g_panels[i].used && used_lines(&g_panels[i]) > 0) {
+        if (!g_panels[i].used ||
+            strcmp(g_panels[i].ns, BW_MOD_PANEL_PORT_NS) == 0) {
+            continue;               /* the port's own panel comes last */
+        }
+        if (drawn_used(&g_panels[i]) > 0) {
+            return &g_panels[i];
+        }
+    }
+    for (i = 0; i < BW_MOD_PANEL_MAX; i++) {
+        if (g_panels[i].used && drawn_used(&g_panels[i]) > 0) {
             return &g_panels[i];
         }
     }
@@ -227,12 +384,9 @@ void bw_mod_panel_set(u32 line, const char *text)
     if (p == NULL || line >= BW_MOD_PANEL_LINES) {
         return;
     }
-    g_generation++;
-    if (text == NULL || text[0] == '\0') {
-        p->line[line][0] = '\0';       /* a line set empty is cleared */
-        return;
+    if (put_text(p->line[line], sizeof(p->line[line]), text)) {
+        g_generation++;
     }
-    copy_text(p->line[line], sizeof(p->line[line]), text);
 }
 
 /* The `panel_clear` call: every line of the calling mod's panel. */
@@ -240,13 +394,18 @@ void bw_mod_panel_clear(void)
 {
     BwModPanelState *p = state_for(current_namespace());
     u32 i;
+    int changed = 0;
 
     if (p == NULL) {
         return;
     }
-    g_generation++;
     for (i = 0; i < BW_MOD_PANEL_LINES; i++) {
-        p->line[i][0] = '\0';
+        if (put_text(p->line[i], sizeof(p->line[i]), "")) {
+            changed = 1;
+        }
+    }
+    if (changed) {
+        g_generation++;
     }
 }
 
@@ -262,26 +421,36 @@ void bw_mod_panel_set_for(const char *ns, u32 line, const char *text)
     if (p == NULL || line >= BW_MOD_PANEL_LINES) {
         return;
     }
-    g_generation++;
-    if (text == NULL || text[0] == '\0') {
-        p->line[line][0] = '\0';
-        return;
+    if (put_text(p->line[line], sizeof(p->line[line]), text)) {
+        g_generation++;
     }
-    copy_text(p->line[line], sizeof(p->line[line]), text);
 }
 
-/* Every line of a named mod's panel. */
+/*
+ * Every line of a named mod's panel: the mod's own lines and the port's
+ * own lines on it.
+ */
 void bw_mod_panel_clear_for(const char *ns)
 {
     BwModPanelState *p = state_for(ns);
     u32 i;
+    int changed = 0;
 
     if (p == NULL) {
         return;
     }
-    g_generation++;
     for (i = 0; i < BW_MOD_PANEL_LINES; i++) {
-        p->line[i][0] = '\0';
+        if (put_text(p->line[i], sizeof(p->line[i]), "")) {
+            changed = 1;
+        }
+        if (put_text(p->port[i], sizeof(p->port[i]), "")) {
+            changed = 1;
+        }
+        p->port_slot[i] = -1;
+    }
+    p->port_count = 0;
+    if (changed) {
+        g_generation++;
     }
 }
 
@@ -302,10 +471,79 @@ int bw_mod_panel_select(const char *ns)
 /* Forget every panel and the choice: at power-on and at every reset. */
 void bw_mod_panel_reset(void)
 {
-    memset(g_panels, 0, sizeof(g_panels));
+    u32 i;
+
+    for (i = 0; i < BW_MOD_PANEL_MAX; i++) {
+        panel_init(&g_panels[i]);
+    }
     g_shown[0] = '\0';
     g_shown_set = 0;
     g_generation++;
+}
+
+/*
+ * The port's own line of a named mod's panel: the timer line and the
+ * split lines (sdk/mod_timer.c).
+ *
+ * The line is drawn on a line of the panel the mod has not used, so a
+ * mod's own line is never overwritten.  The model keeps the line it is
+ * drawn on, so the port's own lines hold their place while the mod's own
+ * lines come and go.
+ *
+ * Returns the line the port's own line is drawn on, or -1 when the panel
+ * has no room for it or when the line was cleared.
+ */
+int bw_mod_panel_set_port(const char *ns, u32 index, const char *text)
+{
+    BwModPanelState *p = state_for(ns);
+    int old_slot;
+    int line;
+    int changed = 0;
+
+    if (p == NULL || index >= BW_MOD_PANEL_LINES) {
+        return -1;
+    }
+    if (text == NULL || text[0] == '\0') {
+        /* The port's own line is cleared: the line it was drawn on is
+         * free again for the mod's own lines. */
+        if (put_text(p->port[index], sizeof(p->port[index]), "")) {
+            changed = 1;
+        }
+        if (p->port_slot[index] != -1) {
+            p->port_slot[index] = -1;
+            changed = 1;
+        }
+        if (changed) {
+            g_generation++;
+        }
+        return -1;
+    }
+    old_slot = p->port_slot[index];
+    line = place_port_line(p, index);
+    if (line < 0) {
+        return -1;                  /* every line of the panel is the mod's */
+    }
+    if (put_text(p->port[index], sizeof(p->port[index]), text)) {
+        changed = 1;
+    }
+    if (old_slot != p->port_slot[index]) {
+        changed = 1;                /* the line it is drawn on moved */
+    }
+    if (index + 1u > p->port_count) {
+        p->port_count = index + 1u;
+    }
+    if (changed) {
+        g_generation++;
+    }
+    return line;
+}
+
+/* How many of the port's own lines the panel holds. */
+u32 bw_mod_panel_port_count(const char *ns)
+{
+    BwModPanelState *p = state_of(ns);
+
+    return (p == NULL) ? 0u : p->port_count;
 }
 
 /* ------------------------------------------------------------------ */
@@ -326,17 +564,12 @@ const char *bw_mod_panel_shown(void)
 
 const char *bw_mod_panel_shown_line(u32 line)
 {
-    BwModPanelState *p = shown_state();
-
-    if (p == NULL || line >= BW_MOD_PANEL_LINES) {
-        return "";
-    }
-    return p->line[line];
+    return drawn_line(shown_state(), line);
 }
 
 u32 bw_mod_panel_shown_used(void)
 {
-    return used_lines(shown_state());
+    return drawn_used(shown_state());
 }
 
 u32 bw_mod_panel_generation(void)
@@ -346,15 +579,10 @@ u32 bw_mod_panel_generation(void)
 
 const char *bw_mod_panel_line_for(const char *ns, u32 line)
 {
-    BwModPanelState *p = state_of(ns);
-
-    if (p == NULL || line >= BW_MOD_PANEL_LINES) {
-        return "";
-    }
-    return p->line[line];
+    return drawn_line(state_of(ns), line);
 }
 
 u32 bw_mod_panel_used_for(const char *ns)
 {
-    return used_lines(state_of(ns));
+    return drawn_used(state_of(ns));
 }

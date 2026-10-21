@@ -870,6 +870,7 @@ if(EIDOS_SDL_FOUND)
     add_library(eidos_platform STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/platform.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/geometry.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/font.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_options_proc.c
@@ -2191,11 +2192,12 @@ if(EIDOS_SDL_FOUND)
     # saved setting, the platform default, else this window.
     add_library(eidos_wizard STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/wizard.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/font.c
     )
     target_include_directories(eidos_wizard PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform)
-    target_link_libraries(eidos_wizard PUBLIC eidos_setup eidos_sdl2)
+    # The port's bitmap font is the platform layer's now: the first-run
+    # window and the run-status panel both draw with it.
+    target_link_libraries(eidos_wizard PUBLIC eidos_setup eidos_sdl2 eidos_platform)
 
     add_executable(eidos_view ${CMAKE_CURRENT_SOURCE_DIR}/demo/eidos_view.c)
     target_link_libraries(eidos_view PRIVATE eidos_platform eidos_wizard)

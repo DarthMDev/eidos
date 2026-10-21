@@ -153,6 +153,40 @@ static const char *k_fsc =
     "    color = vec4(a, 1.0);\n"
     "}\n";
 
+/*
+ * The run-status panel: the port's own text picture, drawn beside the two
+ * screens (engine/platform/mod_panel_draw.h).  It is the presenter's third
+ * image: its own texture, its own quad and its own sampler, because it is
+ * the port's picture and not the game's -- the screens' shader knows about
+ * the 3D layer and the capture, and the panel has neither.  Its picture is
+ * opaque, so the sampler gives its colour and the panel is drawn over the
+ * clear, like the screens.
+ */
+static const char *k_fsp =
+    "#version 330 core\n"
+    "uniform sampler2D ptex;\n"     /* the panel's picture */
+    "uniform vec2 texsize;\n"
+    "uniform vec2 dstsize;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    SHARP_FN
+    "void main() {\n"
+    "    color = vec4(sharp(ptex, uv, texsize, dstsize), 1.0);\n"
+    "}\n";
+
+/*
+ * The panel's state in the presenter: its texture, its program and the
+ * uniforms that program takes.  It is here rather than in plat_gl_int.h
+ * (the presenter's private header) because the process has one presenter
+ * -- one GL context -- so one set of panel state is one image.
+ */
+static struct {
+    GLuint tex;                    /* the panel's picture */
+    int w, h;                      /* its size */
+    GLuint prog;                   /* the panel's program */
+    GLint u_rect, u_tex, u_texsize, u_dstsize;
+} g_panel;
+
 static GLuint compile(EidosGl *g, GLenum type, const char *src)
 {
     GLuint s = g->glCreateShader(type);
@@ -369,6 +403,23 @@ EidosGl *eidos_gl_create(SDL_Window *window)
             g->uc_bfac = g->glGetUniformLocation(g->progc, "bfac");
         }
     }
+
+    /* The run-status panel's image: the third picture the presenter draws.
+     * It is optional like the 3D path: a program that does not compile
+     * leaves a working presenter, without the panel. */
+    g_panel.prog = eidos_gl_compile_program(g, k_vs, k_fsp);
+    if (g_panel.prog != 0) {
+        g_panel.u_rect = g->glGetUniformLocation(g_panel.prog, "rect");
+        g_panel.u_tex = g->glGetUniformLocation(g_panel.prog, "ptex");
+        g_panel.u_texsize = g->glGetUniformLocation(g_panel.prog, "texsize");
+        g_panel.u_dstsize = g->glGetUniformLocation(g_panel.prog, "dstsize");
+        glGenTextures(1, &g_panel.tex);
+        glBindTexture(GL_TEXTURE_2D, g_panel.tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
     return g;
 }
 
@@ -388,6 +439,16 @@ void eidos_gl_destroy(EidosGl *g)
         if (g->behind_tex != 0) {
             glDeleteTextures(1, &g->behind_tex);
         }
+        if (g_panel.tex != 0) {
+            glDeleteTextures(1, &g_panel.tex);
+        }
+        if (g_panel.prog != 0 && g->glDeleteProgram != NULL) {
+            g->glDeleteProgram(g_panel.prog);
+        }
+        g_panel.tex = 0;
+        g_panel.prog = 0;
+        g_panel.w = 0;
+        g_panel.h = 0;
         if (g->have3d || g->p3d != 0) {
             eidos_gl3d_destroy(g);
         }
@@ -423,6 +484,31 @@ void eidos_gl_upload(EidosGl *g, int i, const unsigned char *rgba, int w,
                      GL_UNSIGNED_BYTE, rgba);
         g->tw[i] = w;
         g->th[i] = h;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA,
+                        GL_UNSIGNED_BYTE, rgba);
+    }
+}
+
+/*
+ * The run-status panel's picture: w x h RGBA bytes, R, G, B, A -- the byte
+ * order the panel's own drawing writes (engine/platform/mod_panel_draw.h).
+ * The picture is uploaded when it changes and not once per frame: the
+ * platform layer asks for it only when the model's generation has moved.
+ */
+void eidos_gl_upload_panel(EidosGl *g, const unsigned char *rgba, int w,
+                            int h)
+{
+    if (g == NULL || rgba == NULL || w <= 0 || h <= 0 || g_panel.tex == 0) {
+        return;
+    }
+    glBindTexture(GL_TEXTURE_2D, g_panel.tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (g_panel.w != w || g_panel.h != h) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, rgba);
+        g_panel.w = w;
+        g_panel.h = h;
     } else {
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA,
                         GL_UNSIGNED_BYTE, rgba);
@@ -678,14 +764,57 @@ static void draw_frame(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
     }
 }
 
-void eidos_gl_present(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
+/*
+ * The panel's quad: the third image, in the rectangle the platform layer
+ * gives (window pixels, y down).  It is drawn like the screens: the sharp
+ * sampler, the picture's own size and the rectangle's size, so the text
+ * stays as sharp as the scale allows.
+ */
+static void draw_panel(EidosGl *g, int out_w, int out_h, const SDL_Rect *r)
+{
+    float x0, y0, x1, y1;
+
+    if (g == NULL || r == NULL || r->w <= 0 || r->h <= 0 ||
+        g_panel.prog == 0 || g_panel.tex == 0 || g_panel.w <= 0 ||
+        g_panel.h <= 0) {
+        return;
+    }
+    x0 = 2.f * (float)r->x / (float)out_w - 1.f;
+    x1 = 2.f * (float)(r->x + r->w) / (float)out_w - 1.f;
+    y1 = 1.f - 2.f * (float)r->y / (float)out_h;
+    y0 = 1.f - 2.f * (float)(r->y + r->h) / (float)out_h;
+    g->glUseProgram(g_panel.prog);
+    g->glUniform1i(g_panel.u_tex, 0);
+    g->glUniform4f(g_panel.u_rect, x0, y0, x1, y1);
+    g->glUniform2f(g_panel.u_texsize, (float)g_panel.w, (float)g_panel.h);
+    g->glUniform2f(g_panel.u_dstsize, (float)r->w, (float)r->h);
+    g->glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g_panel.tex);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
+/*
+ * The present: the two screens and, when the port has one, the run-status
+ * panel beside them.  The panel's rectangle is the room the arrangement
+ * reserved for it, so it never covers the game; NULL for no panel.
+ */
+void eidos_gl_present_panel(EidosGl *g, int out_w, int out_h,
+                            const SDL_Rect dst[2], const SDL_Rect *panel)
 {
     if (g == NULL || out_w <= 0 || out_h <= 0) {
         return;
     }
     draw_frame(g, out_w, out_h, dst);
+    draw_panel(g, out_w, out_h, panel);
     gl_debug_dump(out_w, out_h);
     SDL_GL_SwapWindow(g->window);
+}
+
+/* The two screens alone: the panel is the port's own, and a caller that
+ * has none says so with a NULL rectangle. */
+void eidos_gl_present(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
+{
+    eidos_gl_present_panel(g, out_w, out_h, dst, NULL);
 }
 
 int eidos_gl_grab(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2],

@@ -35,7 +35,27 @@
  * which belong to the mod whose run they are) write into the panel of the
  * mod they name.  With no choice made, the port draws the first panel that
  * has a line in it, which is the panel of the only mod that uses the
- * service: the common case needs nothing from the port.
+ * service: the common case needs nothing from the port.  The port's own
+ * panel (the port's own namespace) is the last one considered: it is drawn
+ * when there is no other panel with a line in it, or when the port names
+ * it.
+ *
+ * The mod's lines and the port's own lines
+ * -----------------------------------------
+ *
+ * The lines of a panel are the mod's own: a mod writes them and they are
+ * the mod's.  The port has lines of its own as well -- the timer line and
+ * the split lines (sdk/mod_timer.c) -- and they are the port's:
+ *
+ *   - the port's own line is never drawn on a line the mod has used, so a
+ *     mod's own line is never overwritten;
+ *   - the mod's own line never lands on the port's own line either: the
+ *     model keeps the two apart.
+ *
+ * The port's own run -- the port's own timer, the port's own splits --
+ * lives under the port's own namespace, the empty one, which is the name
+ * the mod layer hands out when the port itself is the caller and no mod is
+ * in force.
  *
  * The port's own calls (the ones below the two services-table calls) are
  * not part of the mod ABI: a mod reaches the panel through the services
@@ -65,6 +85,15 @@ extern "C" {
  * picture cuts it again to what fits its width. */
 #define BW_MOD_PANEL_TEXT_MAX 64u
 
+/*
+ * The port's own namespace: the name the mod layer hands out when the
+ * port itself is the caller and no mod is in force (the empty one).  The
+ * port's own run -- the port's own timer and the port's own splits --
+ * lives under it, so the port's own lines are the port's and are never a
+ * mod's lines.
+ */
+#define BW_MOD_PANEL_PORT_NS ""
+
 /* ------------------------------------------------------------------ */
 /* The services table's calls                                          */
 /* ------------------------------------------------------------------ */
@@ -83,6 +112,7 @@ void bw_mod_panel_set(u32 line, const char *text);
 
 /*
  * The `panel_clear` call: empty every line of the calling mod's panel.
+ * The port's own lines on that panel are the port's and are left alone.
  */
 void bw_mod_panel_clear(void);
 
@@ -112,6 +142,35 @@ int bw_mod_panel_select(const char *ns);
 void bw_mod_panel_reset(void);
 
 /* ------------------------------------------------------------------ */
+/* The port's own lines                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The port's own line of a named mod's panel: the timer line and the
+ * split lines (sdk/mod_timer.c).
+ *
+ * `index` is the port's own line number: zero is the first line the port
+ * wrote, one the second, and so on.  The line is drawn on a line of the
+ * panel that the mod has not used, so a mod's own line is never
+ * overwritten, and the model keeps the line it is drawn on, so the port's
+ * own lines hold their place while the mod's own lines come and go.
+ *
+ * A text that is empty (or no text at all) clears the port's own line and
+ * gives its line back to the mod's own lines.
+ *
+ * Returns the line the port's own line is drawn on, or -1 when the panel
+ * has no room for it (every line of it is the mod's) or when the line was
+ * cleared.
+ */
+int bw_mod_panel_set_port(const char *ns, u32 index, const char *text);
+
+/*
+ * How many of the port's own lines the panel holds: the number the port
+ * has written, the cleared ones among them included.
+ */
+u32 bw_mod_panel_port_count(const char *ns);
+
+/* ------------------------------------------------------------------ */
 /* What the drawing reads                                              */
 /* ------------------------------------------------------------------ */
 
@@ -123,7 +182,10 @@ const char *bw_mod_panel_shown(void);
 
 /* One line of the drawn panel: the text it carries, "" for a line that is
  * empty.  The text points into the model's own storage and stays valid
- * until the next call that changes the panel. */
+ * until the next call that changes the panel.
+ *
+ * A line of the drawn panel is the mod's own line when the mod uses it,
+ * and the port's own line when the port's own line is drawn there. */
 const char *bw_mod_panel_shown_line(u32 line);
 
 /* How many lines of the drawn panel carry a text. */

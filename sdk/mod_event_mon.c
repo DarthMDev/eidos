@@ -21,7 +21,7 @@
  * 0 and says so in a comment; a field that points at memory the game frees
  * later is copied into the payload, never stored as a pointer.
  *
- * Two things are particular to this area.
+ * Three things are particular to this area.
  *
  * The builders run in the ARM9, where an overlay's own code is not
  * reachable: a builder calls the ARM9's accessors, and it reads an
@@ -29,6 +29,12 @@
  * sdk/mod_event_items.c reads the shop's work).  Every view below is copied
  * member for member from the game's own header, so the offsets are the
  * game's at either pointer width.
+ *
+ * The screens that teach a move are the game's own (the party screen for a
+ * TM, the nurse's relearner screen), and each of them keeps the move it
+ * teaches and the item it teaches it with in its own block.  The port reads
+ * those blocks through the views below, the way the game's own code reads
+ * them, so the payload names the move and the teacher the screen knows.
  *
  * The area binds the game's live objects where it learns them: the game
  * data at the rows that carry it (the ones that give the player a Pokemon)
@@ -115,6 +121,12 @@ extern void POKE_PERSONAL_LoadDataDirect(u32 species, int form, void *dst)
 extern struct BoxPokemon *BOX_SAVEDATA_GetPokemon(struct GameData *gameData,
                                                    u32 box, u32 slot)
     BW_PORT_WEAK;                                        /* 0x02007A18 */
+
+/* The item table: the machine index of a TM or an HM, and 0xFF when the
+ * item is not a machine (src/game/arm9/file_util.c).  The party screen
+ * reads the item it teaches with through it, so the port does the same. */
+extern u32 FILE_UTIL_GetId(u32 machineId)
+    BW_PORT_WEAK;                                        /* 0x0202130C */
 
 /* The event work: the game's shared script variables. */
 extern u16 *ZONEDATA_GetEventWorkAddress(struct EventWork *ev, u32 workId)
@@ -457,6 +469,193 @@ typedef struct BwPortBoxMove {
 #define BW_PORT_BOX_LISTED_BASE 0x24u  /* the first box of its own */
 
 /* ------------------------------------------------------------------ */
+/* The party screen's own blocks                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The party screen's own argument block, copied member for member from
+ * the game's own header (aletheia src/game/ov091/pokelist_types.h).  It is
+ * the record the party list screen and the field's party list share, and
+ * it names the move the screen teaches and the item it teaches it with.
+ */
+typedef struct BwPortPokelistRivalEntry {
+    void *party;                      /* 0x00 */
+    u16  *name;                       /* 0x04 */
+    u8    gender;                     /* 0x08 */
+    u8    pad09[3];
+} BwPortPokelistRivalEntry;
+
+typedef struct BwPortPokelistArg {
+    void *party;                      /* 0x00 */
+    void *bag;                        /* 0x04 */
+    void *mailBox;                    /* 0x08 */
+    u8    pad0C[8];
+    void *regulation;                 /* 0x14 */
+    void *zukanSave;                  /* 0x18 */
+    u8    fieldMoveParam[0x14];       /* 0x1C */
+    u16   itemUseParam;               /* 0x30 */
+    u8    pad32[2];
+    int   mode;                       /* 0x34: the screen's own mode */
+    u8    pad38[4];
+    int   selectedIndex;              /* 0x3C */
+    int   exitCode;                   /* 0x40 */
+    u16   itemId;                     /* 0x44: the item being taught */
+    u16   moveId;                     /* 0x46: the move being taught */
+    u8    moveSlot;                   /* 0x48: the slot it goes into */
+    u8    slotOrder[6];               /* 0x49 */
+    u8    pad4F;
+    u32   levelUpCursor;              /* 0x50 */
+    u8    pad54[8];
+    u16   mailSlot;                   /* 0x5C */
+    u8    learnableFlags;             /* 0x5E */
+    u8    season;                     /* 0x5F */
+    u16   timeLeft;                   /* 0x60 */
+    u8    pad62;
+    u8    closeRequested;             /* 0x63 */
+    int   battleKind;                 /* 0x64 */
+    BwPortPokelistRivalEntry entries[3]; /* 0x68 */
+    u8    timerShown;                 /* 0x8C */
+    u8    timerRunning;               /* 0x90 */
+    u8    timerExpired;               /* 0x94 */
+    u8    pad95[3];
+} BwPortPokelistArg;
+
+/*
+ * The party screen's own work, copied member for member from the game's
+ * own header (aletheia src/game/ov091/pokelist_types.h).  The block ends
+ * with the argument block, and the port reads the argument block through
+ * it.  The members keep the game's own types, so the offset of the
+ * argument block is the game's at either pointer width.
+ */
+typedef struct BwPortPokelistWork {
+    u16   heapId;                       /* 0x000 */
+    u8    pad02[2];
+    int   updateTask;                   /* 0x004 */
+    int   touchMode;                    /* 0x008 */
+    u8    phase;                        /* 0x00C */
+    u8    nextPhase;                    /* 0x00D */
+    u8    inputStage;                   /* 0x00E */
+    u8    command;                      /* 0x00F */
+    int   fadeMode;                     /* 0x010 */
+    int   switchButtonEnabled;          /* 0x014 */
+    int   restoreMode18;                /* 0x018 */
+    int   restoreMode19;                /* 0x01C */
+    int   restoreMode1A;                /* 0x020 */
+    int   healSoundPending;             /* 0x024 */
+    int   allowDisabledSelect;          /* 0x028 */
+    int   selectedSlot;                 /* 0x02C */
+    int   swapSourceSlot;               /* 0x030 */
+    int   healSourceSlot;               /* 0x034 */
+    u32   selectedMon;                  /* 0x038 */
+    int   menuChoice;                   /* 0x03C */
+    u16   palSrc[3][16];                /* 0x040 */
+    u16   palDst[3][16];                /* 0x0A0 */
+    u8    fadeStep;                     /* 0x100 */
+    u8    pad101;
+    u16   fadePhase;                    /* 0x102 */
+    u8    swapAnimStep;                 /* 0x104 */
+    u8    selectedCount;                /* 0x105 */
+    u8    pad106[2];
+    int   commandButtons[2];            /* 0x108 */
+    u16   reservedCounter;              /* 0x110 */
+    u8    pad112[2];
+    u8    waitFrames;                   /* 0x114 */
+    u8    pad115[3];
+    int   selectionConfirmed;           /* 0x118 */
+    u16   displayHp;                    /* 0x11C */
+    s8    hpStep;                       /* 0x11E */
+    u8    pad11F;
+    void *phaseCallback;                /* 0x120 */
+    u16   levelUpMoveStat[6];           /* 0x124 */
+    int   descriptor;                   /* 0x130 */
+    void *msgBank;                      /* 0x134 */
+    void *fontMain;                     /* 0x138 */
+    void *fontSub;                      /* 0x13C */
+    void *printSys;                     /* 0x140 */
+    int   messageWaitKey;               /* 0x144 */
+    void *messageDoneCallback;          /* 0x148 */
+    void *menuChoiceCallback;           /* 0x14C */
+    u32   messageWindow;                /* 0x150 */
+    u32   contextMenu;                  /* 0x154 */
+    void *paletteFile;                  /* 0x158 */
+    void *paletteData;                  /* 0x15C */
+    void *plates[6];                    /* 0x160 */
+    int   charRes[8];                   /* 0x178 */
+    int   palRes[7];                    /* 0x198 */
+    int   cellRes[8];                   /* 0x1B4 */
+    void *clactUnit;                    /* 0x1D4 */
+    void *cursorActor;                  /* 0x1D8 */
+    void *swapMarkerActor;              /* 0x1DC */
+    void *backButtonActor;              /* 0x1E0 */
+    void *switchButtonActor;            /* 0x1E4 */
+    void *pressedButtonActor;           /* 0x1E8 */
+    void *actorSystem;                  /* 0x1EC */
+    int   timerDigit[3];                /* 0x1F0 */
+    void *timerLabelWindow;             /* 0x1FC */
+    void *timerValueWindow;             /* 0x200 */
+    int   timerLabelPrinting;           /* 0x204 */
+    int   timerValuePrinting;           /* 0x208 */
+    u8    timerShown;                   /* 0x20C */
+    u8    shownSeconds;                 /* 0x20D */
+    u16   timerPalSrc[16];              /* 0x20E */
+    u16   timerPalDst[16];              /* 0x22E */
+    u16   timerPalPhase;                /* 0x24E */
+    int   touchDragState;               /* 0x250 */
+    int   taskMenu;                     /* 0x254 */
+    int   light;                        /* 0x258 */
+    void *particleMemory;               /* 0x25C */
+    void *particleSystem;               /* 0x260 */
+    u32   evolveCheckKind;              /* 0x264 */
+    u8    effectFrame;                  /* 0x268 */
+    u8    effectLength;                 /* 0x269 */
+    u8    pad26A[2];
+    u32   effectStarted;                /* 0x26C */
+    u32   cryStarted;                   /* 0x270 */
+    u32   cryHandle;                    /* 0x274 */
+    int   reservedWord;                 /* 0x278 */
+    u8    pad27C[4];
+    BwPortPokelistArg *arg;             /* 0x280 */
+} BwPortPokelistWork;
+
+BW_PORT_STATIC_ASSERT(pokelist_arg, sizeof(void *) != 4 ||
+                      offsetof(BwPortPokelistWork, arg) == 0x280u);
+
+/* The party screen's own modes the port reads (src/game/ov091/pokelist.c). */
+#define BW_PORT_PLIST_MODE_TEACH 6u  /* the machine teach: the item is the TM */
+
+/* ------------------------------------------------------------------ */
+/* The relearner screen's own blocks                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The nurse's relearner screen (ov173) and the block it works on, copied
+ * member for member from the game's own header (aletheia
+ * src/game/ov173/poke_summary_types.h).  The block names the Pokemon, the
+ * list of moves it can relearn and the row the player chose; the slot is
+ * the screen's own count of the free slots.
+ */
+typedef struct BwPortSummaryMon {
+    void *party;               /* 0x00: the Pokemon */
+    u32   myStatus;            /* 0x04 */
+    u32   config;              /* 0x08 */
+    void *gameSystem;          /* 0x0C */
+    u16  *moveList;            /* 0x10: the moves it can relearn */
+    u16   selectedIndex;       /* 0x14: the row the player chose */
+    u16   scrollIndex;         /* 0x16: the first row shown */
+    u8    pad18;               /* 0x18 */
+    u8    messageTableIndex;   /* 0x19 */
+    u8    applyFlag;           /* 0x1A */
+    u8    variant;             /* 0x1B: the slot the move goes into */
+} BwPortSummaryMon;
+
+typedef struct BwPortSummaryWork {
+    void *mon;                 /* 0x000: the block the screen works on */
+} BwPortSummaryWork;
+
+BW_PORT_STATIC_ASSERT(summary_mon, sizeof(void *) != 4 ||
+                      offsetof(BwPortSummaryMon, moveList) == 0x10u);
+
+/* ------------------------------------------------------------------ */
 /* The helpers                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -680,6 +879,61 @@ static u8 free_move_slot(struct PokemonParam *mon)
         }
     }
     return 0xFFu;
+}
+
+/*
+ * The move in one of a Pokemon's four move slots, read out of its own
+ * record, or 0 when the record does not hold one there.
+ */
+static u16 move_in_slot(struct PokemonParam *mon, u32 slot)
+{
+    if (mon == NULL || POKE_TOOL_GetPartyValue == NULL || slot >= 4u) {
+        return 0u;
+    }
+    return (u16)POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_MOVE1 + slot, 0u);
+}
+
+/*
+ * The party screen's own argument block: the block that names the move the
+ * screen teaches and the item it teaches it with.  The screen is ov091, so
+ * the port reads the block through its own view of it.
+ */
+static const BwPortPokelistArg *party_screen_arg(const void *work)
+{
+    const BwPortPokelistWork *screen = (const BwPortPokelistWork *)work;
+
+    if (screen == NULL) {
+        return NULL;
+    }
+    return screen->arg;
+}
+
+/*
+ * Who taught the move the party screen teaches.
+ *
+ * The screen's own block names the item being taught, and the screen's
+ * own mode says what it is doing with it: mode 6 is the machine teach,
+ * and the game reads the item there as a machine (the game derives the
+ * move from the item itself in POKELIST_InitWork, and its own move-learn
+ * check reads the item through FILE_UTIL_GetId).  The port reads the same
+ * way, so a teach with a TM or an HM in the bag is a TM.
+ *
+ * The screen's other modes teach a move the player chose in another
+ * screen, and the block names no teacher for them: the source stays 0
+ * there, because the port does not guess one.
+ */
+static u8 party_learn_source(const BwPortPokelistArg *arg)
+{
+    if (arg == NULL || arg->mode != (int)BW_PORT_PLIST_MODE_TEACH) {
+        return 0u;   /* the screen names no teacher */
+    }
+    if (arg->itemId == 0u || FILE_UTIL_GetId == NULL) {
+        return 0u;
+    }
+    if (FILE_UTIL_GetId((u32)arg->itemId) == 0xFFu) {
+        return 0u;   /* the item is not a machine */
+    }
+    return (u8)BW_MOVE_SOURCE_TM;
 }
 
 /*
@@ -1355,6 +1609,180 @@ static void refuse_move_learn_daycare(BwEventCall *call)
 }
 
 /*
+ * move.learn: the party screen teaches a move (POKELIST_TryLearnMove, the
+ * port's POKELIST_FindMoveSlot).  The call carries the screen's own work
+ * and the Pokemon; the screen's own block names the move it teaches and
+ * the item it teaches it with, so the payload names the move and the
+ * teacher.
+ *
+ * The move slot is the first of the Pokemon's four slots that is empty, or
+ * 0xFF when it holds four moves already.  The move it replaces reads 0:
+ * the game asks for that later, in the screen that owns the choice.
+ */
+static void build_move_learn_party(const BwEventCall *call,
+                                   BwEventPayload *out)
+{
+    const BwPortPokelistArg *arg = party_screen_arg((const void *)call->a[0]);
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[1];
+
+    memset(&out->move_learn, 0, sizeof(out->move_learn));
+    if (mon == NULL) {
+        return;
+    }
+    mon_ref(&out->move_learn.mon, (u8)BW_MON_PARTY, 0u, 0u,
+            (arg != NULL) ? (u8)party_slot_of(arg->party, mon) : 0u, mon);
+    out->move_learn.move = (arg != NULL) ? arg->moveId : 0u;
+    out->move_learn.source = party_learn_source(arg);
+    out->move_learn.slot = free_move_slot(mon);
+    out->move_learn.replaced = 0u;
+}
+
+/*
+ * move.learn: the party screen writes the taught move into the slot the
+ * player chose (POKELIST_ReplaceMoveSlot).  The call carries the screen's
+ * own work, the Pokemon and the slot.
+ *
+ * The move it replaces is the move that was in that slot before the
+ * write, and the port can read it out of the Pokemon's own record: the
+ * screen shows it in the message it prints before it asks for the slot.
+ */
+static void build_move_learn_party_slot(const BwEventCall *call,
+                                         BwEventPayload *out)
+{
+    const BwPortPokelistArg *arg = party_screen_arg((const void *)call->a[0]);
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[1];
+    u32 slot = (u32)call->a[2];
+
+    memset(&out->move_learn, 0, sizeof(out->move_learn));
+    if (mon == NULL) {
+        return;
+    }
+    mon_ref(&out->move_learn.mon, (u8)BW_MON_PARTY, 0u, 0u,
+            (arg != NULL) ? (u8)party_slot_of(arg->party, mon) : 0u, mon);
+    out->move_learn.move = (arg != NULL) ? arg->moveId : 0u;
+    out->move_learn.source = party_learn_source(arg);
+    out->move_learn.slot = (slot < 4u) ? (u8)slot : 0xFFu;
+    out->move_learn.replaced = move_in_slot(mon, slot);
+}
+
+/*
+ * move.learn: a script writes a move into a party member
+ * (SCRCMD_PROC_SetMonMove).  The command's own operands are the party
+ * position, the move slot and the move, and the port reads them out of the
+ * script's variables without moving the script VM's program counter.
+ *
+ * The party is not carried by the call, but the command's own work names
+ * the game data, and the port reads the member out of it the way the game
+ * does (SCRCMD_PROC_GetPartyMember).
+ *
+ * This is the path the move tutor teaches by: the tutor's script asks for
+ * the move the tutor of a kind teaches and writes it here.  The source
+ * reads 0: the command names no teacher.  The same command is the tutor's
+ * teach, a script's own gift and a script's own change, and the game's own
+ * tutor compatibility (POKE_TOOL_CheckTutorCompat) says only which of the
+ * seven tutors a species can learn from, not which of them taught this
+ * move: the tutor's own table of moves lives in the ov021 script
+ * command's code, which the ARM9 builder cannot reach.
+ *
+ * The move slot is the slot the command names, or 0xFF when the command
+ * pushes the move in: a slot past 4 goes to POKE_TOOL_PushMove, which
+ * writes the move into the last slot and shifts the others up.  The move
+ * it replaces is the move that was in that slot before the write.
+ */
+static void build_move_learn_script(const BwEventCall *call,
+                                    BwEventPayload *out)
+{
+    const BwPortScrcmdWork *cmd = (const BwPortScrcmdWork *)call->a[1];
+    const BwPortScrcmdCommon *common;
+    struct Party *party;
+    struct PokemonParam *mon;
+    u32 partySlot;
+    u32 moveSlot;
+    u32 move;
+
+    memset(&out->move_learn, 0, sizeof(out->move_learn));
+    if (cmd == NULL || cmd->common == NULL) {
+        return;
+    }
+    common = cmd->common;
+    partySlot = script_operand(call->a[0], cmd, 0u);
+    moveSlot = script_operand(call->a[0], cmd, 1u);
+    move = script_operand(call->a[0], cmd, 2u);
+    bind_game_data(common->gameData);
+    party = party_of(common->gameData);
+    if (party == NULL || partySlot >= party_size(party)) {
+        return;     /* the game writes nothing for a member it does not have */
+    }
+    mon = party_member(party, partySlot);
+    if (mon == NULL) {
+        return;
+    }
+    mon_ref(&out->move_learn.mon, (u8)BW_MON_PARTY, 0u, 0u,
+            (u8)partySlot, mon);
+    out->move_learn.move = (u16)move;
+    out->move_learn.source = 0u;
+    if (moveSlot > 4u) {
+        /* The push: the move goes into the last slot. */
+        out->move_learn.slot = 3u;
+        out->move_learn.replaced = move_in_slot(mon, 3u);
+    } else if (moveSlot < 4u) {
+        out->move_learn.slot = (u8)moveSlot;
+        out->move_learn.replaced = move_in_slot(mon, moveSlot);
+    } else {
+        /* The game writes outside the four move slots at 4; the port does
+         * not name a slot it cannot name. */
+        out->move_learn.slot = 0xFFu;
+        out->move_learn.replaced = 0u;
+    }
+}
+
+/*
+ * move.learn: the refused outcome is that the script writes nothing: the
+ * call is not made, so the Pokemon does not learn the move.  The command
+ * answers 0 in every path of its own, so the script cannot tell the
+ * difference.
+ */
+static void refuse_move_learn_script(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
+/*
+ * move.learn: the nurse's relearner screen writes the move
+ * (POKE_SUMMARY_MAIN_ApplyMove, ov173).  The screen's own block names the
+ * Pokemon, the list of moves it can relearn and the row the player chose,
+ * so the payload names the move the player picked.
+ *
+ * The slot is the screen's own: it counts the free slots of the Pokemon
+ * and writes into the first one.  The party position reads 0: the screen
+ * does not name the party, only the Pokemon.
+ */
+static void build_move_learn_relearner(const BwEventCall *call,
+                                       BwEventPayload *out)
+{
+    const BwPortSummaryWork *work = (const BwPortSummaryWork *)call->a[0];
+    const BwPortSummaryMon *mon;
+    struct PokemonParam *pokemon;
+    u32 slot;
+
+    memset(&out->move_learn, 0, sizeof(out->move_learn));
+    if (work == NULL || work->mon == NULL) {
+        return;
+    }
+    mon = (const BwPortSummaryMon *)work->mon;
+    if (mon->party == NULL || mon->moveList == NULL) {
+        return;
+    }
+    pokemon = (struct PokemonParam *)mon->party;
+    slot = mon->variant;
+    mon_ref(&out->move_learn.mon, (u8)BW_MON_PARTY, 0u, 0u, 0u, pokemon);
+    out->move_learn.move = mon->moveList[mon->scrollIndex + mon->selectedIndex];
+    out->move_learn.source = (u8)BW_MOVE_SOURCE_RELEARNER;
+    out->move_learn.slot = (slot < 4u) ? (u8)slot : 0xFFu;
+    out->move_learn.replaced = move_in_slot(pokemon, slot);
+}
+
+/*
  * mon.release: a Pokemon is released (BOX2_MAIN_ClearSlot).  The call
  * names the box and the slot: a number below 0x1E is a box slot and a
  * number from 0x1E up is a party position.  The Pokemon itself is the
@@ -1681,6 +2109,18 @@ static void refuse_trade_ingame(BwEventCall *call)
  * mon.create's two rows both fire before their function: the species, the
  * level and the personality are the arguments the caller passes on, and
  * the shiny request is the argument the caller asks the roll with.
+ *
+ * The four rows that teach a move in a screen fire before their function
+ * too, because the write is inside it: the party screen writes the taught
+ * move into the Pokemon (two rows), the nurse's relearner screen writes it
+ * into the free slot, and the script command writes it into the party
+ * member.  The screens print what they are about to do before they write
+ * it, so a refusal at those rows would leave the game telling the player
+ * something false: they carry no refusal function, and a mod that wants to
+ * stop a learn reacts after the fact through the state calls
+ * (docs/mod-events.md, section 2).  The script row is the one the port can
+ * refuse: the command answers 0 in every path of its own, so the script
+ * cannot tell the difference.
  */
 static const BwEventBinding g_mon_rows[] = {
     { BW_MOD_REGION_ARM9, 0x02017430u, BW_EVENT_MON_CREATE, BW_EVENT_BEFORE,
@@ -1738,6 +2178,19 @@ static const BwEventBinding g_mon_rows[] = {
     { BW_MOD_REGION_OVL(21), 0x021C360Cu, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_move_learn_daycare, NULL,
       refuse_move_learn_daycare },
+
+    { BW_MOD_REGION_OVL(91), 0x021BA5B4u, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_move_learn_party, NULL, NULL },
+
+    { BW_MOD_REGION_OVL(91), 0x021BA5E0u, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_move_learn_party_slot, NULL, NULL },
+
+    { BW_MOD_REGION_OVL(10), 0x0215BD2Cu, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_move_learn_script, NULL,
+      refuse_move_learn_script },
+
+    { BW_MOD_REGION_OVL(173), 0x021B6B0Cu, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_move_learn_relearner, NULL, NULL },
 
     { BW_MOD_REGION_OVL(170), 0x021DD314u, BW_EVENT_MON_RELEASE, BW_EVENT_BEFORE,
       BW_SCOPE_OUTSIDE, BW_MOD_REGION_OVL(170), 0x021DD530u,

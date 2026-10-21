@@ -6,9 +6,24 @@
  * screenshot, so those three can never disagree.  The placement is data (a
  * rectangle per screen in DS pixels), which is what a touch layout on a
  * phone will replace with its own table.
+ *
+ * The arrangement is the two screens and the run-status panel together:
+ * the panel is drawn beside the screens (engine/platform/mod_panel_draw.h),
+ * so the geometry places the screens and then grows the arrangement by the
+ * panel's own space.  The screens keep their place in it either way.
  */
 
+#include "mod_panel_draw.h"
 #include "platform.h"
+
+/*
+ * The model's call, as sdk/mod_panel.h declares it: whether the panel the
+ * port draws has a line in it.  The header is not included here (the
+ * include path carries both directories and the two files have the same
+ * name), the way engine/platform/mod_panel_draw.c declares the ones it
+ * needs.
+ */
+extern u32 bw_mod_panel_shown_used(void);
 
 void eidos_layout_place(int layout, int swap, int gap,
                         EidosScreenPlacement *out)
@@ -38,6 +53,31 @@ void eidos_layout_place(int layout, int swap, int gap,
     }
     out->screen[0].w = out->screen[1].w = w;
     out->screen[0].h = out->screen[1].h = h;
+
+    /*
+     * The panel's space: the panel is drawn beside the screens, so the
+     * arrangement has to make room for it.  The room is the panel's own
+     * (eidos_mod_panel_space): its rectangle in the arrangement and how
+     * much the arrangement grows for it.
+     *
+     * A panel that is not shown takes no space at all: the player hid it,
+     * or no mod has filled a line, and then the arrangement is the two
+     * screens alone and the window keeps its own shape.  That is the same
+     * question the drawing asks (eidos_mod_panel_view), so the room and
+     * the picture agree: the panel is never drawn outside the room
+     * reserved for it, and the room is never reserved for a panel that
+     * cannot be seen.
+     */
+    {
+        EidosModPanelSpace space;
+
+        eidos_mod_panel_space(out, &space);
+        if ((space.grow_w > 0 || space.grow_h > 0) &&
+            bw_mod_panel_shown_used() > 0) {
+            out->width += space.grow_w;
+            out->height += space.grow_h;
+        }
+    }
 }
 
 void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,

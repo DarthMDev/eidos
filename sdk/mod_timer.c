@@ -24,9 +24,9 @@
  *     (sdk/mod_title.h).
  *   - A split records a name and the time.  The port shows the splits in
  *     the run-status panel and writes them to a file at the end of the run.
- *     The panel is not built yet (docs/mod-implementation.md, section 6),
- *     so the splits live in this file's own list, and the calls the panel
- *     and the run's end will need are below.
+ *     The panel is here now (sdk/mod_panel.c), so the splits live in this
+ *     file's own list and the port's own calls put them in the panel of
+ *     the mod whose run they are.
  *   - The random source is the mod's own, and there is one per mod: two
  *     players who share a seed get the same sequence, so a draft or a
  *     random team is the same on both sides.
@@ -77,6 +77,7 @@
 #include <string.h>
 
 #include "types.h"
+#include "mod_panel.h"
 #include "mod_title.h"
 #include "save.h"
 
@@ -160,9 +161,11 @@ typedef struct BwModTimerState {
     int  running;        /* the timer counts                        */
     int  sampled;        /* the last sample is a real one           */
     int  menu_open;      /* the port's own menu was open at it      */
+    int  started;        /* the timer was started at least once     */
     u64  elapsed_ticks;  /* the ticks counted so far                */
     u64  last_tick;      /* the tick at the last sample             */
     u32  split_count;    /* the splits of this run                  */
+    u32  panel_splits;   /* the split lines the panel holds         */
     BwModSplit splits[BW_MOD_SPLITS_MAX];
 
     /* The generator. */
@@ -293,6 +296,7 @@ void bw_mod_timer_start(void)
         return;
     }
     t->running = 1;
+    t->started = 1;
     t->elapsed_ticks = 0;
     t->split_count = 0;
     t->sampled = 1;
@@ -349,6 +353,77 @@ void bw_mod_timer_split(const char *name)
               sizeof(t->splits[t->split_count].name), name);
     t->splits[t->split_count].ms = eidos_ticks_to_ms(t->elapsed_ticks);
     t->split_count++;
+}
+
+/* ------------------------------------------------------------------ */
+/* The run-status panel                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The time as the panel shows it: hours, minutes, seconds and hundredths,
+ * "H:MM:SS.mm".  The hours are always there, so every line of the panel
+ * is the same width and the times line up.
+ */
+static void format_time(char *out, size_t size, u64 ms)
+{
+    u64 secs = ms / 1000u;
+    unsigned hours = (unsigned)(secs / 3600u);
+    unsigned mins = (unsigned)((secs / 60u) % 60u);
+    unsigned secs_left = (unsigned)(secs % 60u);
+    unsigned cents = (unsigned)((ms % 1000u) / 10u);
+
+    snprintf(out, size, "%u:%02u:%02u.%02u", hours, mins, secs_left, cents);
+}
+
+/*
+ * The run's own lines in the run-status panel: the running time on the
+ * port's own line zero, and the splits on the lines after it.
+ *
+ * The panel's lines are the mod's own, so the port's lines are the
+ * port's: the model keeps the two apart (sdk/mod_panel.c) and draws the
+ * port's own line on a line the mod has not used.  The panel of the
+ * mod the run belongs to is the panel of that mod's namespace; the port's
+ * own run, the one the port itself times, is under the port's own
+ * namespace, the empty one (BW_MOD_PANEL_PORT_NS).
+ *
+ * The splits are shown in the order they were taken.  A panel has
+ * sixteen lines, so a run with more splits than that shows the ones that
+ * fit; the file the port writes at the end of the run keeps all of them
+ * (docs/mod-services.md, "Timer and splits").
+ */
+static void panel_update(BwModTimerState *t)
+{
+    /*
+     * The line the panel shows.  The buffer is longer than the model's
+     * own line, which cuts the text at its own length
+     * (BW_MOD_PANEL_TEXT_MAX): the time comes first, so a name that is
+     * too long is the part that is cut.
+     */
+    char text[BW_MOD_PANEL_TEXT_MAX + 64];
+    char stamp[32];
+    u32 i;
+
+    if (!t->started) {
+        return;                     /* the run never began */
+    }
+
+    /* The running time. */
+    format_time(stamp, sizeof(stamp), eidos_ticks_to_ms(t->elapsed_ticks));
+    snprintf(text, sizeof(text), "Time %s", stamp);
+    bw_mod_panel_set_port(t->ns, 0, text);
+
+    /* The splits. */
+    for (i = 0; i < t->split_count; i++) {
+        format_time(stamp, sizeof(stamp), t->splits[i].ms);
+        snprintf(text, sizeof(text), "%s %s", stamp, t->splits[i].name);
+        bw_mod_panel_set_port(t->ns, 1u + i, text);
+    }
+    /* The splits of the run before this one are gone: the lines they were
+     * on are cleared. */
+    for (i = t->split_count + 1u; i <= t->panel_splits; i++) {
+        bw_mod_panel_set_port(t->ns, i, "");
+    }
+    t->panel_splits = t->split_count;
 }
 
 /* ------------------------------------------------------------------ */
@@ -483,6 +558,11 @@ u64 bw_mod_timer_elapsed_ms(const char *ns)
  * on_frame service runs, so that the pause while the port's own menu is
  * open is exact to the frame.  Every mod's timer is sampled; a timer that
  * no mod asks for is sampled anyway.
+ *
+ * The run-status panel is filled here too: the running time and the
+ * splits of every run that has begun are on the panel of the mod the run
+ * belongs to, and the port's own run is on the panel of the port's own
+ * namespace.
  */
 void bw_mod_timer_frame(void)
 {
@@ -491,6 +571,7 @@ void bw_mod_timer_frame(void)
     for (i = 0; i < BW_MOD_TIMER_MAX; i++) {
         if (g_states[i].used) {
             sample(&g_states[i]);
+            panel_update(&g_states[i]);
         }
     }
 }

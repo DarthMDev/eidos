@@ -34,6 +34,12 @@ extern void        eidos_settings_net_text_cancel(void);
 extern void        eidos_settings_net_defaults(void);
 extern void        eidos_settings_net_revert(void);
 
+/*
+ * The port's own run-status panel and the input injection's limit: the
+ * settings' model holds them (engine/platform/settings.c), and the screen
+ * shows them and the player changes them there.
+ */
+
 /* ================================================================== */
 /* UI TEXT: every string the settings screen shows.  ASCII only.       */
 /* A translation or a mod replaces this block.                         */
@@ -78,8 +84,8 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_SECTION_LAYOUT   "Screen arrangement, swap and gap."
 #define HELP_SECTION_CONTROLS "Keyboard and gamepad bindings."
 #define HELP_SECTION_SOUND    "Master volume."
-#define HELP_SECTION_MODS     "The installed mods and their settings."
-#define HELP_SECTION_NETWORK  "The relay, the control and the name."
+#define HELP_SECTION_MODS     "The mods, their settings and the panel."
+#define HELP_SECTION_NETWORK  "The relay, the control and the press limit."
 #define HELP_KEYS_L0   "Up/Down: choose   A: open"
 #define HELP_KEYS_L0B  "B: save and go back"
 #define HELP_KEYS_L1   "Up/Down: choose   Left/Right: change"
@@ -111,6 +117,13 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_NET_DEFAULTS2 "to their defaults."
 #define HELP_TEXT_EDIT1  "Type the text on the keyboard."
 #define HELP_TEXT_EDIT2  "Enter keeps it, Esc gives it up."
+
+/* The run-status panel (the Mods section) and the input injection's limit
+ * (the Network section). */
+#define HELP_PANEL1   "The run-status panel the mods fill."
+#define HELP_PANEL2   "A hidden panel takes no space."
+#define HELP_INJECT1  "The longest press the injection allows,"
+#define HELP_INJECT2  "in frames. 0 turns it off."
 
 /* Row labels by option id (EIDOS_OPT_*); NULL for hidden options. */
 static const char *const k_option_labels[EIDOS_OPT_COUNT] = {
@@ -164,18 +177,32 @@ static const ValueName k_choice_names[] = {
 #define STR_NET_NAME    "Player name"
 #define STR_NONE        "(none)"
 
+/* The port's own rows: the run-status panel's switch (the Mods section)
+ * and the input injection's limit (the Network section). */
+#define STR_PANEL       "Status panel"
+#define STR_INJECT      "Max press"
+#define STR_OFF         "Off"
+#define STR_ON          "On"
+
+/* The step the injection's limit moves by: half a second at the DS's 60
+ * fps.  The model clamps the value to the port's own ceiling (a minute),
+ * so the row never writes a value the port will not take. */
+#define INJECT_STEP     30
+
 /* ================================================================== */
 
 /*
  * The rows of the screen.  The first four kinds are the port's own
- * settings; the rest are the Mods section (the model of sdk/mod_menu.c)
- * and the Network section (the port's own network settings).
+ * settings; the rest are the Mods section (the port's own panel switch and
+ * the model of sdk/mod_menu.c) and the Network section (the port's own
+ * network settings and the input injection's limit).
  */
 enum {
     ROW_OPTION,           /* an option of the port's own                  */
     ROW_BIND,             /* a key binding                               */
     ROW_DEFAULTS,         /* "Restore defaults"                          */
     ROW_SECTION,          /* a section of the list                       */
+    ROW_PANEL,            /* the run-status panel's switch               */
     ROW_MOD_SWITCH,       /* a mod's switch: arg is the mod              */
     ROW_MOD_OPTION,       /* a mod's own setting: arg the mod, arg2 it  */
     ROW_MOD_CLEAR,        /* "Clear saved data": arg is the mod          */
@@ -185,6 +212,7 @@ enum {
     ROW_NET_RELAY_PORT,   /* the relay's port (a number)                 */
     ROW_NET_CONTROL_PORT, /* the control's port (a number)               */
     ROW_NET_NAME,         /* the player's name (text)                    */
+    ROW_INJECT_MAX,       /* the longest press the injection allows     */
     ROW_NET_DEFAULTS      /* the network settings back to their default  */
 };
 
@@ -231,15 +259,19 @@ static void add_row(int type, int arg, int arg2)
 }
 
 /*
- * The Mods section: the installed mods in load order, each with its
- * switch, its own settings under its name and the clear action; then the
- * folders in the save directory that no installed mod claims.
+ * The Mods section: the port's own panel switch, then the installed mods in
+ * load order, each with its switch, its own settings under its name and the
+ * clear action; then the folders in the save directory that no installed mod
+ * claims.
  */
 static void build_mods_rows(void)
 {
     u32 count = bw_mod_menu_count();
     u32 i, o;
 
+    /* The run-status panel is the port's own: the mods fill it, and the
+     * player hides it from here (docs/mod-services.md, "Run-status panel"). */
+    add_row(ROW_PANEL, 0, 0);
     for (i = 0; i < count; i++) {
         add_row(ROW_MOD_SWITCH, (int)i, 0);
         for (o = 0; o < bw_mod_menu_option_count(i); o++) {
@@ -255,13 +287,16 @@ static void build_mods_rows(void)
     add_row(ROW_MOD_REVERT, 0, 0);
 }
 
-/* The Network section: the port's own settings for the network service. */
+/* The Network section: the port's own settings for the network service, and
+ * the input injection's limit, which is the port's own too: a mod may ask
+ * for a press, and the player says how long a press may be (0 is off). */
 static void build_net_rows(void)
 {
     add_row(ROW_NET_RELAY, 0, 0);
     add_row(ROW_NET_RELAY_PORT, 0, 0);
     add_row(ROW_NET_CONTROL_PORT, 0, 0);
     add_row(ROW_NET_NAME, 0, 0);
+    add_row(ROW_INJECT_MAX, 0, 0);
     add_row(ROW_NET_DEFAULTS, 0, 0);
 }
 
@@ -676,6 +711,19 @@ int eidos_sui_input(unsigned pressed, unsigned held)
         }
         return 0;
     }
+    if (r->type == ROW_PANEL) {
+        /* The run-status panel's switch: left and right turn it on and off
+         * alike, and the model's own value is what the drawing asks for. */
+        int d = (act & 0x10u) ? 1 : (act & 0x20u) ? -1 : 0;
+        if (d == 0 && (pressed & 1u)) {
+            d = 1;
+        }
+        if (d != 0) {
+            eidos_settings_panel_set_visible(!eidos_settings_panel_visible());
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return 0;
+    }
     if (r->type == ROW_MOD_SWITCH) {
         int d = (act & 0x10u) ? 1 : (act & 0x20u) ? -1 : 0;
         if (d == 0 && (pressed & 1u)) {
@@ -719,6 +767,20 @@ int eidos_sui_input(unsigned pressed, unsigned held)
         }
         return 0;
     }
+    if (r->type == ROW_INJECT_MAX) {
+        /* The longest press the injection allows: the model's own value, in
+         * frames.  0 turns the injection off. */
+        int d = (act & 0x10u) ? 1 : (act & 0x20u) ? -1 : 0;
+        if (d != 0) {
+            int v = eidos_settings_input_inject_max() + d * INJECT_STEP;
+
+            if (v != eidos_settings_input_inject_max()) {
+                eidos_settings_input_set_inject_max(v);
+                return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            }
+        }
+        return 0;
+    }
     if (r->type == ROW_NET_RELAY || r->type == ROW_NET_NAME) {
         if (pressed & 1u) {
             begin_text_edit(r->type);
@@ -743,11 +805,16 @@ int eidos_sui_input(unsigned pressed, unsigned held)
             }
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
         case ROW_MOD_REVERT:
-            /* The switches go back to the port's list. */
+            /* The switches go back to the port's list, and the panel's own
+             * switch goes back to the state the last commit left. */
             bw_mod_menu_revert();
+            eidos_settings_panel_revert();
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         case ROW_NET_DEFAULTS:
+            /* The network settings back to their defaults, and the
+             * injection's limit with them: it is this section's own row. */
             eidos_settings_net_defaults();
+            eidos_settings_input_defaults();
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         default:
             break;
@@ -788,6 +855,8 @@ int eidos_sui_row_adjustable(int row)
     switch (r->type) {
     case ROW_OPTION:
     case ROW_MOD_OPTION:
+    case ROW_PANEL:
+    case ROW_INJECT_MAX:
     case ROW_NET_RELAY_PORT:
     case ROW_NET_CONTROL_PORT:
         return 1;
@@ -856,6 +925,16 @@ int eidos_sui_touch(int row, int zone)
         }
         break;
     }
+    case ROW_PANEL:
+        /* The switch is drawn as two choices, off and on. */
+        if (zone >= 0 && zone <= 1) {
+            eidos_settings_panel_set_visible(zone);
+            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        } else if (was) {
+            eidos_settings_panel_set_visible(!eidos_settings_panel_visible());
+            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        break;
     case ROW_MOD_SWITCH:
         /* The switch is drawn as two choices, off and on. */
         if (zone >= 0 && zone <= 1) {
@@ -886,6 +965,7 @@ int eidos_sui_touch(int row, int zone)
     case ROW_MOD_REVERT:
         if (was) {
             bw_mod_menu_revert();
+            eidos_settings_panel_revert();
             res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
         break;
@@ -903,6 +983,17 @@ int eidos_sui_touch(int row, int zone)
             res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
         break;
+    case ROW_INJECT_MAX:
+        if (was && (zone == EIDOS_SUI_ZONE_DEC || zone == EIDOS_SUI_ZONE_INC)) {
+            int v = eidos_settings_input_inject_max() +
+                    (zone == EIDOS_SUI_ZONE_INC ? INJECT_STEP : -INJECT_STEP);
+
+            if (v != eidos_settings_input_inject_max()) {
+                eidos_settings_input_set_inject_max(v);
+                res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            }
+        }
+        break;
     case ROW_BIND:
         eidos_settings_capture_begin();
         g.capturing = r->arg + 1;
@@ -916,6 +1007,7 @@ int eidos_sui_touch(int row, int zone)
     case ROW_NET_DEFAULTS:
         if (was) {
             eidos_settings_net_defaults();
+            eidos_settings_input_defaults();
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
         break;
@@ -1068,10 +1160,15 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         }
         break;
     }
+    case ROW_PANEL:
+        /* The run-status panel and the player's switch. */
+        put(label, nl, STR_PANEL);
+        put(value, nv, eidos_settings_panel_visible() ? STR_ON : STR_OFF);
+        break;
     case ROW_MOD_SWITCH:
         /* The mod's name and its switch. */
         put(label, nl, bw_mod_menu_name_at((u32)r->arg));
-        put(value, nv, bw_mod_menu_enabled_at((u32)r->arg) ? "On" : "Off");
+        put(value, nv, bw_mod_menu_enabled_at((u32)r->arg) ? STR_ON : STR_OFF);
         break;
     case ROW_MOD_OPTION:
         /* The mod's own setting, under the mod's name. */
@@ -1111,6 +1208,16 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         put(label, nl, STR_NET_NAME);
         put(value, nv, net_text(eidos_settings_net_name()));
         break;
+    case ROW_INJECT_MAX:
+        /* The longest press the injection allows, in frames.  0 is off. */
+        put(label, nl, STR_INJECT);
+        if (eidos_settings_input_inject_max() == 0) {
+            put(value, nv, STR_OFF);
+        } else {
+            snprintf(buf, sizeof buf, "%d", eidos_settings_input_inject_max());
+            put(value, nv, buf);
+        }
+        break;
     default:
         put(label, nl, STR_DEFAULTS);
         break;
@@ -1128,10 +1235,19 @@ int eidos_sui_row_choices(int row, int *active, char names[3][20])
         return 0;
     }
     r = &g.rows[g.scroll + row - 1];
+    if (r->type == ROW_PANEL) {
+        /* The panel's switch: two choices, off and on. */
+        put(names[0], 20, STR_OFF);
+        put(names[1], 20, STR_ON);
+        if (active != NULL) {
+            *active = eidos_settings_panel_visible() ? 1 : 0;
+        }
+        return 2;
+    }
     if (r->type == ROW_MOD_SWITCH) {
         /* The mod's switch: two choices, off and on. */
-        put(names[0], 20, "Off");
-        put(names[1], 20, "On");
+        put(names[0], 20, STR_OFF);
+        put(names[1], 20, STR_ON);
         if (active != NULL) {
             *active = bw_mod_menu_enabled_at((u32)r->arg) ? 1 : 0;
         }
@@ -1210,6 +1326,10 @@ void eidos_sui_help_line(int i, char *out, int n)
             l[0] = HELP_BIND1;
             l[1] = HELP_BIND2;
             break;
+        case ROW_PANEL:
+            l[0] = HELP_PANEL1;
+            l[1] = HELP_PANEL2;
+            break;
         case ROW_MOD_SWITCH:
             l[0] = HELP_MOD_SWITCH1;
             l[1] = HELP_MOD_SWITCH2;
@@ -1245,6 +1365,10 @@ void eidos_sui_help_line(int i, char *out, int n)
         case ROW_NET_NAME:
             l[0] = HELP_NET_NAME1;
             l[1] = HELP_NET_NAME2;
+            break;
+        case ROW_INJECT_MAX:
+            l[0] = HELP_INJECT1;
+            l[1] = HELP_INJECT2;
             break;
         case ROW_NET_DEFAULTS:
             l[0] = HELP_NET_DEFAULTS1;

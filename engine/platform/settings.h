@@ -164,6 +164,20 @@ int         eidos_settings_scancode_char(int scancode);
  */
 int         eidos_settings_input_inject_max(void);
 void        eidos_settings_input_set_inject_max(int frames);
+void        eidos_settings_input_defaults(void);
+
+/* ------------------------------------------------------------------ */
+/* The run-status panel                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Whether the port shows the run-status panel.  A hidden panel takes no
+ * space at all, so the window's arrangement follows the player's choice.
+ * The setting lives in the file's [panel] section (visible = on|off).
+ */
+int         eidos_settings_panel_visible(void);
+void        eidos_settings_panel_set_visible(int visible);
+void        eidos_settings_panel_revert(void);
 
 /* ------------------------------------------------------------------ */
 /* Key bindings                                                        */

@@ -206,8 +206,9 @@ void eidos_mod_panel_space(const EidosScreenPlacement *pl,
     if (pl->screen[1].y + pl->screen[1].h > bottom) {
         bottom = pl->screen[1].y + pl->screen[1].h;
     }
-    /* The screens are stacked when the second one is below the first. */
-    stacked = pl->screen[1].y > pl->screen[0].y;
+    /* The screens are stacked when they are in the same column, whichever
+     * of them is the first. */
+    stacked = pl->screen[0].x == pl->screen[1].x;
 
     if (stacked) {
         out->rect.x = right;

@@ -1,3 +1,37 @@
 {
-  "claims": {}
+  "claims": {
+    "W25-MOVE": {
+      "note": "the move-learning screens: the TM, the tutor and the relearner",
+      "paths": [
+        "sdk/mod_event_mon.c"
+      ],
+      "started": "2026-10-21"
+    },
+    "W25-ROWS": {
+      "note": "the settings screen's rows for the panel and the injection's limit",
+      "paths": [
+        "engine/platform/settings.c",
+        "engine/platform/settings_ui.c"
+      ],
+      "started": "2026-10-21"
+    },
+    "W25-SHOW": {
+      "note": "the presenter shows the panel: a third image, and the window grows by its space",
+      "paths": [
+        "engine/platform/geometry.c",
+        "engine/platform/plat_gl.c",
+        "engine/platform/platform.c"
+      ],
+      "started": "2026-10-21"
+    },
+    "W25-SPLITS": {
+      "note": "the timer and the splits reach the panel",
+      "paths": [
+        "sdk/mod_panel.c",
+        "sdk/mod_panel.h",
+        "sdk/mod_timer.c"
+      ],
+      "started": "2026-10-21"
+    }
+  }
 }

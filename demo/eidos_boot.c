@@ -1244,6 +1244,12 @@ int  bw_mod_restart_take(u32 *flags);
  */
 void eidos_mod_handoff_install_confirm(void);
 
+/*
+ * The mod layer's timer (sdk/mod_timer.c has no header of its own either).
+ */
+void bw_mod_timer_start(void);
+void bw_mod_timer_stop(void);
+
 /* The request that waits for the frame loop, and what it asks for. */
 static BootRunNext g_run_next = BOOT_RUN_TITLE;
 static int         g_restart_pending;
@@ -1551,6 +1557,10 @@ static void boot_start_game(BootRunNext next)
         return;
     }
     PROCSYS_ReplaceGlobal((u32)-1, main_proc, init);
+    /* The port's own run starts here: the run-status panel shows its time,
+     * and the mod layer's timer measures it in the port's own ticks
+     * (sdk/mod_timer.c).  No mod is in force, so this is the port's run. */
+    bw_mod_timer_start();
 }
 
 /*

@@ -18,6 +18,7 @@
 #include <stdlib.h>
 
 #include "input.h"
+#include "mod_panel_draw.h"
 #include "platform.h"
 #include "plat_gl.h"
 #include "settings.h"
@@ -30,6 +31,21 @@
 
 #define DEFAULT_WINDOW_SCALE 1
 
+/*
+ * The presenter's third image: the run-status panel (engine/platform/
+ * mod_panel_draw.h).  The two calls are declared here rather than in
+ * plat_gl.h: the panel is the port's own picture, drawn by the platform
+ * layer beside the game's screens, and plat_gl.h is the presenter's own
+ * header (shared with the 3D path).  The declaration is the port's
+ * convention for a call whose header is not this file's, the way
+ * engine/platform/mod_panel_draw.c declares the model's.
+ */
+extern void eidos_gl_upload_panel(EidosGl *gl, const unsigned char *rgba,
+                                   int w, int h);
+extern void eidos_gl_present_panel(EidosGl *gl, int out_w, int out_h,
+                                   const SDL_Rect dst[2],
+                                   const SDL_Rect *panel);
+
 struct EidosPlatform {
     SDL_Window   *window;
     SDL_Renderer *renderer;        /* NULL when the GPU presenter runs      */
@@ -40,12 +56,20 @@ struct EidosPlatform {
     int pre_w[2], pre_h[2];
     int tex_n[2];                  /* internal multiple of each tex/shadow  */
 
+    /* the run-status panel: the port's own picture, beside the screens */
+    SDL_Texture  *panel_tex;       /* the software path's texture for it    */
+    int panel_tex_w, panel_tex_h;
+    u32 panel_gen;                 /* the model's generation last uploaded  */
+    int panel_gen_ok;              /* ... and whether there was one         */
+    int panel_w, panel_h;          /* the picture's size last uploaded      */
+
     int layout;
     int gap;
     int swap;
     int display_mode;
     int win_x, win_y;               /* windowed position, kept across fullscreen */
     int presented;                  /* a frame has been drawn at least once  */
+    int arr_w, arr_h;               /* the arrangement's size last seen      */
     SDL_threadID owner;             /* the thread that made the window and GL context */
     int pend_display, pend_layout;  /* a change asked for from another thread  */
     int pd_mode, pd_w, pd_h, pl_layout, pl_swap, pl_gap;
@@ -808,17 +832,120 @@ static void draw_screen(EidosPlatform *p, int i, const SDL_Rect *dst)
     SDL_RenderCopy(p->renderer, src, NULL, dst);
 }
 
+/* ------------------------------------------------------------------ */
+/* The run-status panel                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The two screens' own area: their bounding box, in the units the two
+ * rectangles are given in.  The arrangement also holds the run-status
+ * panel's strip, and the screenshot is the DS's screens: the panel's strip
+ * is not part of it.
+ */
+static void screens_rect(const EidosRect *a, const EidosRect *b,
+                         EidosRect *out)
+{
+    int x0 = a->x < b->x ? a->x : b->x;
+    int y0 = a->y < b->y ? a->y : b->y;
+    int x1 = a->x + a->w;
+    int y1 = a->y + a->h;
+
+    if (b->x + b->w > x1) {
+        x1 = b->x + b->w;
+    }
+    if (b->y + b->h > y1) {
+        y1 = b->y + b->h;
+    }
+    out->x = x0;
+    out->y = y0;
+    out->w = x1 - x0;
+    out->h = y1 - y0;
+}
+
+/*
+ * The panel's picture and the rectangle it goes to in the output, or -1
+ * when there is no panel to show: the player hid it, or no mod has filled
+ * a line.
+ *
+ * The room is the arrangement's (eidos_mod_panel_space), the same one the
+ * geometry grew the arrangement by, so the picture lands in the room and
+ * never on the game.
+ */
+static int panel_view(const EidosViewport *vp, const EidosScreenPlacement *pl,
+                      EidosModPanelView *view)
+{
+    EidosModPanelSpace space;
+
+    eidos_mod_panel_space(pl, &space);
+    return eidos_mod_panel_view(view, vp, &space, pl->width, pl->height);
+}
+
+/*
+ * The panel's picture, uploaded only when it changed.  The view carries
+ * the model's generation, and the picture is redrawn only when the model's
+ * lines change (engine/platform/mod_panel_draw.h), so the picture is
+ * uploaded once per change and not once per frame.
+ */
+static void upload_panel(EidosPlatform *p, const EidosModPanelView *view)
+{
+    if (p->panel_gen_ok && p->panel_gen == view->generation &&
+        p->panel_w == view->w && p->panel_h == view->h) {
+        return;                         /* the same picture as last frame */
+    }
+    p->panel_gen = view->generation;
+    p->panel_gen_ok = 1;
+    p->panel_w = view->w;
+    p->panel_h = view->h;
+    if (p->gl != NULL) {
+        eidos_gl_upload_panel(p->gl, view->rgba, view->w, view->h);
+        return;
+    }
+    /*
+     * The software path: a texture of its own.  ABGR8888 is a packed
+     * 32-bit pixel 0xAABBGGRR, which on a little-endian host is the byte
+     * order R, G, B, A -- what the panel's own drawing writes, the same
+     * reasoning as the screens' textures above.
+     */
+    if (p->panel_tex == NULL || p->panel_tex_w != view->w ||
+        p->panel_tex_h != view->h) {
+        if (p->panel_tex != NULL) {
+            SDL_DestroyTexture(p->panel_tex);
+            p->panel_tex = NULL;
+        }
+        p->panel_tex = SDL_CreateTexture(p->renderer, SDL_PIXELFORMAT_ABGR8888,
+                                        SDL_TEXTUREACCESS_STREAMING,
+                                        view->w, view->h);
+        p->panel_tex_w = view->w;
+        p->panel_tex_h = view->h;
+        if (p->panel_tex == NULL) {
+            fprintf(stderr, "eidos: SDL_CreateTexture failed: %s\n",
+                    SDL_GetError());
+            return;
+        }
+        set_filter(p->panel_tex, 0);         /* nearest: the text is sharp */
+    }
+    SDL_UpdateTexture(p->panel_tex, NULL, view->rgba, view->w * 4);
+}
+
 /* Draw both screen textures into the current output.  Used by present and
  * by every runtime change, so a new mode shows at once. */
 static void render(EidosPlatform *p)
 {
     EidosViewport vp;
-    int i;
+    EidosScreenPlacement pl;
+    EidosModPanelView view;
+    int i, ow, oh, have_panel;
 
-    eidos_platform_viewport(p, &vp);
+    place(p, &pl);
+    out_size(p, &ow, &oh);
+    eidos_display_viewport(&pl, ow, oh, &vp);
+    have_panel = panel_view(&vp, &pl, &view) == 0;
+    if (have_panel) {
+        upload_panel(p, &view);
+    }
     if (p->gl != NULL) {
         SDL_Rect rects[2];
-        int ow, oh;
+        SDL_Rect prect;
 
         for (i = 0; i < 2; i++) {
             rects[i].x = vp.screen[i].x;
@@ -826,8 +953,15 @@ static void render(EidosPlatform *p)
             rects[i].w = vp.screen[i].w;
             rects[i].h = vp.screen[i].h;
         }
-        out_size(p, &ow, &oh);
-        eidos_gl_present(p->gl, ow, oh, rects);
+        if (have_panel && view.dst.w > 0 && view.dst.h > 0) {
+            prect.x = view.dst.x;
+            prect.y = view.dst.y;
+            prect.w = view.dst.w;
+            prect.h = view.dst.h;
+            eidos_gl_present_panel(p->gl, ow, oh, rects, &prect);
+        } else {
+            eidos_gl_present(p->gl, ow, oh, rects);
+        }
         return;
     }
     SDL_RenderClear(p->renderer);
@@ -841,6 +975,17 @@ static void render(EidosPlatform *p)
         if (dst.w > 0 && dst.h > 0 && p->tex[i] != NULL) {
             draw_screen(p, i, &dst);
         }
+    }
+    /* The panel's picture, in the room the arrangement reserved for it. */
+    if (have_panel && p->panel_tex != NULL && view.dst.w > 0 &&
+        view.dst.h > 0) {
+        SDL_Rect dst;
+
+        dst.x = view.dst.x;
+        dst.y = view.dst.y;
+        dst.w = view.dst.w;
+        dst.h = view.dst.h;
+        SDL_RenderCopy(p->renderer, p->panel_tex, NULL, &dst);
     }
     SDL_RenderPresent(p->renderer);
 }
@@ -968,20 +1113,29 @@ static int set_display_now(EidosPlatform *p, int mode, int win_w,
 
 static int set_layout_now(EidosPlatform *p, int layout, int swap, int gap)
 {
-    u32 ow, oh, nw, nh;
+    u32 nw, nh;
 
     if (p == NULL) {
         return -1;
     }
-    layout_size(p, &ow, &oh);
     p->layout = layout == EIDOS_LAYOUT_SIDE_BY_SIDE
                 ? EIDOS_LAYOUT_SIDE_BY_SIDE : EIDOS_LAYOUT_STACKED;
     p->swap = swap != 0;
     p->gap = gap > 0 ? gap : 0;
     layout_size(p, &nw, &nh);
-    if (p->window != NULL && (nw != ow || nh != oh)) {
+    /*
+     * The window takes the arrangement's shape, and the arrangement is the
+     * two screens and the run-status panel together.  The size it was last
+     * shaped for is the one to compare with, so a panel that appeared or
+     * went away -- which changes the arrangement without changing the
+     * layout -- reshapes the window too.
+     */
+    if (p->window != NULL &&
+        ((int)nw != p->arr_w || (int)nh != p->arr_h)) {
         reshape_window(p);
     }
+    p->arr_w = (int)nw;
+    p->arr_h = (int)nh;
     if (p->presented) {
         render(p);
     }
@@ -1120,6 +1274,8 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
 
     layout_size(p, &w, &h);
+    p->arr_w = (int)w;
+    p->arr_h = (int)h;
     /* The window always opens at the DS's own size for the layout (the saved
      * window size is not used: a size from a maximized or other-shaped window
      * opened oddly and could overflow the screen). */
@@ -1269,6 +1425,9 @@ void eidos_platform_quit(EidosPlatform *p)
             SDL_DestroyTexture(p->pre[i]);
         }
         free(p->shadow[i]);
+    }
+    if (p->panel_tex != NULL) {
+        SDL_DestroyTexture(p->panel_tex);
     }
     if (p->renderer != NULL) {
         SDL_DestroyRenderer(p->renderer);
@@ -1488,6 +1647,23 @@ void eidos_platform_present_nn(EidosPlatform *p, const u8 *top, int n_top,
         }
     }
 
+    /*
+     * The arrangement is the two screens and the run-status panel, so the
+     * panel's space is part of the window's shape: a panel that appears
+     * (or goes away) changes the arrangement, and the window takes the
+     * new shape at the same area, the way a layout change does.
+     */
+    {
+        EidosScreenPlacement pl;
+
+        place(p, &pl);
+        if (pl.width != p->arr_w || pl.height != p->arr_h) {
+            p->arr_w = pl.width;
+            p->arr_h = pl.height;
+            reshape_window(p);
+        }
+    }
+
     p->presented = 1;
     render(p);
 }
@@ -1599,16 +1775,20 @@ int eidos_platform_capture_poll(EidosPlatform *p, EidosCaptured *out)
 void eidos_platform_shot_size(const EidosPlatform *p, u32 *w, u32 *h)
 {
     EidosScreenPlacement pl;
+    EidosRect area;
 
     if (p == NULL) {
         return;
     }
     place(p, &pl);
+    /* The screens, not the arrangement: the screenshot is the DS's screens
+     * and the run-status panel's strip is not part of them. */
+    screens_rect(&pl.screen[0], &pl.screen[1], &area);
     if (w != NULL) {
-        *w = (u32)pl.width * (u32)eidos_platform_frame_scale(p);
+        *w = (u32)area.w * (u32)eidos_platform_frame_scale(p);
     }
     if (h != NULL) {
-        *h = (u32)pl.height * (u32)eidos_platform_frame_scale(p);
+        *h = (u32)area.h * (u32)eidos_platform_frame_scale(p);
     }
 }
 
@@ -1629,6 +1809,7 @@ static int screenshot_gl(EidosPlatform *p, const char *path)
     SDL_Rect rects[2];
     SDL_Surface *surf;
     u8 *rgb, *crop;
+    EidosRect area;
     int ow, oh, i, cw, ch, cx, cy, rc;
 
     out_size(p, &ow, &oh);
@@ -1644,10 +1825,16 @@ static int screenshot_gl(EidosPlatform *p, const char *path)
         free(rgb);
         return -1;
     }
-    cx = vp.content.x < 0 ? 0 : vp.content.x;
-    cy = vp.content.y < 0 ? 0 : vp.content.y;
-    cw = vp.content.w;
-    ch = vp.content.h;
+    /*
+     * The crop is the DS's screens, not the whole arrangement: the
+     * run-status panel's strip is beside them (or below them) and is not
+     * part of a screenshot of the screens.
+     */
+    screens_rect(&vp.screen[0], &vp.screen[1], &area);
+    cx = area.x < 0 ? 0 : area.x;
+    cy = area.y < 0 ? 0 : area.y;
+    cw = area.w;
+    ch = area.h;
     if (cx + cw > ow) {
         cw = ow - cx;
     }
@@ -1704,23 +1891,30 @@ int eidos_platform_screenshot(EidosPlatform *p, const char *path)
     }
 
     place(p, &pl);
-    for (i = 0; i < 2; i++) {
-        /* The picture is as large as the larger screen; a screen kept at a
-         * smaller multiple is repeated up to it. */
-        u32 nn = (u32)eidos_platform_frame_scale(p);
-        u32 own = (u32)p->tex_n[i], sw = SCREEN_W * nn, sh = SCREEN_H * nn;
-        u32 ox = (u32)pl.screen[i].x * nn, oy = (u32)pl.screen[i].y * nn;
+    {
+        EidosRect area;
 
-        for (y = 0; y < sh; y++) {
-            const u8 *s = p->shadow[i] +
-                          (size_t)(y * own / nn) * SCREEN_W * own * 4u;
-            u8 *d = pixels + (size_t)(oy + y) * pitch + (size_t)ox * 3u;
-            for (x = 0; x < sw; x++) {
-                const u8 *q = s + (size_t)(x * own / nn) * 4u;
+        /* The screens' own area: the panel's strip is not in the picture. */
+        screens_rect(&pl.screen[0], &pl.screen[1], &area);
+        for (i = 0; i < 2; i++) {
+            /* The picture is as large as the larger screen; a screen kept at a
+             * smaller multiple is repeated up to it. */
+            u32 nn = (u32)eidos_platform_frame_scale(p);
+            u32 own = (u32)p->tex_n[i], sw = SCREEN_W * nn, sh = SCREEN_H * nn;
+            u32 ox = (u32)(pl.screen[i].x - area.x) * nn;
+            u32 oy = (u32)(pl.screen[i].y - area.y) * nn;
 
-                d[x * 3 + 0] = q[0];
-                d[x * 3 + 1] = q[1];
-                d[x * 3 + 2] = q[2];
+            for (y = 0; y < sh; y++) {
+                const u8 *s = p->shadow[i] +
+                              (size_t)(y * own / nn) * SCREEN_W * own * 4u;
+                u8 *d = pixels + (size_t)(oy + y) * pitch + (size_t)ox * 3u;
+                for (x = 0; x < sw; x++) {
+                    const u8 *q = s + (size_t)(x * own / nn) * 4u;
+
+                    d[x * 3 + 0] = q[0];
+                    d[x * 3 + 1] = q[1];
+                    d[x * 3 + 2] = q[2];
+                }
             }
         }
     }

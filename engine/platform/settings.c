@@ -16,6 +16,7 @@
 #include <SDL.h>
 
 #include "input.h"
+#include "mod_panel_draw.h"
 #include "setup.h"
 #include "settings.h"
 
@@ -106,6 +107,7 @@ typedef struct Model {
     PadCtl pad[NBTN][EIDOS_BIND_SLOTS];
     NetModel net;
     int inject_max;                 /* the longest press the port allows */
+    int panel_visible;               /* the run-status panel: 1 when shown */
 } Model;
 
 static Model g_cur, g_saved;
@@ -201,6 +203,8 @@ static void model_defaults(Model *m)
     /* The input injection: the port allows a press of up to a minute, and
      * the player may lower it (or turn the injection off with 0). */
     m->inject_max = (int)BW_INPUT_INJECT_MAX_FRAMES;
+    /* The run-status panel is shown until the player hides it. */
+    m->panel_visible = 1;
 }
 
 static void model_reset_bindings(Model *m)
@@ -253,6 +257,21 @@ static int apply_layout(void)
 static void apply_volume(void)
 {
     eidos_platform_set_volume(g_plat, g_cur.v[EIDOS_OPT_SOUND_VOLUME]);
+}
+
+/*
+ * The run-status panel: the port's own text panel beside the two screens,
+ * which the mods fill (docs/mod-services.md, "Run-status panel").  The
+ * player's choice is the model's, and the apply hands it to the drawing
+ * (eidos_mod_panel_set_visible) and lays the window out again: a panel the
+ * player has hidden takes no space, so the arrangement changes with it.
+ */
+static void apply_panel(void)
+{
+    eidos_mod_panel_set_visible(g_cur.panel_visible);
+    if (g_plat != NULL) {
+        (void)apply_layout();
+    }
 }
 
 static int apply_bindings(void)
@@ -316,6 +335,7 @@ static int apply_option_group(int id)
 
 static void apply_all(void)
 {
+    apply_panel();                /* the panel's place in the arrangement */
     if (g_plat == NULL) {
         return;
     }
@@ -500,7 +520,61 @@ void eidos_settings_input_set_inject_max(int frames)
     if (frames > (int)BW_INPUT_INJECT_MAX_FRAMES) {
         frames = (int)BW_INPUT_INJECT_MAX_FRAMES;
     }
+    if (frames == g_cur.inject_max) {
+        return;
+    }
     g_cur.inject_max = frames;
+    apply_input();               /* the injection follows at once */
+}
+
+/*
+ * The limit back to the port's own ceiling (a minute), the way the other
+ * settings go back to their defaults.  The value is applied at once, so the
+ * injection is on again as soon as the row says so.
+ */
+void eidos_settings_input_defaults(void)
+{
+    ensure_init();
+    eidos_settings_input_set_inject_max((int)BW_INPUT_INJECT_MAX_FRAMES);
+}
+
+/*
+ * The run-status panel: the port's own text panel beside the two screens,
+ * which the mods fill (docs/mod-services.md, "Run-status panel").  The
+ * player hides it from the port's settings, and a hidden panel takes no
+ * space: the window's arrangement changes with it.
+ *
+ * The setting is the model's, so it is read, changed, reverted and committed
+ * with the rest of the settings, and the file keeps it ([panel], visible).
+ * The drawing asks eidos_mod_panel_visible() before it draws anything.
+ */
+int eidos_settings_panel_visible(void)
+{
+    ensure_init();
+    return g_cur.panel_visible;
+}
+
+void eidos_settings_panel_set_visible(int visible)
+{
+    ensure_init();
+    visible = (visible != 0) ? 1 : 0;
+    if (visible == g_cur.panel_visible) {
+        return;
+    }
+    g_cur.panel_visible = visible;
+    apply_panel();
+}
+
+/* The panel back to the state the last commit left (the screen's "Revert
+ * changes" row). */
+void eidos_settings_panel_revert(void)
+{
+    ensure_init();
+    if (g_cur.panel_visible == g_saved.panel_visible) {
+        return;
+    }
+    g_cur.panel_visible = g_saved.panel_visible;
+    apply_panel();
 }
 
 const char *eidos_settings_net_name(void)
@@ -1024,6 +1098,26 @@ static void lower_into(char *dst, size_t n, const char *src)
     dst[i] = '\0';
 }
 
+/*
+ * A switch in the file: "on" and "off", and the other words a hand-edited
+ * file may use for them.  1 or 0; -1 when the word is none of them.
+ */
+static int parse_switch(const char *text)
+{
+    char low[16];
+
+    lower_into(low, sizeof(low), text);
+    if (strcmp(low, "on") == 0 || strcmp(low, "true") == 0 ||
+        strcmp(low, "yes") == 0 || strcmp(low, "1") == 0) {
+        return 1;
+    }
+    if (strcmp(low, "off") == 0 || strcmp(low, "false") == 0 ||
+        strcmp(low, "no") == 0 || strcmp(low, "0") == 0) {
+        return 0;
+    }
+    return -1;
+}
+
 /* Parse an option's text into a value.  0 on success. */
 static int parse_value(int id, const char *text, int *out)
 {
@@ -1257,6 +1351,24 @@ static void parse_file(FILE *fp, Model *m)
             }
             continue;
         }
+        if (strcmp(section, "panel") == 0) {
+            /* The port's own panel setting: whether the run-status panel is
+             * shown. */
+            if (strcmp(key, "visible") == 0) {
+                int v = parse_switch(val);
+
+                if (v < 0) {
+                    fprintf(stderr, "eidos: settings.ini:%d: bad value '%s' "
+                            "for panel.visible, kept the default\n", lineno, val);
+                } else {
+                    m->panel_visible = v;
+                }
+            } else {
+                fprintf(stderr, "eidos: settings.ini:%d: unknown key '%s' in "
+                        "[panel], ignored\n", lineno, key);
+            }
+            continue;
+        }
         if (strcmp(section, "keys") == 0 || strcmp(section, "pad") == 0) {
             int b;
 
@@ -1354,6 +1466,9 @@ static int write_file(FILE *fp, const Model *m)
      * 0 is off. */
     fprintf(fp, "\n[input]\n");
     fprintf(fp, "max_press = %d\n", m->inject_max);
+    /* The run-status panel: the player hides it from the port's settings. */
+    fprintf(fp, "\n[panel]\n");
+    fprintf(fp, "visible = %s\n", m->panel_visible ? "on" : "off");
     return ferror(fp) ? -1 : 0;
 }
 
@@ -1371,6 +1486,7 @@ int eidos_settings_load(void)
     model_defaults(&m);
     g_cur = g_saved = m;
     apply_input();
+    apply_panel();
     if (path[0] == '\0') {
         return 1;
     }
@@ -1382,6 +1498,7 @@ int eidos_settings_load(void)
     fclose(fp);
     g_cur = g_saved = m;
     apply_input();
+    apply_panel();
     if (g_plat != NULL) {
         apply_all();
     }
