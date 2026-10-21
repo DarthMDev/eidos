@@ -100,6 +100,14 @@
  * returned its state pointer, so the loader holds the bindings until the
  * state is known and registers them then, in the order the mod bound them.
  *
+ * The script layer (sdk/mod_script.c) owns the script command hooks, and it
+ * has the same registering-state hook (bw_mod_script_set_registering_state).
+ * A mod binds a command handler through the host table's `script`, so the
+ * script path holds its bindings until the start has returned the state
+ * pointer as well, and registers them then.  A handler bound after the
+ * start (from a frame handler, say) is registered at once, with the state
+ * the start returned.
+ *
  * The slot registry (sdk/mod_slot.c) holds a chain of hooks per (region,
  * address) pair.  The loader installs with bw_mod_slot_install_mode, which
  * carries the row's mode: a wrap nests in front of the hooks that are
@@ -234,6 +242,9 @@ extern void        bw_mod_restart(u32 flags);
 /* How many events one mod may bind a handler to. */
 #define BW_MOD_LOADER_KINDS_MAX 64
 
+/* How many script commands one mod may bind a handler to. */
+#define BW_MOD_LOADER_SCRIPT_BINDINGS_MAX 64
+
 /* How many overrides one mod may install. */
 #define BW_MOD_LOADER_OVERRIDES_MAX 64
 
@@ -262,6 +273,19 @@ typedef struct BwModLoaderKind {
     int registered;   /* the dispatch holds the mod's entry for it */
 } BwModLoaderKind;
 
+/*
+ * A script command a mod bound a handler to.  The binding waits until the
+ * mod's start has returned its state pointer, because the state is what the
+ * handler is handed and the start is what produces it.  The event path
+ * holds its bindings the same way (the kinds above).
+ */
+typedef struct BwModLoaderScriptBinding {
+    u32             vm;
+    u16             opcode;
+    BwScriptHandler fn;
+    int             registered;   /* the registry holds the mod's handler */
+} BwModLoaderScriptBinding;
+
 /* A pair the mod installed, kept so the way down can revert it. */
 typedef struct BwModLoaderSlot {
     unsigned int region;
@@ -288,6 +312,8 @@ typedef struct BwModLoaderMod {
     u32           binding_count;
     BwModLoaderKind kinds[BW_MOD_LOADER_KINDS_MAX];
     u32           kind_count;
+    BwModLoaderScriptBinding scripts[BW_MOD_LOADER_SCRIPT_BINDINGS_MAX];
+    u32           script_binding_count;
     BwModLoaderSlot overrides[BW_MOD_LOADER_OVERRIDES_MAX];
     u32           override_count;
 } BwModLoaderMod;
@@ -575,28 +601,98 @@ static int loader_cells_store(const char *ns, const void *buf, u32 size)
 }
 
 /*
- * A mod binds a handler to a script command through the host table's
- * `script`.  The registry holds the handler with the mod's own state, so a
- * handler receives the state its mod's start returned, the same rule the
- * event handlers follow.
+ * Hand the script registry the mod's handler for one command.  The
+ * registering state is set around the call, so the handler the registry runs
+ * receives the state of this mod and not another mod's.
+ *
+ * The state is only known once the mod's start has returned, so a mod that
+ * binds its handlers from the start waits here until then (the event path
+ * does the same: loader_register_kind).
  */
-static int loader_bind_script(int slot, u32 vm, u16 opcode, BwScriptHandler fn)
+static int loader_register_script(BwModLoaderMod *m,
+                                  BwModLoaderScriptBinding *b)
 {
-    BwModLoaderMod *m = &g_mods[slot];
     int rc;
 
-    if (m->loaded == 0 || fn == NULL) {
-        return -1;
+    if (b->registered) {
+        return 0;
     }
     bw_mod_script_set_registering_state(m->state);
-    rc = bw_mod_script_register(vm, opcode, fn, m->ns);
+    rc = bw_mod_script_register(b->vm, b->opcode, b->fn, m->ns);
     bw_mod_script_set_registering_state(NULL);
     if (rc != 0) {
         fprintf(stderr,
                 "eidos: mod %s: the handler for command %u of vm %u was not "
-                "bound\n", m->name, (unsigned int)opcode, (unsigned int)vm);
+                "bound\n", m->name, (unsigned int)b->opcode,
+                (unsigned int)b->vm);
+        return -1;
     }
-    return rc;
+    b->registered = 1;
+    return 0;
+}
+
+/*
+ * Whether the VM and the opcode name a command the port can hook.  The
+ * script layer knows the two VMs it hooks and the width of every command of
+ * both tables; a width that does not fit the view is the layer's marker for
+ * a command the game's table does not have.
+ */
+static int loader_script_command_exists(u32 vm, u16 opcode)
+{
+    u32 count = bw_mod_script_opcode_count(vm);
+    u32 width;
+
+    if (count == 0u) {
+        return 0;               /* not one of the port's two VMs */
+    }
+    if ((u32)opcode >= count) {
+        return 0;               /* the game's table has no such command */
+    }
+    width = bw_mod_script_operand_width(vm, opcode);
+    return width <= (u32)BW_MOD_SCRIPT_ARGS_MAX;
+}
+
+/*
+ * A mod binds a handler to a script command through the host table's
+ * `script`.
+ *
+ * The registry holds the handler with the mod's own state, so a handler
+ * receives the state its mod's start returned, the same rule the event
+ * handlers follow.  The state does not exist while the start is running, so
+ * a binding made from the start waits in the mod's own table until the
+ * start has returned it, and is registered then.
+ */
+static int loader_bind_script(int slot, u32 vm, u16 opcode, BwScriptHandler fn)
+{
+    BwModLoaderMod *m = &g_mods[slot];
+    BwModLoaderScriptBinding *b;
+
+    if (m->loaded == 0 || fn == NULL) {
+        return -1;
+    }
+    if (!loader_script_command_exists(vm, opcode)) {
+        fprintf(stderr,
+                "eidos: mod %s: the handler for command %u of vm %u was not "
+                "bound\n", m->name, (unsigned int)opcode, (unsigned int)vm);
+        return -1;
+    }
+    if (m->script_binding_count >= BW_MOD_LOADER_SCRIPT_BINDINGS_MAX) {
+        fprintf(stderr, "eidos: mod %s: too many script handlers\n", m->name);
+        return -1;
+    }
+    b = &m->scripts[m->script_binding_count++];
+    b->vm = vm;
+    b->opcode = opcode;
+    b->fn = fn;
+    b->registered = 0;
+    if (m->started) {
+        /* The state is known: the registry can take the handler now. */
+        return loader_register_script(m, b);
+    }
+    /* The start has not returned yet, so the state is not known: the
+     * binding waits in the mod's own table, and the loader registers it
+     * once the start is through. */
+    return 0;
 }
 
 /*
@@ -997,6 +1093,12 @@ static int loader_load(u32 index)
         for (i = 0; i < m->kind_count; i++) {
             loader_register_kind(m, &m->kinds[i]);
         }
+        /* The script handlers the mod bound during its start go to the
+         * script registry the same way: the state is what the handler is
+         * handed, so the registration waits for the start to be through. */
+        for (i = 0; i < m->script_binding_count; i++) {
+            (void)loader_register_script(m, &m->scripts[i]);
+        }
     }
 
     /* 5. the overrides. */
@@ -1044,6 +1146,13 @@ static void loader_stop(BwModLoaderMod *m)
     bw_arm9_resolve_code_pointers();
     bw_ovl_resolve_code_pointers();
 
+    /* 1b. the mod's own script and frame handlers go out too.  The script
+     *     registry and the frame table hold the mod's own function, so a
+     *     handler left behind after the library is unloaded would be a call
+     *     into a library that is gone. */
+    bw_mod_script_remove_for(m->ns);
+    bw_mod_frame_remove_for(m->ns);
+
     /* 2. the mod's stop entry point.  The namespace is in force, so a
      *    state call the mod makes here reaches the mod's own file: this
      *    is where a mod flushes its data. */
@@ -1068,6 +1177,7 @@ static void loader_stop(BwModLoaderMod *m)
     m->loaded = 0;
     m->binding_count = 0;
     m->kind_count = 0;
+    m->script_binding_count = 0;
 }
 
 /* Release every manifest record the loader keeps. */

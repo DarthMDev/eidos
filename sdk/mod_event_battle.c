@@ -20,6 +20,14 @@
  * 0 and says so in a comment; a field that points at memory the game frees
  * later is copied into the payload, never stored as a pointer.
  *
+ * The rules the appliers of this area keep: a builder fills a field with the
+ * game's own value, so a handler that writes nothing leaves the game's own
+ * value in the payload and the applier writes it back unchanged; a field
+ * whose zero is not a value the game uses (the damage, the level
+ * adjustment) reads zero for "not changed"; and the format has no such
+ * zero, because a single battle is a format a handler may ask for, so the
+ * port names the format it does not know with a marker of its own.
+ *
  * The game's own accessors are declared under the names src/game gives
  * them, the way sdk/mod_state.c does: the port's older address spellings
  * are redirected onto the same names by the build's gamespell header
@@ -30,6 +38,7 @@
 #include "mod_export.h"
 #include "mod_state.h"
 #include "mod_slot.h"
+#include "mod_manifest.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -46,6 +55,7 @@
  * matched against the corpus by name.
  */
 struct GameData;
+struct Party;
 struct BtlMain;
 struct BtlSide;
 struct BtlSideSlot;
@@ -118,6 +128,17 @@ extern u16 BTL_SERVER_FLOW_GetTurnCount(void *flow)
 extern int BTL_SERVER_FLOW_GetEffectiveWeather(struct BtlServerFlow *flow)
     BW_PORT_WEAK;
 
+/*
+ * The catch rate the roll uses.  The game computes it when it rolls the
+ * catch: BTL_SERVER_FLOW_CalcCaptureShakes asks this function for the
+ * ball's factor and multiplies the target's own chance with it.
+ */
+extern int BTL_SERVER_FLOW_GetBallCatchRate(struct BtlServerFlow *flow,
+                                            void *unused,
+                                            struct BtlPokeParam *target,
+                                            int ballKind)
+    BW_PORT_WEAK;                                        /* 0x021CBD48 */
+
 /* The battle command queue: the refusal of a catch pushes a command. */
 extern void BTL_SERVER_CMD_Push(void *queue, u32 id, ...)
     BW_PORT_WEAK;
@@ -127,6 +148,17 @@ extern u32 BTL_CALC_GetItemParam(u32 itemId, u32 paramId)
     BW_PORT_WEAK;
 extern u32 POKE_TOOL_IsShiny(struct PokemonParam *pp)
     BW_PORT_WEAK;                                        /* 0x02017EAC */
+
+/* The party, and a Pokemon's own fields. */
+extern u32 POKEPARTY_GetCount(const struct Party *party)
+    BW_PORT_WEAK;                                        /* 0x0201AA18 */
+extern struct PokemonParam *POKEPARTY_GetMember(struct Party *party, u32 pos)
+    BW_PORT_WEAK;                                        /* 0x0201AB28 */
+extern u32 POKE_TOOL_GetPartyValue(struct PokemonParam *mon, u32 paramId,
+                                   u32 arg)
+    BW_PORT_WEAK;                                        /* 0x02017E1C */
+extern void POKE_TOOL_SetLevelAndRecalc(struct PokemonParam *mon, u32 level)
+    BW_PORT_WEAK;                                        /* 0x02019CA0 */
 
 /* The battle view's messages. */
 extern void BTLV_SCU_InitMessage(struct BtlvMessage *msg, int kind, int id)
@@ -394,6 +426,32 @@ BW_PORT_STATIC_ASSERT(battle_end_setup, sizeof(void *) != 4 ||
 /* The poke id the game uses for "no Pokemon". */
 #define BW_PORT_POKE_ID_NONE  0x1Fu
 
+/*
+ * The format the port does not know yet.  The battle's setup does not exist
+ * when the event fires at BTL_SETUP_Create, so the format is not known
+ * there, and a single battle (0) is a format a handler may ask for: zero
+ * cannot mean "not changed" for the format, so the port names the one it
+ * does not know with a value no format has.
+ */
+#define BW_PORT_FORMAT_UNKNOWN 0xFFu
+
+/* A Pokemon's own field the port reads and writes (the party's record). */
+#define BW_PORT_FIELD_LEVEL  0x9Eu
+
+/* The levels a Pokemon may have. */
+#define BW_PORT_LEVEL_MIN 1u
+#define BW_PORT_LEVEL_MAX 100u
+
+/*
+ * The game's own catch rate of one.  The rate is a 12.12 fixed-point
+ * factor (the game multiplies the target's chance with it), so 0x1000 is
+ * one and the payload's field carries it as a percentage of it.
+ */
+#define BW_PORT_CATCH_RATE_ONE 0x1000
+
+/* The declared row of the game's own catch rate (ov093). */
+#define BW_PORT_CATCH_RATE_ADDR 0x021CBD48u
+
 /* The item record's own fields the port reads (the game's party screen
  * names them PLIST_ITEM_REVIVES and PLIST_ITEM_REVIVES_FULL). */
 #define BW_PORT_ITEM_PARAM_BALL      0x0Fu
@@ -408,6 +466,42 @@ BW_PORT_STATIC_ASSERT(battle_end_setup, sizeof(void *) != 4 ||
  * the move as its two arguments.
  */
 #define BW_PORT_MESSAGE_CANT_USE_MOVE 0x23Bu
+
+/* ------------------------------------------------------------------ */
+/* The port's own state                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The battle's own request: what the handlers asked for when the battle
+ * started.  The event fires at BTL_SETUP_Create, where the setup the game
+ * will build does not exist yet, so the port cannot write the game's own
+ * work there: it keeps the request and applies it at the rows where the
+ * setup is built (the trainer battle, the scripted battle and the wild
+ * battle).
+ *
+ * The format is the one the handlers asked for, or BW_PORT_FORMAT_UNKNOWN
+ * when they asked for nothing: the game's own format is not known before
+ * the setup is built, and a single battle (0) is a format a handler may
+ * ask for, so zero cannot mean "not changed" here.
+ *
+ * The level adjustment is the one the handlers asked for, and zero is no
+ * adjustment, so a handler that wrote nothing leaves the game's own levels
+ * alone.
+ */
+static struct {
+    u8  format;       /* BW_FORMAT_*, or BW_PORT_FORMAT_UNKNOWN */
+    s8  level_adjust; /* the level the handlers asked to add */
+} g_battle_request = { BW_PORT_FORMAT_UNKNOWN, 0 };
+
+/*
+ * The catch rate the roll uses.  The game's own rate is read when the
+ * event fires and kept here, so the applier can tell a handler's write
+ * from a handler that wrote nothing: the payload carries the game's own
+ * rate until a handler changes it.
+ */
+static int g_catch_rate_own;     /* the game's own rate, in percent */
+static int g_catch_rate_pending; /* the rate the handlers asked for, or -1 */
+static int g_catch_rate_hook;    /* the port's own hook is installed */
 
 /* ------------------------------------------------------------------ */
 /* The helpers                                                         */
@@ -495,6 +589,32 @@ static u8 format_of(struct BtlMain *main)
         return (u8)BW_FORMAT_MULTI;
     }
     switch (rule) {
+    case 1u:
+        return (u8)BW_FORMAT_DOUBLE;
+    case 2u:
+        return (u8)BW_FORMAT_TRIPLE;
+    case 3u:
+        return (u8)BW_FORMAT_ROTATION;
+    case 0u:
+    default:
+        return (u8)BW_FORMAT_SINGLE;
+    }
+}
+
+/*
+ * The battle format of a setup, from the setup's own rule and its multi
+ * flag: the same reading as format_of, but from the setup the port holds
+ * before the battle's main module exists.
+ */
+static u8 format_of_setup(const BwPortSetup *setup)
+{
+    if (setup == NULL) {
+        return (u8)BW_FORMAT_SINGLE;
+    }
+    if (setup->multiMode != 0u) {
+        return (u8)BW_FORMAT_MULTI;
+    }
+    switch (setup->rule) {
     case 1u:
         return (u8)BW_FORMAT_DOUBLE;
     case 2u:
@@ -737,6 +857,117 @@ static struct BtlPokeParam *catch_target_of(struct BtlServerFlow *flow,
     return BTL_SIDE_GetPokeAtPosThunk((struct BtlSide *)head->pokeCon, chosen);
 }
 
+/*
+ * The catch rate the roll uses, in percent.  The game's own rate is a
+ * 12.12 fixed-point factor and 0x1000 is one, so the percentage is the
+ * factor's own.
+ */
+static int catch_rate_percent(int rate)
+{
+    if (rate <= 0) {
+        return 0;
+    }
+    return (int)(((s64)rate * 100) / (s64)BW_PORT_CATCH_RATE_ONE);
+}
+
+/*
+ * The port's own hook on the game's catch rate.  The rate is computed
+ * inside the roll (BTL_SERVER_FLOW_CalcCaptureShakes asks the game's own
+ * function for it), and the only way the port's own value reaches the roll
+ * is the declared row of that function: the port's hook is a wrap on it,
+ * so it answers with the rate the handlers asked for and with the game's
+ * own rate otherwise.
+ *
+ * The hook asks the next link inward for the game's own rate, so a mod's
+ * own hook on the same row still runs and its rate is the one the port
+ * scales.
+ */
+static int port_catch_rate(struct BtlServerFlow *flow, void *unused,
+                           struct BtlPokeParam *target, int ballKind)
+{
+    int (*inner)(struct BtlServerFlow *, void *, struct BtlPokeParam *, int);
+    void *next;
+    int own;
+
+    next = bw_mod_slot_original(BW_MOD_REGION_OVL(93),
+                                BW_PORT_CATCH_RATE_ADDR);
+    inner = (int (*)(struct BtlServerFlow *, void *, struct BtlPokeParam *,
+                     int))next;
+    if (inner != NULL) {
+        own = inner(flow, unused, target, ballKind);
+    } else if (BTL_SERVER_FLOW_GetBallCatchRate != NULL) {
+        own = BTL_SERVER_FLOW_GetBallCatchRate(flow, unused, target, ballKind);
+    } else {
+        own = BW_PORT_CATCH_RATE_ONE;
+    }
+    if (g_catch_rate_pending < 0) {
+        return own;
+    }
+    return (int)(((s64)own * g_catch_rate_pending) / 100);
+}
+
+/*
+ * The port's own hook is installed once, the first time a handler asks for
+ * a rate of its own.  It is a wrap on the declared row, so it nests with
+ * the hooks the mods install on the same row.
+ */
+static void install_catch_rate_hook(void)
+{
+    if (g_catch_rate_hook != 0) {
+        return;
+    }
+    if (bw_mod_slot_install_mode(BW_MOD_REGION_OVL(93),
+                                  BW_PORT_CATCH_RATE_ADDR,
+                                  (void *)(uintptr_t)port_catch_rate, "eidos",
+                                  BW_MOD_OVERRIDE_WRAP) == 0) {
+        g_catch_rate_hook = 1;
+    }
+}
+
+/*
+ * The level the handlers asked for is added to every opposing Pokemon's
+ * level.  The opposing party is the setup's own second party: the trainer's
+ * team, or the wild Pokemon.  The game's own setter for a level is used, so
+ * the Pokemon's experience and its stats follow the new level.
+ */
+static void apply_level_adjust(const BwPortSetup *setup, s8 adjust)
+{
+    struct Party *party;
+    u32 count;
+    u32 i;
+
+    if (adjust == 0 || setup == NULL) {
+        return;
+    }
+    party = (struct Party *)setup->party[1];
+    if (party == NULL || POKEPARTY_GetCount == NULL ||
+        POKEPARTY_GetMember == NULL || POKE_TOOL_GetPartyValue == NULL ||
+        POKE_TOOL_SetLevelAndRecalc == NULL) {
+        return;
+    }
+    count = POKEPARTY_GetCount(party);
+    if (count > 6u) {
+        count = 6u;
+    }
+    for (i = 0u; i < count; i++) {
+        struct PokemonParam *mon = POKEPARTY_GetMember(party, i);
+        s32 level;
+
+        if (mon == NULL) {
+            continue;
+        }
+        level = (s32)POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_LEVEL, 0u);
+        level += (s32)adjust;
+        if (level < (s32)BW_PORT_LEVEL_MIN) {
+            level = (s32)BW_PORT_LEVEL_MIN;
+        }
+        if (level > (s32)BW_PORT_LEVEL_MAX) {
+            level = (s32)BW_PORT_LEVEL_MAX;
+        }
+        POKE_TOOL_SetLevelAndRecalc(mon, (u32)level);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* The builders                                                        */
 /* ------------------------------------------------------------------ */
@@ -763,12 +994,177 @@ static void build_battle_start(const BwEventCall *call, BwEventPayload *out)
     bw_mod_battle_context.active = 1u;
 
     /*
+     * The format reads the one the port does not know: the setup does not
+     * exist yet, so the game's own format is not known, and zero is a
+     * format a handler may ask for.  The request of the last battle goes
+     * with the context.
+     */
+    out->battle_start.format = BW_PORT_FORMAT_UNKNOWN;
+    g_battle_request.format = BW_PORT_FORMAT_UNKNOWN;
+    g_battle_request.level_adjust = 0;
+
+    /*
      * The fields the port cannot fill: the setup the game will build does
-     * not exist yet, so the wild flag, the format, the trainer ids and
-     * the handle of the opposing party stay 0.  The port reads them from
-     * the battle's main module at the first battle event (see
+     * not exist yet, so the wild flag, the trainer ids and the handle of
+     * the opposing party stay 0, and the format reads the one the port
+     * does not know.  The port reads the battle's own values from the
+     * battle's main module at the first battle event (see
      * feed_battle_context and fill_trainer_ids).
      */
+}
+
+/*
+ * battle.start: what the handlers asked for is kept until the setup is
+ * built.  The setup does not exist at this row, so the port cannot write
+ * the game's own work here: the request is applied at the rows where the
+ * setup is built (the trainer battle, the scripted battle and the wild
+ * battle).
+ *
+ * The format is kept only when it is a format and not the marker the port
+ * uses for the one it does not know: the game's own format is not known
+ * yet, so the port cannot tell a write of "single" from no write at all,
+ * and it leaves the game's own format alone rather than guess it.
+ */
+static void apply_battle_start(const BwEventPayload *in, BwEventCall *call)
+{
+    (void)call;
+
+    if (in->battle_start.format != BW_PORT_FORMAT_UNKNOWN) {
+        g_battle_request.format = in->battle_start.format;
+    }
+    g_battle_request.level_adjust = in->battle_start.level_adjust;
+}
+
+/*
+ * battle.start: the setup is built, so the payload names the battle's own
+ * values: the wild flag, the format, the opposing trainers and the handle
+ * of the opposing party.
+ *
+ * The format is the one the handlers asked for, or the game's own: the
+ * setup's rule and its multi flag say which format the game built.
+ */
+static void build_battle_setup(const BwPortSetup *setup, BwEventPayload *out)
+{
+    memset(&out->battle_start, 0, sizeof(out->battle_start));
+    out->battle_start.format = BW_PORT_FORMAT_UNKNOWN;
+
+    if (setup == NULL) {
+        return;
+    }
+    out->battle_start.wild = (u8)(setup->competitor == 0u ? 1u : 0u);
+    if (g_battle_request.format != BW_PORT_FORMAT_UNKNOWN) {
+        out->battle_start.format = g_battle_request.format;
+    } else {
+        out->battle_start.format = format_of_setup(setup);
+    }
+    out->battle_start.level_adjust = g_battle_request.level_adjust;
+    fill_setup_trainer_ids(out->battle_start.trainer_id, setup);
+
+    /*
+     * The handle of the opposing party is the party's own address, as far
+     * as the ABI's room for it allows (a u32).  On a host whose pointers
+     * are eight bytes the address does not fit in it; the state layer
+     * (sdk/mod_state.c) owns what the handle means.
+     */
+    out->battle_start.opponent_party = (u32)(uintptr_t)setup->party[1];
+}
+
+/*
+ * battle.start: the trainer battle's setup (FIELD_ENCOUNT_SetupTrainerBattle
+ * carries the setup as its second argument).
+ */
+static void build_battle_setup_trainer(const BwEventCall *call,
+                                        BwEventPayload *out)
+{
+    build_battle_setup((const BwPortSetup *)call->a[1], out);
+}
+
+/*
+ * battle.start: the scripted battle's setup (EVENT_BATTLE_CreateScriptedBattle
+ * carries the setup as its third argument).
+ */
+static void build_battle_setup_scripted(const BwEventCall *call,
+                                         BwEventPayload *out)
+{
+    build_battle_setup((const BwPortSetup *)call->a[2], out);
+}
+
+/*
+ * battle.start: the wild battle's setup (BTL_SETUP_SetupWild carries the
+ * setup as its first argument).
+ */
+static void build_battle_setup_wild(const BwEventCall *call,
+                                     BwEventPayload *out)
+{
+    build_battle_setup((const BwPortSetup *)call->a[0], out);
+}
+
+/*
+ * battle.start: the format a handler changed is the format the battle runs
+ * in, and the level a handler changed is added to every opposing Pokemon's
+ * level.
+ *
+ * The format is written into the setup's own rule, which the battle's main
+ * module reads (BTL_MAIN_GetRule reads the setup's rule), so the battle is
+ * built with the format the handlers asked for.
+ *
+ * A multi battle is not applied: it needs a second trainer's team and a
+ * second party in the setup, and the setup of a battle that was not a multi
+ * one holds neither.
+ */
+static void apply_battle_setup(const BwEventPayload *in, BwPortSetup *setup)
+{
+    if (setup == NULL) {
+        return;
+    }
+    switch (in->battle_start.format) {
+    case (u8)BW_FORMAT_SINGLE:
+        setup->rule = 0u;
+        setup->multiMode = 0u;
+        break;
+    case (u8)BW_FORMAT_DOUBLE:
+        setup->rule = 1u;
+        setup->multiMode = 0u;
+        break;
+    case (u8)BW_FORMAT_TRIPLE:
+        setup->rule = 2u;
+        setup->multiMode = 0u;
+        break;
+    case (u8)BW_FORMAT_ROTATION:
+        setup->rule = 3u;
+        setup->multiMode = 0u;
+        break;
+    default:
+        break;   /* the multi battle is not applied */
+    }
+    apply_level_adjust(setup, in->battle_start.level_adjust);
+}
+
+/*
+ * battle.start: the trainer battle's setup.
+ */
+static void apply_battle_setup_trainer(const BwEventPayload *in,
+                                        BwEventCall *call)
+{
+    apply_battle_setup(in, (BwPortSetup *)call->a[1]);
+}
+
+/*
+ * battle.start: the scripted battle's setup.
+ */
+static void apply_battle_setup_scripted(const BwEventPayload *in,
+                                         BwEventCall *call)
+{
+    apply_battle_setup(in, (BwPortSetup *)call->a[2]);
+}
+
+/*
+ * battle.start: the wild battle's setup.
+ */
+static void apply_battle_setup_wild(const BwEventPayload *in,
+                                     BwEventCall *call)
+{
+    apply_battle_setup(in, (BwPortSetup *)call->a[0]);
 }
 
 /*
@@ -1017,6 +1413,12 @@ static void build_battle_move(const BwEventCall *call, BwEventPayload *out)
  * attacker, the defender, the move record, the type matchup, the range
  * modifier, the critical flag, the fixed roll and the word the damage is
  * written into.
+ *
+ * The event fires on the return of the game's own function: the damage is
+ * computed inside it and written into the word the caller reads after the
+ * call, so this is where the amount is known.  The hit has not landed yet
+ * (the damage record is applied later, when the turn's damage is dealt),
+ * so the target still has the HP it had before the hit.
  */
 static void build_battle_damage(const BwEventCall *call, BwEventPayload *out)
 {
@@ -1025,6 +1427,7 @@ static void build_battle_damage(const BwEventCall *call, BwEventPayload *out)
     struct BtlPokeParam *attacker = (struct BtlPokeParam *)call->a[1];
     struct BtlPokeParam *defender = (struct BtlPokeParam *)call->a[2];
     const BwPortMoveRecord *move = (const BwPortMoveRecord *)call->a[3];
+    const u16 *damage_word = (const u16 *)call->a[8];
     u32 matchup = (u32)call->a[4];
     u32 critical = (u32)call->a[6];
 
@@ -1051,11 +1454,12 @@ static void build_battle_damage(const BwEventCall *call, BwEventPayload *out)
     out->battle_damage.effectiveness = effectiveness_of(matchup);
 
     /*
-     * The field the port cannot fill: the damage.  The game computes it
-     * inside the function and writes it into the word the caller reads
-     * after the call, so at this point the amount is not known.
+     * The damage the game computed: it is in the word the call carries,
+     * and the caller reads that word after the call.
      */
-    out->battle_damage.amount = 0u;
+    if (damage_word != NULL) {
+        out->battle_damage.amount = (u32)*damage_word;
+    }
 
     /*
      * The context is fed here (docs/mod-payloads.md, section 1): the
@@ -1068,6 +1472,30 @@ static void build_battle_damage(const BwEventCall *call, BwEventPayload *out)
 
     bind_battle(main);
     feed_battle_context(main);
+}
+
+/*
+ * battle.damage: the damage a handler changed is the damage the hit does.
+ * The applier writes it into the word the game's own function filled, and
+ * the caller reads that word after the call, so the hit does the damage
+ * the handler asked for.
+ *
+ * A damage of zero is not written: the game never computes a hit of no
+ * damage, so a zero is a handler that wrote nothing, and the game's own
+ * damage stands.
+ */
+static void apply_battle_damage(const BwEventPayload *in, BwEventCall *call)
+{
+    u16 *damage_word = (u16 *)call->a[8];
+
+    if (damage_word == NULL || in->battle_damage.amount == 0u) {
+        return;
+    }
+    if (in->battle_damage.amount > 0xFFFFu) {
+        damage_word[0] = 0xFFFFu;   /* the game's own word holds no more */
+        return;
+    }
+    damage_word[0] = (u16)in->battle_damage.amount;
 }
 
 /*
@@ -1137,17 +1565,44 @@ static void build_catch_attempt(const BwEventCall *call, BwEventPayload *out)
     }
 
     /*
-     * The field the port cannot fill: the catch rate.  The game computes
-     * it itself when it rolls the catch (BTL_SERVER_FLOW_CalcCaptureShakes
-     * calls BTL_SERVER_FLOW_GetBallCatchRate) and the port's binding
-     * cannot write it back; a mod that changes the rate overrides that
-     * function, which is a declared row (docs/mod-events.md, section 1).
+     * The catch rate the roll uses: the game's own function computes it
+     * when the roll asks for it (BTL_SERVER_FLOW_CalcCaptureShakes calls
+     * BTL_SERVER_FLOW_GetBallCatchRate), and the port asks it the same
+     * question, so the payload carries the rate the roll will use.  The
+     * rate is a 12.12 fixed-point factor and the payload carries it as a
+     * percentage of it.
      */
-    out->catch_attempt.rate = 0u;
+    g_catch_rate_own = 0;
+    if (BTL_SERVER_FLOW_GetBallCatchRate != NULL && target != NULL) {
+        g_catch_rate_own = catch_rate_percent(
+            BTL_SERVER_FLOW_GetBallCatchRate((struct BtlServerFlow *)flow,
+                                             thrower, target,
+                                             (int)out->catch_attempt.ball));
+    }
+    out->catch_attempt.rate = (u8)g_catch_rate_own;
 
     feed_turn_weather((struct BtlServerFlow *)flow);
     bind_battle(main);
     feed_battle_context(main);
+}
+
+/*
+ * catch.attempt: the rate a handler changed is the rate the roll uses.  The
+ * rate is computed inside the roll, so the port's own hook on the game's
+ * own function (the declared row of the catch rate) answers with it.
+ *
+ * A rate the handlers left alone is not applied: the game's own rate is
+ * the one the roll uses, and the port does not scale it a second time.
+ */
+static void apply_catch_attempt(const BwEventPayload *in, BwEventCall *call)
+{
+    (void)call;
+
+    if ((int)in->catch_attempt.rate == g_catch_rate_own) {
+        return;
+    }
+    install_catch_rate_hook();
+    g_catch_rate_pending = (int)in->catch_attempt.rate;
 }
 
 /*
@@ -1184,6 +1639,20 @@ static void build_catch_result(const BwEventCall *call, BwEventPayload *out)
     feed_turn_weather((struct BtlServerFlow *)flow);
     bind_battle(main);
     feed_battle_context(main);
+}
+
+/*
+ * catch.result: the throw is over, so the rate the handlers asked for is
+ * for that throw alone: the port's own hook answers with the game's own
+ * rate again (the port's own state, like the save window the save.done
+ * row closes).
+ */
+static void apply_catch_result(const BwEventPayload *in, BwEventCall *call)
+{
+    (void)in;
+    (void)call;
+
+    g_catch_rate_pending = -1;
 }
 
 /*
@@ -1412,10 +1881,30 @@ static void refuse_catch_attempt(BwEventCall *call)
  * server's faint (battle.faint), the server's throw (catch.attempt,
  * catch.result), the end of the battle (battle.end) and the two
  * blackouts (whiteout).
+ *
+ * battle.start fires twice for a battle: once at BTL_SETUP_Create, where
+ * the setup the game will build does not exist yet and the payload is
+ * empty, and once at the rows that build the setup, where the payload
+ * names the battle's own values and the port applies the format and the
+ * level the handlers asked for.  The wild battle's row (BTL_SETUP_SetupWild)
+ * is in the table, but the declared set gives that row no event, so the
+ * slot does not call the event layer there and the row waits for it.
  */
 static const BwEventBinding g_battle_rows[] = {
     { BW_MOD_REGION_ARM9, 0x02013090u, BW_EVENT_BATTLE_START, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_battle_start, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_battle_start, apply_battle_start, NULL },
+
+    { BW_MOD_REGION_OVL(21), 0x021AA5CCu, BW_EVENT_BATTLE_START, BW_EVENT_AFTER,
+      BW_SCOPE_ANY, 0u, 0u, build_battle_setup_trainer,
+      apply_battle_setup_trainer, NULL },
+
+    { BW_MOD_REGION_OVL(10), 0x0216E7C8u, BW_EVENT_BATTLE_START, BW_EVENT_AFTER,
+      BW_SCOPE_ANY, 0u, 0u, build_battle_setup_scripted,
+      apply_battle_setup_scripted, NULL },
+
+    { BW_MOD_REGION_ARM9, 0x0201347Cu, BW_EVENT_BATTLE_START, BW_EVENT_AFTER,
+      BW_SCOPE_ANY, 0u, 0u, build_battle_setup_wild, apply_battle_setup_wild,
+      NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021CF5B0u, BW_EVENT_BATTLE_ACTION,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_action_fight, NULL,
@@ -1444,17 +1933,19 @@ static const BwEventBinding g_battle_rows[] = {
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_move, NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021C1E74u, BW_EVENT_BATTLE_DAMAGE,
-      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_damage, NULL, NULL },
+      BW_EVENT_AFTER, BW_SCOPE_ANY, 0u, 0u, build_battle_damage,
+      apply_battle_damage, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021C4F64u, BW_EVENT_BATTLE_FAINT,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_faint, NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021CBA40u, BW_EVENT_CATCH_ATTEMPT,
-      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_catch_attempt, NULL,
-      refuse_catch_attempt },
+      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_catch_attempt,
+      apply_catch_attempt, refuse_catch_attempt },
 
     { BW_MOD_REGION_OVL(93), 0x021CBA40u, BW_EVENT_CATCH_RESULT,
-      BW_EVENT_AFTER, BW_SCOPE_ANY, 0u, 0u, build_catch_result, NULL, NULL },
+      BW_EVENT_AFTER, BW_SCOPE_ANY, 0u, 0u, build_catch_result,
+      apply_catch_result, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0216EE7Cu, BW_EVENT_BATTLE_END,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_end, NULL, NULL },

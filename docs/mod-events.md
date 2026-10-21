@@ -286,37 +286,42 @@ per area (`sdk/mod_event_session.c`, `sdk/mod_event_field.c`,
 - `move.learn`'s replaced move reads 0: the game asks for that later, in the
   screen that owns the choice. The move slot is the first of the Pokemon's
   four that is empty, or 0xFF when it holds four moves already.
-- `move.learn` fires from two of the six rows the area binds: the level-up
-  check (arm9) and the day care (ov021). The other four name addresses the
-  port has no event-carrying slot for: the party screen's two
-  (`POKELIST_FindMoveSlot` 0x021BA5B4 and `POKELIST_ReplaceMoveSlot`
-  0x021BA5E0, ov091) and the nurse's relearner screen (0x021B6B0C, ov173)
-  are not declared rows at all, and the script command that writes a move
-  (`SCRCMD_PROC_SetMonMove` 0x0215BD2C, ov010) is one, but its fourth column
-  is empty, so its slot carries no event. The declared set's fourth column
-  names the rows whose slot carries the event, so an address goes there to
-  make it fire.
+- `move.learn` fires from all six rows the area binds: the level-up check
+  (arm9), the day care (ov021), the party screen's two (`POKELIST_TryLearnMove`
+  0x021BA5B4 and `POKELIST_ReplaceMoveSlot` 0x021BA5E0, ov091) and the
+  nurse's relearner screen (`POKE_SUMMARY_MAIN_ApplyMove` 0x021B6B0C,
+  ov173) are declared rows with the event in their fourth column, and the
+  script command that writes a move (`SCRCMD_PROC_SetMonMove` 0x0215BD2C,
+  ov010) is one too.  The party screen's rows and the relearner's read the
+  game's own blocks (the screen's argument block, copied member for member
+  from the game's header), so they name the move, the teacher and the slot;
+  the script command's row reads the command's own operands, and its source
+  reads 0 - the command names no teacher, and the tutor's own move table
+  lives in ov021's script command, which the ARM9 builder cannot reach.
 - `mon.helditem`'s party position reads 0: the party is not carried by the
   call.
 
 **The battle area.**
 
 - `battle.start`'s wild flag, format, trainer ids and the handle of the
-  opposing party read 0: the setup the game will build does not exist yet.
-  The port reads them from the battle's main module at the first battle event.
+  opposing party read 0 at the row that creates the setup: the setup the
+  game will build does not exist yet.  The rows that build it (the wild
+  setup, the trainer setup and the scripted one) fill them, and the port
+  applies the format and the levels the handlers asked for.
 - `battle.action`'s Pokemon reads 0 for the switch: the choice list holds the
   party positions and nothing else. The party position the player picked is
   the function's result, and 6 is the game's own "backed out".
 - `battle.move`'s target reads 0. The call carries the attacker and the move
   record, and the move record holds no target: the server picks the target
   set itself.
-- `battle.damage`'s amount reads 0: the game computes it inside the function
-  and writes it into the word the caller reads after the call, so at that
-  point the amount is not known. The target's HP before the hit is filled,
-  because the hit has not landed yet.
-- `catch.attempt`'s rate reads 0: the game computes the catch rate itself
-  when it rolls the catch, and the port's binding cannot write it back. A mod
-  that changes the rate overrides the function that computes it, which is a
+- `battle.damage` fires on the return of the game's own function, so the
+  amount is known: the port writes it into the word the caller reads. The
+  target's HP before the hit is filled, because the hit has not landed yet
+  (in a multi-hit move the earlier hits have).
+- `catch.attempt`'s rate is the game's own rate as a percentage of its
+  factor (100 for a Poke Ball, 150 for a Great Ball), and the port answers
+  the roll with the factor the handlers asked for. A mod that wants the
+  absolute factor overrides the function that computes it, which is a
   declared row.
 - `catch.result`'s caught flag and shakes read 0: the game keeps both in the
   locals of the roll and writes them into the battle's command stream, which
@@ -519,7 +524,7 @@ the game's own, so a raw hook can break when aletheia restructures the code. A
 mod that uses raw hooks states the port version it was built against, and the
 port refuses to load it on another version.
 
-The declared set has 248 rows: 68 carry a stable event, the rest
+The declared set has 251 rows: 73 carry a stable event, the rest
 are raw hooks a mod or a stable event may need later. By region:
 
 | Region | Rows |
@@ -531,13 +536,14 @@ are raw hooks a mod or a stable event may need later. By region:
 | ov020 | 7 |
 | ov021 | 64 |
 | ov070 | 1 |
-| ov091 | 5 |
+| ov091 | 7 |
 | ov092 | 1 |
 | ov093 | 41 |
 | ov094 | 6 |
 | ov095 | 1 |
 | ov120 | 1 |
 | ov170 | 5 |
+| ov173 | 1 |
 | ov207 | 1 |
 
 **Script command hooks.** The field script VM dispatches every script command

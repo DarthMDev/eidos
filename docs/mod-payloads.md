@@ -45,13 +45,19 @@ marked field: its applier closes the port's own save window, the step in
 which the mod's own file is written with the game's save
 (`docs/mod-state.md`, section 2).
 
-Four events carry a marked field whose row has no applier yet:
-`mon.nickname` (`force`), `battle.start` (`format` and `level_adjust`),
-`battle.damage` (`amount`) and `catch.attempt` (`rate`). Their builders fill
-the field with 0, because the call does not carry the value, and a handler's
-write to it has no effect. A mod that wants the catch rate, for instance,
-overrides the function that computes it, which is a declared row
+One event still carries a marked field whose row has no applier:
+`mon.nickname`'s `force`. Its builder fills the field with 0, and a
+handler's write to it has no effect: the game has no call that forces the
+nickname prompt, so the port has no hook at the decision (the answer to the
+prompt reaches the battle's return through the catch arguments, and the port
+does not see that path). A mod that wants the nickname asked for overrides
+the game's own prompt instead, which is a declared row
 (`docs/mod-overrides.md`).
+
+The other three now have appliers: `battle.start`'s `format` and
+`level_adjust` are written into the setup the game just built, and
+`battle.damage`'s `amount` and `catch.attempt`'s `rate` are applied to the
+game's own values.
 
 ### The common types
 
@@ -414,10 +420,9 @@ because the call carries the Pokemon and not the party. `move.learn`
 carries the move and its source, and the move slot is the first of the
 Pokemon's four that is empty, or 0xFF when it holds four moves already; the
 replaced move reads 0, because the game asks for that later, in the screen
-that owns the choice. The event fires from two of the area's six rows: the
-level-up check and the day care. The party screen's two rows, the nurse's
-relearner screen and the script command that writes a move name addresses no
-slot carries the event for, so the event does not fire there
+that owns the choice. The event fires from all six of the area's rows: the
+level-up check, the day care, the party screen's two, the nurse's relearner
+and the script command that writes a move
 (`docs/mod-events.md`, section 1).
 `mon.helditem` carries the item given and the item it held, but the party
 position reads 0: the party is not carried by the call.
@@ -429,10 +434,17 @@ position reads 0: the party is not carried by the call.
 | Field | Type | Meaning |
 |---|---|---|
 | `wild` | u8 | a wild battle |
-| `format` | u8, *mod* | single, double, triple, rotation, multi (reads 0 today) |
-| `trainer_id` | `u16[2]` | the opposing trainers, or 0 (reads 0 today) |
-| `level_adjust` | s8, *mod* | added to every opposing Pokemon's level (reads 0 today) |
-| `opponent_party` | u32 | a handle to the opposing party; a handler edits it through the state calls (reads 0 today) |
+| `format` | u8, *mod* | single, double, triple, rotation, multi; 0xFF where the port does not know the format yet (the row that creates the setup) |
+| `trainer_id` | `u16[2]` | the opposing trainers, or 0 |
+| `level_adjust` | s8, *mod* | added to every opposing Pokemon's level |
+| `opponent_party` | u32 | a handle to the opposing party; a handler edits it through the state calls |
+
+The format and the levels are applied: the port writes the format into the
+setup's own rule and the levels through the game's own setter, after the
+handlers have run.  A handler that writes nothing leaves the game's own
+values alone; a zero level adjustment means "no adjustment", and a zero
+format is a format a handler may ask for, so the row that creates the setup
+names the unknown one 0xFF instead.
 
 **`battle.action`**
 
@@ -652,11 +664,11 @@ it was caught or only seen.
 
 ## Still to build
 
-1. **The appliers the four rows without one need.** `mon.nickname`'s
-   `force`, `battle.start`'s `format` and `level_adjust`, `battle.damage`'s
-   `amount` and `catch.attempt`'s `rate` are marked, but the rows that carry
-   them have no applier, so a write to them has no effect (section 0, "What
-   the port writes back").
+1. **The applier the nickname's row still needs.** `mon.nickname`'s `force`
+   is marked, but the row that carries it has no applier, so a write to it
+   has no effect (section 0, "What the port writes back"). The game has no
+   call that forces the prompt, so the hook the port would need does not
+   exist to be hooked.
 2. **The fields the call does not carry.** The builders fill what the bound
    call and the game's own accessors give them; the fields they leave at 0
    are listed with the reason in `docs/mod-events.md`, section 1, "What the

@@ -35,7 +35,7 @@
 0x02012C18	GAME_DATA_LoadFromSave	arm9	save.load
 0x02012F08	GAME_DATA_GetMiscSave	arm9	
 0x02013090	BTL_SETUP_Create	arm9	battle.start
-0x0201347C	BTL_SETUP_SetupWild	arm9	
+0x0201347C	BTL_SETUP_SetupWild	arm9	encounter.wild
 0x02014314	ZONEDATA_SetEventFlag	arm9	flag.set
 0x02017430	POKE_TOOL_CreateEx	arm9	mon.create
 0x020180F4	POKE_TOOL_PushMove	arm9	
@@ -88,7 +88,7 @@
 0x0215B5A8	SCRCMD_PROC_HealParty	ov010	heal
 0x0215BB50	SCRCMD_PROC_AddMonToPartySimple	ov010	
 0x0215BBD0	SCRCMD_PROC_AddMonToPartyDetailed	ov010	
-0x0215BD2C	SCRCMD_PROC_SetMonMove	ov010	
+0x0215BD2C	SCRCMD_PROC_SetMonMove	ov010	move.learn
 0x0215C180	SCRCMD_PROC_AddMonToBoxSimple	ov010	
 0x0215C200	SCRCMD_PROC_AddMonToBoxDetailed	ov010	
 0x0215C2D0	SCRCMD_PROC_AddEggToParty	ov010	mon.receive
@@ -220,6 +220,8 @@
 0x021BAFC4	ITEMMENU_PrintMoney	ov070	
 
 # ov091
+0x021BA5B4	POKELIST_TryLearnMove	ov091	move.learn
+0x021BA5E0	POKELIST_ReplaceMoveSlot	ov091	move.learn
 0x021BA624	POKELIST_SetHeldItem	ov091	mon.helditem
 0x021BC2C8	PLIST_MENU_ShowItemUsedThenClose	ov091	
 0x021BC30C	PLIST_MENU_ShowItemUsedThenContinue	ov091	
@@ -292,6 +294,9 @@
 0x021DD330	BOX2_MAIN_MoveMonToParty	ov170	
 0x021DD530	BOX2_MAIN_UpdateBoxSlots	ov170	box.deposit,box.withdraw
 0x021DD810	BOX2_MAIN_MoveMonIntoBox	ov170	
+
+# ov173
+0x021B6B0C	POKE_SUMMARY_MAIN_ApplyMove	ov173	move.learn
 
 # ov207
 0x0220B55C	ZUKAN_NICKNAME_Create	ov207	mon.nickname

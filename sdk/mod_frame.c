@@ -260,6 +260,39 @@ void bw_mod_frame_reset(void)
     g_registering_state = NULL;
 }
 
+/*
+ * Take one mod's handlers out: the table holds the mod's own function, so a
+ * handler left behind after the mod's library is unloaded would be a call
+ * into a library that is gone.  The loader calls this when it stops a mod.
+ * Returns how many handlers it took.
+ */
+u32 bw_mod_frame_remove_for(const char *ns)
+{
+    u32 removed = 0;
+    u32 i;
+    u32 keep = 0;
+
+    if (ns == NULL || *ns == '\0') {
+        return 0;
+    }
+    for (i = 0; i < g_handler_count; i++) {
+        if (strcmp(g_handlers[i].ns, ns) == 0) {
+            removed++;
+            continue;
+        }
+        if (keep != i) {
+            g_handlers[keep] = g_handlers[i];
+        }
+        keep++;
+    }
+    if (keep < g_handler_count) {
+        memset(&g_handlers[keep], 0,
+               (g_handler_count - keep) * sizeof(g_handlers[0]));
+        g_handler_count = keep;
+    }
+    return removed;
+}
+
 u32 bw_mod_frame_handler_count(void)
 {
     return g_handler_count;

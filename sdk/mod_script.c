@@ -381,6 +381,9 @@ int bw_mod_script_run(u32 vm, u16 opcode, BwModScriptCommand *cmd)
     for (i = c->head; i != 0; i = g_handlers[i - 1].next) {
         const char *saved = NULL;
 
+        if (g_handlers[i - 1].fn == NULL) {
+            continue;               /* the mod that bound it is gone */
+        }
         if (bw_mod_savedata_set_namespace != NULL && g_handlers[i - 1].ns != NULL) {
             /* The mod's own state calls are about its own file, so its
              * namespace is in force while its handler runs (the event path
@@ -484,6 +487,55 @@ const char *bw_mod_script_vm_name(u32 vm)
     case BW_MOD_SCRIPT_BATTLE: return "battle-effect";
     default:                   return "none";
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* The removal                                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Take one mod's handlers out of the registry.  The registry holds the
+ * mod's own function, so a handler left behind after the mod's library is
+ * unloaded would be a call into a library that is gone; the loader calls
+ * this when it stops a mod.  Returns how many handlers it took.
+ */
+u32 bw_mod_script_remove_for(const char *ns)
+{
+    u32 removed = 0;
+    u32 ci;
+
+    if (ns == NULL || *ns == '\0') {
+        return 0;
+    }
+    for (ci = 0; ci < g_command_count; ci++) {
+        BwModScriptCommandRec *c = &g_commands[ci];
+        u16 prev = 0;
+        u16 h = c->head;
+
+        while (h != 0) {
+            BwModScriptHandlerRec *rec = &g_handlers[h - 1];
+            u16 next = rec->next;
+
+            if (rec->fn != NULL && rec->ns != NULL &&
+                strcmp(rec->ns, ns) == 0) {
+                if (prev == 0) {
+                    c->head = next;
+                } else {
+                    g_handlers[prev - 1].next = next;
+                }
+                if (c->tail == h) {
+                    c->tail = prev;
+                }
+                rec->fn = NULL;
+                rec->state = NULL;
+                removed++;
+            } else {
+                prev = h;
+            }
+            h = next;
+        }
+    }
+    return removed;
 }
 
 /* ------------------------------------------------------------------ */

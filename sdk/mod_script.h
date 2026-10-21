@@ -91,6 +91,14 @@ int bw_mod_script_dispatch(u32 vm, BwModScriptCommand *cmd,
 /* Drop every handler: the state at start-up and at a reset. */
 void bw_mod_script_reset(void);
 
+/*
+ * Take one mod's handlers out: the registry holds the mod's own function,
+ * so a handler left behind after the mod's library is unloaded would be a
+ * call into a library that is gone.  The loader calls this when it stops a
+ * mod.  Returns how many handlers it took.
+ */
+u32 bw_mod_script_remove_for(const char *ns);
+
 /* How many handlers are bound to a command, for the tests and the reports. */
 u32 bw_mod_script_handler_count(u32 vm, u16 opcode);
 

@@ -88,6 +88,14 @@ void bw_mod_frame_tick(void);
 /* Drop every handler: the state at start-up and at a reset. */
 void bw_mod_frame_reset(void);
 
+/*
+ * Take one mod's handlers out: the table holds the mod's own function, so a
+ * handler left behind after the mod's library is unloaded would be a call
+ * into a library that is gone.  The loader calls this when it stops a mod.
+ * Returns how many handlers it took.
+ */
+u32  bw_mod_frame_remove_for(const char *ns);
+
 /* How many handlers are bound, for the tests and the reports. */
 u32  bw_mod_frame_handler_count(void);
 

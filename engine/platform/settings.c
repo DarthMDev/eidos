@@ -6,6 +6,11 @@
  * sections of the port's own that are not rows of that table: [network] (the
  * relay, the two ports and the player's name) and [input] (the longest
  * press the port's input injection allows).
+ *
+ * It holds the port's own session too: the session's code is a setting of
+ * the port's own ([session], code), and the calls the port's own menu
+ * makes on the peer session service (sdk/mod_net.h, "The port's own
+ * session") are here, beside the network settings they read.
  */
 
 #include <ctype.h>
@@ -16,7 +21,9 @@
 #include <SDL.h>
 
 #include "input.h"
+#include "mod_net.h"
 #include "mod_panel_draw.h"
+#include "plat_thread.h"
 #include "setup.h"
 #include "settings.h"
 
@@ -94,12 +101,27 @@ typedef struct PadCtl {
 #define EIDOS_NET_NAME_MAX 32
 #define EIDOS_NET_PORT_MAX 65535
 
+/* The longest session code the port keeps: the relay's short code, and the
+ * code the player types to join one (the service's own limit is the same:
+ * BW_MOD_NET_CODE_MAX). */
+#define EIDOS_SESSION_CODE_MAX 32
+
 typedef struct NetModel {
     char relay[EIDOS_NET_RELAY_MAX];    /* the relay's address           */
     int  relay_port;                    /* the relay's port              */
     int  control_port;                  /* the control's port: 0 is off  */
     char name[EIDOS_NET_NAME_MAX];      /* the player's name             */
 } NetModel;
+
+/*
+ * The session's code: the code the relay handed out for a session the
+ * player hosts, and the code the player types to join one.  It is a
+ * setting of the port's own, so it is read, changed, reverted and
+ * committed with the rest, and the file keeps it ([session], code).
+ */
+typedef struct SessionModel {
+    char code[EIDOS_SESSION_CODE_MAX];  /* the session's code           */
+} SessionModel;
 
 typedef struct Model {
     int v[EIDOS_OPT_COUNT];
@@ -108,6 +130,7 @@ typedef struct Model {
     NetModel net;
     int inject_max;                 /* the longest press the port allows */
     int panel_visible;               /* the run-status panel: 1 when shown */
+    SessionModel session;            /* the session's code                */
 } Model;
 
 static Model g_cur, g_saved;
@@ -126,8 +149,14 @@ static int g_size_pending;   /* a window resize not yet in the file */
  * dropped (Escape).  The value itself is the model's, so the screen shows
  * what the player has typed.
  */
+
+/* The texts the screen edits. */
+#define EIDOS_TEXT_RELAY 0        /* the relay's address                */
+#define EIDOS_TEXT_NAME  1        /* the player's name                  */
+#define EIDOS_TEXT_CODE  2        /* the session's code                 */
+
 static struct {
-    int  which;                   /* 0 the relay, 1 the name, -1: none */
+    int  which;                   /* EIDOS_TEXT_*, -1: none            */
     char saved[EIDOS_NET_RELAY_MAX];
 } g_text;
 
@@ -205,6 +234,9 @@ static void model_defaults(Model *m)
     m->inject_max = (int)BW_INPUT_INJECT_MAX_FRAMES;
     /* The run-status panel is shown until the player hides it. */
     m->panel_visible = 1;
+    /* The session's code: none yet.  The relay hands one out when the
+     * player hosts a session, and the player types one to join one. */
+    m->session.code[0] = '\0';
 }
 
 static void model_reset_bindings(Model *m)
@@ -423,13 +455,17 @@ const char *eidos_settings_value_text(int id, char *buf, size_t n)
 /* The buffer a text setting keeps, and its size. */
 static char *net_text_buf(int which, size_t *size)
 {
-    if (which == 0) {
+    if (which == EIDOS_TEXT_RELAY) {
         *size = sizeof g_cur.net.relay;
         return g_cur.net.relay;
     }
-    if (which == 1) {
+    if (which == EIDOS_TEXT_NAME) {
         *size = sizeof g_cur.net.name;
         return g_cur.net.name;
+    }
+    if (which == EIDOS_TEXT_CODE) {
+        *size = sizeof g_cur.session.code;
+        return g_cur.session.code;
     }
     *size = 0;
     return NULL;
@@ -633,14 +669,14 @@ int eidos_settings_scancode_char(int scancode)
 void eidos_settings_net_relay_text_begin(void)
 {
     ensure_init();
-    g_text.which = 0;
+    g_text.which = EIDOS_TEXT_RELAY;
     memcpy(g_text.saved, g_cur.net.relay, sizeof g_cur.net.relay);
 }
 
 void eidos_settings_net_name_text_begin(void)
 {
     ensure_init();
-    g_text.which = 1;
+    g_text.which = EIDOS_TEXT_NAME;
     memcpy(g_text.saved, g_cur.net.name, sizeof g_cur.net.name);
 }
 
@@ -729,6 +765,261 @@ int eidos_settings_net_dirty(void)
 {
     ensure_init();
     return memcmp(&g_cur.net, &g_saved.net, sizeof g_cur.net) != 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* The session's code                                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The session's code is a setting of the port's own: the code the relay
+ * handed out for the session the player hosts, and the code the player
+ * types to join one.  It is in the model, so the same commit, revert and
+ * defaults reach it, and the file keeps it ([session], code).
+ */
+
+const char *eidos_settings_session_code(void)
+{
+    ensure_init();
+    return g_cur.session.code;
+}
+
+void eidos_settings_session_set_code(const char *code)
+{
+    ensure_init();
+    net_text_copy(g_cur.session.code, sizeof g_cur.session.code,
+                  code != NULL ? code : "");
+}
+
+/* The screen begins the edit of the code (the code the player types to
+ * join a session). */
+void eidos_settings_session_code_text_begin(void)
+{
+    ensure_init();
+    g_text.which = EIDOS_TEXT_CODE;
+    memcpy(g_text.saved, g_cur.session.code, sizeof g_cur.session.code);
+}
+
+/* The code back to nothing (the section's "Restore defaults"). */
+void eidos_settings_session_defaults(void)
+{
+    ensure_init();
+    g_cur.session.code[0] = '\0';
+    g_text.which = -1;
+}
+
+/* The code back to the state the last commit left (the section's
+ * "Revert changes"). */
+void eidos_settings_session_revert(void)
+{
+    ensure_init();
+    memcpy(g_cur.session.code, g_saved.session.code,
+           sizeof g_cur.session.code);
+    g_text.which = -1;
+}
+
+int eidos_settings_session_dirty(void)
+{
+    ensure_init();
+    return memcmp(g_cur.session.code, g_saved.session.code,
+                  sizeof g_cur.session.code) != 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* The port's own session                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The port's own calls on the peer session service (sdk/mod_net.h, "The
+ * port's own session").  They live here, beside the network settings
+ * they read, and not in the mod layer's surface: a mod reaches the
+ * service through the services table, which is frozen (docs/mod-abi.md),
+ * and the port does not go through that table.
+ *
+ * Two things the mod-facing calls do not do are done here.
+ *
+ *   - The service is given the relay and the name the port's own settings
+ *     hold, before the call.  The boot hands them over once, at the
+ *     port's start-up; the menu changes them while the game runs, and the
+ *     session the player starts from the menu is the one that uses them.
+ *
+ *   - The call does not block the frame thread.  A host or a join waits
+ *     for the relay, for up to three seconds (sdk/mod_net.c), and the
+ *     settings screen is drawn on the frame thread, so the call is made
+ *     on the port's own worker and the screen polls it.  The worker
+ *     publishes its answer under the lock; the frame thread takes it and
+ *     puts the code into the model, so the model is only ever written by
+ *     the thread that draws it.
+ */
+
+/* The work in flight, and the answer of the last one. */
+static struct {
+    BwMutex  *lock;
+    BwThread *thread;
+    int       busy;        /* the worker is running                    */
+    int       done;        /* the worker finished, not taken yet        */
+    int       taken;       /* the frame thread has taken the answer    */
+    int       rc;          /* the answer of the service                */
+    int       host;        /* the work was a host                      */
+    char      code[BW_MOD_NET_CODE_MAX + 1];     /* the code to join with */
+    char      result[BW_MOD_NET_CODE_MAX + 1];   /* the code that came back */
+} g_sess;
+
+/* The relay and the name the port's own settings hold. */
+static void session_give_relay(void)
+{
+    const char *host = eidos_settings_net_relay();
+    const char *name = eidos_settings_net_name();
+    int port = eidos_settings_net_relay_port();
+
+    if (port < 0) {
+        port = 0;
+    }
+    bw_mod_net_set_relay(host != NULL ? host : "", (u16)port);
+    bw_mod_net_set_name(name != NULL ? name : "");
+}
+
+/*
+ * The worker: the call that blocks.  It takes the lock only to copy what
+ * it needs and to publish what it got, so the frame thread's poll never
+ * waits for the relay.
+ */
+static void session_worker(void *arg)
+{
+    char code[BW_MOD_NET_CODE_MAX + 1];
+    char join[BW_MOD_NET_CODE_MAX + 1];
+    int host;
+    int rc;
+
+    (void)arg;
+    bw_mutex_lock(g_sess.lock);
+    host = g_sess.host;
+    memcpy(join, g_sess.code, sizeof join);
+    bw_mutex_unlock(g_sess.lock);
+
+    code[0] = '\0';
+    if (host) {
+        rc = bw_mod_net_session_host(code, (u32)sizeof code);
+    } else {
+        rc = bw_mod_net_session_join(join);
+    }
+
+    bw_mutex_lock(g_sess.lock);
+    g_sess.rc = rc;
+    if (host) {
+        memcpy(g_sess.result, code, sizeof g_sess.result);
+    } else {
+        memcpy(g_sess.result, join, sizeof g_sess.result);
+    }
+    g_sess.done = 1;
+    g_sess.busy = 0;
+    bw_mutex_unlock(g_sess.lock);
+}
+
+/*
+ * Start a session (host != 0) or join one (host == 0, with the code).
+ * The call does not block.
+ */
+int bw_port_session_start(int host, const char *code)
+{
+    BwThread *old;
+
+    if (g_sess.lock == NULL) {
+        g_sess.lock = bw_mutex_create();
+    }
+    /* The service is given the port's own relay and name first: they are
+     * the settings the player may have changed since the boot. */
+    session_give_relay();
+
+    bw_mutex_lock(g_sess.lock);
+    if (g_sess.busy) {
+        bw_mutex_unlock(g_sess.lock);
+        return -1;
+    }
+    /* The last work's thread, if its answer was never taken (the player
+     * left the menu before the relay answered): it is joined here, and it
+     * has published its answer by now, so this returns at once. */
+    old = g_sess.thread;
+    g_sess.thread = NULL;
+    bw_mutex_unlock(g_sess.lock);
+    if (old != NULL) {
+        bw_thread_join(old);
+    }
+
+    bw_mutex_lock(g_sess.lock);
+    g_sess.host = host != 0 ? 1 : 0;
+    memset(g_sess.code, 0, sizeof g_sess.code);
+    if (code != NULL) {
+        size_t n = strlen(code);
+
+        if (n >= sizeof g_sess.code) {
+            n = sizeof g_sess.code - 1;
+        }
+        memcpy(g_sess.code, code, n);
+    }
+    memset(g_sess.result, 0, sizeof g_sess.result);
+    g_sess.rc = 0;
+    g_sess.done = 0;
+    g_sess.taken = 0;
+    g_sess.busy = 1;
+    g_sess.thread = bw_thread_start(session_worker, NULL);
+    bw_mutex_unlock(g_sess.lock);
+    return 0;
+}
+
+/*
+ * Ask how the session is doing.  The answer of a finished work is given
+ * once: the frame thread takes it, puts the code into the model and
+ * shows it.
+ */
+int bw_port_session_poll(BwPortSessionState *out)
+{
+    BwThread *t = NULL;
+    int done = 0;
+
+    if (g_sess.lock == NULL) {
+        if (out != NULL) {
+            memset(out, 0, sizeof(*out));
+        }
+        return 0;
+    }
+    bw_mutex_lock(g_sess.lock);
+    if (out != NULL) {
+        memset(out, 0, sizeof(*out));
+        out->busy = g_sess.busy;
+        out->rc = g_sess.rc;
+        out->host = g_sess.host;
+        memcpy(out->code, g_sess.result, sizeof(out->code));
+        out->code[sizeof(out->code) - 1] = '\0';
+    }
+    if (g_sess.done && !g_sess.taken) {
+        g_sess.taken = 1;
+        done = 1;
+        if (out != NULL) {
+            out->done = 1;
+        }
+        t = g_sess.thread;
+        g_sess.thread = NULL;
+    }
+    bw_mutex_unlock(g_sess.lock);
+    if (t != NULL) {
+        /* The work is over: the worker has published its answer and is
+         * about to return, so this does not wait. */
+        bw_thread_join(t);
+    }
+    return done;
+}
+
+/* Leave the session.  The service's leave does not block. */
+void bw_port_session_leave(void)
+{
+    bw_mod_net_session_leave();
+}
+
+/* Whether a session is running. */
+int bw_port_session_active(void)
+{
+    return bw_mod_net_session_active();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1332,6 +1623,17 @@ static void parse_file(FILE *fp, Model *m)
             }
             continue;
         }
+        if (strcmp(section, "session") == 0) {
+            /* The port's own session: the code of the session the player is
+             * in, or the one the player types to join one. */
+            if (strcmp(key, "code") == 0) {
+                net_text_copy(m->session.code, sizeof m->session.code, val);
+            } else {
+                fprintf(stderr, "eidos: settings.ini:%d: unknown key '%s' in "
+                        "[session], ignored\n", lineno, key);
+            }
+            continue;
+        }
         if (strcmp(section, "input") == 0) {
             /* The port's own input setting: the longest press the port
              * allows, in frames.  0 is off. */
@@ -1462,6 +1764,10 @@ static int write_file(FILE *fp, const Model *m)
     fprintf(fp, "relay_port = %d\n", m->net.relay_port);
     fprintf(fp, "control_port = %d\n", m->net.control_port);
     fprintf(fp, "name = %s\n", m->net.name);
+    /* The port's own session: the code of the session the player is in, or
+     * the one the player types to join one. */
+    fprintf(fp, "\n[session]\n");
+    fprintf(fp, "code = %s\n", m->session.code);
     /* The input injection: the longest press the port allows, in frames.
      * 0 is off. */
     fprintf(fp, "\n[input]\n");

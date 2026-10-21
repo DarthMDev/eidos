@@ -133,13 +133,10 @@ that changes it. Where an item is only partly done, it says which part.
 - **Milestone 8+**: high-resolution/widescreen rendering, packaging.
 
 - **The mod layer's remaining gaps**: the relay server is not part of the
-  port, and the TM path, the nurse's relearner path and the script that
-  writes a move are bound in the event layer but no slot carries the event
-  for them, so `move.learn` fires only from the level-up check and the day
-  care. Five marked payload fields have no applier yet
-  (`mon.nickname`'s `force`, `battle.start`'s `format` and `level_adjust`,
-  `battle.damage`'s `amount` and `catch.attempt`'s `rate`), so a handler's
-  write to them has no effect. The rest of the layer is in place: the Mods
+  port, and one marked payload field has no applier (`mon.nickname`'s
+  `force`: the game has no call that forces the nickname prompt, so the
+  port has no hook at that decision). The rest of the layer is in place: the
+  Mods
   section of the settings screen (`engine/platform/settings_ui.c`) draws the
   model behind it (`sdk/mod_menu.c`), the player can reorder their mods, the
   run-status panel is shown beside the screens and the player can hide it, the

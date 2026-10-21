@@ -9,6 +9,7 @@
 
 #include "settings.h"
 #include "mod_menu.h"
+#include "mod_net.h"
 
 /*
  * The port's own network settings (engine/platform/settings.c): the
@@ -35,6 +36,15 @@ extern void        eidos_settings_net_defaults(void);
 extern void        eidos_settings_net_revert(void);
 
 /*
+ * The port's own session (engine/platform/settings.c): the session's code
+ * is a setting of the port's own, so it is read, changed, reverted and
+ * committed with the rest of the settings, and the file keeps it
+ * ([session], code).  The calls the screen makes on the peer session
+ * service are the port's own too (sdk/mod_net.h, "The port's own
+ * session").
+ */
+
+/*
  * The port's own run-status panel and the input injection's limit: the
  * settings' model holds them (engine/platform/settings.c), and the screen
  * shows them and the player changes them there.
@@ -47,7 +57,7 @@ extern void        eidos_settings_net_revert(void);
 
 #define STR_TITLE "Settings"
 static const char *const k_tab_names[] = {
-    "Display", "Layout", "Controls", "Sound", "Mods", "Network"
+    "Display", "Layout", "Controls", "Sound", "Mods", "Network", "Session"
 };
 
 /* Short button names for the Controls rows (the backend labels are long). */
@@ -86,6 +96,7 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_SECTION_SOUND    "Master volume."
 #define HELP_SECTION_MODS     "The mods, their settings and the panel."
 #define HELP_SECTION_NETWORK  "The relay, the control and the press limit."
+#define HELP_SECTION_SESSION  "The peer session: host, join, leave."
 #define HELP_KEYS_L0   "Up/Down: choose   A: open"
 #define HELP_KEYS_L0B  "B: save and go back"
 #define HELP_KEYS_L1   "Up/Down: choose   Left/Right: change"
@@ -117,6 +128,19 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_NET_DEFAULTS2 "to their defaults."
 #define HELP_TEXT_EDIT1  "Type the text on the keyboard."
 #define HELP_TEXT_EDIT2  "Enter keeps it, Esc gives it up."
+
+/* The Session section: the port's own peer session (sdk/mod_net.h, "The
+ * port's own session"). */
+#define HELP_SESSION_CODE1  "The code of the session."
+#define HELP_SESSION_CODE2  "Type the code to join one."
+#define HELP_SESSION_HOST1  "Ask the relay for a session."
+#define HELP_SESSION_HOST2  "The code comes back here."
+#define HELP_SESSION_JOIN1  "Join with the code above."
+#define HELP_SESSION_JOIN2  "The relay is asked at once."
+#define HELP_SESSION_LEAVE1 "Leave the session."
+#define HELP_SESSION_LEAVE2 "The other players are told."
+#define HELP_SESSION_REVERT1 "The code goes back as it was."
+#define HELP_SESSION_REVERT2 "The change applies when you leave."
 
 /* The run-status panel (the Mods section) and the input injection's limit
  * (the Network section). */
@@ -177,6 +201,27 @@ static const ValueName k_choice_names[] = {
 #define STR_NET_NAME    "Player name"
 #define STR_NONE        "(none)"
 
+/* The Session section's own labels. */
+#define STR_SESSION_CODE  "Session code"
+#define STR_SESSION_HOST  "Host session"
+#define STR_SESSION_JOIN  "Join session"
+#define STR_SESSION_LEAVE "Leave session"
+#define STR_SESSION_REVERT "Revert changes"
+
+/* What the session's rows say about the work: the relay takes up to
+ * three seconds to answer, so the row says so while it waits. */
+#define STR_SESSION_WAIT "Waiting..."
+#define STR_SESSION_IN   "In session"
+#define STR_SESS_OK      "OK"
+#define STR_SESS_NORELAY "No relay"
+#define STR_SESS_BUSY    "Busy"
+#define STR_SESS_NOSESS  "No session"
+#define STR_SESS_REFUSED "Refused"
+#define STR_SESS_BIG     "Too big"
+#define STR_SESS_IO      "No answer"
+#define STR_SESS_ARG     "Bad code"
+#define STR_SESS_FAILED  "Failed"
+
 /* The port's own rows: the run-status panel's switch (the Mods section)
  * and the input injection's limit (the Network section). */
 #define STR_PANEL       "Status panel"
@@ -191,11 +236,20 @@ static const ValueName k_choice_names[] = {
 
 /* ================================================================== */
 
+/* A text into a buffer the screen hands out. */
+static void put(char *dst, int n, const char *s)
+{
+    if (n > 0) {
+        snprintf(dst, (size_t)n, "%s", s);
+    }
+}
+
 /*
  * The rows of the screen.  The first four kinds are the port's own
  * settings; the rest are the Mods section (the port's own panel switch and
- * the model of sdk/mod_menu.c) and the Network section (the port's own
- * network settings and the input injection's limit).
+ * the model of sdk/mod_menu.c), the Network section (the port's own
+ * network settings and the input injection's limit) and the Session
+ * section (the port's own peer session).
  */
 enum {
     ROW_OPTION,           /* an option of the port's own                  */
@@ -213,14 +267,21 @@ enum {
     ROW_NET_CONTROL_PORT, /* the control's port (a number)               */
     ROW_NET_NAME,         /* the player's name (text)                    */
     ROW_INJECT_MAX,       /* the longest press the injection allows     */
-    ROW_NET_DEFAULTS      /* the network settings back to their default  */
+    ROW_NET_DEFAULTS,     /* the network settings back to their default  */
+    ROW_SESSION_CODE,     /* the session's code (text)                   */
+    ROW_SESSION_HOST,     /* start a session                             */
+    ROW_SESSION_JOIN,     /* join a session                              */
+    ROW_SESSION_LEAVE,    /* leave the session                           */
+    ROW_SESSION_REVERT,   /* the code back to the committed state        */
+    ROW_SESSION_DEFAULTS  /* the code back to nothing                     */
 };
 
 typedef struct Row { int type; int arg; int arg2; } Row;
 
-#define TAB_COUNT 6
+#define TAB_COUNT 7
 #define TAB_MODS 4
 #define TAB_NETWORK 5
+#define TAB_SESSION 6
 
 static struct {
     int level;        /* 0 section list, 1 inside a section      */
@@ -300,6 +361,22 @@ static void build_net_rows(void)
     add_row(ROW_NET_DEFAULTS, 0, 0);
 }
 
+/*
+ * The Session section: the port's own peer session (sdk/mod_net.h, "The
+ * port's own session").  The code is a setting of the port's own, so it
+ * is in the model with the rest of the settings and the file keeps it;
+ * the three rows in the middle are the player's own actions.
+ */
+static void build_session_rows(void)
+{
+    add_row(ROW_SESSION_CODE, 0, 0);
+    add_row(ROW_SESSION_HOST, 0, 0);
+    add_row(ROW_SESSION_JOIN, 0, 0);
+    add_row(ROW_SESSION_LEAVE, 0, 0);
+    add_row(ROW_SESSION_REVERT, 0, 0);
+    add_row(ROW_SESSION_DEFAULTS, 0, 0);
+}
+
 static void build_rows(void)
 {
     int i;
@@ -332,9 +409,14 @@ static void build_rows(void)
     case TAB_MODS:
         build_mods_rows();
         return;
-    default:
+    case TAB_NETWORK:
         build_net_rows();
         return;
+    case TAB_SESSION:
+        build_session_rows();
+        return;
+    default:
+        break;
     }
     add_row(ROW_DEFAULTS, 0, 0);
 }
@@ -486,6 +568,128 @@ static void change_net_port(int type, int d)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* The port's own session                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * What the screen shows of the port's own session.  The state itself is
+ * the port's own (sdk/mod_net.h, "The port's own session"); the screen
+ * keeps the last answer, so it can say what happened.
+ */
+static struct {
+    int busy;        /* the work is running                     */
+    int have;        /* there is an answer                      */
+    int rc;          /* the answer of the last work             */
+    int host;        /* the last work was a host                */
+} g_sess;
+
+/*
+ * Ask the port's own session how it is doing.  The relay takes up to
+ * three seconds to answer, so the work runs on the port's own worker and
+ * the screen asks each frame; the answer is taken once, and the code the
+ * relay handed out goes into the model, where the row shows it and the
+ * player reads it to the other players.
+ *
+ * Returns non-zero when the screen has to draw again.
+ */
+static int poll_session(void)
+{
+    BwPortSessionState st;
+    int redraw = 0;
+
+    memset(&st, 0, sizeof st);
+    (void)bw_port_session_poll(&st);
+    if (st.busy != g_sess.busy) {
+        g_sess.busy = st.busy;
+        redraw = 1;
+    }
+    if (st.done) {
+        g_sess.have = 1;
+        g_sess.rc = st.rc;
+        g_sess.host = st.host;
+        if (st.rc == BW_MOD_NET_OK && st.code[0] != '\0') {
+            eidos_settings_session_set_code(st.code);
+        }
+        redraw = 1;
+    }
+    return redraw;
+}
+
+/* The service's own answers, in the screen's own words. */
+static const char *session_answer_text(int rc)
+{
+    switch (rc) {
+    case BW_MOD_NET_OK:           return STR_SESS_OK;
+    case BW_MOD_NET_E_NO_RELAY:   return STR_SESS_NORELAY;
+    case BW_MOD_NET_E_BUSY:       return STR_SESS_BUSY;
+    case BW_MOD_NET_E_NO_SESSION: return STR_SESS_NOSESS;
+    case BW_MOD_NET_E_RELAY:      return STR_SESS_REFUSED;
+    case BW_MOD_NET_E_TOO_BIG:    return STR_SESS_BIG;
+    case BW_MOD_NET_E_IO:         return STR_SESS_IO;
+    case BW_MOD_NET_E_ARG:        return STR_SESS_ARG;
+    default:                      return STR_SESS_FAILED;
+    }
+}
+
+/* The value of the Host and Join rows: the state of the work. */
+static void session_value(int host, char *out, int n)
+{
+    if (n > 0) {
+        out[0] = '\0';
+    }
+    if (g_sess.busy) {
+        put(out, n, STR_SESSION_WAIT);
+        return;
+    }
+    if (g_sess.have && g_sess.host == host) {
+        put(out, n, session_answer_text(g_sess.rc));
+    }
+}
+
+/*
+ * The Session section's own rows.  Hosting and joining do not block the
+ * frame thread: the port's own worker asks the relay and the screen
+ * waits for the answer (poll_session).
+ */
+static int session_action(int type)
+{
+    switch (type) {
+    case ROW_SESSION_HOST:
+        if (bw_port_session_start(1, NULL) == 0) {
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
+    case ROW_SESSION_JOIN: {
+        const char *code = eidos_settings_session_code();
+
+        if (code == NULL || code[0] == '\0') {
+            /* no code to join with: the player types one first */
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
+        }
+        if (bw_port_session_start(0, code) == 0) {
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
+    }
+    case ROW_SESSION_LEAVE:
+        /* The service's leave does not block. */
+        bw_port_session_leave();
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+    case ROW_SESSION_REVERT:
+        /* The code back to the state the last commit left. */
+        eidos_settings_session_revert();
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+    case ROW_SESSION_DEFAULTS:
+        /* The code back to nothing. */
+        eidos_settings_session_defaults();
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+    default:
+        break;
+    }
+    return 0;
+}
+
 /* The player's switch of a mod. */
 static int toggle_mod(int mod)
 {
@@ -546,8 +750,10 @@ static void begin_text_edit(int type)
 {
     if (type == ROW_NET_RELAY) {
         eidos_settings_net_relay_text_begin();
-    } else {
+    } else if (type == ROW_NET_NAME) {
         eidos_settings_net_name_text_begin();
+    } else {
+        eidos_settings_session_code_text_begin();
     }
     g.editing = 1;
     eidos_settings_capture_begin();
@@ -636,7 +842,25 @@ static unsigned repeat_dirs(unsigned pressed, unsigned held)
     return out;
 }
 
+/* The screen's own input: the buttons the player pressed. */
+static int sui_input(unsigned pressed, unsigned held);
+
 int eidos_sui_input(unsigned pressed, unsigned held)
+{
+    int res = sui_input(pressed, held);
+
+    /*
+     * The port's own session: the work runs on the port's own worker (the
+     * relay takes up to three seconds to answer), so the screen asks for
+     * the answer here and draws the screen again when it comes.
+     */
+    if (poll_session()) {
+        res |= EIDOS_SUI_REDRAW;
+    }
+    return res;
+}
+
+static int sui_input(unsigned pressed, unsigned held)
 {
     unsigned act;
     const Row *r;
@@ -781,10 +1005,19 @@ int eidos_sui_input(unsigned pressed, unsigned held)
         }
         return 0;
     }
-    if (r->type == ROW_NET_RELAY || r->type == ROW_NET_NAME) {
+    if (r->type == ROW_NET_RELAY || r->type == ROW_NET_NAME ||
+        r->type == ROW_SESSION_CODE) {
         if (pressed & 1u) {
             begin_text_edit(r->type);
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return 0;
+    }
+    if (r->type == ROW_SESSION_HOST || r->type == ROW_SESSION_JOIN ||
+        r->type == ROW_SESSION_LEAVE || r->type == ROW_SESSION_REVERT ||
+        r->type == ROW_SESSION_DEFAULTS) {
+        if (pressed & 1u) {
+            return session_action(r->type);
         }
         return 0;
     }
@@ -971,9 +1204,19 @@ int eidos_sui_touch(int row, int zone)
         break;
     case ROW_NET_RELAY:
     case ROW_NET_NAME:
+    case ROW_SESSION_CODE:
         if (was) {
             begin_text_edit(r->type);
             res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        break;
+    case ROW_SESSION_HOST:
+    case ROW_SESSION_JOIN:
+    case ROW_SESSION_LEAVE:
+    case ROW_SESSION_REVERT:
+    case ROW_SESSION_DEFAULTS:
+        if (was) {
+            res = session_action(r->type);
         }
         break;
     case ROW_NET_RELAY_PORT:
@@ -1035,13 +1278,6 @@ int eidos_sui_level(void)
 int eidos_sui_tab_count(void)
 {
     return TAB_COUNT;
-}
-
-static void put(char *dst, int n, const char *s)
-{
-    if (n > 0) {
-        snprintf(dst, (size_t)n, "%s", s);
-    }
 }
 
 static void option_value_of(int id, int v, char *out, int n)
@@ -1218,6 +1454,30 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
             put(value, nv, buf);
         }
         break;
+    case ROW_SESSION_CODE:
+        /* The session's code: the one the relay handed out, or the one the
+         * player types to join a session. */
+        put(label, nl, STR_SESSION_CODE);
+        put(value, nv, net_text(eidos_settings_session_code()));
+        break;
+    case ROW_SESSION_HOST:
+        put(label, nl, STR_SESSION_HOST);
+        session_value(1, value, nv);
+        break;
+    case ROW_SESSION_JOIN:
+        put(label, nl, STR_SESSION_JOIN);
+        session_value(0, value, nv);
+        break;
+    case ROW_SESSION_LEAVE:
+        put(label, nl, STR_SESSION_LEAVE);
+        put(value, nv, bw_port_session_active() ? STR_SESSION_IN : "");
+        break;
+    case ROW_SESSION_REVERT:
+        put(label, nl, STR_SESSION_REVERT);
+        break;
+    case ROW_SESSION_DEFAULTS:
+        put(label, nl, STR_DEFAULTS);
+        break;
     default:
         put(label, nl, STR_DEFAULTS);
         break;
@@ -1312,7 +1572,8 @@ void eidos_sui_help_line(int i, char *out, int n)
     } else if (g.level == 0 && r != NULL) {
         static const char *const sec[] = {
             HELP_SECTION_DISPLAY, HELP_SECTION_LAYOUT, HELP_SECTION_CONTROLS,
-            HELP_SECTION_SOUND, HELP_SECTION_MODS, HELP_SECTION_NETWORK };
+            HELP_SECTION_SOUND, HELP_SECTION_MODS, HELP_SECTION_NETWORK,
+            HELP_SECTION_SESSION };
         l[0] = sec[r->arg];
         l[2] = HELP_KEYS_L0;
         l[3] = HELP_KEYS_L0B;
@@ -1373,6 +1634,30 @@ void eidos_sui_help_line(int i, char *out, int n)
         case ROW_NET_DEFAULTS:
             l[0] = HELP_NET_DEFAULTS1;
             l[1] = HELP_NET_DEFAULTS2;
+            break;
+        case ROW_SESSION_CODE:
+            l[0] = HELP_SESSION_CODE1;
+            l[1] = HELP_SESSION_CODE2;
+            break;
+        case ROW_SESSION_HOST:
+            l[0] = HELP_SESSION_HOST1;
+            l[1] = HELP_SESSION_HOST2;
+            break;
+        case ROW_SESSION_JOIN:
+            l[0] = HELP_SESSION_JOIN1;
+            l[1] = HELP_SESSION_JOIN2;
+            break;
+        case ROW_SESSION_LEAVE:
+            l[0] = HELP_SESSION_LEAVE1;
+            l[1] = HELP_SESSION_LEAVE2;
+            break;
+        case ROW_SESSION_REVERT:
+            l[0] = HELP_SESSION_REVERT1;
+            l[1] = HELP_SESSION_REVERT2;
+            break;
+        case ROW_SESSION_DEFAULTS:
+            l[0] = HELP_DEFAULTS1;
+            l[1] = HELP_DEFAULTS2;
             break;
         default:
             l[0] = HELP_DEFAULTS1;

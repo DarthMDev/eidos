@@ -71,9 +71,12 @@ connects to the project's relay, which returns a short code. The other
 players join with `session_join` and that code, and the relay links them.
 This follows Archipelago and the Minecraft "easy multiplayer" style: nobody
 opens a port or types an address. The port's own settings hold where the
-relay is and what the player is called; the port has no menu for the session
-itself yet. `session_host` and `session_join` block the calling thread, the
-game's, while the relay answers, for up to three seconds.
+relay is and what the player is called, and a Session section of the settings
+screen holds the code: the player hosts a session, the code comes back and
+is shown for the other players to read, and the player types a code to join
+one. The wait does not stall the game: the port's own layer does the
+blocking call on its own worker thread and the screen polls it, so
+`session_host` and `session_join` never run on the frame thread.
 
 **The relay.** A small server the project runs, which only forwards messages
 between the players of one session. The port can also point the client at

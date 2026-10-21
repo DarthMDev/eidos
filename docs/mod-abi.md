@@ -171,11 +171,10 @@ command as the ones before it left it, so the writes to the operands chain. A
 handler that replaces the command does not stop the later handlers; when any
 of them replaced it, the game's own handler does not run.
 
-A script handler is handed the state of the mod that registered it. A handler
-registered from the start entry point is registered before that entry has
-returned its state pointer, so it is handed a null state; a handler
-registered after the start has returned, from a frame handler for instance, is
-handed its mod's state.
+A script handler is handed the state of the mod that registered it. The
+port holds the binding until the start entry has returned the mod's state
+pointer, so a handler registered from the start entry is handed that state
+too; a mod that returns no state hands it none.
 
 The header carries four conveniences for reading and writing the operands a
 word at a time: `bw_script_arg_u16`, `bw_script_arg_u32`,
@@ -294,9 +293,8 @@ same everywhere.
    hook whose stated prototype differs is refused; a mod that states none is
    not checked.
 2. **The script handler's state.** A script handler registered from the start
-   entry point is registered before that entry has returned the mod's state
-   pointer, so it is handed a null state. The event handlers do not have this
-   problem: the port holds their bindings until the start has returned.
+   entry point is handed the mod's state, the way an event handler is: the
+   port holds the binding until the start has returned the state pointer.
 
 ## Related documents
 

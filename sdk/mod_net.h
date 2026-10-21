@@ -270,6 +270,75 @@ int  bw_mod_net_session_active(void);
  */
 void bw_mod_net_reset(void);
 
+/* ------------------------------------------------------------------ */
+/* The port's own session                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The port's own session calls: the ones the port's own menu makes (the
+ * Session section of the settings screen, engine/platform/settings_ui.c).
+ *
+ * The calls in "The services table's calls" above are the ones a mod
+ * reaches, and the table that carries them (sdk/mod_state.h) is frozen
+ * within an interface version (docs/mod-abi.md).  The port does not go
+ * through that table: it makes the calls below, which live in the port's
+ * own code (engine/platform/settings.c) and which do three things the
+ * mod-facing calls do not.
+ *
+ *   - They hand the service the relay and the name the port's own
+ *     settings hold, so the settings the player changes in the menu are
+ *     the ones the next session uses.  The boot hands them over once, at
+ *     the port's start-up; the menu changes them while the game runs.
+ *   - They keep the port's own state: the answer of the last call and the
+ *     work in flight.
+ *   - They do not block the frame thread.  A host or a join waits for the
+ *     relay, for up to three seconds, and the settings screen is drawn on
+ *     the frame thread, so the call is made on the port's own worker and
+ *     the screen polls it.
+ *
+ * The service's own calls do the work.  bw_mod_net_session_host,
+ * bw_mod_net_session_join and bw_mod_net_session_leave are the port's own
+ * code (sdk/mod_net.c) and the port may call them directly: they do not
+ * read the mod's namespace, because the token the relay remembers the
+ * player by is the process's own and the name is the port's own setting.
+ * The two calls that do read it, bw_mod_net_session_send and
+ * bw_mod_net_on_session, are keyed on the mod that is calling: the port's
+ * own key is the empty namespace, the way sdk/mod_handoff.c uses it.
+ *
+ * The implementation is the port's own code and not the library's, so a
+ * file of the library does not call these.
+ */
+
+/* The state of the port's own session. */
+typedef struct BwPortSessionState {
+    int  busy;          /* the work is running                      */
+    int  done;          /* the work finished since the last poll     */
+    int  rc;            /* the answer of the work (0 for success)    */
+    int  host;          /* the work was a host                       */
+    char code[BW_MOD_NET_CODE_MAX + 1];    /* the session's code       */
+} BwPortSessionState;
+
+/*
+ * Start a session (host != 0) or join one (host == 0, with the code).
+ * The call does not block: the work runs on the port's own worker and the
+ * screen polls it with bw_port_session_poll().  0 when the work started,
+ * -1 when one is already running.
+ */
+int  bw_port_session_start(int host, const char *code);
+
+/*
+ * Ask how the session is doing.  `out` is filled in either way; the call
+ * returns 1 when the work finished since the last poll (the screen takes
+ * the code then) and 0 otherwise.
+ */
+int  bw_port_session_poll(BwPortSessionState *out);
+
+/* Leave the session.  The service's leave does not block. */
+void bw_port_session_leave(void);
+
+/* Whether a session is running. */
+int  bw_port_session_active(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -307,20 +307,11 @@ payload is built once for all the handlers of the event.
 
 What is still to build:
 
-1. **The move-learning screens.** The TM path (the party screen's two rows)
-   and the nurse's relearner path of `move.learn` are bound in the event
-   layer (`sdk/mod_event_mon.c`), and the script command that writes a move
-   is bound too, but no slot carries the event for them: the party screen's
-   two addresses and the relearner's are not declared rows at all, and the
-   script command's row is declared with an empty fourth column. The
-   declared set's fourth column names the rows whose slot carries the event
-   calls, so an address goes there to make the event fire.
-2. **The appliers the marked fields without one need.** `mon.nickname`'s
-   `force`, `battle.start`'s `format` and `level_adjust`, `battle.damage`'s
-   `amount` and `catch.attempt`'s `rate` are marked, but the rows that carry
-   them have no applier, so a write to them has no effect
-   (`docs/mod-payloads.md`, section 0).
-3. **The relay server.** The protocol is fixed (`docs/mod-services.md`,
+1. **The nickname's force.** `mon.nickname`'s `force` is marked, but the
+   row that carries it has no applier, so a write to it has no effect
+   (`docs/mod-payloads.md`, section 0). The game has no call that forces
+   the prompt, so the hook the port would need does not exist.
+2. **The relay server.** The protocol is fixed (`docs/mod-services.md`,
    "Peer sessions"), but the server that answers it is not part of the port.
 
 The port's own seams are in place: the boot installs the run restart's

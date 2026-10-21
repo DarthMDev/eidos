@@ -180,6 +180,23 @@ void        eidos_settings_panel_set_visible(int visible);
 void        eidos_settings_panel_revert(void);
 
 /* ------------------------------------------------------------------ */
+/* The peer session                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The session's code: the code the relay handed out when the player
+ * hosted a session, and the code the player types to join one.  It is a
+ * setting of the port's own, so it is read, changed, reverted and
+ * committed with the rest, and the file keeps it ([session], code).
+ */
+const char *eidos_settings_session_code(void);
+void        eidos_settings_session_set_code(const char *code);
+void        eidos_settings_session_code_text_begin(void);
+void        eidos_settings_session_defaults(void);
+void        eidos_settings_session_revert(void);
+int         eidos_settings_session_dirty(void);
+
+/* ------------------------------------------------------------------ */
 /* Key bindings                                                        */
 /* ------------------------------------------------------------------ */
 

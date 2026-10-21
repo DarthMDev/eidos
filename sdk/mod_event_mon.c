@@ -239,6 +239,9 @@ typedef struct BwPortScriptWork {
     u16   localWorks[96];              /* 0x7C: the work ids 0x8000 and up */
 } BwPortScriptWork;
 
+/* How many local works the script has: the ids 0x8000 to 0x805F. */
+#define BW_PORT_SCRIPT_LOCAL_WORKS 96u
+
 BW_PORT_STATIC_ASSERT(script_local_work, sizeof(void *) != 4 ||
                       offsetof(BwPortScriptWork, localWorks) == 0x7Cu);
 
@@ -768,6 +771,9 @@ static u32 party_slot_of(struct Party *party, const struct PokemonParam *mon)
  *
  * The event work's variables are read through the game's own accessor,
  * which the port calls with the game data the script command carries.
+ *
+ * A local work the script does not have (an id from 0x8060 up) reads 0:
+ * the port reads the block it copied and stops at its end.
  */
 static u32 script_work_value(const void *scriptWork, void *gameData, u32 id)
 {
@@ -796,6 +802,13 @@ static u32 script_work_value(const void *scriptWork, void *gameData, u32 id)
         const BwPortScriptWork *work = (const BwPortScriptWork *)scriptWork;
 
         if (work == NULL) {
+            return 0u;
+        }
+        if (id - 0x8000u >= BW_PORT_SCRIPT_LOCAL_WORKS) {
+            /* The id names a local work the script does not have.  The
+             * game's own read walks past the block (SCRIPT_WORK_GetLocalWork
+             * does not bound it), but the port reads the block it copied,
+             * and a value it cannot read stays 0. */
             return 0u;
         }
         return (u32)work->localWorks[id - 0x8000u];
@@ -1325,6 +1338,14 @@ static void build_mon_receive_trade(const BwEventCall *call,
  * force here: the game decides to ask before it gets here (the catch
  * screen asks whether the player wants a nickname, and that code is not a
  * declared row), and the port has no hook at that decision.
+ *
+ * The game's own code shows no call that forces the prompt.  The catch
+ * registration screen (ov207, ZUKAN_TOROKU_GRAPHIC) writes the player's
+ * answer into the catch arguments' wantsNickname, and the battle return
+ * (ov092, EVENT_BATTLE_RETURN_Main) reads it to open the name-in screen
+ * (NAMEIN_SETUP_CreateCaptureArgs, which runs in ov194).  Neither the
+ * answer nor the arguments that carry it reach this call, so the force
+ * flag stays a documented 0.
  */
 static void build_mon_nickname(const BwEventCall *call, BwEventPayload *out)
 {
@@ -1338,6 +1359,11 @@ static void build_mon_nickname(const BwEventCall *call, BwEventPayload *out)
  * the caught Pokemon is in the catch screen's work.  The payload's mon
  * reads 0, and the force flag reads 0: the screen is being opened here,
  * so there is nothing left for a handler to force.
+ *
+ * The game's own code shows no call that forces it either: the screen is
+ * always created, and whether the player is asked is the answer the catch
+ * registration screen wrote into the catch arguments, which this call does
+ * not carry (the comment above names the path).
  */
 static void build_mon_nickname_catch(const BwEventCall *call,
                                      BwEventPayload *out)
