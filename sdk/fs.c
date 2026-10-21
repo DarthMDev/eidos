@@ -66,7 +66,6 @@
 #include "vfs.h"
 
 #define BW_FS_MAGIC     0x42574653u  /* 'BWFS' */
-#define BW_FS_MAX_OPEN  32u
 #define BW_FS_NO_ID     0xFFFFFFFFu
 
 typedef struct BwFsRecord {
@@ -89,7 +88,12 @@ typedef struct BwFsSlot {
     int       used;
 } BwFsSlot;
 
-static BwFsSlot g_slots[BW_FS_MAX_OPEN];
+/* The open files.  The DS has no limit (an FSFile is the caller's memory),
+ * and one screen can hold many archives open at once (the Pokedex entry
+ * keeps 35 message banks and more graphics archives open), so the table
+ * grows as files open; a slot is reused once its file closes. */
+static BwFsSlot *g_slots;
+static u32 g_nslots;
 
 /* ------------------------------------------------------------------ */
 /* Module state                                                         */
@@ -544,7 +548,7 @@ static BwFsRecord *record_of(void *file)
     BwFsRecord *r = (BwFsRecord *)file;
 
     if (r == NULL || r->magic != BW_FS_MAGIC || r->slot == 0 ||
-        r->slot > BW_FS_MAX_OPEN || !g_slots[r->slot - 1].used) {
+        r->slot > g_nslots || !g_slots[r->slot - 1].used) {
         bw_panic("FS", 0, "operation on a file that is not open");
     }
     return r;
@@ -555,7 +559,18 @@ static int claim_slot(BwFsRecord *r, FILE *fp, const u8 *mem, u32 base, u32 size
 {
     u32 i;
 
-    for (i = 0; i < BW_FS_MAX_OPEN; i++) {
+    for (i = 0;; i++) {
+        if (i == g_nslots) {
+            u32 n = g_nslots != 0 ? g_nslots * 2u : 32u;
+            BwFsSlot *grown = (BwFsSlot *)realloc(g_slots, (size_t)n * sizeof(*grown));
+
+            if (grown == NULL) {
+                return -1;
+            }
+            memset(grown + g_nslots, 0, (size_t)(n - g_nslots) * sizeof(*grown));
+            g_slots = grown;
+            g_nslots = n;
+        }
         if (!g_slots[i].used) {
             g_slots[i].fp = fp;
             g_slots[i].mem = mem;
@@ -1051,7 +1066,7 @@ BOOL FS_CloseFile(void *file)
     BwFsSlot *s;
 
     if (r == NULL || r->magic != BW_FS_MAGIC || r->slot == 0 ||
-        r->slot > BW_FS_MAX_OPEN) {
+        r->slot > g_nslots) {
         return FALSE;
     }
     s = &g_slots[r->slot - 1];
