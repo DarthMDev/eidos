@@ -351,6 +351,21 @@ int  bw_keep_going(void);
  */
 void bw_port_reset(void);
 
+/*
+ * The port's restart: the emulated machine back to power-on, with the
+ * calling thread left alone.  The old game stops (bw_os_stop_threads,
+ * sdk/os.h), the machine is reset (bw_port_reset), and the caller carries
+ * on to start the game again.
+ *
+ * It is callable from the frame thread, the one that runs the port's own
+ * code while it holds the run token: the game's threads are stopped before
+ * the memory they run in is cleared, and the frame thread is left running.
+ * A caller that is not the token holder cannot be told apart from it, so
+ * the port's own uses record the request and let the frame loop carry it
+ * out.
+ */
+void bw_port_restart(void);
+
 #ifdef __cplusplus
 }
 #endif

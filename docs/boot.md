@@ -186,6 +186,29 @@ single-core assumptions true. Interrupts are delivered on the main thread at
 the points the DS would deliver them: vblank from `engine/frame/`, timers
 and alarms from `OS_GetTick`'s clock.
 
+### Restarting a running game
+
+`bw_port_reset` puts the emulated machine back to power-on, but it cannot be
+run on the thread that called it while the game is running: the reset clears
+the main RAM the game is running in, and the game's threads must be stopped
+before it does. `bw_port_restart` (`sdk/port.h`) is the entry point for that:
+it stops every game thread but the caller's, resets the machine, and lets the
+caller carry on and start the game again.
+
+The caller is recognised as the record of the thread that holds the run token,
+so the call has to come from the thread that runs the port's own code while
+it holds the token: the frame thread, the one the OS layer's idle thread
+runs on. A menu thread cannot be told apart from it, so a request from the
+menu is recorded and the frame loop carries it out (the mod layer's run
+restart does this, `sdk/mod_restart.c`).
+
+Two things follow from the DS's own model. The thread that calls the game's
+`OS_InitThread` is the launcher, and the launcher cannot be killed (it has no
+trampoline to unwind it with), so it is retired: its record is kept and it is
+parked for good, and the old game never resumes. And a restarted game must
+run on a fresh host thread, because the frame thread is the OS layer's idle
+thread's host and cannot be the launcher at the same time.
+
 ## Linking the boot
 
 `-DEIDOS_BOOT=ON` links NitroMain and its closure into `eidos_boot`

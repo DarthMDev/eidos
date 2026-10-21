@@ -161,11 +161,13 @@ save is chosen and before the game runs:
    binds its handlers through `host->on`, and the loader holds the bindings
    until the start entry has returned its state pointer.
 5. Register the handlers the mod asked for, and install the manifest's
-   `override` lines with `bw_mod_slot_install`, after the declared check
-   (`docs/mod-state.md`, section 4).
+   `override` lines with `bw_mod_slot_install_mode` in the row's mode, after
+   the declared check (`docs/mod-state.md`, section 4).
 
 On exit, or when the player disables the mod, the loader reverts the slots the
-mod installed, calls `eidos_mod_stop`, and unloads the library, in that order.
+mod installed (each of the mod's own hooks comes out of the pair's chain,
+even one a later mod has shadowed), calls `eidos_mod_stop`, and unloads the
+library, in that order.
 The namespace is in force for the stop entry, so a state call the mod makes
 there reaches its own file and is where a mod flushes its data. The library
 is last because a code pointer into it is still live until then.

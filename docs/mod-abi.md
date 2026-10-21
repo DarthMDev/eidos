@@ -98,35 +98,102 @@ void eidos_mod_stop(void *mod_state);
 
 `eidos_mod_start` runs once when the port loads the mod, after the save is
 chosen and before the game runs. It receives the host table and stores its own
-state pointer; that pointer is the `mod_state` every handler receives. It
-returns 0, or a non-zero value to tell the port to unload the mod.
+state pointer; that pointer is the `mod_state` the event handlers receive.
+It returns 0, or a non-zero value to tell the port to unload the mod.
 `eidos_mod_stop` runs when the port unloads the mod or exits.
 
 `BwModHost` is a table of function pointers the port fills: the interface
-version, the registration call, the state calls and the service calls.
+version, the two registration calls, the state calls and the service calls.
 
 ```c
 typedef struct BwModHost {
     u32  api;                                   /* the port's interface version */
     int  (*on)(u32 kind, BwEventHandler fn);    /* bind a handler to an event */
+    int  (*script)(u32 vm, u16 opcode, BwScriptHandler fn);  /* to a command */
     const struct BwModState    *state;          /* sdk/mod_state.h */
-    const struct BwModServices *services;       /* docs/mod-services.md */
+    const struct BwModServices *services;       /* sdk/mod_state.h */
 } BwModHost;
 ```
 
-A mod calls `host->on` from `eidos_mod_start` for each event it handles. The
-table is the only way into the port, so a mod links against nothing but the
-host executable's exported table, and one library works with any port build
-of the same version.
+A mod calls `host->on` from `eidos_mod_start` for each event it handles, and
+`host->script` for each script command it hooks. The port holds the event
+bindings until the start entry has returned its state pointer, and registers
+them then, in the order the mod bound them. The table is the only way into the
+port, so a mod links against nothing but the host executable's exported table,
+and one library works with any port build of the same version.
+
+### The script commands
+
+The field script VM and the battle effect VM each dispatch every command
+through one table: the field VM's has 609 entries and the battle effect VM's
+78. The port hooks both dispatches, so a mod can observe or replace a command
+by its opcode without one declared row per command.
+
+```c
+enum {
+    BW_SCRIPT_VM_FIELD  = 0,   /* the field script VM */
+    BW_SCRIPT_VM_BATTLE = 1    /* the battle effect VM */
+};
+
+typedef struct BwScriptCommand {
+    u16 opcode;                /* the command's opcode */
+    u16 nargs;                 /* how many operand bytes the command carries */
+    u8  args[BW_SCRIPT_ARGS_MAX];  /* the operands, as the bytes they are in */
+    u32 pc;                    /* the program counter before the command */
+    u32 next_pc;               /* the program counter after it */
+} BwScriptCommand;
+
+typedef int (*BwScriptHandler)(void *mod_state, BwScriptCommand *cmd);
+
+enum {
+    BW_SCRIPT_CONTINUE = 0,   /* the game's own handler runs too */
+    BW_SCRIPT_REPLACE  = 1    /* the game's own handler does not run */
+};
+```
+
+The operands are bytes: the game's script holds them as bytes, and its own
+handler reads them off the VM's cursor a halfword or a word at a time. Some
+of the field VM's commands carry an odd number of bytes, so those read a byte
+or two straight off the cursor. The view holds every byte of every command of
+both VMs: the port's own width table gives the width of each command in bytes,
+and the widest is `BW_SCRIPT_ARGS_MAX`, 60 (the battle effect VM's opcode 8;
+the field VM's widest is 22), so a handler reaches the last operand of the
+widest command as well as the first of the narrowest. A handler writes the
+bytes to change the command the game runs, and the port writes them back into
+the script exactly, with nothing rounded to a word.
+
+The program counter is a number, not a pointer: it is the hook's own count of
+where the command sits in the script, so the view carries no host pointer and
+reads the same at every pointer width. The view is valid only for the call.
+
+Every handler bound to a command runs, in load order, and each one sees the
+command as the ones before it left it, so the writes to the operands chain. A
+handler that replaces the command does not stop the later handlers; when any
+of them replaced it, the game's own handler does not run.
+
+A script handler is handed the state of the mod that registered it. A handler
+registered from the start entry point is registered before that entry has
+returned its state pointer, so it is handed a null state; a handler
+registered after the start has returned, from a frame handler for instance, is
+handed its mod's state.
+
+The header carries four conveniences for reading and writing the operands a
+word at a time: `bw_script_arg_u16`, `bw_script_arg_u32`,
+`bw_script_set_arg_u16` and `bw_script_set_arg_u32`. They are not part of the
+frozen surface, and a handler may read and write the bytes of `args` itself.
 
 ### The state and service calls
 
 `sdk/mod_state.h` declares `BwModState`, one function per value of
 `docs/mod-events.md`, section 4: party and box reads and writes, a Pokemon's
-fields by `BwMonRef` and field id, money, badges, flags, the map and the
-player position. `BwModServices` declares the port services of
-`docs/mod-services.md`: messages, peer sessions, the mod's saved data, the
-timer and the others. Each name and signature is frozen within a version.
+fields by `BwMonRef` and field id, the species data and the dex, money,
+badges, flags, the map, the player position and the battle style, and the two
+moves between places. `BwModServices` declares the port services of
+`docs/mod-services.md`: messages, peer sessions, the field avatars, the
+mod's own saved data, the timer, the run restart, the random source, the
+external control, the frame tick, the save handoff and the others. A service
+the port has not built is `NULL` in the table, so a mod that calls one checks
+the pointer first. Each name and signature is frozen within a version.
 
 ## 2. What is not in the surface
 
@@ -140,32 +207,70 @@ timer and the others. Each name and signature is frozen within a version.
 
 ## 3. The version
 
-`api` is one integer, the major version of the surface. A mod states the
-version it was built against in its manifest, and the port also reads it from
-the mod's start call. The port loads the mod when the two match and refuses it
-otherwise, with a message naming both numbers. A mismatch means the mod reads a
-struct at a layout the port does not have, which fails silently, so a warning
-is not enough.
+`api` is one integer, the major version of the surface. It is 3. A mod states
+the version it was built against in its manifest, and the port checks that
+number against its own before it loads the mod. A mod may also compare the
+`api` in the host table with the number it was built against and refuse to
+start by returning a non-zero value from its start entry. The port loads the
+mod when the two numbers match and refuses it otherwise, with a message
+naming both. A mismatch means the mod reads a struct at a layout the port
+does not have, which fails silently, so a warning is not enough.
 
-The number cannot be forgotten. A test hashes the surface: every struct's size
-and field offsets, every enum value, every event id and name, and every state
-and service signature. The expected hash is stored beside the version number.
-A change to the surface fails the test until the number is raised and the hash
-updated in the same change. A comment or a change outside the headers does not
-move the hash.
+The version moves when the surface moves.
+
+- **Version 1** was the surface without the script command hooks: the
+  events, the payloads, the state calls and the services.
+- **Version 2** added the script command hooks: the host table's `script`
+  call and the command's view.
+- **Version 3** gave the command's view the whole operand area: the operands
+  are bytes and the view holds every byte of every command of both script
+  VMs, so a handler can reach an operand past the eighth word. It added the
+  services table's `state_in_step`, which answers for the calling mod
+  whether its own saved data was written with the save in force.
+
+The number cannot be forgotten. A test recomputes the hash of the surface out
+of the headers themselves and compares it with the number the header carries,
+so a change to the surface fails the test until the hash is updated in the
+same change; and the rule is that the same change raises the version. A
+comment or a change outside the headers does not move the hash.
+
+The hash is an FNV-1a fold (the seed 2166136261, the multiplier 16777619): a
+name goes in byte by byte, a number goes in as eight little-endian bytes. It
+covers
+
+- the event header and the Pokemon reference, field by field;
+- the handler types, by their size;
+- every event id, by its constant name and its value;
+- every small enum, by its name and its value;
+- every payload struct, field by field;
+- the script command's view and the script enums;
+- the three tables, member by member;
+- the port's own state file header, field by field.
+
+Each field and each member goes in as its name, its offset and its size. The
+fold therefore cannot see a field that changes its type without changing its
+size, and it cannot see the signature of a call at all; the version is the
+guard for those.
 
 The three tables hold function pointers, so their layout follows the pointer
 width and the hash follows it: the number beside the version number is the
 32-bit one, the port's reference configuration, and the test carries the
 64-bit one as well, so a change fails on every width the port is built at.
+
+| Pointers | Hash |
+|---|---|
+| 32-bit | 0xFE6D7989 (the number in `sdk/mod_api.h`) |
+| 64-bit | 0x9A23EB9F |
+
 The payload structs, the ids and the enums hold no pointer and hash the
 same everywhere.
 
 ## 4. What the port promises
 
 - **Within a version** a mod runs unchanged, with no rebuild: event names,
-  ids, payload layouts, the handler type and every state and service call stay
-  as they are. Fields may be added at the end of a payload.
+  ids, payload layouts, the handler type, the script command's view and every
+  state and service call stay as they are. Fields may be added at the end of a
+  payload.
 - **Across versions** a mod rebuilds against the new headers. Its source
   survives where it uses the stable parts: event names, `BwMonRef`, and the
   state calls. Only code that reads a changed payload field needs an edit.
@@ -176,8 +281,16 @@ same everywhere.
 
 ## Still to build
 
-1. **The loader.** Load the library, check `api`, call `eidos_mod_start`, and
-   bind the handlers (`docs/mod-implementation.md`).
+1. **The signature check.** The hash folds in each field's name, its offset
+   and its size, and each table member's name, offset and size. A field that
+   changes its type without changing its size (an unsigned field that becomes
+   a signed one) and a call whose parameters change are both invisible to it,
+   so the test does not fail for them. The interface version is the guard
+   there, and the loader is what enforces it.
+2. **The script handler's state.** A script handler registered from the start
+   entry point is registered before that entry has returned the mod's state
+   pointer, so it is handed a null state. The event handlers do not have this
+   problem: the port holds their bindings until the start has returned.
 
 ## Related documents
 

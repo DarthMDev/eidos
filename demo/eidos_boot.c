@@ -1563,11 +1563,24 @@ static int boot_load_input_script(void)
 }
 
 /*
+ * The game's own thread: the game's main loop.  NitroMain does not return.
+ */
+static void boot_game_thread(void *arg)
+{
+    (void)arg;
+    NitroMain();
+    bw_panic("NitroMain returned", 0x02005124u, "its loop has no exit");
+}
+
+/*
  * The run's start-up: what the boot does after the reset.  The first run
  * does it once; a restart does it again, after the port's own reset.
- * NitroMain does not return, so this does not either.
+ *
+ * `own_thread` says where the game runs: on the calling thread (the first
+ * run, where the caller is the process's main thread) or on a fresh host
+ * thread (a restart, where the caller is the frame thread).
  */
-static int boot_run_start(EidosFrameHooks *hooks)
+static int boot_run_start(EidosFrameHooks *hooks, int own_thread)
 {
     bw_input_reset();
     if (boot_load_input_script() != 0) {
@@ -1611,8 +1624,16 @@ static int boot_run_start(EidosFrameHooks *hooks)
     eidos_frame_init(&g_run.loop, hooks, g_run.top, g_run.bottom);
     eidos_frame_set_current(&g_run.loop);
     bw_os_set_halt_hook(boot_frame, &g_run);
-    NitroMain();
-    bw_panic("NitroMain returned", 0x02005124u, "its loop has no exit");
+    if (own_thread) {
+        /* The game runs on a fresh host thread.  The thread that calls the
+         * game's OS_InitThread is the launcher, and the frame thread is the
+         * OS layer's idle thread's host, so it cannot be the launcher at the
+         * same time (sdk/os.h). */
+        (void)bw_thread_start(boot_game_thread, NULL);
+    } else {
+        NitroMain();
+        bw_panic("NitroMain returned", 0x02005124u, "its loop has no exit");
+    }
     return 0;
 }
 
@@ -1628,13 +1649,6 @@ static int boot_run_start(EidosFrameHooks *hooks)
  *
  * What the run does next (a new game, the save in force) is applied at the
  * first frame of the new run.
- *
- * What the port's OS layer does not allow yet: its reset leaves "no threads
- * but the caller" (sdk/os.h), but it stops and joins every thread whose
- * record is not the launcher's, and the frame thread is the OS layer's idle
- * thread, which never reaches a point where it can be stopped.  The port
- * needs a restart entry point that leaves the calling thread alone; this
- * function is the one place to move when it has one.
  */
 static void boot_run_restart(void)
 {
@@ -1646,14 +1660,18 @@ static void boot_run_restart(void)
     /* The image is in place before the reset, which copies it into main
      * RAM, binds the names and relocates the pointers. */
     bw_data_install(&bw_arm9_data, 0);
-    /* The port's own reset: the machine back to power-on, and the layers
-     * joined again. */
-    bw_port_reset();
+    /* The port's own restart: the old game's threads stop (the caller's own
+     * thread is left alone, and this is the frame thread), and the machine
+     * goes back to power-on (sdk/port_reset.c). */
+    bw_port_restart();
     /* No overlay is resident any more: the reset cleared their data. */
     bw_overlay_sdk_init();
     /* The run's start-up again: the input, the 3D, the link-time
-     * constants, the mods, the frame loop and the game. */
-    (void)boot_run_start(&g_run.hooks);
+     * constants, the mods, the frame loop and the game.  The game runs on a
+     * fresh host thread: the frame thread is the OS layer's idle thread's
+     * host, and the thread that calls the game's OS_InitThread is the
+     * launcher. */
+    (void)boot_run_start(&g_run.hooks, 1);
 }
 
 static int run_boot(u64 frames, int window, unsigned watchdog)
@@ -1683,7 +1701,7 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
     /* The run's start-up: the input, the 3D, the link-time constants, the
      * mods, the frame loop and the game.  A restart does the same again,
      * after the port's own reset (boot_run_restart). */
-    if (boot_run_start(&g_run.hooks) != 0) {
+    if (boot_run_start(&g_run.hooks, 0) != 0) {
         return 2;
     }
     return 3;

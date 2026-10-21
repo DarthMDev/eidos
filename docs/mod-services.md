@@ -13,8 +13,8 @@ fixes. The table is `BwModServices` (`sdk/mod_state.h`), and the loader gives
 every mod a table of its own (`sdk/mod_loader.c`): the port says which mod is
 calling by putting that mod's namespace in force around every call it makes
 into a mod, so a service that keeps state keeps it per mod. A call the port
-has not built is `NULL` in the table, and a mod that calls one gets nothing
-rather than a crash.
+has not built is `NULL` in the table, so a mod has to check the pointer
+before it calls one.
 
 ## Messages
 
@@ -236,8 +236,8 @@ void (*panel_set)(u32 line, const char *text);   /* lines 0 to 15 */
 void (*panel_clear)(void);
 ```
 
-**Not built.** Both calls are `NULL` in the services table, so a mod that
-calls one gets nothing. The panel is drawn by the port outside the game's
+**Not built.** Both calls are `NULL` in the services table, so a mod has to
+check the pointer before it calls one. The panel is drawn by the port outside the game's
 screens (to the side in the stacked layout, below in the side-by-side
 layout), so it never covers the game and is not part of a screenshot of the
 DS screens. Typical contents: deaths, encounters by route, the level cap, a
@@ -450,7 +450,7 @@ payload is built once for every handler of the event, and one mod's file may
 be in step while another's is not. The answer is 1 when the file's
 `save_check` is the checksum of the save in force, 0 when they differ (the
 game save was written without the mod), and -1 when the question cannot be
-answered (no state file, or no save in force).
+answered (no state file, or the save in force cannot be read).
 
 ## Script command hooks
 
@@ -469,7 +469,8 @@ each command in bytes, and the widest is 60 (the battle effect VM's opcode
 8; the field VM's widest is 22), so a handler reaches the last operand of
 the widest command as well as the first of the narrowest. The game keeps the
 operands as bytes and reads them off its cursor a halfword or a word at a
-time, and nine of the field VM's widths are odd, so some commands read a byte
+time, and eighteen of the field VM's commands carry an odd number of bytes,
+so some commands read a byte
 or two straight off the cursor; the view holds the bytes as they are and the
 port writes them back exactly, with nothing rounded to a word. The program
 counter in the view is a number, not a pointer, so the view reads the same at
@@ -497,11 +498,13 @@ player's choices beside the mod's saved data, and the mod reads them:
 int (*setting_get)(const char *key);   /* bool and choice index */
 ```
 
-**Not bound.** The loader does not bind the call into the services table, so a
-mod that calls it gets nothing. The manifest layer parses the `settings` key
-and keeps the path in the mod's record, and the menu's model
+**Bound.** The loader binds the call into the services table
+(`bw_mod_menu_setting_get`), and the mod that calls it is the one whose
+namespace is in force, so the answer is the mod's own. The manifest layer
+parses the `settings` key and keeps the path in the mod's record, and the
+menu's model
 (`sdk/mod_menu.c`) parses the options and holds the player's choices beside
-the mod's saved data; nothing hands them to the mod yet.
+the mod's saved data. The screen that lists them does not exist yet.
 
 ## The mod menu
 

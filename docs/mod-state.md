@@ -204,13 +204,16 @@ file was written with the game save in force.  The question is per mod, so
 it cannot be the `save.load` payload's byte: that payload is built once for
 all the handlers of the event, and one mod's file may be in step while
 another's is not.  The port keeps the answer in the file's header
-(`save_check`) and compares it with the save in force.  The answer is 1 when
+(`save_check`) and compares it with the save in force, which the layer reads
+from the port's own save state.  The answer is 1 when
 the two match, 0 when they differ, and -1 when the question cannot be
-answered: there is no state file, or the port has not told the layer which
-save is in force.
+answered: there is no state file, or the save in force cannot be read.
 
 The port's own `save.begin` and `save.done` events are where a mod reacts to
-a save. A mod that stores its payload in its `save.begin` handler hands the
+a save, and they are what drive the layer's window: the game's own save
+opens it and the game's own save closes it, so a mod's file is written with
+the checksum of the save the game wrote. A mod that stores its payload in its
+`save.begin` handler hands the
 bytes to the layer, which holds them while the save is in progress and writes
 them with the new save's checksum when it ends. A mod that keeps its own files
 uses `state_dir` and the same whole-file discipline.
@@ -255,7 +258,7 @@ the record into registrations. The keys and what each becomes:
 | `port` | text | the port version a mod with raw hooks is built against; a mismatch refuses the mod |
 | `code` | relative path | the library the loader opens |
 | `state` | identifier | the state namespace of section 1 |
-| `override` | a list of pairs | one `bw_mod_slot_install` per pair, after the declared check of section 4 |
+| `override` | a list of pairs | one `bw_mod_slot_install_mode` per pair, after the declared check of section 4 |
 | `rule` | a list of event and path | a rule binding for the interpreter |
 | `settings` | relative path | the settings declaration |
 
@@ -295,11 +298,11 @@ The apply does four things per mod:
    settings surface.
 
 The loader does the rest: it resolves each surviving override's symbol in the
-loaded library and calls `bw_mod_slot_install(region, addr, symbol, owner)`
-(`sdk/mod_slot.h`), in the order the manifest gave them, so a later mod wins
-over an earlier one for one pair. It installs the symbol the same way for
-both modes: the registry keeps one hook per pair and does not chain hooks
-yet, so the `wrap` mode's chain of wraps does not exist
+loaded library and calls `bw_mod_slot_install_mode(region, addr, symbol,
+owner, mode)` (`sdk/mod_slot.c`), in the order the manifest gave them. A
+`wrap` goes in front of the chain the pair holds, so the last-loaded wrap
+runs first and each wrap's original is the hook that was loaded before it;
+a `replace` takes the slot for itself and the links under it do not run
 (`docs/mod-overrides.md`).
 
 ## 4. The declared-address check

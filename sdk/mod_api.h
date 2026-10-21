@@ -699,7 +699,8 @@ enum {
  *
  * The operands are bytes: the game's script holds them as bytes and the
  * game's own handler reads them off the VM's cursor a u16 or a u32 at a
- * time (nine of the field VM's widths are odd, so some commands read a
+ * time (eighteen of the field VM's commands carry an odd number of bytes,
+ * so some commands read a
  * byte or two straight off the cursor).  The view holds them as they
  * are, so a handler reads and writes the bytes and the port writes them
  * back into the script exactly, with nothing rounded to a word.

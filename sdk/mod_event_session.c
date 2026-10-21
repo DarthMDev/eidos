@@ -20,6 +20,14 @@
  * 0 and says so in a comment; a field that points at memory the game frees
  * later is copied into the payload, never stored as a pointer.
  *
+ * The two save rows are more than payloads: they are the port's own save
+ * window (docs/mod-state.md, section 2).  The game's save.begin opens the
+ * window, in which the port's own save state is read and its checksum
+ * taken, and the game's save.done closes it, in which the mod's own files
+ * are written with the checksum of the save the game has just written.  The
+ * window is therefore the game's own save and not the menu's apply, and a
+ * mod's own file is written only when the game saved.
+ *
  * The game's own accessors are declared under the names src/game gives
  * them, the way sdk/mod_state.c does: the port's older address spellings
  * are redirected onto the same names by the build's gamespell header
@@ -116,6 +124,20 @@ extern u32 MISC_CountBadges(struct MiscSave *miscSave)
 extern u32 POKE_TOOL_GetPartyValue(struct PokemonParam *mon, u32 paramId, u32 arg)
     BW_PORT_WEAK;                                        /* 0x02017E1C */
 
+/*
+ * The game's own save window (sdk/mod_savedata.c): the port's own save
+ * state is read when the window opens and the mod's own files are
+ * written with the checksum of the save the game has just written when
+ * it closes.  The window is the game's own save, not the menu's apply
+ * (docs/mod-state.md, section 2).
+ *
+ * Weak, so that a link without the saved-data layer still succeeds: the
+ * rows then only fill their payloads.
+ */
+extern void bw_mod_savedata_save_begin(void) BW_PORT_WEAK;
+extern int  bw_mod_savedata_save_done(int ok, u32 check) BW_PORT_WEAK;
+extern u32  bw_mod_savedata_save_check(void) BW_PORT_WEAK;
+
 /* ------------------------------------------------------------------ */
 /* The helpers                                                         */
 /* ------------------------------------------------------------------ */
@@ -196,6 +218,12 @@ static void build_game_new(const BwEventCall *call, BwEventPayload *out)
 /*
  * save.begin: the save starts.  The play time and the zone come from the
  * save control the call carries.
+ *
+ * The save window opens here: the port's own save state is read and its
+ * checksum taken, and the payload a mod hands over in its save.begin
+ * handler is held until the game's save is done, so the mod's own file
+ * and the game's save are written in the same step
+ * (docs/mod-state.md, section 2).
  */
 static void build_save_begin(const BwEventCall *call, BwEventPayload *out)
 {
@@ -204,6 +232,10 @@ static void build_save_begin(const BwEventCall *call, BwEventPayload *out)
     memset(&out->save_begin, 0, sizeof(out->save_begin));
     out->save_begin.play_seconds = play_seconds_of_save(save);
     out->save_begin.zone = save_zone(save);
+
+    if (bw_mod_savedata_save_begin != NULL) {
+        bw_mod_savedata_save_begin();
+    }
 }
 
 /*
@@ -220,6 +252,39 @@ static void build_save_done(const BwEventCall *call, BwEventPayload *out)
     out->save_done.play_seconds = play_seconds_of_save(save);
     out->save_done.zone = save_zone(save);
     out->save_done.ok = (call->ret == 2) ? 1u : 0u;
+}
+
+/*
+ * The save window closes: this is the port's own action after the
+ * handlers of the event have run, so a mod that stores its payload in its
+ * save.done handler is inside the window too.
+ *
+ * The game's answer decides what happens (docs/mod-state.md, section 2):
+ *
+ *   - 2, the write the flash accepted: the game's save is in the port's
+ *     own save state now, and the mod's own files are written with its
+ *     checksum, so a mod's file says which game save it was written
+ *     with;
+ *   - 3 and up, a failed write: the payloads the window held are dropped
+ *     and the old state files stay, so the two never drift apart;
+ *   - 0 (the early arm that only erased the outside save) and 1 (the
+ *     write is still in progress): the save goes on, and the window
+ *     stays open until the game says the save is done.
+ */
+static void apply_save_done(const BwEventPayload *in, BwEventCall *call)
+{
+    s64 ret;
+
+    (void)in;
+    if (call == NULL || bw_mod_savedata_save_done == NULL) {
+        return;
+    }
+    ret = call->ret;
+    if (ret == 2) {
+        (void)bw_mod_savedata_save_done(1, bw_mod_savedata_save_check());
+    } else if (ret >= 3) {
+        (void)bw_mod_savedata_save_done(0, 0u);
+    }
 }
 
 /*
@@ -384,7 +449,7 @@ static const BwEventBinding g_session_rows[] = {
       BW_SCOPE_ANY, 0u, 0u, build_save_begin, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x02007168u, BW_EVENT_SAVE_DONE, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_save_done, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_save_done, apply_save_done, NULL },
 
     { BW_MOD_REGION_ARM9, 0x02012C18u, BW_EVENT_SAVE_LOAD, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_save_load, NULL, NULL },

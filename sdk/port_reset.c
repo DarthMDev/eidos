@@ -27,6 +27,17 @@
  * it (sdk/pxi.h, "Synchronisation"), which on the OS layer's side is every
  * OS_RestoreInterrupts.  Both are installed here, not by either layer, so
  * the OS layer links without the PXI and the PXI without the OS layer.
+ *
+ * The restart
+ *
+ *   bw_port_restart is the reset a running game can be restarted with: the
+ *   old game stops (the OS layer's bw_os_stop_threads, which leaves the
+ *   calling thread alone), the machine goes back to power-on, and the
+ *   caller carries on and starts the game again.  The reset itself is
+ *   callable from the frame thread, the one that runs the port's own code
+ *   while it holds the run token: the game's threads are stopped before
+ *   the memory they run in is cleared, and the frame thread is left
+ *   running.
  */
 
 #include "arm7/arm7.h"
@@ -46,12 +57,25 @@
 #include "mod_state.h"
 #include "mod_text.h"
 #include "mod_timer.h"
+
+/* The saved data's own calls (sdk/mod_savedata.c has no header of its own;
+ * the prototypes live at the top of the file, the way the manifest layer's
+ * do). */
+extern void        bw_mod_savedata_reset(void);
 #include "os.h"
 #include "port.h"
 #include "pxi.h"
 
 void bw_port_reset(void)
 {
+    /* The game's threads are stopped before the memory they run in is
+     * cleared.  The reset is callable from the frame thread, which holds
+     * the run token: the other threads are blocked while it happens, but
+     * they must not be running when the memory goes.  The caller is left
+     * alone (sdk/os.h, "The OS layer's API"), so a reset from the frame
+     * leaves the frame loop's thread running. */
+    bw_os_stop_threads();
+
     /* Unjoin first, so nothing a reset runs reaches a half-reset layer.   */
     bw_os_set_cpu_step(NULL);
     bw_pxi_set_irq_sink(NULL);
@@ -71,6 +95,11 @@ void bw_port_reset(void)
     bw_mod_event_bind_all();
     bw_mod_context_reset();
     bw_mod_state_reset();
+    /* The saved data: the layer's window, the checksum of the save in force
+     * and the payloads it holds.  The window belongs to the game's own save
+     * (the save.begin and save.done rows), so a reset in the middle of a
+     * save leaves it open unless it is closed here. */
+    bw_mod_savedata_reset();
     bw_mod_message_reset();
     bw_mod_text_reset();
     bw_mod_rule_reset();
@@ -84,4 +113,25 @@ void bw_port_reset(void)
 
     bw_pxi_set_irq_sink(bw_os_raise_irq);
     bw_os_set_cpu_step(bw_arm7_step);
+}
+
+/*
+ * The port's restart: the machine back to power-on, with the calling
+ * thread left alone.
+ *
+ * The old game stops first: every game thread but the caller's is stopped
+ * and joined, so that nothing of the old run is running when the memory
+ * it runs in is cleared.  The caller (the frame thread, the one that runs
+ * the port's own code while it holds the run token) carries on, and starts
+ * the game again.
+ *
+ * bw_port_reset does the same thing, so this is the restart as the port's
+ * own seam: the game stops, the machine is reset, and the caller carries
+ * on.  The boot calls it from its frame loop, at the frame's safe point
+ * (demo/eidos_boot.c), and then starts the run again.
+ */
+void bw_port_restart(void)
+{
+    bw_os_stop_threads();     /* the old game stops; the caller survives */
+    bw_port_reset();          /* the machine's power-on */
 }

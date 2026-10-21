@@ -44,6 +44,30 @@
  *   OSi_ExitThread" from OS_KillThread) lives in a side table keyed by the
  *   OSThread pointer, never in the game's struct.
  *
+ * The restart (docs/boot.md, "Threads, interrupts and the frame")
+ *
+ *   bw_os_stop_threads stops every game thread but the caller's, and
+ *   bw_os_thread_reset (the OS layer's power-on) does the same and keeps
+ *   the caller's record.  The caller is the thread that holds the run
+ *   token, which is the thread that runs code now: for the port's restart
+ *   that is the frame thread, the one that runs the port's own code (the
+ *   frame loop) while it holds the token.  A thread running the game's own
+ *   code cannot be the caller, because the reset clears the memory the
+ *   game runs in.
+ *
+ *   The caller's host thread is neither killed nor joined, so the caller
+ *   carries on and can start the game again; the next run's idle thread is
+ *   that same host thread, so the frame loop stays where it is.  The other
+ *   threads are blocked (the token holder is the only one that runs), and
+ *   the kill flag is honoured where they block: in wait_token and in the
+ *   halt wait, so that a join does not hang.  The launcher has no host
+ *   thread of its own and cannot be killed; it is retired instead: it
+ *   never resumes, and the next run's launcher is a record of its own.
+ *
+ *   The token is handed over when a thread dies (the trampoline's end
+ *   clears it and wakes the waiters), so that a wait for a token that will
+ *   never come does not hang.
+ *
  * The context
  *
  *   OSThread.context is the game's, but its registers are the host thread's
@@ -137,6 +161,8 @@ typedef struct HostRec {
     void    (*fn)(void *);
     void     *arg;
     u32       cpsr;          /* the thread's CPSR I/F bits while out      */
+    int       kept;          /* the caller's: its host thread runs on     */
+    int       retired;       /* the thread must not resume                */
     jmp_buf   exit_to;
 } HostRec;
 
@@ -146,22 +172,65 @@ static OSThread  *g_token;
 static HostRec  **g_recs;
 static int        g_nrecs;
 static int        g_caprecs;
+static HostRec   *g_cur;     /* the record running code now (the token's) */
 
 void bw_os_lock(void)     { bw_mutex_lock(g_mx); }
 void bw_os_unlock(void)   { bw_mutex_unlock(g_mx); }
-void bw_os_wait(void)     { bw_cond_wait(g_cv, g_mx); }
 void bw_os_wake_all(void) { bw_cond_broadcast(g_cv); }
+
+/*
+ * The wait in OS_Halt (sdk/os_interrupt.c): the thread is blocked with the
+ * lock held, and the kill flag is honoured here as it is in wait_token, so
+ * that a thread destroyed while it halts leaves and its host thread can be
+ * joined.  Without it a reset that stopped a halted thread would wait for
+ * it for ever.
+ */
+void bw_os_wait(void)
+{
+    HostRec *r = g_cur;
+
+    if (r != NULL && r->kill && !r->launcher) {
+        bw_mutex_unlock(g_mx);
+        longjmp(r->exit_to, 1);
+    }
+    bw_cond_wait(g_cv, g_mx);
+}
 
 static HostRec *rec_find(const OSThread *t)
 {
     int i;
 
     for (i = 0; i < g_nrecs; i++) {
-        if (g_recs[i]->thread == t) {
+        if (!g_recs[i]->retired && g_recs[i]->thread == t) {
             return g_recs[i];
         }
     }
     return NULL;
+}
+
+/*
+ * The record of a thread whatever its state: a retired thread (the
+ * launcher of a run that was reset) is still running, and the scheduler
+ * must find its record when it switches away from it.  A live record wins:
+ * the next run's launcher is a record of its own, and the retired one is
+ * the same thread object.
+ */
+static HostRec *rec_find_any(const OSThread *t)
+{
+    HostRec *old = NULL;
+    int i;
+
+    for (i = 0; i < g_nrecs; i++) {
+        if (g_recs[i]->thread == t) {
+            if (!g_recs[i]->retired) {
+                return g_recs[i];
+            }
+            if (old == NULL) {
+                old = g_recs[i];
+            }
+        }
+    }
+    return old;
 }
 
 static HostRec *rec_get(OSThread *t)
@@ -215,11 +284,21 @@ static void wait_token(HostRec *r)
         }
         bw_cond_wait(g_cv, g_mx);
     }
+    if (r->retired) {
+        /* The thread this record belongs to was reset while it was
+         * waiting: it must not run again.  It parks for good (the reset
+         * that retired it has no other way to stop it: the launcher has no
+         * host thread of its own to unwind). */
+        for (;;) {
+            bw_cond_wait(g_cv, g_mx);
+        }
+    }
 }
 
 /* Lock not held.  The thread has the token again: put its CPU state back. */
 static void resume(HostRec *r)
 {
+    g_cur = r;               /* the thread that runs code now */
     bw_os_cpsr_set(r->cpsr);
     if (r->redirect) {
         void *arg = r->redirect_arg;
@@ -247,6 +326,14 @@ static void trampoline(void *p)
     /* Reached by longjmp, lock released: the thread is over. */
     bw_mutex_lock(g_mx);
     r->finished = 1;
+    /* The token of a thread that dies is handed over: the thread that
+     * held it is gone, and a wait for a token that will never come must
+     * not hang.  The thread that takes it over is the one the reset
+     * leaves running (bw_os_stop_threads gives it to the caller). */
+    if (g_token == r->thread) {
+        g_token = NULL;
+        bw_os_wake_all();
+    }
     bw_mutex_unlock(g_mx);
 }
 
@@ -256,7 +343,7 @@ static void trampoline(void *p)
  */
 static void host_switch(OSThread *from, OSThread *to)
 {
-    HostRec *fr = rec_find(from);
+    HostRec *fr = rec_find_any(from);
     HostRec *tr = rec_get(to);
 
     if (fr == NULL) {
@@ -666,19 +753,46 @@ void OS_CreateThread(OSThread *thread, void (*func)(void *), void *arg,
     /* A thread object can be created again once its thread is over; its
      * previous host thread (finished, or destroyed while blocked) goes. */
     r = rec_find(thread);
-    if (r != NULL && r->host != NULL) {
+    if (r != NULL && r->kept) {
+        /* The kept record's host thread is the caller of the reset: it is
+         * running, and it must not be stopped.  The thread object is
+         * created again (the game starts again), so the record is
+         * re-armed: the host thread stays, and the trampoline running on
+         * it goes on with the thread's own entry.  That is the idle
+         * thread's case (the frame thread stays the frame thread); any
+         * other entry would leave the running host thread on the old
+         * code, so the record is retired and the thread gets a record of
+         * its own. */
+        if (r->fn != func) {
+            r->retired = 1;
+            r = NULL;
+        }
+    }
+    if (r != NULL && r->host != NULL && !r->kept) {
         rec_stop(r);
     }
     r = rec_get(thread);
-    r->host = NULL;
-    r->started = 0;
-    r->kill = 0;
-    r->finished = 0;
-    r->redirect = 0;
-    r->launcher = 0;
-    r->fn = func;
-    r->arg = arg;
-    r->cpsr = 0;
+    if (r->kept) {
+        r->fn = func;
+        r->arg = arg;
+        r->kill = 0;
+        r->finished = 0;
+        r->redirect = 0;
+        r->redirect_arg = NULL;
+        r->cpsr = 0;
+        r->kept = 0;
+    } else {
+        r->host = NULL;
+        r->started = 0;
+        r->kill = 0;
+        r->finished = 0;
+        r->redirect = 0;
+        r->redirect_arg = NULL;
+        r->launcher = 0;
+        r->fn = func;
+        r->arg = arg;
+        r->cpsr = 0;
+    }
 
     (void)OS_RestoreInterrupts(e);
 }
@@ -699,7 +813,6 @@ void OS_InitThread(void)
     OSi_LauncherThread.next = NULL;
     OSi_LauncherThread.profiler = NULL;
     OSi_ThreadInfo.list = &OSi_LauncherThread;
-    OSi_ThreadInfo.current = &OSi_LauncherThread;
 
     OSi_LauncherThread.stackBottom = DS_LAUNCHER_STACK_BOTTOM;
     OSi_LauncherThread.stackTop = DS_LAUNCHER_STACK_TOP;
@@ -714,8 +827,17 @@ void OS_InitThread(void)
     r = rec_get(&OSi_LauncherThread);
     r->launcher = 1;
     r->started = 1;
+    r->kept = 0;              /* the launcher is a record of its own now */
     bw_mutex_lock(g_mx);
-    g_token = &OSi_LauncherThread;
+    if (g_token == NULL) {
+        /* The launcher takes the token, as on the DS.  After a restart the
+         * caller holds it (it is the thread that runs the port's own
+         * code), and the launcher waits for it like any other thread: the
+         * caller hands it over at the next switch. */
+        g_token = &OSi_LauncherThread;
+        OSi_ThreadInfo.current = &OSi_LauncherThread;
+        g_cur = r;
+    }
     bw_mutex_unlock(g_mx);
 
     memset(&OSi_ThreadInfo.switchCallback, 0, sizeof(OSi_ThreadInfo.switchCallback));
@@ -1040,29 +1162,146 @@ OSSwitchThreadCallback OS_SetSwitchThreadCallback(OSSwitchThreadCallback callbac
 }
 
 /* ------------------------------------------------------------------ */
-/* Reset                                                               */
+/* Reset and restart                                                   */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The caller's own record: the record of the thread that holds the run
+ * token, which is the thread that is running code now (the token holder is
+ * the only one that runs).  For the port's restart that is the frame
+ * thread: the thread that runs the port's own code (the frame loop) while
+ * it holds the token.
+ *
+ * A thread running the game's own code cannot be the caller: the reset
+ * clears the memory the game runs in.
+ */
+static HostRec *rec_caller(void)
+{
+    HostRec *r = NULL;
+
+    if (g_mx == NULL) {
+        return NULL;
+    }
+    bw_mutex_lock(g_mx);
+    if (g_token != NULL) {
+        r = rec_find(g_token);
+    }
+    bw_mutex_unlock(g_mx);
+    return r;
+}
+
+/*
+ * A thread that cannot be killed: the launcher has no host thread of its
+ * own (it is the host thread that called bw_os_reset), so there is no
+ * trampoline to unwind it with.  It is retired instead: it never resumes
+ * (wait_token parks it), and the next run's launcher is a record of its
+ * own.  The record is not freed: the retired thread is parked inside it.
+ */
+static void rec_retire(HostRec *r)
+{
+    bw_mutex_lock(g_mx);
+    r->retired = 1;
+    bw_cond_broadcast(g_cv);
+    bw_mutex_unlock(g_mx);
+}
+
+/*
+ * Stop every game thread but the caller's.
+ *
+ * The caller's record is left alone: its host thread is neither killed nor
+ * joined, so the caller carries on and can start the game again.  Every
+ * other thread is stopped: the ones with a host thread of their own are
+ * killed and joined (they are blocked, and the kill flag is honoured where
+ * they block: in wait_token and in the halt wait), and the launcher, which
+ * has no host thread of its own, is retired.
+ *
+ * The token belongs to the caller, and the caller keeps it.  A thread that
+ * dies with the token hands it over (the trampoline's end clears it and
+ * wakes the waiters), so that a wait does not hang.
+ */
+static void stop_threads(HostRec *me)
+{
+    int i;
+
+    if (g_mx == NULL) {
+        return;
+    }
+    for (i = 0; i < g_nrecs; i++) {
+        HostRec *r = g_recs[i];
+
+        if (r == me || r->retired) {
+            continue;
+        }
+        if (r->host != NULL) {
+            rec_stop(r);
+        } else if (r->launcher) {
+            /* The launcher has no host thread of its own: it is the host
+             * thread that called bw_os_reset, and there is no trampoline
+             * to unwind it with. */
+            rec_retire(r);
+        }
+    }
+    bw_mutex_lock(g_mx);
+    if (me == NULL || g_token != me->thread) {
+        /* The token of a thread that is gone goes to the caller, or is
+         * dropped: a wait for a token that will never come must not
+         * hang. */
+        g_token = (me != NULL) ? me->thread : NULL;
+    }
+    bw_os_wake_all();
+    bw_mutex_unlock(g_mx);
+}
+
+/* The OS layer's restart entry point (sdk/os.h says what it is for). */
+void bw_os_stop_threads(void)
+{
+    stop_threads(rec_caller());
+}
+
+/*
+ * The OS layer back to power-on: the thread list, the launcher and the
+ * idle thread are the ones of a fresh start, and every thread but the
+ * caller's is stopped.
+ *
+ * The caller's record stays: the caller is the frame thread, the idle
+ * thread's host thread, and the next run's idle thread is that same host
+ * thread (so the frame loop stays where it is).  The retired records stay
+ * as well: their threads are parked inside them.
+ */
 void bw_os_thread_reset(void)
 {
+    HostRec *me;
     int i;
 
     if (g_mx == NULL) {
         g_mx = bw_mutex_create();
         g_cv = bw_cond_create();
     }
-    /* Stop every host thread but the caller's, then forget them all. */
-    for (i = 0; i < g_nrecs; i++) {
-        if (!g_recs[i]->launcher) {
-            rec_stop(g_recs[i]);
+    me = rec_caller();
+    stop_threads(me);
+
+    /* Forget the threads that are gone. */
+    for (i = 0; i < g_nrecs; ) {
+        HostRec *r = g_recs[i];
+
+        if (r != me && !r->retired) {
+            free(r);
+            g_recs[i] = g_recs[g_nrecs - 1];
+            g_nrecs--;
+            continue;
         }
+        i++;
     }
-    for (i = 0; i < g_nrecs; i++) {
-        free(g_recs[i]);
+
+    /* The caller's record: its host thread is running, and the next run's
+     * idle thread is that same host thread. */
+    if (me != NULL) {
+        me->kept = 1;
+        me->kill = 0;
+        me->finished = 0;
+        me->redirect = 0;
+        me->redirect_arg = NULL;
     }
-    free(g_recs);
-    g_recs = NULL;
-    g_nrecs = g_caprecs = 0;
 
     memset(&OSi_ThreadInfo, 0, sizeof(OSi_ThreadInfo));
     memset(&OSi_LauncherThread, 0, sizeof(OSi_LauncherThread));
@@ -1072,10 +1311,19 @@ void bw_os_thread_reset(void)
     g_thread_initialized = 0;
     g_thread_id_count = 0;
     g_system_switch_cb = NULL;
+    g_cur = me;               /* the caller is the thread that runs code */
 
     bw_mutex_lock(g_mx);
-    g_token = NULL;
+    /* The token: the caller holds it and keeps it.  The caller runs the
+     * port's own code, and the game cannot run until the caller hands the
+     * token over at the next switch. */
+    g_token = (me != NULL) ? me->thread : NULL;
+    bw_os_wake_all();
     bw_mutex_unlock(g_mx);
+
+    if (me != NULL) {
+        OSi_ThreadInfo.current = me->thread;
+    }
 }
 
 /* ------------------------------------------------------------------ */

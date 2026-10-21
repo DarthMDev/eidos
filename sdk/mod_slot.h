@@ -83,6 +83,27 @@ void *bw_mod_slot_original(unsigned int region, unsigned int addr);
 int bw_mod_slot_install(unsigned int region, unsigned int addr, void *override,
                         const char *owner);
 
+/* Install `override` for (region, addr) in the row's mode (sdk/mod_manifest.h
+ * carries the two).  The registry holds a chain per pair: the new link goes
+ * in front, so the chain is the load order reversed and the last-loaded wrap
+ * runs first.  A wrap asks the registry for the next link inward with
+ * bw_mod_slot_original, so the wraps nest; a replace takes the slot for
+ * itself, the links under it do not run, and the port names them
+ * (docs/mod-overrides.md).  Returns 0, or -1 when the table is full or the
+ * pair already holds as many links as it may. */
+int bw_mod_slot_install_mode(unsigned int region, unsigned int addr,
+                             void *override, const char *owner, int mode);
+
+/* Take one hook out of (region, addr)'s chain: the one with this function,
+ * put in by this mod.  `override` NULL means the live hook, the head of the
+ * chain.  The link the pair holds after the removal is the one the slot
+ * calls, and when the chain is empty the pair holds the game's own function
+ * again.  A hook that was shadowed comes out too, so a chain never keeps a
+ * pointer into a library that is about to be unloaded.  Returns 0, or -1 when
+ * the pair holds no such hook. */
+int bw_mod_slot_remove(unsigned int region, unsigned int addr, void *override,
+                       const char *owner);
+
 /* Publish the original function for (region, addr).  The build's generated
  * code calls this at start-up (bw_boot_link_init) or when an overlay loads
  * (sdk/overlay_image.c, provider_load), so a wrap can reach the original.

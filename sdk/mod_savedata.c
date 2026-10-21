@@ -17,9 +17,9 @@
  *     payload size and rewritten in the current version, a file newer
  *     than the port's is not read and is moved aside, and a file the
  *     port cannot read is moved aside and reported;
- *   - the five calls the services table carries (sdk/mod_state.h,
- *     BwModServices): state_load, state_store, state_clear, state_info and
- *     state_dir.
+ *   - the six calls the services table carries (sdk/mod_state.h,
+ *     BwModServices): state_load, state_store, state_clear, state_info,
+ *     state_dir and state_in_step.
  *
  * The write discipline is the port's own whole-file atomic write
  * (bw_save_write_atomic, sdk/save.h): a temporary file, a sync and the
@@ -36,13 +36,32 @@
  *
  *   - the loader (sdk/mod_loader.c) tells the layer which mod is calling
  *     (bw_mod_savedata_set_namespace) and which manifest api is in force
- *     (bw_mod_savedata_set_api), and binds the five calls below into the
+ *     (bw_mod_savedata_set_api), and binds the six calls below into the
  *     mod's services table.  The namespace is set around every call the
  *     port makes into a mod, so a mod's state call always knows whose
  *     file it is about;
  *   - the port tells the layer the checksum of the game save in force
  *     (bw_mod_savedata_set_save_check) and drives the save handoff
- *     (bw_mod_savedata_save_begin and bw_mod_savedata_save_done).
+ *     (bw_mod_savedata_save_begin and bw_mod_savedata_save_done);
+ *   - the session area's rows drive the save window (sdk/
+ *     mod_event_session.c): the game's own save.begin opens it and the
+ *     game's own save.done closes it, so the window is the game's save
+ *     and not the menu's apply.
+ *
+ * The window and the save in force
+ * -------------------------------
+ *
+ * The port's own save state is the backup chip's image (sdk/arm7/fs.c),
+ * the game's save as the port holds it.  The layer reads it when the
+ * window opens and when the window closes, and takes its CRC-32: the
+ * checksum the window opens with is the checksum of the save in force
+ * while the window is open, and the one it closes with is the checksum
+ * of the save the game has just written, which is the checksum the
+ * mod's own files are written with (docs/mod-state.md, section 2, "The
+ * lifecycle").  A mod's file therefore says which game save it was
+ * written with, and state_in_step answers for the mod that calls it
+ * whether that file was written with the save in force: the answer is
+ * per mod, because every mod has a file of its own.
  *
  * The layer keeps no game state of its own: it is a file and an envelope
  * around a payload the mod owns.
@@ -65,7 +84,7 @@
 /*
  * The port's own calls.  They are not part of the mod ABI: a mod reaches
  * the state through the services table (sdk/mod_state.h), and the loader
- * binds the five calls below into it.  The other calls are the port's
+ * binds the six calls below into it.  The other calls are the port's
  * own seam: the loader and the save handoff use them.
  *
  * The prototypes are here so the file reads in one order; the header
@@ -93,15 +112,33 @@ int  bw_mod_savedata_save_done(int ok, u32 check);
  * (bw_port_reset).  The files on the disk are untouched. */
 void bw_mod_savedata_reset(void);
 
-/* The five calls the services table carries. */
+/* The six calls the services table carries. */
 s32  bw_mod_savedata_load(void *buf, u32 size);
 int  bw_mod_savedata_store(const void *buf, u32 size);
 int  bw_mod_savedata_clear(void);
 int  bw_mod_savedata_info(BwModStateHeader *out);
 int  bw_mod_savedata_dir(char *out, u32 out_size);
+int  bw_mod_savedata_in_step(void);
 
 /* The checksum the port and the layer share. */
 u32  bw_mod_savedata_crc(const void *data, u32 size);
+
+/*
+ * The port's own save state: the game's save as the port holds it, the
+ * backup chip's image (sdk/arm7/fs.c, the file pokeblack.sav).  The
+ * layer reads it to take the checksum of the save in force.
+ *
+ * Weak, so a link without the ARM7 layer still succeeds: the checksum is
+ * then the one the port told the layer, and the question cannot be
+ * answered when the port told it none (docs/mod-state.md, section 2).
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#define BW_PORT_WEAK __attribute__((weak))
+#else
+#define BW_PORT_WEAK
+#endif
+
+extern const u8 *bw_arm7_backup_image(u32 *size) BW_PORT_WEAK;
 
 /* ------------------------------------------------------------------ */
 /* The limits                                                          */
@@ -248,6 +285,56 @@ u32 bw_mod_savedata_crc(const void *data, u32 size)
         crc = g_crc_table[(crc ^ p[i]) & 0xFFu] ^ (crc >> 8);
     }
     return crc ^ 0xFFFFFFFFu;
+}
+
+/* ------------------------------------------------------------------ */
+/* The port's own save state                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The checksum of the port's own save state: the game's save as the port
+ * holds it, the backup chip's image.  The chip is the game's save
+ * (docs/mod-state.md, section 1), and the image is what the file
+ * pokeblack.sav holds, so the checksum names the save the player is
+ * playing.
+ *
+ * 0 when the state could be read, -1 when there is none: a link without
+ * the ARM7 layer, or a chip that has not been identified yet.
+ */
+static int save_state_check(u32 *out)
+{
+    const u8 *image;
+    u32 size = 0;
+
+    if (bw_arm7_backup_image == NULL) {
+        return -1;
+    }
+    image = bw_arm7_backup_image(&size);
+    if (image == NULL || size == 0) {
+        return -1;
+    }
+    *out = bw_mod_savedata_crc(image, size);
+    return 0;
+}
+
+/*
+ * The checksum of the save in force: the port's own save state read now,
+ * or the one the layer holds when the state cannot be read.
+ *
+ * The state is read when the layer has not been told which save is in
+ * force.  The port tells it when it installs a save from a peer
+ * (bw_mod_savedata_set_save_check), and the game's own save tells it
+ * when the window opens and when the window closes.
+ */
+static u32 save_check_in_force(void)
+{
+    u32 check;
+
+    if (!g_save_check_known && save_state_check(&check) == 0) {
+        g_save_check = check;
+        g_save_check_known = 1;
+    }
+    return g_save_check;
 }
 
 /* ------------------------------------------------------------------ */
@@ -734,6 +821,11 @@ void bw_mod_savedata_set_save(const char *name)
  * The checksum of the game save in force: the header's save_check.  The
  * port owns the checksum (it is a checksum of the game save written in
  * the same step); the layer only carries it and compares it.
+ *
+ * The port tells the layer when it installs a save of its own (the
+ * handoff, sdk/mod_handoff.c).  The game's own save tells it when the
+ * save window opens and when it closes, and the layer reads the port's
+ * own save state when nobody has.
  */
 void bw_mod_savedata_set_save_check(u32 check)
 {
@@ -741,10 +833,14 @@ void bw_mod_savedata_set_save_check(u32 check)
     g_save_check_known = 1;
 }
 
-/* The checksum of the game save in force. */
+/*
+ * The checksum of the game save in force.  The layer reads the port's own
+ * save state when nobody has told it which save is in force, so the
+ * answer is the save the game is playing.
+ */
 u32 bw_mod_savedata_save_check(void)
 {
-    return g_save_check;
+    return save_check_in_force();
 }
 
 /*
@@ -753,15 +849,31 @@ u32 bw_mod_savedata_save_check(void)
  * 1 when the state file's save_check is the checksum of the save in
  * force, 0 when they differ (the game save was written without the mod:
  * an older backup, or a save made while the mod was disabled), and -1
- * when the question cannot be answered (no state file, or the port has
- * not told the layer which save is in force).
+ * when the question cannot be answered (no state file, or no save in
+ * force).
+ *
+ * The answer is the mod's own: the file that is read is the one of the
+ * mod that is calling, so a mod whose file was written with another save
+ * answers 0 while another mod's file, written with the save in force,
+ * answers 1.  It is not the save.load payload's byte, which is built
+ * once for every handler of the event (docs/mod-state.md, section 2).
  */
 int bw_mod_savedata_in_step(void)
 {
     BwModStateHeader h;
+    u32 check;
 
     if (!g_save_check_known) {
-        return -1;
+        /*
+         * The port has not told the layer which save is in force: the
+         * layer reads the port's own save state, which is the save the
+         * game is playing.
+         */
+        if (save_state_check(&check) != 0) {
+            return -1;
+        }
+        g_save_check = check;
+        g_save_check_known = 1;
     }
     if (bw_mod_savedata_info(&h) != 0) {
         return -1;
@@ -776,10 +888,27 @@ int bw_mod_savedata_in_step(void)
  * layer holds the payload and does not write anything, so a game save
  * that fails leaves the old state file in place and the two never drift
  * apart (docs/mod-state.md, section 2).
+ *
+ * The window is the game's own: the session area's rows call these two
+ * (sdk/mod_event_session.c), the game's save.begin opens the window and
+ * the game's save.done closes it.
  */
 void bw_mod_savedata_save_begin(void)
 {
+    u32 check;
+
     g_save_pending = 1;
+
+    /*
+     * The port's own save state is read and its checksum taken: the
+     * checksum of the save in force while the window is open.  The game
+     * is about to write over that save, so this is the checksum of the
+     * save the mod's own file belongs to until the save is done.
+     */
+    if (save_state_check(&check) == 0) {
+        g_save_check = check;
+        g_save_check_known = 1;
+    }
 }
 
 /*
@@ -795,13 +924,35 @@ int bw_mod_savedata_save_done(int ok, u32 check)
 
     g_save_pending = 0;
     if (!ok) {
+        /*
+         * The game's save did not happen: the payloads it held are
+         * dropped and the old state files stay, so the two never drift
+         * apart.
+         */
         for (i = 0; i < g_mod_count; i++) {
             drop_staged(&g_mods[i]);
         }
         return 0;
     }
+
+    /*
+     * The game's save is in the port's own save state now, so the state
+     * is read again and its checksum taken: that is the checksum of the
+     * save in force, and the one the mod's own files are written with,
+     * so a mod's file says which game save it was written with.  A
+     * layer that cannot read the state uses the checksum the caller
+     * gave.
+     */
+    {
+        u32 now;
+
+        if (save_state_check(&now) == 0) {
+            check = now;
+        }
+    }
     g_save_check = check;
     g_save_check_known = 1;
+
     for (i = 0; i < g_mod_count; i++) {
         BwModSaveRec *rec = &g_mods[i];
 
@@ -821,6 +972,10 @@ int bw_mod_savedata_save_done(int ok, u32 check)
  * (bw_port_reset).  The files on the disk are untouched, because a mod's
  * state belongs to the save and not to the run: a reset does not rewind
  * a run the player may go on to.
+ *
+ * The checksum of the save in force is forgotten with the rest: the
+ * port's own save state is read again when it is needed, because a reset
+ * may have brought another save with it.
  */
 void bw_mod_savedata_reset(void)
 {
@@ -836,6 +991,7 @@ void bw_mod_savedata_reset(void)
     g_mod_count = 0;
     g_current = -1;
     g_save_pending = 0;
+    g_save_check_known = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -968,6 +1124,9 @@ s32 bw_mod_savedata_load(void *buf, u32 size)
  * leaves the old file in place.  While a save handoff is in progress the
  * payload is held and written when the handoff ends, so the state file
  * and the game save are written in the same step.
+ *
+ * A store made outside the window is written at once, with the checksum
+ * of the save in force (docs/mod-state.md, section 2).
  */
 int bw_mod_savedata_store(const void *buf, u32 size)
 {
@@ -992,7 +1151,7 @@ int bw_mod_savedata_store(const void *buf, u32 size)
         }
         return 0;
     }
-    return write_state(rec, buf, size, g_save_check);
+    return write_state(rec, buf, size, save_check_in_force());
 }
 
 /*

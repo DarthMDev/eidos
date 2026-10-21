@@ -214,8 +214,38 @@ extern OSThreadQueue OSi_IrqThreadQueue;   /* 0x02FE00A0 */
  * thread is stopped and joined first.  Call it after bw_ds_reset() and
  * before the game's OS_Init; bw_port_reset (sdk/port.h) is the start-up
  * that does both, then resets the PXI and joins it to this layer.
+ *
+ * The caller is the thread that holds the run token, which is the thread
+ * that runs code now: the frame thread, the one that runs the port's own
+ * code (the frame loop) while it holds the token.  It is left alone: its
+ * host thread is neither killed nor joined, so it carries on, and the next
+ * run's idle thread is that same host thread.  A thread running the game's
+ * own code cannot be the caller: the reset clears the memory the game runs
+ * in.
  */
 void bw_os_reset(void);
+
+/*
+ * The OS layer's restart entry point: stop every game thread but the
+ * caller's, and leave the caller runnable, so that the caller can carry
+ * on and start the game again.
+ *
+ * The caller's own record is recognised as the caller's whatever thread it
+ * is: it is the record of the thread that holds the run token (the frame
+ * thread, the OS layer's idle thread's host thread, is the one the port's
+ * restart uses).  Every other thread is stopped: the ones with a host
+ * thread of their own are killed and joined, and the launcher, which has
+ * none, is retired (it never resumes).
+ *
+ * The token is handed over when a thread dies, so that a wait does not
+ * hang, and the kill flag is honoured where a thread blocks (in the halt
+ * wait as well as in the scheduler's wait), so that a join does not hang
+ * either.
+ *
+ * bw_port_reset (sdk/port.h) calls it, and the port's own restart
+ * (bw_port_restart, sdk/port.h) calls it before the machine's power-on.
+ */
+void bw_os_stop_threads(void);
 
 /*
  * Latch interrupt requests (IF |= mask).  Callable from any host thread:

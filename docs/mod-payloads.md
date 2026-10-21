@@ -33,6 +33,26 @@ from.
    continues (`docs/mod-events.md`, section 2). A write to any other field has
    no effect.
 
+### What the port writes back
+
+A marked field is one the event's binding row carries an applier for. The
+applier reads the field back out of the payload and writes it into the
+game's own work, so that the change reaches the game. The rows that have one
+today are `save.done`, `map.warp`, `menu.build`, `encounter.wild`,
+`encounter.static`, `item.add`, `shop.buy`, `money.change`, `heal`,
+`mon.create`, `mon.evolve` and `mon.exp`. `save.done` is the one with no
+marked field: its applier closes the port's own save window, the step in
+which the mod's own file is written with the game's save
+(`docs/mod-state.md`, section 2).
+
+Four events carry a marked field whose row has no applier yet:
+`mon.nickname` (`force`), `battle.start` (`format` and `level_adjust`),
+`battle.damage` (`amount`) and `catch.attempt` (`rate`). Their builders fill
+the field with 0, because the call does not carry the value, and a handler's
+write to it has no effect. A mod that wants the catch rate, for instance,
+overrides the function that computes it, which is a declared row
+(`docs/mod-overrides.md`).
+
 ### The common types
 
 Every payload starts with `BwEvent` (`u32 size`, `u32 kind`). A Pokemon is a
@@ -54,7 +74,9 @@ valid only for the call.
 
 Some fields are not in scope when the event fires: the move that caused a
 faint was used a call earlier. The port keeps a small record for each such
-situation and updates it from the slots it passes.
+situation and updates it from the slots it passes. The two records are the
+port's own (`sdk/mod_context.h`), and both are cleared at power-on and at
+every reset.
 
 **The battle context.** Reset at `battle.start`; `active` cleared at
 `battle.end`.
@@ -62,8 +84,8 @@ situation and updates it from the slots it passes.
 | Field | Type | Fed by |
 |---|---|---|
 | `active` | u8 | `battle.start` |
-| `wild` | u8 | `battle.start` |
-| `format` | u8 | `battle.start` (single, double, triple, rotation, multi) |
+| `wild` | u8 | the battle's main module, at the first battle event that carries it |
+| `format` | u8 | the battle's main module, at the first battle event that carries it (single, double, triple, rotation, multi) |
 | `turn` | u16 | the battle's turn record, read at each battle event |
 | `last_move` | u16 | `battle.move` |
 | `last_attacker` | `BwMonRef` | `battle.move` and `battle.damage` |
@@ -85,7 +107,10 @@ never reads a context directly.
 
 ## 2. The payloads
 
-Each table lists the fields after the `BwEvent` header, in layout order.
+Each table lists the fields after the `BwEvent` header, in layout order. The
+rows, the builders, the appliers and the refusal functions of an area live in
+one file (`sdk/mod_event_session.c` and its siblings), and the paragraph
+after an area's tables says what its builder fills.
 
 ### Session
 
@@ -105,7 +130,7 @@ Each table lists the fields after the `BwEvent` header, in layout order.
 |---|---|---|
 | `play_seconds` | u32 | play time of the loaded save |
 | `zone` | u16 | where the save resumes |
-| `state_in_step` | u8 | the mod's saved data was written with this save (`docs/mod-state.md`) |
+| `state_in_step` | u8 | reads 0: whether the mod's own saved data was written with this save is a per-mod answer, and the payload is built once for every handler of the event, so the mod asks the services table's `state_in_step` (`docs/mod-state.md`, section 2) |
 
 **`game.cleared`**
 
@@ -114,6 +139,18 @@ Each table lists the fields after the `BwEvent` header, in layout order.
 | `play_seconds` | u32 | play time at the Hall of Fame |
 | `team_count` | u8 | Pokemon entered |
 | `team` | `BwMonRef[6]` | the team |
+
+**What the session builder fills.** The session area's rows are in
+`sdk/mod_event_session.c`. `game.new` has no fields: the event is the moment
+itself. The save events read the play time and the zone out of the save
+control the call carries, through the save's own play time and location
+blocks; `save.done`'s `ok` is the function's own answer, 1 when the write
+was accepted. The two save rows are also the port's own save window:
+`save.begin` opens it and `save.done` closes it, so a mod's own file is
+written in the same step as the game's save (`docs/mod-state.md`, section 2).
+`save.load` carries the play time and the zone of the loaded save, and it
+resets the field context. `game.cleared` names the party the player brings
+to the Hall of Fame: the party's own members, up to six.
 
 ### World
 
@@ -175,6 +212,26 @@ Each table lists the fields after the `BwEvent` header, in layout order.
 
 **`pc.open`**: no fields.
 
+**What the world builder fills.** The world area's rows are in
+`sdk/mod_event_field.c`. `route.change` carries the new zone from the call,
+the zone left from the field context and the season from the game data, and
+it resets and refills the context. `map.warp` carries the zone the warp
+starts in and the zone it leads to out of the map change's own work, and the
+arrival cell for a direct position; a warp to a rail position has no cell.
+`player.step` carries the zone from the map, the cell from the player's own
+position, the facing from the step's input and the mode from the same, and
+it feeds the position and the facing into the field context.
+`trainer.spotted` carries the trainer that sees the player, the distance to
+it and the second trainer of a pair battle; a trainer that does not see the
+player leaves the payload empty. `npc.talk` carries the zone; the object and
+the script read 0, because the model in front of the player is what the
+bound search returns and the port does not run the search a second time.
+`menu.build` carries the entries the menu shows, one bit per slot, read at
+the return of the menu's creation. `field.move` carries the move the game
+asks about; the user reads 0, because the Pokemon that uses the move is the
+one the game's own handler looks for in the party. `menu.open` and `pc.open`
+have no fields.
+
 ### Encounters
 
 **`encounter.wild`**
@@ -206,6 +263,21 @@ Each table lists the fields after the `BwEvent` header, in layout order.
 | `partner_id` | u16 | the second trainer, or 0 |
 | `format` | u8 | single, double, triple, rotation, multi |
 
+**What the encounters builder fills.** The encounter rows are in
+`sdk/mod_event_field.c` too. `encounter.wild` carries the zone from the
+call, the method from the game's own encounter type and the slot of the
+zone's table that was rolled; the species, the level and the shiny mode are
+the ones the function built, and an encounter that builds no Pokemon (a
+repel) leaves them empty. A roamer's slot reads 0, because a roamer comes
+from the save and not from a table of the zone, and its shiny and double
+flags read 0 as well. `encounter.static` carries the player's own zone, the
+species and the level of the Pokemon the setup holds, and the kind says
+whether the battle is a wild one or a battle a script started; the
+legendary kind has no feeder at this call, because the game chooses the
+species in the script that starts the battle. `encounter.trainer` carries
+the trainer and its partner from the call's own arguments and the format
+from the game's own rule.
+
 ### Pokemon
 
 **`mon.create`**
@@ -235,7 +307,7 @@ Each table lists the fields after the `BwEvent` header, in layout order.
 | Field | Type | Meaning |
 |---|---|---|
 | `mon` | `BwMonRef` | the Pokemon |
-| `force` | u8, *mod* | 1 opens the prompt even when the game would skip it |
+| `force` | u8, *mod* | 1 opens the prompt even when the game would skip it (reads 0 today) |
 
 **`mon.evolve`**
 
@@ -317,6 +389,32 @@ Each table lists the fields after the `BwEvent` header, in layout order.
 | `given` | `BwMonRef` | the player's Pokemon |
 | `received_species` | u16 | the species offered |
 
+**What the Pokemon builder fills.** The Pokemon area's rows are in
+`sdk/mod_event_mon.c`. `mon.create` carries the species and the level the
+caller asks for and the personality value it passes; the row that rolls the
+personality reads 0 for it, because the game rolls it inside that call, and
+the nature reads 0xFF, the sentinel "leave the roll", because the nature is
+rolled inside the creation call as well. `mon.receive` names the Pokemon
+that was received, where it came from and whether it went to a box because
+the party was full; a Pokemon that went into a box has no slot, because the
+free slot inside that box is not named by the call, and a Pokemon given
+while the party was full has no record left to read, so its shiny flag reads
+0 and the species and the level come from the script's own creation request.
+An in-game trade's species reads 0, because the trade record is the
+overlay's own data. `mon.nickname`'s Pokemon reads 0 and its force flag
+reads 0: the prompt's own work holds the Pokemon, and the game decides to
+ask before it gets to the prompt. `mon.evolve` names the Pokemon and the
+species it comes from, and the species it evolves into is the check's own
+result. `mon.exp` names the first member of the party that gains
+experience, with the experience and the level read out of the party record
+through the state calls; the day care's payload has no party position,
+because the call carries the Pokemon and not the party. `move.learn`
+carries the move and its source, and the move slot is the first of the
+Pokemon's four that is empty, or 0xFF when it holds four moves already; the
+replaced move reads 0, because the game asks for that later, in the screen
+that owns the choice. `mon.helditem` carries the item given and the item it
+held, but the party position reads 0: the party is not carried by the call.
+
 ### Battle
 
 **`battle.start`**
@@ -324,10 +422,10 @@ Each table lists the fields after the `BwEvent` header, in layout order.
 | Field | Type | Meaning |
 |---|---|---|
 | `wild` | u8 | a wild battle |
-| `format` | u8, *mod* | single, double, triple, rotation, multi |
-| `trainer_id` | `u16[2]` | the opposing trainers, or 0 |
-| `level_adjust` | s8, *mod* | added to every opposing Pokemon's level |
-| `opponent_party` | u32 | a handle to the opposing party; a handler edits it through the state calls |
+| `format` | u8, *mod* | single, double, triple, rotation, multi (reads 0 today) |
+| `trainer_id` | `u16[2]` | the opposing trainers, or 0 (reads 0 today) |
+| `level_adjust` | s8, *mod* | added to every opposing Pokemon's level (reads 0 today) |
+| `opponent_party` | u32 | a handle to the opposing party; a handler edits it through the state calls (reads 0 today) |
 
 **`battle.action`**
 
@@ -373,7 +471,7 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 | `attacker` | `BwMonRef` | the attacker |
 | `target` | `BwMonRef` | the target |
 | `move` | u16 | the move |
-| `amount` | u32, *mod* | the damage |
+| `amount` | u32, *mod* | the damage (reads 0 today) |
 | `target_hp` | u16 | the target's HP before the hit |
 | `target_max_hp` | u16 | the target's maximum HP |
 | `critical` | u8 | a critical hit |
@@ -408,7 +506,7 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 | `level` | u8 | its level |
 | `shiny` | u8 | shiny |
 | `ball` | u16 | the ball item |
-| `rate` | u8, *mod* | the catch rate the roll uses |
+| `rate` | u8, *mod* | the catch rate the roll uses (reads 0 today) |
 
 **`catch.result`**
 
@@ -435,6 +533,30 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 |---|---|---|
 | `in_battle` | u8 | 1 the battle half, 0 the field half |
 | `money_lost` | u32 | the money the game takes |
+
+**What the battle builder fills.** The battle area's rows are in
+`sdk/mod_event_battle.c`. `battle.start` carries nothing: the setup the game
+will build does not exist yet, so the wild flag, the format, the trainer ids
+and the handle of the opposing party read 0, and the port reads them from
+the battle's main module at the first battle event instead. `battle.action`
+carries the action, the side and, for a fight, the move the game checks; the
+Pokemon reads 0 for a switch, because the choice list holds the party
+positions and nothing else, and the party position the player picked is the
+function's own result, 6 being the game's "backed out". `battle.switch`'s
+forced flag is set when the Pokemon that leaves has fainted; a move that
+forces the switch runs the same function and cannot be told from the call.
+`battle.move`'s target reads 0, because the move record holds no target: the
+server picks the target set itself. `battle.damage` carries the attacker,
+the target, the move, the critical flag and the type matchup, and the
+target's HP before the hit, because the hit has not landed yet; the amount
+reads 0, because the game computes it inside the function. `catch.attempt`
+carries the ball, the target and its species, level and shiny flag; the
+catch rate reads 0, because the game computes the rate itself when it rolls
+the catch. `catch.result`'s caught flag and shakes read 0: the game keeps
+both in the locals of the roll. `battle.faint`'s cause comes from the battle
+context, so a faint from the weather, a hazard or a status has no cause.
+`whiteout`'s money lost reads 0: the game computes the penalty inside the
+step, at the state that shows the amount.
 
 ### Items, money and healing
 
@@ -474,6 +596,21 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 | `source` | u8 | Pokemon Centre or script, the HP-restore power |
 | `mask` | u8, *mod* | one bit per party position to heal |
 
+**What the items builder fills.** The items area's rows are in
+`sdk/mod_event_items.c`. `item.add` carries the item and the count from the
+call and the pocket the game puts the item in, read out of the item's own
+data. `item.use` carries the item and the Pokemon the check is made for; the
+target's position in the party reads 0, because the call carries the party
+record but not the party. `shop.buy` carries the item and the price out of
+the shop's own fields, so a changed price is the one the shop shows and
+charges. `money.change` carries the change and the money before, read out of
+the misc save block; the row that adds the money applies only a positive
+change and the row that takes it away only a negative one, so a change of
+the other sign is applied as 0 and the money stays as it was. `heal` names
+the party positions the heal covers and says where the heal came from: a
+script for a Pokemon Centre, because the nurse runs the same script command,
+and the power for the HP-restore power.
+
 ### Progress
 
 **`badge.get`**
@@ -497,16 +634,28 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 | `species` | u16 | the species |
 | `caught` | u8 | 1 caught, 0 seen |
 
+**What the progress builder fills.** The progress rows are in
+`sdk/mod_event_session.c`, beside the session ones. `badge.get` carries the
+badge the call names and the number of badges held once it is set, counted
+out of the misc save block. `flag.set` carries the flag id the call names
+and the value 1, because the bound function is the setting one: the game
+clears a flag with another function, which is not a declared row. `dex.register`
+carries the species read out of the Pokemon the call hands over, and whether
+it was caught or only seen.
+
 ## Still to build
 
-1. **The source of each field.** For each field, the argument, accessor or
-   context it is read from, confirmed against the bound game function when its
-   builder is written (`progress/PAYLOAD_SURVEY.md` holds most of them). The
-   session and items areas' builders are written (`sdk/mod_event_session.c`,
-   `sdk/mod_event_items.c`); the pokemon, field and battle areas' are not.
-2. **The builders for the rest of the events.** The pokemon, field and battle
-   areas have no binding rows yet, and so no builder, applier or refusal
-   function (`docs/mod-implementation.md`, section 6, step 4).
+1. **The appliers the four rows without one need.** `mon.nickname`'s
+   `force`, `battle.start`'s `format` and `level_adjust`, `battle.damage`'s
+   `amount` and `catch.attempt`'s `rate` are marked, but the rows that carry
+   them have no applier, so a write to them has no effect (section 0, "What
+   the port writes back").
+2. **The fields the call does not carry.** The builders fill what the bound
+   call and the game's own accessors give them; the fields they leave at 0
+   are listed with the reason in `docs/mod-events.md`, section 1, "What the
+   builders fill, and what they cannot". Filling one of them needs a hook
+   the port does not have yet, and that hook is what is left to build
+   (`progress/PAYLOAD_SURVEY.md` holds the survey behind them).
 
 ## Related documents
 

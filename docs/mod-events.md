@@ -444,12 +444,11 @@ order they were added in (`sdk/vfs.h`, "The mod list").
 - **Modifications chain.** Each handler sees the payload as the handlers
   before it left it. The last write to a field wins.
 - **Any refusal refuses.** If one handler refuses, the action is refused.
-- **Raw hooks are exclusive.** The registry keeps one hook per
-  `(region, address)`, so two mods that both install one leave the later
-  mod's hook in place, and the port reports the earlier one as shadowed,
-  naming both (`docs/mod-overrides.md`). The registry does not chain hooks
-  yet, so a `wrap` reaches the game's own function through the slot's
-  original and two wraps on one key do not nest.
+- **Raw hooks chain.** The registry holds a chain per `(region, address)`. A
+  `wrap` goes in front of the chain, so the last-loaded wrap runs first and
+  each wrap's original is the hook that was loaded before it; two wraps on
+  one function nest. A `replace` takes the slot for itself: the links under
+  it do not run, and the port names them (`docs/mod-overrides.md`).
 
 ## 4. The state API
 

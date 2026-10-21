@@ -114,12 +114,11 @@ order they were added in.
 - **Modifications chain.** Each handler sees the payload as the handlers
   before it left it. The last write to a field wins.
 - **Any refusal refuses.** If one handler refuses, the action is refused.
-- **Raw hooks are exclusive.** The registry keeps one hook per
-  `(region, address)`, so two mods that both install one leave the later
-  mod's hook in place, and the port reports the earlier one as shadowed,
-  naming both. The registry does not chain hooks yet, so a `wrap` reaches the
-  game's own function through the slot's original and two wraps on one key do
-  not nest (`docs/mod-overrides.md`).
+- **Raw hooks chain.** The registry holds a chain per `(region, address)`. A
+  `wrap` goes in front of the chain, so the last-loaded wrap runs first and
+  each wrap's original is the hook that was loaded before it; two wraps on
+  one function nest. A `replace` takes the slot for itself: the links under
+  it do not run, and the port names them (`docs/mod-overrides.md`).
 
 ## 4. Port services
 
@@ -139,9 +138,9 @@ Some things a mod needs are not game functions. The port provides them
   disable and order mods.
 
 Most of them are built. The run-status panel and the input injection are not:
-those two calls are `NULL` in the services table, and a mod that calls one gets
-nothing rather than a crash. The mod settings are declared and parsed but not
-handed to the mod, because the loader does not bind the call. The mod menu's
+those two calls are `NULL` in the services table, so a mod has to check the
+pointer before it calls one. The mod settings are bound: the loader gives
+the mod the call and the mod's own choices come back. The mod menu's
 model is in `sdk/mod_menu.c`; the screen that draws it does not exist yet.
 
 ## 5. The game modes
@@ -238,9 +237,9 @@ trainer parties, base stats and moves are replaced through the data layer.
    disabling, ordering the mods and clearing a mod's saved data. The model
    behind it is `sdk/mod_menu.c`.
 2. **The run-status panel and the input injection**: the two services whose
-   calls are still `NULL` in the services table. The mod settings are
-   declared and parsed by the menu's model, but the loader does not bind the
-   call, so a mod cannot read them yet.
+   calls are still `NULL` in the services table. The mod settings are bound
+   and the mod's own choices come back, but the screen that lists them does
+   not exist yet.
 3. **The relay server**: the protocol is fixed (`docs/mod-services.md`,
    "Peer sessions"), but the server that answers it is not part of the port.
 4. **The move-learning screens:** the TM, tutor and relearner paths of

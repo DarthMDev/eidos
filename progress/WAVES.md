@@ -27,3 +27,4 @@ Waves 3 and 4 have no row. The log has no record for either.
 | 19 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the script command's operands and the per-mod answer in the mod's surface, and the peer sessions and the external control |
 | 20 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the frame tick, the field avatars, the run restart and the save handoff, and the rule layer's peer send |
 | 21 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the boot's restart and the handoff's reload, the mod menu's model, and the mod layer's documentation |
+| 22 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the restart entry point, the save window from the game's own events, the wrap chain, and the last four documents |

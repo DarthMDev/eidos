@@ -19,14 +19,19 @@ break on the next rename with no warning; one keyed on an address does not.
 The region is part of the key because two overlays can share one RAM window:
 0x021C5200 is a battle function in ov093 and a Pokedex function in ov208.
 
+The address may be written either way: the even function start the declared
+set holds, or the Thumb-tagged value a code pointer carries. The manifest
+masks the low bit before the check, so the two spell the same function.
+
 ## How a hook is installed
 
 The mod's manifest declares each raw hook with an `override` line
 (`docs/mod-interface.md`, section 3): the key, the mode, the symbol the mod's
 library exports, an optional prototype and an optional switch name. At load the
-port checks that the key is in the declared set, checks the prototype when one
-is given, resolves the symbol in the library and calls `bw_mod_slot_install`
-(`sdk/mod_slot.h`). From then on the function's slot calls the mod's function.
+port checks that the key is in the declared set, resolves the symbol in the
+library and installs the hook with the row's mode
+(`bw_mod_slot_install_mode`, `sdk/mod_slot.c`). From then on the function's
+slot calls the mod's function.
 
 **Why at run time.** A player installs a mod without rebuilding the port, so a
 hook cannot win by being linked in. The slot is the indirection the build puts
@@ -34,33 +39,56 @@ at each declared call site for this purpose.
 
 **Modes.**
 
-- `replace`: the mod's function runs instead of the game's.
+- `replace`: the mod's function runs instead of the game's. It takes the slot
+  for itself: the hooks under it do not run.
 - `wrap`: the mod's function runs instead of the game's and calls the next
   function in the chain itself, through `bw_mod_slot_original`. It can act
   before and after, change the arguments, or change the result.
 
-**Prototype check.** When the manifest states a prototype, the port normalises
-it the way the cross-overlay trampolines do (`tools/ovlink.py`, `signature`)
-and refuses the hook when it differs from the slot's. A hook without a stated
-prototype is trusted.
+The two modes install the same way: the registry holds a chain of hooks for
+one `(region, address)` pair, and every install puts the new hook in front of
+the chain, so the chain is the load order reversed. A wrap nests in that
+chain; a replace takes the slot for itself, and the links under it are
+reported as shadowed.
 
-**Switch.** Every slot asks `bw_hook_enabled` (`sdk/mod_hooks.h`) with the
-hook's switch name, which defaults to the function's name. Turning it off
-sends the slot back to the game's function, which isolates one mod's hook while
-debugging.
+**The prototype is kept, not checked.** The manifest's `sig=` states the
+prototype the mod expects, and the record keeps it (`sdk/mod_manifest.h`,
+`BwModOverride.sig`). The port does not compare it with the slot's prototype
+yet, so a hook whose prototype does not match the function's is trusted as
+much as one that states no prototype at all, and is installed as it stands.
+
+**The switch.** Every slot asks `bw_hook_enabled` (`sdk/mod_hooks.h`) with the
+declared row's function name, and that is the switch that answers. Turning it
+off sends the slot back to the game's function, which isolates one mod's hook
+while debugging. The manifest's `switch=` option is read and kept in the
+record, but the slot does not ask it yet, so a stated switch name has no
+effect.
 
 ## Several mods on one function
 
 Mods load in ascending manifest `order`.
 
 - **Replaces are exclusive.** When two mods replace one function, the later mod
-  wins and the port reports the earlier one as shadowed, naming the key and
-  both mods. The port does not try to combine two replacements, because it
-  cannot know which one the player meant.
+  wins: the replace takes the slot for itself, the links under it do not run,
+  and the port reports them as shadowed, naming the key and both mods. The
+  port does not try to combine two replacements, because it cannot know which
+  one the player meant.
 - **Wraps chain.** Wraps on one function nest in load order: the last-loaded
   wrap runs first, and each wrap's "original" is the next one inward, down to
-  the game's function (or a replacement, when one is installed). A mod that
-  needs to sit on top of another wraps rather than replaces.
+  the game's own function. A mod that needs to sit on top of another wraps
+  rather than replaces. A wrap under a replacement does not run while the
+  replacement holds the slot, and runs again once the replacement is taken
+  out.
+
+The chain of one pair holds at most eight hooks; a pair that reaches the cap
+refuses the install and says so. The way down is the mirror of the way up:
+the port takes the mod's own hook out of the chain, so the hooks of the other
+mods stay where they are.
+
+**One question, one answer.** The chain is walked from the head on every
+call, and `bw_mod_slot_original` does not say which link is asking, so a wrap
+that asks twice in one call reaches the second link inward the second time. A
+wrap that asks once per call is exact.
 
 Stable events are separate from raw hooks: an event's handlers all run
 (`docs/mod-events.md`, section 3), and an event still fires when a raw hook is
@@ -74,6 +102,11 @@ states the port version it was built against (the manifest's `port` key), and
 the port refuses to load it on another version. The stable tier has no such
 pin (`docs/mod-abi.md`, section 4).
 
+The port's own version is a build setting, `-DBW_MOD_PORT_VERSION`, and
+`0.0.0-dev` when the build does not set one. The pin is checked for a mod that
+has raw hooks and states one: a mod that states no pin is loaded, and a port
+that does not know its own version reports the pin and does not check it.
+
 ## What the port checks
 
 - **No mod, no change.** With nothing installed every slot calls the game's
@@ -82,9 +115,12 @@ pin (`docs/mod-abi.md`, section 4).
 - **The registry answers by key.** A hook installed for one `(region, address)`
   is returned for that key only, including for the same address in another
   overlay.
-- **A wrong prototype is refused.**
-- **A wrap reaches the original.** A wrap's call through
-  `bw_mod_slot_original` runs the next function in the chain.
+- **The declared set answers too.** A hook for a pair that is not in
+  `mod/declared_set.txt` is reported and skipped, and the mod still loads
+  (`docs/mod-state.md`, section 4).
+- **A wrap reaches the next link.** A wrap's call through
+  `bw_mod_slot_original` runs the next hook inward, down to the game's own
+  function.
 - **Shadowing is reported** with both mods named.
 
 ## Limits
@@ -93,14 +129,19 @@ pin (`docs/mod-abi.md`, section 4).
   so a hook misses those calls (`docs/mod-interface.md`, section 2).
 - **Code pointers into the ARM9 static module** do not consult the registry
   yet; code pointers into overlays do (`docs/mod-interface.md`, section 2).
+- **A prototype is not compared** with the function's, and a stated switch
+  name is not asked.
 
 ## Still to build
 
-1. **Wrap chaining in the registry.** `sdk/mod_slot.c` keeps one hook per key;
-   it needs an ordered chain so `bw_mod_slot_original` returns the next wrap
-   inward.
-2. **ARM9 code-pointer coverage**, as `docs/mod-interface.md`, "Still to
-   build", item 2.
+1. **The prototype check.** The manifest's `sig=` is kept in the record, but
+   the loader does not compare it with the slot's prototype, so a hook with a
+   wrong prototype is installed as it stands.
+2. **The switch name.** The manifest's `switch=` is kept in the record, but
+   the generated slot asks `bw_hook_enabled` with the row's function name, so a
+   stated switch name has no effect.
+3. **ARM9 code-pointer coverage**, as `docs/mod-interface.md`, "Still to
+   build", item 3.
 
 ## Related documents
 

@@ -71,28 +71,47 @@ definition's own prototype:
     int bw_slot_arm9_02007150(int a0)
     {
         void *h = bw_mod_slot_lookup(BW_MOD_REGION_ARM9, 0x02007150u);
+        int r;
+
+        bw_mod_event_push(BW_MOD_REGION_ARM9, 0x02007150u);
         if (h != NULL && bw_hook_enabled("SAVE_CONTROL_StartSave")) {
-            return ((int (*)(int))h)(a0);
+            r = ((int (*)(int))h)(a0);
+        } else {
+            r = SAVE_CONTROL_StartSave(a0);
         }
-        return SAVE_CONTROL_StartSave(a0);
+        bw_mod_event_pop();
+        return r;
     }
+
+Every slot pushes its own `(region, address)` on the scope stack and pops it
+on return, so a binding that means something only inside or outside another
+function can tell (`docs/mod-implementation.md`, section 1). A row that
+carries a stable event gets the event's enter and leave around the call as
+well.
 
 With nothing installed, or with the hook switched off, the slot calls the
 original. A prototype the generator cannot normalise is refused at generation
 with the address and the name.
 
 **The registry.** `sdk/mod_slot.h` and `sdk/mod_slot.c` hold one entry per
-installed hook: the region, the address, the installed function, the original
-and the owning mod. `bw_mod_slot_install` installs a hook; a later install of
-one pair wins and the earlier is reported as shadowed. `bw_mod_slot_original`
-returns the original, which the build publishes at start-up for `arm9`
+declared pair: the region, the address, the original and the chain of hooks
+installed for it. `bw_mod_slot_install_mode` puts a hook in front of the
+chain, with the mode the manifest gave it: a wrap nests in the chain and a
+replace takes the slot for itself, and the links under a replace are reported
+as shadowed. `bw_mod_slot_original` returns the next link inward for the
+wrap that is running, and the original when the chain has no link left; the
+original is the one the build publishes at start-up for `arm9`
 (`bw_boot_link_init`) and when an overlay loads (`sdk/overlay_image.c`,
-`provider_load`). A `wrap` calls it.
+`provider_load`). The way down is `bw_mod_slot_remove`, which takes one mod's
+own hook out of the chain and leaves the hooks of the other mods where they
+are.
 
 **The switch.** The slot asks `bw_hook_enabled` (`sdk/mod_hooks.h`) with the
 row's function name, the same switch the port's compiled hooks use
 (`docs/hooks.md`). `EIDOS_HOOKS_OFF` or `bw_hook_set` turns a slot back to the
-original, which isolates one mod while debugging.
+original, which isolates one mod while debugging. The switch a slot answers
+is the row's own name; the manifest's `switch=` option is read and kept but
+does not change it (section 3).
 
 **Code pointers.** A function the game reaches through a pointer stored in
 data does not pass a call site. For overlay windows `bw_ovl_code_entry`
@@ -135,11 +154,19 @@ later versions can add keys (`sdk/vfs.c`, `read_manifest`).
 | `rule` | a grammar line, repeatable | none | one rule bound to one event |
 | `settings` | relative path | none | the mod's settings declaration (`docs/mod-services.md`) |
 
-`name` and `order` are read today; the other keys come with the code loader.
-An `order` that is empty, not a number or out of range is reported and the
-default stands.
+`name` and `order` are read by the data layer, which builds the mod list and
+the load order (`sdk/vfs.c`, `read_manifest`); the whole schema above is read
+again by the manifest layer, which fills one record per mod and applies it
+(`sdk/mod_manifest.c`, `docs/mod-state.md`, section 3). An `order` that is
+empty, not a number or out of range is reported and the default stands, and
+the same is true of every other key the port cannot use: the line is ignored
+and the default stands. A mod with code and no `api` is refused: the number
+cannot be forgotten (`docs/mod-abi.md`, section 3). The `port` pin is only
+checked for a mod that has raw hooks, because it is the raw tier that is
+pinned to a port version (`docs/mod-overrides.md`).
 
 A mod binds its event handlers in its own code, at start-up, through the
+registration call, and its script command handlers through the script
 registration call (`docs/mod-abi.md`, section 1). The manifest does not list
 them.
 
@@ -151,13 +178,17 @@ The `override` grammar:
 
 - `<region>:<address>` is the key of section 1, for example `ov093:0x021CBA40`.
   A bare address is refused.
-- `<mode>` is `replace` or `wrap`. A `wrap` calls the original through
-  `bw_mod_slot_original`.
+- `<mode>` is `replace` or `wrap`. A `wrap` calls the next link of the
+  chain through `bw_mod_slot_original`; a `replace` takes the slot for
+  itself (`docs/mod-overrides.md`).
 - `<symbol>` is the C symbol the mod's library exports for the hook.
-- `sig=` states the prototype the mod expects. When present, the port checks
-  it against the slot's prototype and refuses a mismatch.
-- `switch=` names the key `bw_hook_enabled` answers. It defaults to the row's
-  function name.
+- `sig=` states the prototype the mod expects. The record keeps it
+  (`sdk/mod_manifest.h`, `BwModOverride.sig`), but the port does not compare
+  it with the slot's prototype yet, so a stated prototype is read and kept
+  but not enforced.
+- `switch=` names the key `bw_hook_enabled` answers. The record keeps it,
+  but the switch a slot asks is the row's own function name, so a stated
+  switch name is read and kept but does not change the switch yet.
 
 The `rule` grammar is `<event> <path>`: a stable event name and a rule file in
 the mod (`docs/mod-rules-language.md`).
@@ -168,7 +199,7 @@ An example:
 # Nuzlocke Soul Link
 name  = Nuzlocke Soul Link
 order = 20
-api   = 1
+api   = 3
 code  = nuzlocke_soullink.dll
 state = nuzlocke-soullink
 
@@ -199,8 +230,8 @@ both run in the same address space.
 
 The port promises only:
 
-- a deterministic load order, a later-wins rule for raw hooks, and a visible
-  conflict report;
+- a deterministic load order, a replace that takes the slot over the hooks
+  under it, and a visible conflict report;
 - the `bw_hook_enabled` switch over every slot;
 - that a build with no mods behaves exactly as a build without the mod
   machinery, because the matched files are never edited and every slot calls
@@ -213,12 +244,15 @@ code and needs no such trust.
 
 ## Still to build
 
-1. **The code loader.** Load the `code` library at start-up, call its entry
-   point, check `api`, and read the `override` lines (`docs/mod-abi.md`).
-2. **ARM9 code-pointer coverage.** Make the ARM9 data relocation consult the
+1. **The prototype check.** The manifest's `sig=` is parsed and kept in the
+   record, but nothing compares it with the slot's prototype, so a hook whose
+   prototype does not match the function's is installed as it stands
+   (`docs/mod-overrides.md`).
+2. **The switch name.** The manifest's `switch=` is parsed and kept, but the
+   generated slot asks `bw_hook_enabled` with the row's function name, so a
+   stated switch name has no effect yet.
+3. **ARM9 code-pointer coverage.** Make the ARM9 data relocation consult the
    registry, as `bw_ovl_code_entry` does for overlays (`docs/armdata.md`).
-3. **The script command hooks.** One hook on each script VM dispatch, keyed by
-   opcode (`docs/mod-events.md`, section 5).
 
 ## Related documents
 

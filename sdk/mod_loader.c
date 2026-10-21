@@ -100,10 +100,14 @@
  * returned its state pointer, so the loader holds the bindings until the
  * state is known and registers them then, in the order the mod bound them.
  *
- * The slot registry (sdk/mod_slot.c) keeps one hook per (region, address)
- * pair.  The loader installs with bw_mod_slot_install and reverts with the
- * same call and a NULL override, which leaves the pair with the original
- * the build published.
+ * The slot registry (sdk/mod_slot.c) holds a chain of hooks per (region,
+ * address) pair.  The loader installs with bw_mod_slot_install_mode, which
+ * carries the row's mode: a wrap nests in front of the hooks that are
+ * already there, and a replace takes the slot for itself.  The way down is
+ * bw_mod_slot_remove: the mod takes its own hook out of the chain, and the
+ * hooks of the other mods stay where they are, so a wrap that was under
+ * this one runs again (docs/mod-overrides.md, "Several mods on one
+ * function").
  */
 #include "mod_api.h"
 #include "mod_avatar.h"
@@ -158,6 +162,21 @@ extern const char *bw_mod_manifest_code(const void *manifest);
 extern const char *bw_mod_manifest_state(const void *manifest);
 extern int         bw_mod_manifest_has_api(const void *manifest);
 extern void        bw_mod_manifest_applied_clear(void);
+
+/*
+ * The slot registry (sdk/mod_slot.c).  The header (sdk/mod_slot.h) carries
+ * the install without a mode, and the chain needs the mode and a way to take
+ * one link out again, so the two calls are declared here the way the
+ * manifest layer's calls are.
+ *
+ * The mode is the row's own (sdk/mod_manifest.h): BW_MOD_OVERRIDE_REPLACE or
+ * BW_MOD_OVERRIDE_WRAP.
+ */
+extern int         bw_mod_slot_install_mode(unsigned int region,
+                                            unsigned int addr, void *override,
+                                            const char *owner, int mode);
+extern int         bw_mod_slot_remove(unsigned int region, unsigned int addr,
+                                      void *override, const char *owner);
 
 /*
  * The saved data (sdk/mod_savedata.c).  The five calls are the ones the
@@ -652,10 +671,18 @@ static int loader_run(int slot, void *state, BwEvent *event)
 
 /*
  * Install the manifest's override lines.  The symbol is resolved in the
- * loaded library, and the pair goes into the registry under the mod's
- * name, so a later mod's pair on the same address is reported as
- * shadowing this one (docs/mod-overrides.md, "Several mods on one
- * function").
+ * loaded library, and the hook goes into the registry under the mod's name
+ * and with the row's mode, so a later mod's hook on the same address is
+ * reported as shadowing this one (docs/mod-overrides.md, "Several mods on
+ * one function").
+ *
+ * The mode is what the two modes mean (docs/mod-overrides.md, "Modes"): a
+ * wrap nests in front of the hooks that are already there, so two wraps on
+ * one function run one after the other, and a replace takes the slot for
+ * itself, so the hooks under it do not run.  The hooks are installed in
+ * load order, and the registry puts each new hook in front, so the
+ * last-loaded wrap runs first and each wrap's original is the hook that was
+ * loaded before it.
  *
  * The apply has already left in the record only the pairs whose address
  * is declared; the ones that are not were reported there and skipped
@@ -685,7 +712,8 @@ static void loader_install_overrides(BwModLoaderMod *m)
             fprintf(stderr, "eidos: mod %s: too many overrides\n", m->name);
             break;
         }
-        if (bw_mod_slot_install(o->region, o->addr, fn, m->name) != 0) {
+        if (bw_mod_slot_install_mode(o->region, o->addr, fn, m->name,
+                                     o->mode) != 0) {
             fprintf(stderr,
                     "eidos: mod %s: the override %u:0x%08X could not be "
                     "installed\n", m->name, o->region, o->addr);
@@ -979,21 +1007,19 @@ static void loader_stop(BwModLoaderMod *m)
     u32 i;
 
     /* 1. the slots the mod installed go back to their originals.  The
-     *    registry keeps one hook per pair, so a NULL override is the way
-     *    back to the original the build published.  A pair a later mod
-     *    has taken over is left alone: that hook is the live one, and
-     *    the earlier mod's shadowed report already named both.  The
-     *    pairs are reverted in the reverse order they were installed, so
-     *    a mod that shadowed an earlier one gives the pair back before
-     *    the earlier one does. */
+     *    registry holds a chain of hooks for one pair, so the mod takes
+     *    its own hook out of the chain: the hooks of the other mods stay
+     *    where they are, and a wrap that was under this one runs again
+     *    (docs/mod-overrides.md, "Several mods on one function").  The
+     *    hook goes out even when a later mod has taken the slot over,
+     *    because the library is unloaded below and a hook left behind
+     *    would point into it.  The pairs are reverted in the reverse order
+     *    they were installed, so a mod that shadowed an earlier one gives
+     *    the pair back before the earlier one does. */
     for (i = m->override_count; i > 0; i--) {
-        if (bw_mod_slot_lookup(m->overrides[i - 1].region,
-                               m->overrides[i - 1].addr) !=
-            m->overrides[i - 1].fn) {
-            continue;
-        }
-        bw_mod_slot_install(m->overrides[i - 1].region,
-                            m->overrides[i - 1].addr, NULL, m->name);
+        bw_mod_slot_remove(m->overrides[i - 1].region,
+                           m->overrides[i - 1].addr,
+                           m->overrides[i - 1].fn, m->name);
     }
     m->override_count = 0;
 
