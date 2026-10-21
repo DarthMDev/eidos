@@ -195,6 +195,154 @@ Notes from the callers:
 | `flag.set` | `ZONEDATA_SetEventFlag` 0x02014314 | arm9 | - | - |
 | `dex.register` | `ZUKAN_SAVE_RegisterSeen` 0x0200CFA0; `ZUKAN_SAVE_RegisterCaught` 0x0200CDE0 | arm9 | - | - |
 
+### What the builders fill, and what they cannot
+
+A builder fills the payload from what the bound call carries, plus the game's
+own accessors the port can reach at that point. A field the call does not
+carry and the port cannot read at that point reads 0. That is not a gap in
+the port: the game's own data is not in scope at that call, and the port
+reads what is there rather than inventing it. The builders live in one file
+per area (`sdk/mod_event_session.c`, `sdk/mod_event_field.c`,
+`sdk/mod_event_mon.c`, `sdk/mod_event_items.c`, `sdk/mod_event_battle.c`).
+
+**The session area.**
+
+- `game.new` and `menu.open` have no fields at all: the event is the moment
+  itself.
+- `save.load`'s `state_in_step` reads 0. Whether the mod's own saved data was
+  written with this save is a per-mod answer, and the payload is built once
+  for every handler of the event, so the byte cannot carry it. The mod asks
+  the services table instead (`docs/mod-services.md`, "The mod's own saved
+  data").
+
+**The world area.**
+
+- `npc.talk`'s object and script read 0. The model in front of the player is
+  what the bound search returns, and the port does not run the search a second
+  time to name it; the script the talk runs is the event id of that model,
+  which the game reads when the search has answered.
+- `field.move`'s user reads 0. The Pokemon that uses the move is the one the
+  game's own handler for that move looks for in the party, and the port names
+  neither the move the index stands for nor the member that has it.
+- `map.warp`'s arrival cell reads 0 for a warp to a rail position: the game
+  names the rail cell of the destination in its own way. The event fires once
+  per step of the map change, and the destination a handler changes is the one
+  the game applies at the step that moves the player.
+- `menu.build` can hide an entry but cannot add one. The game prints the
+  label of a slot and draws its icon from the message bank and the archive it
+  opens while it creates the menu, and it closes both again, so the port
+  cannot make a slot the game left empty. The slot keeps the label the game
+  printed for it.
+- `encounter.wild`'s species, level and shiny are the ones the game builds
+  the wild Pokemon from. For a roamer the slot reads 0, because a roamer
+  comes from the save and not from a table of the zone, and the roamer's
+  shiny and double flags read 0 as well: its personality is the save's own and
+  the game sets its battle up alone.
+- `encounter.static`'s legendary kind has no feeder at this call: the game
+  chooses the species in the script that starts the battle, and the setup
+  carries no flag for it. The kind the payload does carry says whether the
+  battle is a wild one or a battle a script started. A species a handler
+  changes is written into the record without the personal data being
+  recalculated, so a mod that wants that uses the state calls.
+
+**The Pokemon area.**
+
+- `mon.create`'s nature reads 0xFF, the sentinel "leave the roll", because the
+  nature is rolled inside the creation call. The shiny flag reads 0: the roll
+  is the caller's, and a handler that asks for a shiny Pokemon gets one
+  through the applier. The personality is the argument the caller passes, the
+  low half of the 64-bit value, which is the half the game stores; on the
+  row that rolls the personality it reads 0 instead, because the game rolls
+  it inside that call.
+- `mon.receive`'s slot reads 0 for a Pokemon that went into a box: the free
+  slot inside that box is not named by the call. A Pokemon given while the
+  party was full has no record left to read at all, so its shiny flag reads 0
+  as well and the species and level come from the script's own creation
+  request. For an in-game trade the species reads 0: the trade record is the
+  overlay's own data and the call does not name it, so a mod reads the
+  Pokemon it is given through the state calls.
+- `mon.nickname`'s Pokemon reads 0: the prompt's own work holds it, and that
+  work is the overlay's own block. The force flag reads 0 as well: the game
+  decides to ask before it gets to the prompt, and the catch screen's
+  decision is not a declared row, so the port has no hook there.
+- `mon.exp` names one Pokemon: the first member of the party that gains
+  experience, because the payload has room for one. The experience and the
+  level it carries are the party record's own, read through the state calls,
+  because the battle works on a copy and those are the values the battle
+  started from. The day care's payload has no party position: the call
+  carries the Pokemon, not the party.
+- `trade.ingame`'s received species reads 0: the trade record is the
+  overlay's own data and the call does not name it. The trade id and the
+  party position are the command's own operands, and the port reads them out
+  of the script's variables without moving the script VM's program counter.
+- `move.learn`'s replaced move reads 0: the game asks for that later, in the
+  screen that owns the choice. The move slot is the first of the Pokemon's
+  four that is empty, or 0xFF when it holds four moves already.
+- `mon.helditem`'s party position reads 0: the party is not carried by the
+  call.
+
+**The battle area.**
+
+- `battle.start`'s wild flag, format, trainer ids and the handle of the
+  opposing party read 0: the setup the game will build does not exist yet.
+  The port reads them from the battle's main module at the first battle event.
+- `battle.action`'s Pokemon reads 0 for the switch: the choice list holds the
+  party positions and nothing else. The party position the player picked is
+  the function's result, and 6 is the game's own "backed out".
+- `battle.move`'s target reads 0. The call carries the attacker and the move
+  record, and the move record holds no target: the server picks the target
+  set itself.
+- `battle.damage`'s amount reads 0: the game computes it inside the function
+  and writes it into the word the caller reads after the call, so at that
+  point the amount is not known. The target's HP before the hit is filled,
+  because the hit has not landed yet.
+- `catch.attempt`'s rate reads 0: the game computes the catch rate itself
+  when it rolls the catch, and the port's binding cannot write it back. A mod
+  that changes the rate overrides the function that computes it, which is a
+  declared row.
+- `catch.result`'s caught flag and shakes read 0: the game keeps both in the
+  locals of the roll and writes them into the battle's command stream, which
+  the port does not read.
+- `whiteout`'s money lost reads 0. The game computes the penalty inside the
+  step, at the state that shows the amount, and the accessor that computes it
+  latches its result, so the port does not call it: the game would find
+  nothing left to show. The field half of the event reads 0 for the same
+  reason: the recover script takes the money, and the port does not read the
+  script's work.
+- `battle.faint`'s cause comes from the battle context, and a faint from the
+  weather, a hazard or a status has no cause, so those fields read 0.
+
+**The items area.**
+
+- `item.use`'s target's party position reads 0: the call carries the party
+  record but not the party, and the party is the party screen's own work.
+  The record's address is in the handle, so a mod that has the party can find
+  the position itself.
+- `money.change` cannot be applied in the other direction on the row it fired
+  on. The row that adds the money applies only a positive change and the row
+  that takes it away applies only a negative one; a change of the other sign
+  is applied as 0 and the money stays as it was. A mod that wants the money to
+  go down waits for the row that takes it away.
+- `heal`'s source reads as script for a Pokemon Centre, because the nurse
+  runs the same script command and the two cannot be told apart at the call.
+  The mask names the party positions the heal covers, and the port heals the
+  positions a handler kept with the game's own healer; it cannot take the
+  heal away from a position the game's own function heals, because that
+  function heals every occupied slot and there is no hook between its heal
+  and its return. A mod that wants a narrower heal refuses the event and then
+  heals the Pokemon it wants through the state calls.
+
+### The contexts
+
+Some payloads read a value the call does not carry: the move that caused a
+faint was used a call earlier, the zone the player is in was read at the map
+change. The port keeps those in two contexts (`sdk/mod_context.h`), and the
+slots that pass the events feed them. The battle context is reset at
+`battle.start` and its `active` flag is cleared at `battle.end`; the field
+context is reset at `save.load` and at each `route.change`; both are cleared
+at power-on and at every reset. A context field with no feeder in the current
+situation reads 0, never a value from an earlier situation.
+
 ### 1c. Corrected rows
 
 aletheia corrected the function names in its matched corpus, and the port's
@@ -296,10 +444,12 @@ order they were added in (`sdk/vfs.h`, "The mod list").
 - **Modifications chain.** Each handler sees the payload as the handlers
   before it left it. The last write to a field wins.
 - **Any refusal refuses.** If one handler refuses, the action is refused.
-- **Raw hooks are exclusive.** Two mods that both replace one raw hook: the
-  later mod in the load order wins and the port reports the earlier one as
-  shadowed (`docs/mod-overrides.md`). A `wrap` calls the original, so wraps
-  from several mods nest in load order.
+- **Raw hooks are exclusive.** The registry keeps one hook per
+  `(region, address)`, so two mods that both install one leave the later
+  mod's hook in place, and the port reports the earlier one as shadowed,
+  naming both (`docs/mod-overrides.md`). The registry does not chain hooks
+  yet, so a `wrap` reaches the game's own function through the slot's
+  original and two wraps on one key do not nest.
 
 ## 4. The state API
 
@@ -352,23 +502,25 @@ the game's own, so a raw hook can break when aletheia restructures the code. A
 mod that uses raw hooks states the port version it was built against, and the
 port refuses to load it on another version.
 
-The declared set has 219 rows: 57 carry a stable event, the rest
+The declared set has 248 rows: 68 carry a stable event, the rest
 are raw hooks a mod or a stable event may need later. By region:
 
 | Region | Rows |
 |---|---|
-| arm9 | 44 |
+| arm9 | 46 |
 | ov009 | 3 |
-| ov010 | 53 |
+| ov010 | 58 |
 | ov018 | 8 |
 | ov020 | 7 |
-| ov021 | 54 |
+| ov021 | 64 |
 | ov070 | 1 |
-| ov091 | 4 |
-| ov093 | 33 |
+| ov091 | 5 |
+| ov092 | 1 |
+| ov093 | 41 |
 | ov094 | 6 |
+| ov095 | 1 |
 | ov120 | 1 |
-| ov170 | 4 |
+| ov170 | 5 |
 | ov207 | 1 |
 
 **Script command hooks.** The field script VM dispatches every script command

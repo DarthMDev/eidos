@@ -9,7 +9,12 @@ peer sends through its `message` and `send` actions
 challenge runs use which service.
 
 Each service below says what it does, its calls, and the design choices it
-fixes.
+fixes. The table is `BwModServices` (`sdk/mod_state.h`), and the loader gives
+every mod a table of its own (`sdk/mod_loader.c`): the port says which mod is
+calling by putting that mod's namespace in force around every call it makes
+into a mod, so a service that keeps state keeps it per mod. A call the port
+has not built is `NULL` in the table, and a mod that calls one gets nothing
+rather than a crash.
 
 ## Messages
 
@@ -28,6 +33,26 @@ game. `confirm` is only allowed in the field; in battle it returns 0 at once.
 Text is UTF-8; characters the game font lacks show as `?`. A message from a
 refusal handler appears after the action is refused.
 
+The service is `sdk/mod_message.c`, the queue and the encoding, and
+`sdk/mod_text.c`, the port's own text path that puts the text on screen. The
+queue holds eight texts, and one text may be 128 code units; a longer text is
+cut at the cap. The game's text is a run of 16-bit code units, one per
+character, with 0xFFFF ending a string and 0xFFFE a line break, and the
+service encodes the UTF-8 into those units. The built-in answer to "does the
+game font have this character" is the printable ASCII range, because the
+font's own character table is inside the font file (arc 0x17, member 0) and
+the port does not read that file yet; a port that does installs the game's
+own answer. The showing is the port's text path: it builds the game's string
+object out of the code units and prints it with the game's own print queue in
+the window the game has open, the field's talk window or the battle's message
+box.
+
+A confirm waits for the answer. The question goes into the queue with the
+other texts, the wait advances the game to the next message point, the port's
+text path asks the question in the field's yes/no window, and the answer
+comes back to the caller. The wait gives up after 3600 ticks and answers no.
+With no text path that can ask, a confirm answers no at once.
+
 ## Peer sessions
 
 Connect two or more eidos instances and exchange mod messages.
@@ -40,25 +65,81 @@ int  (*session_send)(u32 peer, const void *buf, u32 size);   /* peer 0: everyone
 void (*on_session)(BwSessionHandler fn);              /* receive, join, leave */
 ```
 
-**The flow.** A player chooses "Start session" in the mod menu, or the mod
+**The flow.** A player starts a session from the port's own menu, or the mod
 calls `session_host`. The port connects to the project's relay, which returns
 a short code. The other players enter the code, or the mod calls
 `session_join`, and the relay links them. This follows Archipelago and the
 Minecraft "easy multiplayer" style: nobody opens a port or types an address.
+`session_host` and `session_join` block the calling thread, the game's,
+while the relay answers, for up to three seconds.
 
 **The relay.** A small server the project runs, which only forwards messages
-between the players of one session. The port can also connect two instances
-directly when a player gives an address, for a LAN or a self-hosted relay.
+between the players of one session. The port can also point the client at
+another relay, for a LAN or a self-hosted one. The port has no relay of its own
+yet: the transport under the client is an interface the port fills (a connect,
+a send, a receive, a close), and the default transport refuses to connect and
+says "no relay". A plain TCP transport is available for a port that has none of
+its own.
+
+**The protocol.** The client speaks it and the relay has to answer it. It is
+a stream of frames, each one a type letter, the payload's length in decimal,
+a newline, and the payload:
+
+```
+<type> <length>\n<payload>
+```
+
+The client sends:
+
+| Frame | Payload | Meaning |
+|---|---|---|
+| `H` | `<version> <token> <name>` | host a session; the relay answers with a code |
+| `J` | `<version> <token> <code> <name>` | join a session |
+| `D` | `<peer>\n<key>\n<bytes>` | a mod's message, to one peer or to every peer (peer 0) |
+| `B` | empty | leave the session |
+
+and the relay sends:
+
+| Frame | Payload | Meaning |
+|---|---|---|
+| `C` | `<code>` | the session's short code |
+| `W` | `<peer> <name>` | you are in; this is your number |
+| `P` | `<peer> <name>` | a peer joined |
+| `X` | `<peer>` | a peer left, or was dropped |
+| `D` | `<peer>\n<key>\n<bytes>` | a mod's message |
+| `E` | `<reason>` | an error; the session is over |
+
+The relay's rules, which the client relies on: it gives the host a short code
+and tells the host the code; it tells every client its own peer number and
+every client about each join and each drop; it forwards a message to one peer
+or to all the others, in the order it was sent, once each, and the peer
+number in the message it forwards is the sender's own, not the target the
+sender named; it keeps a peer's number for the session's lifetime, so the
+same token joining the same code again gets the same number back; and it
+refuses a join with an unknown code with `E`.
+
+**What the port has to know to reach the relay:** the host (a name or a
+dotted address), the port, and the session's code, which the relay hands out
+and the players type. The port sets the first two from its own settings and
+the third comes from the relay's answer.
 
 **Messages.** A message is up to 4 KB of the mod's own bytes, delivered in
-order, at most once, to every player in the session (or one, by peer number).
-Each mod receives only messages sent by the same mod on the other side, keyed
-by the mod's `name`. The handler runs on the game's frame, never on a network
-thread.
+order, at most once, to every player in the session (or one, by peer
+number). Each mod receives only messages sent by the same mod on the other
+side, keyed by the mod's own name, which is its state namespace. The handler
+runs on the game's frame, never on a network thread: the session's reader
+thread queues what it read and the frame tick drains the queue and calls the
+handlers.
 
 **Identity and drops.** Each player has a peer number for the session's
 lifetime and a display name. A dropped player is reported to the handler; a
 rejoin with the same code gets the same number back.
+
+**The answers.** The session calls name their reason, so a mod can tell "the
+relay is not there" from "the message was too big" without reading the port's
+log: 0 for success, 1 for no relay, 2 for a session already running, 3 for
+no session, 4 for the relay refusing or not answering, 5 for a message over
+4 KB, 6 for a failed connection, 7 for a bad argument.
 
 ## Field avatars
 
@@ -72,9 +153,28 @@ void (*avatar_delete)(u32 avatar);
 
 An avatar is a field entity the port creates in the game's own entity pool,
 with an object id outside the game's range and no events, so the local game
-never interacts with it. The port moves it smoothly between the positions a mod
-sends. Avatars are deleted at each map change; the mod recreates the ones in the
-new zone.
+never interacts with it. The port moves it smoothly between the positions a
+mod sends. Avatars are deleted at each map change; the mod recreates the ones
+in the new zone.
+
+**The pool.** The game's field entity pool holds 64 records, and the port
+leaves **eight of them free** for the zone's own people, which the game
+creates after the avatars are there. The port asks for the free slot itself
+and answers 0 when there is none, rather than taking a slot the game needs.
+Its own table holds sixteen avatars, so the pool's headroom, not the port's
+table, is what limits a session. An avatar's object id is 0x8000 plus its
+index, outside the game's own range (the zone's people have the ids of the
+event data and the player has 0xFF).
+
+**The sprite.** The sprite is the game's own object code: 1 is the male hero
+and 4 the female heroine. The codes the game takes from the zone's own event
+data, 162 to 177, are refused, because the game replaces those with the
+sprite the zone names. The direction is the game's own: 0 up, 1 down, 2 left,
+3 right.
+
+**The move.** The avatar walks to the cell the mod named; it does not jump.
+The mode is how the other player moves: 0 walking, 1 running, 2 cycling,
+3 surfing. A handle the port does not know is ignored.
 
 ## Pokemon export and import
 
@@ -86,11 +186,46 @@ int (*mon_export)(BwMonRef mon, void *buf, u32 size);        /* bytes written */
 int (*mon_import)(const void *buf, u32 size, BwMonRef *out); /* into the party, else a box */
 ```
 
-The exported form is the game's own 0xDC-byte Pokemon record, with the port's
-header in front: a magic, a format version and a checksum. Importing checks
-the checksum and the game's own record checksum, and refuses a record whose
-species, moves or items the game does not know. A Genlocke carries the record
-into the next game; Wonderlocke and Egglocke send it through a peer session.
+**The exported form.** The port's own 16-byte header in front of the game's
+own 0xDC-byte Pokemon record, so a file is 252 bytes:
+
+| Offset | Size | What |
+|---|---|---|
+| 0 | 4 | the magic `BWPM` |
+| 4 | 2 | the format version, 1 |
+| 6 | 2 | the flags, zero |
+| 8 | 4 | the record's size, 0xDC |
+| 12 | 4 | the checksum of the record's bytes, a CRC-32 |
+| 16 | 0xDC | the game's own Pokemon record |
+
+The header is written one field at a time and little-endian, so the file is
+the same on every host whatever the compiler does with the struct. The
+checksum is the CRC-32 every host library computes, the reflected IEEE
+polynomial 0xEDB88320, and it is the same checksum the saved-data layer
+uses.
+
+**What an import checks.** The port's own header (the magic, the version and
+the checksum), the game's own record checksum (the sum of the record's block
+area has to be the checksum word the record carries, the game's own rule),
+and the species, the moves and the item: a record the game does not know is
+refused, because the game would not be able to read it. The last species of
+the game's table is 493 and the last item is 626.
+
+**The record.** The game's own record is a box part of 0x88 bytes and a party
+part of 0x54 bytes, and the two areas are masked with the game's own stream
+(the linear congruential generator `s = s * 0x41C64E6D + 0x6073`, the middle
+halfword of each new state XORed into the area halfword by halfword). The
+mask is its own inverse, so masking and unmasking are the same operation,
+which is how the game reads a record: it unmasks it, reads it and masks it
+again. The record carries the state of its two areas in its own flags, so a
+record exported from one game and imported into another is read the same way
+in both. The port implements the mask and the checksum itself rather than
+calling the game's own functions, so a file can be checked with no game
+running at all.
+
+**Where the record goes.** An import puts the Pokemon into the party, and
+into a box when the party is full. A call that reaches the game without the
+game there reports a failure and never calls into nothing.
 
 ## Run-status panel
 
@@ -101,11 +236,12 @@ void (*panel_set)(u32 line, const char *text);   /* lines 0 to 15 */
 void (*panel_clear)(void);
 ```
 
-The panel is drawn by the port outside the game's screens (to the side in the
-stacked layout, below in the side-by-side layout), so it never covers the game
-and is not part of a screenshot of the DS screens. Typical contents: deaths,
-encounters by route, the level cap, a timer. The player can hide it from the
-port's settings.
+**Not built.** Both calls are `NULL` in the services table, so a mod that
+calls one gets nothing. The panel is drawn by the port outside the game's
+screens (to the side in the stacked layout, below in the side-by-side
+layout), so it never covers the game and is not part of a screenshot of the
+DS screens. Typical contents: deaths, encounters by route, the level cap, a
+timer. The player can hide it from the port's settings.
 
 ## Timer and splits
 
@@ -116,9 +252,32 @@ u64  (*timer_ms)(void);
 void (*split)(const char *name);
 ```
 
-The timer counts real time while the game runs, paused while the port's own
-menu is open. A split records the name and the time; the port shows the splits
-in the run-status panel and writes them to a file at the end of the run.
+**The clock.** The timer measures the port's own tick, the SDK's tick the
+DS's `OS_GetTick` counts (the system clock divided by 64, 523655.96875 Hz),
+and reports the elapsed time in milliseconds. It is therefore the time the
+game ran, at the DS's rate, and a headless run that steps frames without
+sleeping measures the same as a paced one does.
+
+The timer counts while the game runs and is paused while the port's own menu
+is open, which is the settings screen, the one the player enables, disables
+and orders the mods in. The pause is exact to the frame: the port samples
+every mod's timer once a frame, and an interval that touches the menu is
+dropped whole, so a run's time is never made shorter by the port's own menu
+being open.
+
+**One timer per mod.** The port keeps the timer, the splits and the random
+source per mod, keyed by the mod's namespace, so two mods that both time
+their runs do not share one timer.
+
+**Splits.** A split records the name and the time it was taken at. One run
+holds up to 32 splits, more than the panel's sixteen lines, so the file
+keeps all of them. The port shows the splits in the run-status panel and
+writes them to a file at the end of the run: `<save dir>/splits/<namespace>.txt`,
+plain text, a header line, the mod's namespace, and one line per split with
+the time in milliseconds and the name. The file is written whole and
+atomically, so a crash leaves the old file or the new one and never a torn
+one. The panel is not built, so the splits live in the timer's own list and
+the file is written when the port asks for it.
 
 ## Run restart
 
@@ -132,6 +291,24 @@ title. With `BW_RESTART_DELETE_SAVE` the save and the mod's saved data are
 removed first. Ironmon uses it after a loss; a permadeath mod uses it with the
 delete flag.
 
+**What the port does with it.** The decision is the service's: the game save
+goes first, then the mod's own saved data, and then the flags say what the
+run should do next. The work is the port's, because only the port can reset
+the machine and start the game again. The call therefore hands the request to
+the port's own handler, and a port that installs none takes it with its own
+call when it is ready. The handler runs on the game's thread, where the reset
+cannot be done, so the request is recorded and the work happens at the next
+safe point of the port's loop. The boot's handler records the request and its
+frame loop carries it out: with `BW_RESTART_NEW_GAME` the game goes into a
+new game directly, and without it the game boots to the title, the way the
+port's own reset leaves it.
+
+**The save.** The game's save is the backup chip's image, and the port keeps
+it in a file. The reset writes the chip's image back to that file, so a file
+that was removed would come back with the reset. The image is therefore
+dropped first, which leaves the game an erased chip, and the file is removed
+after it.
+
 ## Seeded random source
 
 ```c
@@ -144,6 +321,16 @@ mod's choices do not change the game's rolls. One per mod. Two players who
 share a seed get the same sequence, which lets a draft or a random team be the
 same on both sides.
 
+The generator is SplitMix64, the algorithm Steele, Lea and Flood's
+("Fast Splittable Pseudorandom Number Generators", OOPSLA 2014): the state
+is one 64-bit word, a draw adds 0x9E3779B97F4A7C15 to it and mixes the new
+state with two multiplications and three shifts. `rand_next` hands out the
+high half of the 64-bit output. The whole algorithm is in the port, so two
+players who share a seed get the same sequence on every platform, whatever
+the host's C library does. A mod that never seeds draws from a generator
+started at a fixed seed, because a seed that changes from run to run is not a
+seed two players can share.
+
 ## External control
 
 A local endpoint outside tools connect to: a stream overlay, a chat bot, a
@@ -155,10 +342,22 @@ void (*publish)(const char *topic, const char *json); /* events out */
 ```
 
 The port listens on `127.0.0.1` only, on a port chosen in its settings, and
-only while a mod that uses the service is enabled. A command is one line of
-text the mod interprets; the handler runs on the game's frame. `publish` sends
-a JSON message to every connected tool, for overlays that show the run's
-state.
+only while a mod that uses the service is enabled: the listener starts when
+the first mod binds a command handler and stops at the port's reset. Up to
+eight tools may be connected at once. The port's own settings do not reach
+the service yet: the number comes from the port's call, and the default is 0,
+which is off.
+
+**The wire format.** The control is plain text over TCP, one line each way.
+A tool sends a command as one line of text, ended by a newline (a carriage
+return before it is ignored), up to 1024 bytes; the line is handed to the
+mod as it is, with the newline removed. A `publish` sends one line to every
+connected tool: the topic, a space, and the mod's JSON, and a newline. A
+tool reads one line per message.
+
+A command is one line of text the mod interprets; the handler runs on the
+game's frame. `publish` sends a JSON message to every connected tool, for
+overlays that show the run's state.
 
 ## Input injection
 
@@ -166,9 +365,10 @@ state.
 void (*input_press)(u32 buttons, u32 frames);
 ```
 
-Holds the given DS buttons for the given number of frames, as if the player
-pressed them. Real input and injected input combine. A chat-controlled mod
-turns votes into presses.
+**Not built.** The call is `NULL` in the services table. The plan is to hold
+the given DS buttons for the given number of frames, as if the player pressed
+them, with the real input and the injected input combining. A
+chat-controlled mod turns votes into presses.
 
 ## Frame tick
 
@@ -178,6 +378,16 @@ void (*on_frame)(BwFrameHandler fn);
 
 Called once per game frame, after the game's own frame work. Co-op uses it to
 send positions and move avatars; a timer display uses it to refresh.
+
+**How the tick runs.** The port's frame hook runs the mods' own frame
+handlers in the order the mods bound them, which is the load order, and then
+the network's frame, where the queued session events and the commands the
+network's threads read reach the mods' handlers, and then the timer's frame,
+the avatars' step and the save handoff's pieces. Each handler runs with its
+own mod's namespace in force, so a mod's state calls reach its own file
+while it runs. A handler that binds another handler does not make the new one
+run in the same frame: the count of handlers is taken before the first one
+runs. The table holds sixty-four handlers.
 
 ## Save handoff
 
@@ -189,6 +399,86 @@ void (*on_save_received)(BwSaveHandler fn);
 Sends the current game save and the mod's saved data to another player in the
 session. The receiver's port shows a confirmation, then installs the save and
 reloads. A Taglocke passes the run from player to player this way.
+
+**What travels.** The current game save (the backup chip's image under the
+save folder) and the mod's own saved data are packed into one blob with a
+32-byte head of its own, and the blob is cut into pieces of the size a
+session message may carry (4 KB less a 20-byte head), each piece with its own
+number and the length of the whole, so a piece that never arrives is seen.
+The pieces go out over the frames, a few a frame, because the peer session
+keeps what it read in a queue of 64 KB and drops the oldest records when it
+is full. The handoff is the port's own traffic, so the pieces travel under
+the port's own key and the port's own session handler takes them in; a mod's
+own messages keep their own key.
+
+**On the other side.** The blob is put back together, the port's own
+confirmation is asked for, and the save is installed: the game save written,
+and the mod's own data written beside it with the checksum of the save that
+was installed, so the mod's file is in step with the save it belongs to. The
+port's confirmation is the port's own user interface, which is not built yet,
+so a save that arrives is reported and dropped, and nothing is installed. The
+reload behind it is the port's own: the boot's handler starts the run again,
+and it loads the save that is now in force.
+
+**The answers.** `save_send` answers 0 when the save is on its way, and one
+of the peer session's own answers when it was not: no session, another save
+still on its way, the save does not fit, or the connection failed.
+
+## The mod's own saved data
+
+A mod keeps its own data in the port's state file, one per mod, beside the
+game's save (`docs/mod-state.md`).
+
+```c
+s32  (*state_load)(void *buf, u32 size);    /* bytes read, -1 on damage */
+int  (*state_store)(const void *buf, u32 size);
+int  (*state_clear)(void);
+int  (*state_info)(BwModStateHeader *out);
+int  (*state_dir)(char *out, u32 out_size);
+int  (*state_in_step)(void);                 /* 1 in step, 0 out of step, -1 unknown */
+```
+
+The port owns the file's 24-byte header and the mod owns the bytes after it.
+The header carries a CRC-32 of the payload, and the payload may be up to
+4 MiB; a bigger store is refused with a report. `state_dir` gives the mod
+the path of its own folder, for a mod that keeps files of its own.
+
+**The "in step" answer.** `state_in_step` answers for the mod that calls it:
+whether the mod's own file was written with the game save in force. The
+question is per mod, so it cannot be the `save.load` payload's byte: that
+payload is built once for every handler of the event, and one mod's file may
+be in step while another's is not. The answer is 1 when the file's
+`save_check` is the checksum of the save in force, 0 when they differ (the
+game save was written without the mod), and -1 when the question cannot be
+answered (no state file, or no save in force).
+
+## Script command hooks
+
+The field script VM and the battle effect VM each run their commands through
+one table, and the port hooks the dispatch, so a mod can watch or replace any
+script command by its opcode without one declared row per command
+(`docs/mod-events.md`, section 5).
+
+```c
+int (*script)(u32 vm, u16 opcode, BwScriptHandler fn);
+```
+
+**The command's view.** The operands are bytes, and the view holds every byte
+of every command of both VMs: the port's own width table gives the width of
+each command in bytes, and the widest is 60 (the battle effect VM's opcode
+8; the field VM's widest is 22), so a handler reaches the last operand of
+the widest command as well as the first of the narrowest. The game keeps the
+operands as bytes and reads them off its cursor a halfword or a word at a
+time, and nine of the field VM's widths are odd, so some commands read a byte
+or two straight off the cursor; the view holds the bytes as they are and the
+port writes them back exactly, with nothing rounded to a word. The program
+counter in the view is a number, not a pointer, so the view reads the same at
+every pointer width.
+
+Every handler bound to a command runs, in load order, and each one sees the
+command as the ones before it left it, so the writes to the operands chain. A
+handler that replaces the command does not stop the later handlers; when any
+of them replaced it, the game's own handler does not run.
 
 ## Mod settings
 
@@ -207,12 +497,27 @@ player's choices beside the mod's saved data, and the mod reads them:
 int (*setting_get)(const char *key);   /* bool and choice index */
 ```
 
+**Not bound.** The loader does not bind the call into the services table, so a
+mod that calls it gets nothing. The manifest layer parses the `settings` key
+and keeps the path in the mod's record, and the menu's model
+(`sdk/mod_menu.c`) parses the options and holds the player's choices beside
+the mod's saved data; nothing hands them to the mod yet.
+
 ## The mod menu
 
 The port's settings screen has a Mods section: the installed mods in load
 order, each with an on/off switch, its settings, and "Clear saved data". The
 order can be changed. Changes apply when the player leaves the menu, following
 the rules of `docs/mod-rules.md`, section 2.
+
+**The model is there; the screen is not.** `sdk/mod_menu.c` is the model
+behind the section: it holds the player's list of mods in
+`<save dir>/mods.ini`, answers the screen's questions about each of them (its
+name, its namespace, its switch, whether it is running, its settings file and
+its options), applies the player's changes when the player leaves the menu,
+clears a mod's saved data and reports the saved-data folders on the disk that
+belong to a mod that is no longer installed. The screen that draws it, the
+port's own Mods section on the settings screen, does not exist yet.
 
 ## Related documents
 
@@ -221,3 +526,4 @@ the rules of `docs/mod-rules.md`, section 2.
 - `docs/mod-coop.md`: co-op and the field avatars.
 - `docs/mod-state.md`: the mod's saved data.
 - `docs/mod-rules-language.md`: the `message` and `send` actions.
+- `docs/mod-events.md`: the events, and the script command hooks.

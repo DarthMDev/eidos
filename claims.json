@@ -1,3 +1,31 @@
 {
-  "claims": {}
+  "claims": {
+    "W21-BOOT": {
+      "note": "the boot's restart handler and the handoff's reload",
+      "paths": [
+        "demo/eidos_boot.c"
+      ],
+      "started": "2026-10-21"
+    },
+    "W21-DOC": {
+      "note": "the mod layer's documentation, brought up to what is built",
+      "paths": [
+        "docs/mod-events.md",
+        "docs/mod-implementation.md",
+        "docs/mod-services.md",
+        "docs/mod-state.md",
+        "docs/modding.md",
+        "docs/status.md"
+      ],
+      "started": "2026-10-21"
+    },
+    "W21-MENU": {
+      "note": "the mod menu's model: the installed mods, the switch, the clear action, the orphan report",
+      "paths": [
+        "sdk/mod_menu.c",
+        "sdk/mod_menu.h"
+      ],
+      "started": "2026-10-21"
+    }
+  }
 }

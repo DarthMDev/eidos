@@ -15,19 +15,70 @@ A mod is a directory laid out like the data root, with a manifest,
 |---|---|---|---|
 | Data layer | Replace a whole file, or one member of a NARC archive | built | `docs/mods.md` |
 | Slots | One indirection per declared game function; with no mod installed it calls the original | built | `docs/mod-interface.md` |
-| Events | Observe a game moment, with a typed payload; refuse it where the event defines a refusal | designed | `docs/mod-events.md`, `docs/mod-payloads.md` |
-| Raw hooks | Replace or wrap one declared game function by `(region, address)` | designed | `docs/mod-overrides.md` |
-| State API | Read and write party, boxes, money, flags, map and position through accessors | designed | `docs/mod-events.md`, section 4 |
-| Mod state | Keep the mod's own data, stored per save slot | designed | `docs/mod-state.md` |
-| Port services | Messages, peer sessions, field avatars, timer, run-status panel and the others | designed | `docs/mod-services.md` |
-| Rules | Write simple rules in a small language instead of C | designed | `docs/mod-rules.md`, `docs/mod-rules-language.md` |
-| Code loading | Load a mod's native library at start-up, check its interface version | designed | `docs/mod-abi.md`, `docs/mod-implementation.md` |
+| Events | Observe a game moment, with a typed payload; refuse it where the event defines a refusal | built | `docs/mod-events.md`, `docs/mod-payloads.md` |
+| Raw hooks | Replace or wrap one declared game function by `(region, address)` | built | `docs/mod-overrides.md` |
+| State API | Read and write party, boxes, money, flags, map and position through accessors | built | `docs/mod-events.md`, section 4 |
+| Mod state | Keep the mod's own data, stored per save slot | built | `docs/mod-state.md` |
+| Port services | Messages, peer sessions, field avatars, timer, run-status panel and the others | built, except the panel, the input injection and the settings | `docs/mod-services.md` |
+| Rules | Write simple rules in a small language instead of C | built | `docs/mod-rules.md`, `docs/mod-rules-language.md` |
+| Code loading | Load a mod's native library at start-up, check its interface version | built | `docs/mod-abi.md`, `docs/mod-implementation.md` |
 
 The base is never edited. A build with no mods behaves exactly like a build
 without the mod machinery, because every slot calls the original when nothing
 is installed.
 
-## 2. The two tiers of hooks
+## 2. How a code mod runs
+
+A mod with code is a native library that ships beside its manifest. The port
+loads it in the load order, after the save is chosen and before the game runs
+(`sdk/mod_loader.c`).
+
+1. **The manifest is read and applied.** The parse fills one record per mod
+   (`sdk/mod_manifest.c`); the apply checks the versions, derives the state
+   namespace, checks every `override` against the declared table, and leaves
+   the rule list and the settings path in the record.
+2. **The versions are checked.** The manifest's `api` must be the port's
+   interface version. A mod with raw hooks may also state the `port` version
+   it was built against, and when it does the pin is checked and a mismatch
+   refuses the mod. A mismatch is reported with a message naming both
+   numbers, and the mod is never loaded. A mod with code and no `api` at all
+   is refused too: the number cannot be forgotten.
+3. **The library is opened** (`LoadLibraryW` on Windows, `dlopen` elsewhere)
+   and `eidos_mod_start` and `eidos_mod_stop` are found in it.
+4. **The mod's start entry runs.** It is handed the host table: the port's
+   interface version, the registration call, the state table and the services
+   table. It stores its own state pointer, which is the `mod_state` every
+   handler receives. A non-zero return tells the port not to load the mod.
+5. **The handlers are bound.** A mod binds a handler to an event with
+   `host->on`, and a handler to a script command with `host->script`. The
+   port holds the bindings until the start entry has returned its state
+   pointer, and registers them then, in the order the mod bound them.
+6. **The overrides are installed.** Each `override` line that survived the
+   declared check has its symbol resolved in the loaded library and is
+   installed in the slot registry, in load order, so a later mod wins over an
+   earlier one for one pair.
+
+The way back down: the slots the mod installed are reverted to their
+originals, `eidos_mod_stop` runs (the mod's namespace is in force, so a state
+call it makes there reaches its own file, and that is where it flushes its
+data), and the library is unloaded last, because a code pointer into it is
+still live until then.
+
+**The refusals reach the game.** A refusal never just skips the game
+function, because most game functions return a value or do work their caller
+depends on. Each refusable event defines its own refused outcome, and the
+port produces it at the slot: the refused outcome is what the caller sees,
+so the game's own text and the game's own state stay consistent. A refused
+catch keeps the ball and the turn, a refused withdrawal leaves the Pokemon in
+its box. Where no such path exists and a refusal would leave the game's own
+text saying something false, the event is not refusable; a mod reacts after
+the fact through the state calls.
+
+A handler that refuses can tell the player why through the message service,
+which shows the text in the game's own window. Every handler bound to an event
+runs; if any of them refuses, the action is refused.
+
+## 3. The two tiers of hooks
 
 A mod binds to the game at one of two levels.
 
@@ -53,30 +104,24 @@ addresses are fixed for the life of the ROM; names change with aletheia's
 cleanup. Two overlays can share one RAM window, so the region is part of the
 key: `ov093:0x021C5200` and `ov208:0x021C5200` are two different functions.
 
-### Refusals
+### The order several mods run in
 
-Some events let a mod refuse the action. A refusal never just skips the game
-function, because most game functions return a value or do work their caller
-depends on. Each refusable event defines its own refused outcome, and the port
-produces it:
+Mods load in ascending manifest `order`, and mods with equal `order` keep the
+order they were added in.
 
-- `battle.item` refused: back to the action menu; the item stays in the bag
-  and the turn is not spent.
-- `encounter.wild` refused: no battle starts and the player keeps walking.
-- `heal` refused: the heal does not happen and the script continues.
-- `box.withdraw` refused: the Pokemon stays in the box.
+- **Every handler runs.** All handlers bound to an event run, in load order. A
+  refusal does not stop the later handlers.
+- **Modifications chain.** Each handler sees the payload as the handlers
+  before it left it. The last write to a field wins.
+- **Any refusal refuses.** If one handler refuses, the action is refused.
+- **Raw hooks are exclusive.** The registry keeps one hook per
+  `(region, address)`, so two mods that both install one leave the later
+  mod's hook in place, and the port reports the earlier one as shadowed,
+  naming both. The registry does not chain hooks yet, so a `wrap` reaches the
+  game's own function through the slot's original and two wraps on one key do
+  not nest (`docs/mod-overrides.md`).
 
-Each outcome is the path the game already takes for a similar case (a move
-blocked by Taunt, a trapped Pokemon, an item with no effect), read from the
-game function's callers. Where no such path exists and a refusal would leave
-the game's own text saying something false, the event is not refusable; a mod
-reacts after the fact through the state calls.
-
-A handler that refuses can tell the player why through the message service,
-which shows the text in the game's own window. Every handler bound to an event
-runs; if any of them refuses, the action is refused.
-
-## 3. Port services
+## 4. Port services
 
 Some things a mod needs are not game functions. The port provides them
 (`docs/mod-services.md`):
@@ -93,7 +138,13 @@ Some things a mod needs are not game functions. The port provides them
 - **Mod settings** on the port's settings screen, and a **mod menu** to enable,
   disable and order mods.
 
-## 4. The game modes
+Most of them are built. The run-status panel and the input injection are not:
+those two calls are `NULL` in the services table, and a mod that calls one gets
+nothing rather than a crash. The mod settings are declared and parsed but not
+handed to the mod, because the loader does not bind the call. The mod menu's
+model is in `sdk/mod_menu.c`; the screen that draws it does not exist yet.
+
+## 5. The game modes
 
 `docs/mod-modes.md` lists every challenge run studied and what each needs.
 The modes below are the four the design started from; each lists what it
@@ -164,7 +215,7 @@ mod state. `docs/mod-modes.md` lists each one against the events and services
 it uses. Randomizers and difficulty hacks are data: encounter tables,
 trainer parties, base stats and moves are replaced through the data layer.
 
-## 5. Constraints
+## 6. Constraints
 
 - **Matched files are never edited.** Every mod is additive, and the base
   stays the original game.
@@ -181,13 +232,18 @@ trainer parties, base stats and moves are replaced through the data layer.
   port reports the earlier one as shadowed. Events are not exclusive: every
   bound handler runs.
 
-## 6. Open decisions
+## 7. What is still open
 
-1. **The source of each payload field,** confirmed when its builder is written
-   (`docs/mod-payloads.md`).
-2. **The relay:** where it runs, how codes are issued, and its limits
-   (`docs/mod-services.md`, "Peer sessions").
-3. **The move-learning screens:** the TM, tutor and relearner paths of
+1. **The mod menu's screen**: the port's own Mods section for enabling,
+   disabling, ordering the mods and clearing a mod's saved data. The model
+   behind it is `sdk/mod_menu.c`.
+2. **The run-status panel and the input injection**: the two services whose
+   calls are still `NULL` in the services table. The mod settings are
+   declared and parsed by the menu's model, but the loader does not bind the
+   call, so a mod cannot read them yet.
+3. **The relay server**: the protocol is fixed (`docs/mod-services.md`,
+   "Peer sessions"), but the server that answers it is not part of the port.
+4. **The move-learning screens:** the TM, tutor and relearner paths of
    `move.learn` (`docs/mod-events.md`, section 1).
 
 ## Related documents

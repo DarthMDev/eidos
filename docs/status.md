@@ -66,6 +66,24 @@ that changes it. Where an item is only partly done, it says which part.
   (`docs/installer.md`).
 - **Builds with no game data**, and `tools/check.py` runs GCC and Clang at
   both pointer widths, ASan+UBSan and no-SDL, warning-free.
+- **The mod layer**: the whole of it is built. `sdk/mod_api.h` and
+  `sdk/mod_state.h` are the frozen surface a mod compiles against: the
+  events and their payloads, the state and service tables, the host table and
+  the entry points. `sdk/mod_event.c` is the dispatch (the binding table, the
+  fan-out, the refusals and the scope stack) and the five area files hold the
+  rows; `sdk/mod_state.c` the state calls over the game's own accessors;
+  `sdk/mod_manifest.c` the manifest record, the parse, the namespace rules,
+  the declared-address check and the apply; `sdk/mod_savedata.c` a mod's own
+  saved data; `sdk/mod_loader.c` the loader. The services are
+  `sdk/mod_message.c` and `sdk/mod_text.c` (the messages), `sdk/mod_timer.c`
+  (the timer, the splits and the mod's own random source), `sdk/mod_export.c`
+  (a Pokemon's export and import), `sdk/mod_net.c` (the peer sessions and the
+  external control), `sdk/mod_frame.c` (the frame tick), `sdk/mod_avatar.c`
+  (the field avatars), `sdk/mod_restart.c` (the run restart) and
+  `sdk/mod_handoff.c` (the save handoff). `sdk/mod_script.c` and
+  `stubs/reimpl_vm_control.c` are the script command hooks, and
+  `sdk/mod_rule.c` the rule interpreter. The tests are the thirteen
+  `tests/test_mod_*.c`. `docs/modding.md` is the overview.
 
 ## Open, no aletheia dependency
 
@@ -110,8 +128,18 @@ that changes it. Where an item is only partly done, it says which part.
   under MSVC too, through the `vc` devel zip (README "Building with MSVC").
 - **Milestone 5, oracle breadth**: more sequences in the audio oracle is
   mechanical coverage, not accuracy.
-- **Milestone 8+**: high-resolution/widescreen rendering, the mod API,
-  packaging.
+- **Milestone 8+**: high-resolution/widescreen rendering, packaging.
+
+- **The mod layer's last pieces**: the in-game mod menu's screen (the model
+  behind it is `sdk/mod_menu.c`: the installed mods, the switch, the state
+  clear action and the orphan report) and the documentation pass over the mod
+  layer's own documents (`docs/mod-services.md`, `docs/modding.md`,
+  `docs/mod-state.md`, `docs/mod-events.md`, `docs/mod-implementation.md` and
+  this file). The run-status panel and the input injection are the two
+  services whose calls are still `NULL` in the services table; the mod
+  settings are declared and parsed but the loader does not bind the call. The
+  boot's own restart handler and the handoff's reload are in place
+  (`demo/eidos_boot.c`).
 
 ## Open, port integration
 

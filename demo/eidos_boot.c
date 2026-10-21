@@ -39,6 +39,15 @@
  * the port never delivers) is reported with every thread's call chain
  * (sdk/plat_crash.h) and ends with status 3.
  *
+ * The mod layer's own seams are here too: what a run restart means to the
+ * port (sdk/mod_restart.c) and what the port does with a save that arrived
+ * from a peer (sdk/mod_handoff.c).  Neither can be done where the request
+ * is made, so the request is recorded and the frame loop carries it out at
+ * its next safe point: the port's own reset, and then the run's start-up
+ * again.  With the new game flag the game goes into a new game directly,
+ * without stopping at the title, the way the title's own rows start one
+ * (ov088's startmenu.c).
+ *
  * Two builds, chosen by the CMake option EIDOS_BOOT:
  *
  *   OFF (the default)  the boot is not linked.  This build compiles only
@@ -66,8 +75,10 @@
  */
 
 #include "mod_frame.h"
+#include "mod_handoff.h"
 #include "mod_hooks.h"
 #include "mod_loader.h"
+#include "mod_menu.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -292,6 +303,7 @@ static void *boot_resolve_code(unsigned int ds_addr, const char **name)
 
 typedef struct BootRun {
     EidosFrameLoop loop;
+    EidosFrameHooks hooks;    /* the frame loop's hooks, kept for a restart */
     u64 limit;         /* frames to run before the clean exit            */
     u64 vblanks;       /* vblank interrupts raised                       */
     u32 skipped;       /* presents skipped in a row (badly behind)       */
@@ -1191,6 +1203,47 @@ static void boot_audio_fast(BootRun *run)
 }
 #endif
 
+/* ------------------------------------------------------------------ */
+/* The run restart and the save handoff's reload                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The mod layer's run restart (sdk/mod_restart.c) and the save handoff's
+ * reload (sdk/mod_handoff.c) both ask the port to start the game again:
+ * the restart resets the game the way the port's own reset does and, with
+ * BW_RESTART_NEW_GAME, starts a new game directly, without stopping at the
+ * title; the reload installs a save that arrived from a peer and goes on
+ * with it (docs/mod-services.md, "Run restart" and "Save handoff").
+ *
+ * Neither can be done where the request is made: the restart's handler runs
+ * on the game's thread and the reload on the frame, and the reset clears the
+ * main RAM the game is running in.  So the request is recorded here and the
+ * frame loop carries it out at its next safe point (boot_frame).
+ *
+ * What the run does once it has started again.
+ */
+typedef enum BootRunNext {
+    BOOT_RUN_TITLE = 0,    /* the title screen, as the port's reset leaves it */
+    BOOT_RUN_NEW_GAME,     /* a new game, without the title                   */
+    BOOT_RUN_CONTINUE      /* the save that is in force                       */
+} BootRunNext;
+
+/*
+ * The restart's calls.  sdk/mod_restart.c has no header of its own (the
+ * saved-data layer does the same), so the prototypes are here.
+ */
+void bw_mod_restart_set_handler(void (*fn)(u32 flags));
+int  bw_mod_restart_take(u32 *flags);
+
+/* The request that waits for the frame loop, and what it asks for. */
+static BootRunNext g_run_next = BOOT_RUN_TITLE;
+static int         g_restart_pending;
+
+/* The restart's machinery (below): the game starts again, and the game
+ * goes on with a new game or with the save that is in force. */
+static void boot_start_game(BootRunNext next);
+static void boot_run_restart(void);
+
 /* The halt hook: one frame of time passing. */
 static void boot_frame(void *user)
 {
@@ -1198,6 +1251,38 @@ static void boot_frame(void *user)
     int audio_device = 0;
     int speed = 1;   /* fast forward factor (Tab), eidos_platform_fast_forward */
     u64 t_step, t_ph;
+
+    /*
+     * The restart and the handoff's reload: both want the game to start
+     * again, and neither can be done where the request was made (the
+     * mod's handler is on the game's thread, and the reset clears the main
+     * RAM the game is running in).  The request waits here and is carried
+     * out now, at the frame loop's safe point.
+     */
+    {
+        u32 flags = 0;
+
+        if (g_restart_pending) {
+            g_restart_pending = 0;
+            boot_run_restart();
+        } else if (bw_mod_restart_take(&flags) != 0) {
+            /* A request that came in with no handler in place waits for the
+             * port to take it, so that it is not lost. */
+            g_run_next = ((flags & BW_RESTART_NEW_GAME) != 0u)
+                         ? BOOT_RUN_NEW_GAME : BOOT_RUN_TITLE;
+            boot_run_restart();
+        }
+    }
+
+    /*
+     * The first frame of a run that was started again: the game goes into a
+     * new game, or loads the save that is in force, the way the title's own
+     * rows do it (ov088's startmenu.c).
+     */
+    if (g_run_next != BOOT_RUN_TITLE && eidos_frame_count(&run->loop) == 0) {
+        boot_start_game(g_run_next);
+        g_run_next = BOOT_RUN_TITLE;
+    }
 
 #if EIDOS_BOOT_SDL
     if (run->want_window && !run->window_tried) {
@@ -1208,6 +1293,7 @@ static void boot_frame(void *user)
     if (eidos_frame_count(&run->loop) >= run->limit) {
         boot_finish(0, "ran");
     }
+
     /* Line 0 of the next frame: the vblank flag drops. */
     io_raw_write(REG_DISPSTAT, 2,
                  io_raw_read(REG_DISPSTAT, 2) & ~DISPSTAT_VBLANK_FLAG);
@@ -1346,38 +1432,149 @@ static void boot_window(EidosFrameHooks *hooks, int window)
 #endif
 }
 
-static int run_boot(u64 frames, int window, unsigned watchdog)
+/* ------------------------------------------------------------------ */
+/* The run restart and the save handoff's reload                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The restart the mod layer asks for: the request is recorded here, and the
+ * frame loop carries it out.  With BW_RESTART_NEW_GAME the game goes into a
+ * new game directly; without it the game boots to the title, the way the
+ * port's own reset leaves it.
+ */
+static void boot_restart(u32 flags)
 {
-    EidosFrameHooks hooks;
+    g_run_next = ((flags & BW_RESTART_NEW_GAME) != 0u) ? BOOT_RUN_NEW_GAME
+                                                       : BOOT_RUN_TITLE;
+    g_restart_pending = 1;
+}
 
-    memset(&g_run, 0, sizeof g_run);
-    g_run.limit = frames;
+/*
+ * The handoff's reload: a save arrived from a peer and the player took it,
+ * so the save is installed (sdk/mod_handoff.c) and the game goes on with it.
+ * The run starts again and loads the save that is now in force.
+ */
+static void boot_reload(void)
+{
+    g_run_next = BOOT_RUN_CONTINUE;
+    g_restart_pending = 1;
+}
 
-    memset(&hooks, 0, sizeof hooks);
-    hooks.step = NULL;              /* the game runs on its own threads */
-    hooks.vblank = boot_vblank;
-    hooks.user = &g_run;
-    boot_window(&hooks, window);
-
-    /* The image is installed before the first reset, which copies it into
-     * main RAM, binds the names and relocates the pointers. */
-    bw_data_install(&bw_arm9_data, 0);
-#if EIDOS_OVERLAYS
-    /* The overlays load through FS_LoadOverlay like the game's own:
-     * copied into their windows, bound and relocated at each load. */
-    bw_ovl_install(&bw_ovl_set_boot, 0);
+/*
+ * The game's own calls, the way the title screen starts a game (ov088's
+ * startmenu.c): the save is reset for a new game, the init work says which
+ * way the game starts, and the global process is replaced with the game's
+ * own main process, which makes the map change that starts the game
+ * (ov020's EVENT_MAPCHANGE_CreateByMode; the new game start event it
+ * reaches is the port's game.new, mod/declared_set.txt).
+ *
+ * They are weak, so that a build without the game still links: the port
+ * then says that it cannot start a game, and the game stays at the title.
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#define BW_BOOT_WEAK __attribute__((weak))
+#else
+#define BW_BOOT_WEAK
 #endif
-    bw_port_reset();
+
+extern void *SAVE_CONTROL_Get(void) BW_BOOT_WEAK;
+extern void  SAVE_CONTROL_ResetToNewGame(void *saveControl) BW_BOOT_WEAK;
+extern void *GAMESYSTEM_SetupInitWork(u32 mode, u16 zoneId, void *position,
+                                       int direction) BW_BOOT_WEAK;
+extern void  PROCSYS_ReplaceGlobal(u32 overlayId, const void *data,
+                                    void *procWork) BW_BOOT_WEAK;
+extern void *PLAYER_LOCATION_GetData(void *save) BW_BOOT_WEAK;
+extern u16   PLAYER_LOCATION_GetZoneId(const void *location) BW_BOOT_WEAK;
+
+/*
+ * The game's main process: the one the title replaces the global process
+ * with when a game starts (ov088's startmenu.c, the ProcData at the ARM9's
+ * 0x0209DF9C).
+ */
+#define BOOT_MAIN_PROC_ADDR 0x0209DF9Cu
+
+/* The init work's modes (ov020's event_mapchange.c). */
+#define BOOT_INIT_FIRST    0u
+#define BOOT_INIT_CONTINUE 1u
+
+/*
+ * The game goes on: the global process is replaced with the game's own main
+ * process and the init work says which way the game starts, which is what
+ * the title's rows do (ov088's startmenu.c).  The main process makes the
+ * map change that starts the game.
+ */
+static void boot_start_game(BootRunNext next)
+{
+    u32 pos[4] = { 0u, 0u, 0u, 0u };
+    const void *main_proc;
+    void *init;
+
+    if (PROCSYS_ReplaceGlobal == NULL || GAMESYSTEM_SetupInitWork == NULL) {
+        fprintf(stderr, "eidos_boot: the game's own calls are not in this "
+                        "build; the game stays at the title\n");
+        return;
+    }
+    main_proc = bw_ds_try_ptr(BOOT_MAIN_PROC_ADDR);
+    if (main_proc == NULL) {
+        fprintf(stderr, "eidos_boot: the game's main process is not in this "
+                        "build; the game stays at the title\n");
+        return;
+    }
+    if (next == BOOT_RUN_NEW_GAME) {
+        /* A new game: the save is reset to the defaults, the way the title's
+         * new game row does it before it asks for the name. */
+        if (SAVE_CONTROL_Get != NULL && SAVE_CONTROL_ResetToNewGame != NULL) {
+            SAVE_CONTROL_ResetToNewGame(SAVE_CONTROL_Get());
+        }
+        init = GAMESYSTEM_SetupInitWork(BOOT_INIT_FIRST, 0, pos, 0);
+    } else if (next == BOOT_RUN_CONTINUE) {
+        /* The save that is in force: the game loads it and resumes where it
+         * was, the way the title's continue row does it. */
+        u16 zone = 0;
+        void *save = (SAVE_CONTROL_Get != NULL) ? SAVE_CONTROL_Get() : NULL;
+
+        if (save != NULL && PLAYER_LOCATION_GetData != NULL &&
+            PLAYER_LOCATION_GetZoneId != NULL) {
+            zone = PLAYER_LOCATION_GetZoneId(PLAYER_LOCATION_GetData(save));
+        }
+        init = GAMESYSTEM_SetupInitWork(BOOT_INIT_CONTINUE, zone, pos, 0);
+    } else {
+        return;
+    }
+    PROCSYS_ReplaceGlobal((u32)-1, main_proc, init);
+}
+
+/*
+ * The timed input script (sdk/input.h's text format): the run's own input,
+ * read again for every run, because the reset clears the input state.
+ */
+static int boot_load_input_script(void)
+{
+    char err[160];
+
+    if (g_input_script[0] == '\0') {
+        return 0;
+    }
+    if (bw_input_script_load(g_input_script, err, sizeof(err)) != 0) {
+        fprintf(stderr, "eidos_boot: input script: %s\n", err);
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * The run's start-up: what the boot does after the reset.  The first run
+ * does it once; a restart does it again, after the port's own reset.
+ * NitroMain does not return, so this does not either.
+ */
+static int boot_run_start(EidosFrameHooks *hooks)
+{
     bw_input_reset();
+    if (boot_load_input_script() != 0) {
+        return -1;
+    }
     if (getenv("EIDOS_G3D_DUMP") != NULL) {
         g3d_hw_snapshot_enable(1);
-    }
-    if (g_input_script[0] != '\0') {
-        char err[160];
-        if (bw_input_script_load(g_input_script, err, sizeof(err)) != 0) {
-            fprintf(stderr, "eidos_boot: input script: %s\n", err);
-            return 2;
-        }
     }
     /* The 3D hardware after the reset that cleared its access hook: the
      * game's geometry FIFO and SWAP_BUFFERS land there, and its frame is
@@ -1389,11 +1586,18 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
            (unsigned long)bw_data_scanned());
     fflush(stdout);
     bw_boot_link_init();
-    /* The mods: the loader runs after the save is chosen and before the game
-     * runs (docs/mod-implementation.md, section 3).  The declared table the
-     * manifest's address check asks is registered by bw_boot_link_init, so
-     * the loader comes after it.  With no mod root there is nothing to
-     * load. */
+    /* The mod layer's own seams: what a restart means to the port, and what
+     * the port does with a save that arrived from a peer. */
+    bw_mod_restart_set_handler(boot_restart);
+    bw_mod_handoff_set_reload(boot_reload);
+    /* The player's own mod list: the menu's record restores the roots the
+     * player chose, before the loader reads them (sdk/mod_menu.h). */
+    bw_mod_menu_start();
+    /* The mods: the loader runs after the save is chosen and before the
+     * game runs (docs/mod-implementation.md, section 3).  The declared
+     * table the manifest's address check asks is registered by
+     * bw_boot_link_init, so the loader comes after it.  With no mod root
+     * there is nothing to load. */
     {
         int loaded = bw_mod_loader_load_all();
 
@@ -1404,16 +1608,84 @@ static int run_boot(u64 frames, int window, unsigned watchdog)
     }
     commit_main_ram();
 
-    eidos_frame_init(&g_run.loop, &hooks, g_run.top, g_run.bottom);
+    eidos_frame_init(&g_run.loop, hooks, g_run.top, g_run.bottom);
     eidos_frame_set_current(&g_run.loop);
     bw_os_set_halt_hook(boot_frame, &g_run);
+    NitroMain();
+    bw_panic("NitroMain returned", 0x02005124u, "its loop has no exit");
+    return 0;
+}
+
+/*
+ * The run starts again: the port's own reset, and then the run's start-up
+ * again.
+ *
+ * The reset is the port's own (sdk/port_reset.c): it puts the emulated
+ * machine back to power-on and joins the layers again.  It cannot run where
+ * the request was made: the mod's handler is on the game's thread, and the
+ * reset clears the main RAM the game is running in.  It runs here, on the
+ * frame thread, at the frame loop's safe point.
+ *
+ * What the run does next (a new game, the save in force) is applied at the
+ * first frame of the new run.
+ *
+ * What the port's OS layer does not allow yet: its reset leaves "no threads
+ * but the caller" (sdk/os.h), but it stops and joins every thread whose
+ * record is not the launcher's, and the frame thread is the OS layer's idle
+ * thread, which never reaches a point where it can be stopped.  The port
+ * needs a restart entry point that leaves the calling thread alone; this
+ * function is the one place to move when it has one.
+ */
+static void boot_run_restart(void)
+{
+    printf("eidos_boot: the run starts again (%s)\n",
+           g_run_next == BOOT_RUN_NEW_GAME ? "a new game" :
+           g_run_next == BOOT_RUN_CONTINUE ? "the save in force" :
+           "the title screen");
+    fflush(stdout);
+    /* The image is in place before the reset, which copies it into main
+     * RAM, binds the names and relocates the pointers. */
+    bw_data_install(&bw_arm9_data, 0);
+    /* The port's own reset: the machine back to power-on, and the layers
+     * joined again. */
+    bw_port_reset();
+    /* No overlay is resident any more: the reset cleared their data. */
+    bw_overlay_sdk_init();
+    /* The run's start-up again: the input, the 3D, the link-time
+     * constants, the mods, the frame loop and the game. */
+    (void)boot_run_start(&g_run.hooks);
+}
+
+static int run_boot(u64 frames, int window, unsigned watchdog)
+{
+    memset(&g_run, 0, sizeof g_run);
+    g_run.limit = frames;
+
+    memset(&g_run.hooks, 0, sizeof g_run.hooks);
+    g_run.hooks.step = NULL;          /* the game runs on its own threads */
+    g_run.hooks.vblank = boot_vblank;
+    g_run.hooks.user = &g_run;
+    boot_window(&g_run.hooks, window);
+
+    /* The image is installed before the first reset, which copies it into
+     * main RAM, binds the names and relocates the pointers. */
+    bw_data_install(&bw_arm9_data, 0);
+#if EIDOS_OVERLAYS
+    /* The overlays load through FS_LoadOverlay like the game's own:
+     * copied into their windows, bound and relocated at each load. */
+    bw_ovl_install(&bw_ovl_set_boot, 0);
+#endif
+    bw_port_reset();
     bw_plat_crash_context(boot_report_context);
     if (watchdog != 0) {
         bw_plat_watchdog(watchdog, boot_progress);
     }
-
-    NitroMain();
-    bw_panic("NitroMain returned", 0x02005124u, "its loop has no exit");
+    /* The run's start-up: the input, the 3D, the link-time constants, the
+     * mods, the frame loop and the game.  A restart does the same again,
+     * after the port's own reset (boot_run_restart). */
+    if (boot_run_start(&g_run.hooks) != 0) {
+        return 2;
+    }
     return 3;
 }
 

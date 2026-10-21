@@ -461,6 +461,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_avatar.c       # the field avatars
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_restart.c      # the run restart
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_handoff.c      # the save handoff
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_menu.c        # the mod menu's model
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_manifest.c   # the run-time manifest: the record, the parse, the apply
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_savedata.c   # a mod's own saved data: the file, the envelope, the versions
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_loader.c     # the loader: the library, the host table, the handlers

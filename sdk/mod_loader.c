@@ -112,6 +112,7 @@
 #include "mod_frame.h"
 #include "mod_handoff.h"
 #include "mod_loader.h"
+#include "mod_menu.h"
 #include "mod_manifest.h"
 #include "mod_message.h"
 #include "mod_net.h"
@@ -908,6 +909,9 @@ static int loader_load(u32 index)
      * namespace is in force, the way the network's calls find their
      * caller. */
     m->services.on_frame      = bw_mod_frame_on_frame;
+    /* The mod's own settings: the menu holds the player's choices, and the
+     * mod reads them (sdk/mod_menu.h). */
+    m->services.setting_get    = bw_mod_menu_setting_get;
     /* The field avatars, the run restart and the save handoff. */
     m->services.avatar_create = bw_mod_avatar_create;
     m->services.avatar_move   = bw_mod_avatar_move;

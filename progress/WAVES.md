@@ -26,3 +26,4 @@ Waves 3 and 4 have no row. The log has no record for either.
 | 18 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the port against the new tree: the spelling header follows the tree's content, the renaming survives the new header style, and the boot's closure carries the state API's accessors |
 | 19 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the script command's operands and the per-mod answer in the mod's surface, and the peer sessions and the external control |
 | 20 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the frame tick, the field avatars, the run restart and the save handoff, and the rule layer's peer send |
+| 21 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the boot's restart and the handoff's reload, the mod menu's model, and the mod layer's documentation |

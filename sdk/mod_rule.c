@@ -4183,9 +4183,12 @@ int bw_mod_rule_bind_manifest(const char *root, const char *dir_name,
         rule_report(label, NULL, 0, "the rule has no file");
         return -1;
     }
-    if (root != NULL && *root != '\0' &&
-        (dir_name != NULL && *dir_name != '\0')) {
-        n = snprintf(path, sizeof path, "%s/%s/%s", root, dir_name, rel_path);
+    if (root != NULL && *root != '\0') {
+        /* The root the mod list holds is the mod's own folder (the vfs
+         * splits it there: bw_add_mod_root takes the folder), so the rule's
+         * path is relative to it, the way the library's is (the loader
+         * joins the root and the manifest's `code`). */
+        n = snprintf(path, sizeof path, "%s/%s", root, rel_path);
     } else if (dir_name != NULL && *dir_name != '\0') {
         n = snprintf(path, sizeof path, "%s/%s", dir_name, rel_path);
     } else {

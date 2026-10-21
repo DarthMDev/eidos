@@ -42,7 +42,7 @@ address space with the port's privilege (`docs/mod-interface.md`, section 5).
 mod keeps the file boundary and lets a mod keep more than one file under one
 namespace, a pairing table beside a run history for example, without a second
 namespace. A mod that wants raw files of its own asks for the folder path with
-`state_dir`.
+`state_dir`, which makes the folder if it is not there yet.
 
 ### Where it lives
 
@@ -67,11 +67,12 @@ directory name, the way a bad `order` is reported and the default stands
 
 The port's own rules, which the documents leave open:
 
-- The default namespace is the name in lower case, with the spaces and the
-  punctuation that is not a letter or a digit turned into nothing and the
-  words joined by a dash: "Nuzlocke Soul Link" gives "nuzlocke-soullink".
-  The name is cut at the first space, so the first word stands and the rest
-  follows it joined.
+- The default namespace is the name in lower case. The name is split at the
+  spaces, and every character that is not a letter, a digit, a dash or an
+  underscore becomes a dash, a run of them becomes one dash and a trailing one
+  is cut. The first word stands alone, a dash follows it, and the words after
+  it are joined to it without a dash: "Nuzlocke Soul Link" gives
+  "nuzlocke-soullink". A name with nothing usable in it gives "mod".
 - The namespace is at most 64 characters, and it may hold letters, digits,
   `-`, `_` and `.` only. A reserved device name (CON, PRN, AUX, NUL, COM1
   to COM9, LPT1 to LPT9, with or without an extension) is refused.
@@ -91,12 +92,22 @@ The file is a port-owned header followed by the mod's opaque payload.
 | 20 | `save_check`, u32, a checksum of the game save written in the same step | port |
 | 24 | the payload | mod |
 
-The header is 24 bytes (`BwModStateHeader` in `sdk/mod_state.h`). The port writes and reads it. The mod owns the payload
+The header is 24 bytes (`BwModStateHeader` in `sdk/mod_state.h`). It is written
+one field at a time and little-endian, so the file is the same on every host
+whatever the compiler does with the struct. The port writes and reads it. The
+mod owns the payload
 and its internal format, which is the mod-owns-the-bytes rule of
 `docs/mod-interface.md`, section 3. The mod never sees the header; the
 port-owned calls of section 2 hand it the payload and its length. A mod that
 wants the raw file uses the folder path and owns every byte in it, including
 its own version marker.
+
+The payload's checksum is a CRC-32: the reflected IEEE polynomial
+0xEDB88320, the one every host library computes. It catches a hand edit or a
+disk fault, and `bw_save_write_atomic` already rules out a torn write, because
+it writes a temporary and replaces it (`sdk/save.c`, `sdk/save.h`). The
+largest payload a mod may store is 4 MiB; a bigger store is refused and
+reported.
 
 ### Removal
 
@@ -105,9 +116,11 @@ The port does not delete a mod's folder when the mod is removed.
 effects persist, and the port restores nothing (`docs/mod-interface.md`,
 section 4). Deleting the state
 on removal would rewind a run the player may re-enable, so removal leaves the
-folder and a re-enable reads it again. The port reports the orphan at the menu.
-A player-facing clear action calls the port's `state_clear`, which deletes the
-state file and leaves the folder, or deletes the folder.
+folder and a re-enable reads it again. The orphan report, which tells the
+player that a mod's folder is left over, belongs to the mod menu: its model
+answers it (`sdk/mod_menu.c`), and the screen that would show it does not
+exist yet. A player-facing clear action calls the port's `state_clear`, which
+deletes the state file and leaves the folder.
 
 ## 2. The lifecycle
 
@@ -118,20 +131,23 @@ creates the folder. The port writes no empty file at load, so an absent file
 and an empty file are the same to a mod, and the first run starts from the
 mod's defaults.
 
-**Loaded.** At `save.load` the port reads the state file that belongs to the
-save being loaded and hands the payload to the mod. It also compares the
-header's `save_check` with the save being loaded. When they differ, the game
-save was written without the mod (an older backup, or a save made while the mod
-was disabled), and the port tells the mod the state is out of step; the mod
-decides what to do. A new game (`game.new`) starts with no state.
+**Loaded.** The file that belongs to the save being loaded is the one the
+mod's own `state_load` reads: the file is named after the game save, so a mod
+that loads at `save.load` reads the file of the save it is loading. The port
+also compares the header's `save_check` with the save in force, and the mod
+asks for that answer with `state_in_step`: when the two differ, the game save
+was written without the mod (an older backup, or a save made while the mod
+was disabled), and the mod decides what to do. A new game (`game.new`) starts
+with no state.
 
 **Written.** The port writes the mod's state in the same step as the game's
-save. At `save.begin` it asks the mod for its payload; when the game's save
-completes (`save.done`) it writes the state file with the new game save's
-checksum. A game save that fails leaves the old state file in place, so the two
-never drift apart. A mod may also store at any other event for its own
-reasons; such a store is written with the checksum of the save currently on
-disk.
+save. The saved-data layer holds a window for that: the port opens it, a
+`state_store` inside the window holds the payload instead of writing it, and
+the port closes the window with the game's save's answer, which writes the
+held payload with the new game save's checksum or drops it when the save
+failed. A game save that fails leaves the old state file in place, so the two
+never drift apart. A store made outside that window is written at once, with
+the checksum of the save currently on disk.
 
 **Discarded.** A store is the whole file: `bw_save_write_atomic` writes a
 temporary and replaces the file, so there is no partial state. A store that
@@ -148,14 +164,18 @@ The four constraints are `docs/mod-rules.md`, section 2.
    `bw_clear_mods` set the roots, and every change drops the cached merged
    archives (`sdk/vfs.h`, "The mod list"; `sdk/vfs.c`, `bw_vfs_flush`). The
    state namespace is per mod, so a root rebuild does not move state. Enabling
-   a mod adds its root and the load point reads its state. The menu is not
-   built (`docs/mod-services.md`).
-2. Disabling a code mod reverts its slots before its library unloads. The port
-   calls the mod's flush first, then reverts each `(region, address)` pair the
-   mod installed to its original, then unloads the library. The registry holds
-   the mod's handler, and a code pointer in data resolves through the same
-   lookup (`sdk/overlay_image.c`, `bw_ovl_code_entry`), so the revert must
-   precede the unload. The loader is not built (`docs/mod-abi.md`).
+   a mod adds its root and the load point reads its state. The menu's model
+   is `sdk/mod_menu.c`; the screen that drives it does not exist yet
+   (`docs/mod-services.md`).
+2. Disabling a code mod reverts its slots before its library unloads. The
+   registry holds the mod's handler, and a code pointer in data resolves
+   through the same lookup (`sdk/overlay_image.c`, `bw_ovl_code_entry`), so
+   the revert must precede the unload. The loader keeps the order
+   (`sdk/mod_loader.c`): the slots the mod installed go back to their
+   originals in the reverse order they were installed, `eidos_mod_stop` runs
+   (the namespace is in force, so a state call the mod makes there reaches
+   the mod's own file and is where a mod flushes its data), and the library
+   is unloaded last, because a code pointer into it is still live until then.
 3. A disabled mod's effects persist. The state file stays and the game bytes
    the mod wrote stay until the game writes over them or the port restarts
    (`docs/mod-rules.md`, section 2, constraint 3). Re-enabling reads the state
@@ -184,12 +204,33 @@ file was written with the game save in force.  The question is per mod, so
 it cannot be the `save.load` payload's byte: that payload is built once for
 all the handlers of the event, and one mod's file may be in step while
 another's is not.  The port keeps the answer in the file's header
-(`save_check`) and compares it with the save in force.
+(`save_check`) and compares it with the save in force.  The answer is 1 when
+the two match, 0 when they differ, and -1 when the question cannot be
+answered: there is no state file, or the port has not told the layer which
+save is in force.
 
-The port asks for the payload at `save.begin` through the mod's `save.begin`
-handler, which calls `state_store`; the port holds the bytes and writes them at
-`save.done`. A mod that keeps its own files uses `state_dir` and the same
-whole-file discipline.
+The port's own `save.begin` and `save.done` events are where a mod reacts to
+a save. A mod that stores its payload in its `save.begin` handler hands the
+bytes to the layer, which holds them while the save is in progress and writes
+them with the new save's checksum when it ends. A mod that keeps its own files
+uses `state_dir` and the same whole-file discipline.
+
+### The rule cells' own file
+
+A rule keeps its own cells, and the cells do not live in the mod's own file.
+One file per mod is the only isolation the port can give, and a rule that
+wrote a cell would take the mod's own payload with it. So the cells live in a
+file of their own, under a namespace derived from the mod's: the mod's
+namespace with `-rules` at the end, cut so it stays inside the length the
+saved-data layer accepts. The saved-data layer turns that namespace into a
+folder and a file of its own, and the file is named after the game save, so
+the cells still follow the game save.
+
+The cells' payload is the rule layer's own: the magic `BWRC`, a version, and
+the cells. A file that does not hold that magic, or holds another version, is
+not read: the cells stay in memory for the run and the port is told once. A
+port that has given the rule layer no file for the cells at all keeps the
+cells in memory for the run too, and says so once.
 
 ## 3. The run-time manifest
 
@@ -244,19 +285,22 @@ one address").
 
 The apply does four things per mod:
 
-1. Check `api` (and `port`, when the mod has raw hooks) against the port's
-   version, and refuse the mod on a mismatch.
+1. Check `api` against the port's version, and check the `port` pin when the
+   mod has raw hooks and states one. A mismatch refuses the mod.
 2. Derive the namespace from `state`, or from `name` when `state` is absent.
-3. For each `override`: check the pair against the declared table, resolve the
-   symbol in the loaded library, and call
-   `bw_mod_slot_install(region, addr, symbol, owner)` (`sdk/mod_slot.h`). The later-wins rule and the shadow report are the registry's.
+3. For each `override`: check the pair against the declared table. The ones
+   that are declared stay in the record; the ones that are not are reported and
+   dropped.
 4. Store each `rule` and the `settings` path for the interpreter and the
    settings surface.
 
-The install waits for the loader, which resolves the symbol
-(`docs/mod-implementation.md`, section 6). Without the loader the apply stores
-the override list on the mod record, and a test installs a known pointer
-directly.
+The loader does the rest: it resolves each surviving override's symbol in the
+loaded library and calls `bw_mod_slot_install(region, addr, symbol, owner)`
+(`sdk/mod_slot.h`), in the order the manifest gave them, so a later mod wins
+over an earlier one for one pair. It installs the symbol the same way for
+both modes: the registry keeps one hook per pair and does not chain hooks
+yet, so the `wrap` mode's chain of wraps does not exist
+(`docs/mod-overrides.md`).
 
 ## 4. The declared-address check
 
@@ -287,8 +331,8 @@ int  bw_mod_slot_declared(unsigned int region, unsigned int addr);
 ```
 
 `bw_mod_declare_table` stores the rows in a declared set in `sdk/mod_slot.c`.
-`bw_mod_slot_declared` answers from it. The set holds a few hundred rows, so
-the table is sorted by region and address and searched by bisection.
+`bw_mod_slot_declared` answers from it. The set holds a few hundred rows, so the
+table is sorted by region and address and searched by bisection.
 
 The table carries the whole set, not only the rows the link defines. A declared
 row whose definition the link does not carry has no slot
@@ -363,70 +407,41 @@ moves the file to `<save>.bin.bad`, and the mod starts from defaults. The crc
 catches a hand edit or a disk fault. `bw_save_write_atomic` already rules out a
 torn write, because it writes a temporary and replaces it (`sdk/save.c`, `sdk/save.h`).
 
-### The mod's own migration
+## 6. What is built
 
-The port hands the header fields to the mod through `state_info`, so the
-mod can migrate its payload when `version` or `api_written` changed. A mod that
-cannot migrate calls `state_clear` and starts fresh. The port does not
-migrate a payload it cannot read.
+The state layer is `sdk/mod_savedata.c`, the manifest layer is
+`sdk/mod_manifest.c`, and the loader is `sdk/mod_loader.c`. Between them they
+cover the whole of this document:
 
-## 6. The implementation split
+- **The envelope.** `sdk/mod_state.h` carries the frozen 24-byte header and the
+  six state calls; `sdk/mod_savedata.c` writes and reads it, one field at a
+  time and little-endian, and computes the payload's CRC-32.
+- **The file.** The namespace validation, the default namespace, the path
+  (`<save dir>/mods/<namespace>/<save>.bin`), the whole-file atomic write and
+  the move-aside of a file the port cannot read.
+- **The lifecycle.** The staged payload between `save.begin` and `save.done`,
+  the save's checksum, and the per-mod "in step" answer.
+- **The manifest.** The record, the parse, the namespace rules, the version
+  check and the declared-address check, in `sdk/mod_manifest.c` and
+  `sdk/mod_manifest.h`.
+- **The loader.** The library, the host table, the version check, the handler
+  bindings, the override installation and the way back down, in
+  `sdk/mod_loader.c`.
+- **The cells' file.** The rule layer's own namespace and the two calls the
+  loader installs for it, in `sdk/mod_rule.c`.
 
-The steps below split into workstreams with disjoint files. Step 1 is the
-shared header and lands first; steps 2 to 5 are then parallel; step 6 wires
-them.
-
-**Step 1. Freeze the state header and the state API.** `sdk/mod_state.h`:
-`BwModStateHeader`, the namespace helpers, and the `bw_mod_state_*` prototypes.
-One writer. It is the interface the other steps compile against.
-Test: a compile-only check in `tests/test_mod_state.c` that includes the header
-and asserts the header size and offsets.
-
-**Step 2. The state layer.** `sdk/mod_state.c`: the namespace validation and
-default, the path, the envelope, `bw_mod_state_load`, `bw_mod_state_store`,
-`state_clear`, `state_info`, `state_dir`. Disjoint file.
-Test: `tests/test_mod_state.c`, a temp directory set with `bw_set_save_dir`,
-like `tests/test_vfs.c`. It stores and loads a payload, checks the header, the
-crc, an older version, a newer version, a damaged file, and the namespace
-default. No game data is needed. Register it with the `foreach` list
-(`CMakeLists.txt`, the test list).
-
-**Step 3. The declared set at run time.** `sdk/mod_slot.h` and
-`sdk/mod_slot.c`: `BwModDeclared`, `bw_mod_declare_table`,
-`bw_mod_slot_declared`, and the low-bit mask.
-Test: `tests/test_mod_declare.c` registers a small table and checks a declared
-pair, an undeclared pair, and the Thumb-tagged form. Register it like step 2.
-
-**Step 4. The manifest reader.** `sdk/mod_manifest.h` and
-`sdk/mod_manifest.c`, and the one call from `read_manifest` (`sdk/vfs.c`). It depends on step 3 for the declared check.
-Test: `tests/test_mod_manifest.c`, a temp tree like `tests/test_vfs.c`, with
-one declared and one undeclared `override` line and a bad `api`. It checks the declared pair is stored, the undeclared pair is
-reported and skipped, and the namespace default derives from `name`.
-
-**Step 5. The generator change.** `tools/bootlink.py` emits `bw_declared_rows[]`
-from `mod/declared_set.txt` and the `bw_mod_declare_table` call in
-`bw_boot_link_init` (`tools/bootlink.py`, `write_link_c`).
-Test: the seam verification path of `docs/mod-interface.md`, section 2. The
-generated `boot_link.c` is read in a scratch out-dir for the table and the
-call. `tests/test_ovlink.py` shows the generator-test pattern. No compiler and
-no game byte are needed.
-
-**Step 6. Wiring.** Add `sdk/mod_state.c` and `sdk/mod_manifest.c` to
-`BW_SDK_SOURCES` (`CMakeLists.txt`, beside `sdk/mod_slot.c`), add the
-tests, and reset the manifest layer from `bw_port_reset` (`sdk/port_reset.c`;
-`docs/mod-implementation.md`, section 6).
-Test: the full suite and the boot with a mod that declares one state namespace
-and one override.
-
-The dependency chain is step 1, then steps 2 to 5 in parallel, then step 6.
-Steps 2, 3, 4 and 5 touch disjoint files. Step 5 touches only the generator.
+The tests are `tests/test_mod_savedata.c` (the envelope, the versions and the
+write discipline), `tests/test_mod_manifest.c` (the parse, the namespace, the
+declared check and the override grammar), `tests/test_mod_declare.c` (the
+declared set at run time) and `tests/test_mod_loader.c` (which loads a real
+library).
 
 ## Still to build
 
-1. **The in-game mod menu.** Enabling and disabling a mod, the state clear
-   action and the orphan report (`docs/mod-services.md`).
-2. **The disable order.** Flush the state, revert the mod's slots, then unload
-   the library (constraint 2), built with the loader.
+1. **The in-game mod menu's screen.** The model behind it is `sdk/mod_menu.c`:
+   the installed mods, the switch, the state clear action and the orphan
+   report. The screen that draws it is the port's own user interface
+   (`docs/mod-services.md`).
 
 The port's own choices, which the documents do not fix:
 

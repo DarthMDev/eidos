@@ -120,14 +120,14 @@ section 1, and its notes):
 | `catch.attempt` | pushes the block command (0x47) for the target and returns 0, so the ball is not taken from the bag |
 | `item.use` | returns 0, "it won't have any effect" |
 | `shop.buy` | sets the shop's state to the list again, with no message of its own |
-| `heal` | returns 0 without healing (`SCRCMD_PROC_HealParty`); returns without healing (`GPOWER_UseHpRestore`) |
+| `heal` | returns 0 without healing (`SCRCMD_PROC_HealParty`); answers 0xFF, the "no power active" value (`GPOWER_UseHpRestore`), and the power is not consumed |
 
 Building each event includes checking its refusal in a running game
 (section 6, step 4).
 
 ### Fan-out
 
-`bw_mod_event_fire` runs every handler bound to the event, in load order
+The dispatch runs every handler bound to the event, in load order
 (`docs/mod-events.md`, section 3). Each handler sees the payload as the ones
 before it left it. The result is refused when any handler returned
 `BW_EVENT_REFUSE`. A refusal at an event with no refusal function is ignored
@@ -152,17 +152,27 @@ payload, never stored as a pointer.
 `sdk/mod_loader.c` loads each mod with a `code` key, in load order, after the
 save is chosen and before the game runs:
 
-1. Open the library: `LoadLibraryW` on Windows, `dlopen` elsewhere.
-2. Find `eidos_mod_start` and `eidos_mod_stop`.
-3. Check the manifest's `api` (and `port`, for raw hooks) against the port.
+1. Read the manifest and apply it: the `api`, and the `port` version for a
+   mod with raw hooks, are checked there, and a mod that does not match is
+   refused and never loaded. A mod with code and no `api` is refused too.
+2. Open the library: `LoadLibraryW` on Windows, `dlopen` elsewhere.
+3. Find `eidos_mod_start` and `eidos_mod_stop`.
 4. Call `eidos_mod_start` with the host table (`docs/mod-abi.md`). The mod
-   binds its handlers through `host->on`.
-5. Install the manifest's `override` lines with `bw_mod_slot_install`, after
-   the declared check (`docs/mod-state.md`, section 4).
+   binds its handlers through `host->on`, and the loader holds the bindings
+   until the start entry has returned its state pointer.
+5. Register the handlers the mod asked for, and install the manifest's
+   `override` lines with `bw_mod_slot_install`, after the declared check
+   (`docs/mod-state.md`, section 4).
 
-On exit, or when the player disables the mod, the loader stores the mod's
-state, reverts its slots, calls `eidos_mod_stop`, and unloads the library, in
-that order.
+On exit, or when the player disables the mod, the loader reverts the slots the
+mod installed, calls `eidos_mod_stop`, and unloads the library, in that order.
+The namespace is in force for the stop entry, so a state call the mod makes
+there reaches its own file and is where a mod flushes its data. The library
+is last because a code pointer into it is still live until then.
+
+The event layer holds the handlers a mod bound and has no call to drop the
+handlers of one mod, so the port resets the event layer and binds the port's
+own rows again before it loads the mods that are still wanted.
 
 ## 4. State and services
 
@@ -183,6 +193,13 @@ one port-side stand-in for each VM's dispatch function, compiled in place of
 the matched one, the way the port's own compiled hooks replace a function
 (`docs/hooks.md`).
 
+The registry, the two opcode tables and the hook are `sdk/mod_script.c`; the
+stand-in that takes the game's dispatch function's place is
+`stubs/reimpl_vm_control.c`. The two VMs are told apart by the size of their
+command table: the field VM's has 609 entries and the battle effect VM's 78.
+The game's two other VMs, the trainer AI's and the station act script's, have
+tables of their own and are left alone.
+
 ## 6. The build order
 
 Each step has a test that runs without game data unless it says so.
@@ -192,8 +209,9 @@ Each step has a test that runs without game data unless it says so.
    the surface hash test (`docs/mod-abi.md`, section 3). Everything else
    compiles against them.
 2. **The dispatch core.** `sdk/mod_event.c`: the binding table, enter, leave,
-   fire, the registration call. Test: a fake binding and two handlers check the
-   order, the chaining of a modified field, and that one refusal refuses.
+   the fan-out, the registration call. Test: a fake binding and two handlers
+   check the order, the chaining of a modified field, and that one refusal
+   refuses.
 3. **The generator change.** `tools/bootlink.py` and `tools/ovlink.py` emit the
    enter and leave calls for rows with an event, and call the original through
    `call.a[]`. Test: generate into a scratch directory and read the output
@@ -221,31 +239,50 @@ Steps 6 to 10 need 1 and can run in parallel with step 4.
 
 ### What is built
 
-Steps 1, 2, 3 and 5 are built, step 4 for every area, and steps 6, 7 and 8's
-first service: `sdk/mod_api.h`, `sdk/mod_state.h`, `sdk/mod_event.h`,
-`sdk/mod_context.h`, `sdk/mod_script.h`, `sdk/mod_rule.h` and
-`sdk/mod_text.h` are the headers, `sdk/mod_event.c` and `sdk/mod_context.c`
-the dispatch and the contexts, `sdk/mod_state.c` the state calls, the five
-area files the rows, `sdk/mod_manifest.c` the manifest record and the apply,
-`sdk/mod_savedata.c` a mod's own saved data, `sdk/mod_loader.c` the loader,
-`sdk/mod_message.c` the message service, `sdk/mod_text.c` the port's text
-path, `sdk/mod_script.c` the script command hooks and `sdk/mod_rule.c` the
-rule interpreter. The declared set is at run time too: the boot link emits
-the table of every row and `sdk/mod_slot.c` answers from it.
+All ten steps are built.
+
+- **The headers.** `sdk/mod_api.h` (the types, the events, the script
+  commands, the host table and the entry points), `sdk/mod_state.h` (the state
+  calls and the services table), and the port's own `sdk/mod_event.h`,
+  `sdk/mod_context.h`, `sdk/mod_script.h`, `sdk/mod_rule.h`, `sdk/mod_text.h`,
+  `sdk/mod_message.h`, `sdk/mod_net.h`, `sdk/mod_avatar.h`, `sdk/mod_export.h`,
+  `sdk/mod_frame.h`, `sdk/mod_handoff.h`, `sdk/mod_manifest.h`,
+  `sdk/mod_loader.h`, `sdk/mod_timer.h` and `sdk/mod_title.h`.
+- **The dispatch.** `sdk/mod_event.c` (the binding table, the handler table,
+  the scope stack, the fan-out and the refusals), `sdk/mod_context.c` (the two
+  contexts), and the five area files that hold the rows:
+  `sdk/mod_event_session.c`, `sdk/mod_event_items.c`, `sdk/mod_event_mon.c`,
+  `sdk/mod_event_field.c` and `sdk/mod_event_battle.c`.
+- **The state calls.** `sdk/mod_state.c`, over the game's own accessors.
+- **The manifest and the mod's own saved data.** `sdk/mod_manifest.c` (the
+  record, the parse, the namespace rules, the declared-address check and the
+  apply) and `sdk/mod_savedata.c` (the file, the 24-byte envelope, the
+  CRC-32, the versions and the per-mod "in step" answer).
+- **The loader.** `sdk/mod_loader.c`: the library, the host table, the
+  version check, the handler bindings, the override installation and the way
+  back down.
+- **The services.** `sdk/mod_message.c` and `sdk/mod_text.c` (the messages),
+  `sdk/mod_timer.c` (the timer, the splits and the mod's own random source),
+  `sdk/mod_export.c` (a Pokemon's export and import), `sdk/mod_net.c` (the
+  peer sessions and the external control), `sdk/mod_frame.c` (the frame tick),
+  `sdk/mod_avatar.c` (the field avatars), `sdk/mod_restart.c` (the run
+  restart) and `sdk/mod_handoff.c` (the save handoff).
+- **The script command hooks.** `sdk/mod_script.c` (the registry, the two
+  opcode tables and the hook) and `stubs/reimpl_vm_control.c`, the stand-in
+  that takes the game's dispatch function's place.
+- **The rule interpreter.** `sdk/mod_rule.c`: the parse of a rule file, the
+  actions, the cells and their own file, and the peer send, which calls the
+  session service when the port has installed no other call.
+- **The declared set at run time.** The boot link emits the table of every row
+  and `sdk/mod_slot.c` answers from it.
 
 The tests are `tests/test_mod_surface.c` (the surface hash),
 `tests/test_mod_event.c` (the dispatch), `tests/test_mod_state.c` (the state
 calls), `tests/test_mod_manifest.c`, `tests/test_mod_savedata.c`,
 `tests/test_mod_loader.c` (which loads a real library),
 `tests/test_mod_declare.c`, `tests/test_mod_messages.c`,
-`tests/test_mod_text.c`, `tests/test_mod_script.c` and
-`tests/test_mod_rule.c`.
-
-What is still to build: the panel, the settings, the save handoff and the
-input injection (they need the platform layer's drawing and input), the
-rule interpreter's peer send (the service is built, the rule layer does not
-call it yet), and the port's own frame hook, which is where the network
-service's handlers run.
+`tests/test_mod_text.c`, `tests/test_mod_script.c`, `tests/test_mod_rule.c`,
+`tests/test_mod_timer.c` and `tests/test_mod_export.c`.
 
 The script command's view carries the operands as bytes, sixty of them, which
 is the widest command of the two tables (the battle effect VM's opcode 8, at
@@ -255,9 +292,23 @@ mod's own saved data answers whether it is in step with the save in force
 through a service call, because that answer is per mod and the `save.load`
 payload is built once for all the handlers of the event.
 
-The services that are the port's own are built: the messages, the timer and
-the splits, the mod's own random source, a Pokemon's export and import, and
-the peer sessions and the external control.
+What is still to build:
+
+1. **The mod menu's screen**: the port's own Mods section for enabling,
+   disabling, ordering the mods, clearing a mod's saved data and reporting an
+   orphan. The model behind it is `sdk/mod_menu.c`
+   (`docs/mod-services.md`).
+2. **The run-status panel and the input injection**: the two services whose
+   calls are still `NULL` in the services table, and the mod settings, which
+   the menu's model parses but the loader does not bind.
+3. **The relay's address and the control's port.** The network service reads
+   them from the port's own calls, and the port's settings do not reach it
+   yet (`sdk/mod_net.h`).
+
+The port's own seams are in place: the boot installs the run restart's
+handler and the save handoff's reload (`demo/eidos_boot.c`), and the boot's
+frame hook runs the mod layer's frame tick, so the mods' handlers and the
+network's queued events reach the mods on the game's frame.
 
 What the areas owe the boot: the battle half of the state API and
 `FIELD_PLAYER_GetPos` are not in the boot's closure, and the port has to bind

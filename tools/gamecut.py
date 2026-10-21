@@ -324,10 +324,12 @@ def cut(text, drop, cut_asm, drop_decls=False):
         # declarations here lose `static` too.
         out = re.sub(r"(?m)^([ \t]*)static[ \t]+(?=[^;{}\n]*\b%s[ \t]*\([^;{}]*\)[ \t]*;)"
                      % re.escape(name), r"\1", out)
-    # The tree's per-file header pair goes too (header_renames): the port
-    # renames the name itself, so the header's declaration and the call
-    # must both see the port's name.
-    out = header_renames(out, True)
+    # The tree's per-file header pair stays in the copy (header_renames):
+    # it is the unit's own way of correcting the header's declaration of a
+    # name (the header says u8 *, the unit reads the 32-bit slot), and the
+    # pair is what keeps the two declarations apart.  The port's readers
+    # blank the pair, so the port's model of the unit does not take the name
+    # for a macro of the unit (host_branches).
     return out, cut_names
 
 
