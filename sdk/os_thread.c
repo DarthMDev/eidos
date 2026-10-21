@@ -274,6 +274,34 @@ static void rec_stop(HostRec *r)
 
 static void exit_thread(void *arg);
 
+/* The frame handoff (bw_os_frame_delegate): the frame thread's record, and
+ * a frame another thread asked it to run. */
+static HostRec      *g_frame_rec;
+static BwOsHaltHook  g_freq_hook;
+static void         *g_freq_user;
+static int           g_freq;       /* a frame is asked for              */
+static int           g_serving;    /* the frame thread runs one for it  */
+
+/*
+ * Lock held, and `r` is the frame thread: run the frame another thread asked
+ * for (bw_os_frame_delegate).  The asker holds the token and is halted, so
+ * the frame runs as it would on the asker; the lock is released while it
+ * runs, as OS_Halt releases it around the hook.
+ */
+static void serve_frame(void)
+{
+    BwOsHaltHook hook = g_freq_hook;
+    void *user = g_freq_user;
+
+    g_serving = 1;
+    bw_mutex_unlock(g_mx);
+    hook(user);
+    bw_mutex_lock(g_mx);
+    g_serving = 0;
+    g_freq = 0;
+    bw_cond_broadcast(g_cv);
+}
+
 /* Lock held.  Returns, lock still held, once `r` holds the token. */
 static void wait_token(HostRec *r)
 {
@@ -281,6 +309,10 @@ static void wait_token(HostRec *r)
         if (r->kill && !r->launcher) {
             bw_mutex_unlock(g_mx);
             longjmp(r->exit_to, 1);
+        }
+        if (g_freq && !g_serving && r == g_frame_rec) {
+            serve_frame();
+            continue;
         }
         bw_cond_wait(g_cv, g_mx);
     }
@@ -372,6 +404,49 @@ static void host_switch(OSThread *from, OSThread *to)
     wait_token(fr);
     bw_mutex_unlock(g_mx);
     resume(fr);
+}
+
+/* sdk/os.h */
+int bw_os_frame_delegate(BwOsHaltHook hook, void *user)
+{
+    HostRec *me = g_cur;
+
+    if (g_mx == NULL || me == NULL) {
+        return 0;
+    }
+    bw_mutex_lock(g_mx);
+    if (g_frame_rec == NULL || g_frame_rec->retired || g_frame_rec->finished) {
+        g_frame_rec = me;          /* the first thread to run a frame */
+    }
+    if (g_frame_rec == me) {
+        bw_mutex_unlock(g_mx);
+        return 0;
+    }
+    g_freq_hook = hook;
+    g_freq_user = user;
+    g_freq = 1;
+    bw_cond_broadcast(g_cv);
+    while (g_freq) {
+        if (me->kill && !me->launcher) {
+            bw_mutex_unlock(g_mx);
+            longjmp(me->exit_to, 1);
+        }
+        if (me->retired) {
+            /* A restart in the frame retired this thread (the launcher):
+             * it must not run again (wait_token parks it the same way). */
+            for (;;) {
+                bw_cond_wait(g_cv, g_mx);
+            }
+        }
+        bw_cond_wait(g_cv, g_mx);
+    }
+    if (me->retired) {
+        for (;;) {
+            bw_cond_wait(g_cv, g_mx);
+        }
+    }
+    bw_mutex_unlock(g_mx);
+    return 1;
 }
 
 int bw_os_host_threads(void)
@@ -1183,7 +1258,11 @@ static HostRec *rec_caller(void)
         return NULL;
     }
     bw_mutex_lock(g_mx);
-    if (g_token != NULL) {
+    if (g_serving) {
+        /* A frame the frame thread runs for a halted thread: the caller
+         * is the frame thread, though the halted thread holds the token. */
+        r = g_frame_rec;
+    } else if (g_token != NULL) {
         r = rec_find(g_token);
     }
     bw_mutex_unlock(g_mx);
@@ -1285,6 +1364,9 @@ void bw_os_thread_reset(void)
         HostRec *r = g_recs[i];
 
         if (r != me && !r->retired) {
+            if (r == g_frame_rec) {
+                g_frame_rec = NULL;
+            }
             free(r);
             g_recs[i] = g_recs[g_nrecs - 1];
             g_nrecs--;

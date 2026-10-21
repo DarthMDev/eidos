@@ -274,6 +274,16 @@ u32  bw_os_pending_irqs(void);
 typedef void (*BwOsHaltHook)(void *user);
 void bw_os_set_halt_hook(BwOsHaltHook hook, void *user);
 
+/*
+ * The frame thread runs every frame.  The window, its event queue and the
+ * OpenGL context belong to the host thread that ran the first frame, so a
+ * thread that halts in place (OS_WaitInterrupt halts with no thread switch)
+ * hands the frame to it and waits.  Returns 1 when the frame thread ran the
+ * hook, 0 when the caller is the frame thread (or there is none to take
+ * it) and runs the hook itself.  No lock held.
+ */
+int  bw_os_frame_delegate(BwOsHaltHook hook, void *user);
+
 /* HW_INTR_CHECK_BUF in the DS address space.                              */
 volatile u32 *bw_os_irq_check_flag(void);
 

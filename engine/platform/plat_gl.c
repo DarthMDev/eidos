@@ -523,7 +523,7 @@ void eidos_gl_set_3d_zero(EidosGl *g, const unsigned char *zero, int w, int h)
         return;
     }
     g->has_zero = 0;
-    if (getenv("EIDOS_NO_ZERO") != NULL || zero == NULL || g->zero_tex == 0 || w != 256 || h != 192) {
+    if (zero == NULL || g->zero_tex == 0 || w != 256 || h != 192) {
         return;
     }
     glBindTexture(GL_TEXTURE_2D, g->zero_tex);

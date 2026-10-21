@@ -306,7 +306,9 @@ void OS_Halt(void)
             continue;
         }
         bw_os_unlock();
-        hook(user);                 /* time passes */
+        if (!bw_os_frame_delegate(hook, user)) {
+            hook(user);             /* time passes */
+        }
     }
     mirror_if();
     safe_point();                   /* the CPU takes it on waking */
