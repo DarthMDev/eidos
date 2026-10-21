@@ -118,7 +118,7 @@ static int         g_trace_on;
  * script sdk/input.h reads ("<frame> press <buttons> [<hold>]"), so a run
  * can walk past the title screen with no window and repeat exactly.
  */
-static char g_input_script[8192];
+static char g_input_script[262144];   /* --input and --press, joined */
 
 static int add_input_text(const char *line)
 {
