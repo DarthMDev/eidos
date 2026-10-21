@@ -62,12 +62,16 @@ does not happen.
 | `npc.talk` | `FIELD_EVENT_CHECK_SearchGridFrontMmdl` 0x0218B4B0; on rails `FIELD_EVENT_CHECK_SearchRailFrontMmdl` 0x0218B53C | ov021 | no person is found ahead; the A press goes on to the sign and tile checks | - |
 | `menu.open` | `EVENT_FIELD_MENU_Create` 0x0215FC40 (the X-button menu event) and `EVENT_FIELD_MENU_CreateForZone` 0x0215FCE0 | ov010 | the menu does not open (no event is returned) | - |
 | `menu.build` | the return of `FIELD_MENU_Create` 0x021A836C | ov021 | - | entries (a cleared entry is hidden; one added is not built) |
-| `field.move` | `FIELD_SKILL_CHECK_CallHandler` 0x021644C4 | ov010 | the field move shows as unusable | - |
+| `field.move` | `FIELD_SKILL_CHECK_CallHandler` 0x021644C4 | ov010 | the field action slot answers "not allowed" | - |
 | `pc.open` | `SCRCMD_PROC_FLD_CallOv170Event` 0x021B4D60, the script command that opens the box screen (the PC, and the battle box with its kind 4) | ov021 | the PC does not open; the script reads a plain exit | - |
 
-`field.move` fires when the game checks which of the ten field moves can be
-used (`FIELD_SKILL_CHECK_FillUseFlags` asks for each), so a refusal removes
-the move from the choices before the player picks it.
+`field.move` fires when the game checks which of its ten field action slots
+are allowed (`FIELD_SKILL_CHECK_FillUseFlags` asks for each). The bag and
+the Y shortcut menu read the slots: slot 0 is the bicycle; the other slots
+are zone and tile checks whose items are not mapped yet. The payload's
+`move` is the slot number, not a move id. The party screen's field moves
+(Cut, Surf, Fly, Dig, Teleport...) do not go through this check and do not
+fire it yet (`docs/mod-backlog.md`).
 
 ### Encounters
 

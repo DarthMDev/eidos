@@ -491,8 +491,13 @@ typedef struct BwMenuBuild {
 } BwMenuBuild;
 
 /*
- * field.move: the player uses a field move (Cut, Surf, Strength, Fly...);
- * refused, the move cannot be used.
+ * field.move: the game checks whether one of its ten field action slots is
+ * allowed here (FIELD_SKILL_CHECK_FillUseFlags asks for each, slot 0 to 9).
+ * The bag and the Y shortcut menu read these slots: slot 0 is the bicycle;
+ * the other slots are zone and tile checks whose items are not mapped yet.
+ * Refused, the slot answers "not allowed".  `move` is the slot number, not
+ * a move id.  The party screen's field moves (Cut, Surf, Fly, Dig,
+ * Teleport...) do not go through this check and do not fire it yet.
  */
 typedef struct BwFieldMove {
     BwEvent h;
@@ -964,6 +969,9 @@ typedef struct BwItemAdd {
 /*
  * item.use: the party screen checks whether an item works on a Pokemon,
  * before it is used; refused, the item has no effect and stays in the bag.
+ * Items used straight from the bag on the field (Escape Rope, Repel, the
+ * bicycle, the Dowsing Machine) do not go through the party screen and do
+ * not fire this event yet.
  */
 typedef struct BwItemUse {
     BwEvent h;

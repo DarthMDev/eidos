@@ -217,7 +217,7 @@ to the Hall of Fame: the party's own members, up to six.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `move` | u16 | the field move |
+| `move` | u16 | the field action slot, 0 to 9 (0 the bicycle); not a move id |
 | `user` | `BwMonRef` | the Pokemon using it |
 
 **`pc.open`**: no fields.

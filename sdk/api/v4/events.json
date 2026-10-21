@@ -564,10 +564,10 @@
       "struct": "EidosFieldMove",
       "c_struct": "BwFieldMove",
       "size": 20,
-      "doc": "The player uses a field move (Cut, Surf, Strength, Fly...); refused, the move cannot be used.",
-      "details": "",
+      "doc": "The game checks whether one of its ten field action slots is allowed here (FIELD_SKILL_CHECK_FillUseFlags asks for each, slot 0 to 9).",
+      "details": "The bag and the Y shortcut menu read these slots: slot 0 is the bicycle; the other slots are zone and tile checks whose items are not mapped yet. Refused, the slot answers \"not allowed\".  `move` is the slot number, not a move id.  The party screen's field moves (Cut, Surf, Fly, Dig, Teleport...) do not go through this check and do not fire it yet.",
       "where": "`FIELD_SKILL_CHECK_CallHandler` 0x021644C4",
-      "refuse": "the field move shows as unusable",
+      "refuse": "the field action slot answers \"not allowed\"",
       "modify": null,
       "fields": [
         {
@@ -578,7 +578,7 @@
           "count": null,
           "writable": false,
           "rule_name": "move",
-          "doc": "the field move",
+          "doc": "the field action slot, 0 to 9 (0 the bicycle); not a move id",
           "c_type": "u16"
         },
         {
@@ -2931,7 +2931,7 @@
       "c_struct": "BwItemUse",
       "size": 20,
       "doc": "The party screen checks whether an item works on a Pokemon, before it is used; refused, the item has no effect and stays in the bag.",
-      "details": "",
+      "details": "Items used straight from the bag on the field (Escape Rope, Repel, the bicycle, the Dowsing Machine) do not go through the party screen and do not fire this event yet.",
       "where": "`PLIST_DEMO_CheckItemUsable` 0x021BDD78",
       "refuse": "the game's \"it won't have any effect\"; the item stays",
       "modify": null,

@@ -18,7 +18,8 @@ cannot be verified stays here rather than shipping half-working.
 |---|---|
 | A finer `route.change` `how` | Door or stairs, warp tile, Fly, Dig or Escape Rope, Teleport, whiteout, script, game start. `MapChangeWork.changeKind` (0 to 4) is not decoded yet. |
 | `pc.open` screen mode | The box screen's mode (organise, deposit, withdraw, Battle Box) is a script operand of `SCRCMD_PROC_FLD_CallOv170Event`. |
-| `item.use` from the bag | `item.use` fires at the party screen's item check only. Field items used from the bag (Escape Rope, Repel, the bike) go another way, not yet found. Fly, Dig and Teleport are field moves: `field.move` refuses them. |
+| `item.use` from the bag | `item.use` fires at the party screen's item check only. Field items used from the bag (Escape Rope, Repel, the bicycle, the Dowsing Machine) go through the bag's own use step (`ITEMMENU_HandleActionMenuChoice`, action 0) and do not fire it. |
+| Field moves on the party screen | Cut, Surf, Fly, Dig, Teleport and the others used from the party screen do not fire any event yet. `field.move` is the field action slot check the bag and the Y menu read (slot 0 the bicycle), not the party screen's moves; its other slots are still to be mapped. |
 | `shop.buy` quantity | The event fires when an item is picked, before the quantity screen. A purchase is visible as `item.add` and `money.change` (source purchase). |
 | Disobedience | A refusable obedience check, for level caps. |
 | Type matchups | A writable type effectiveness in a battle. |
