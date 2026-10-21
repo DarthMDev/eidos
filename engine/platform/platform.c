@@ -464,17 +464,21 @@ int eidos_platform_fast_forward(const EidosPlatform *p)
      * key does nothing while another program has the focus. */
     keys = SDL_GetKeyboardState(NULL);
     if (keys != NULL && keys[SDL_SCANCODE_TAB]) {
-        return EIDOS_FAST_FORWARD;
+        return keys[SDL_SCANCODE_LSHIFT] ? EIDOS_FAST_FORWARD_MAX
+                                         : EIDOS_FAST_FORWARD;
     }
-    /* EIDOS_FAST_FORWARD=1 holds it down for a whole run (tests, timing). */
+    /* EIDOS_FAST_FORWARD=1 holds Tab down for a whole run, =max left Shift
+     * and Tab (tests, timing). */
     {
         static int env = -1;
 
         if (env < 0) {
             const char *v = getenv("EIDOS_FAST_FORWARD");
-            env = v != NULL && *v != '\0' && strcmp(v, "0") != 0;
+            env = (v == NULL || *v == '\0' || strcmp(v, "0") == 0) ? 1
+                : strcmp(v, "max") == 0 ? EIDOS_FAST_FORWARD_MAX
+                : EIDOS_FAST_FORWARD;
         }
-        return env ? EIDOS_FAST_FORWARD : 1;
+        return env;
     }
 }
 
@@ -488,7 +492,8 @@ void eidos_platform_wait_frame(EidosPlatform *p)
     if (p == NULL) {
         return;
     }
-    /* Held Tab: the period is EIDOS_FAST_FORWARD times shorter. */
+    /* Fast forward: the period is the factor times shorter (with
+     * EIDOS_FAST_FORWARD_MAX the host is always behind, so it never waits). */
     period = (u64)EIDOS_DS_FRAME_CLOCKS * 1000000000ull
              / (u64)eidos_platform_fast_forward(p);
     step = period / (u64)EIDOS_DS_SYSTEM_CLOCK;

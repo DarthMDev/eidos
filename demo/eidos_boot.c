@@ -1329,14 +1329,15 @@ static void boot_frame(void *user)
      * frame costs more than running one, more so at higher resolutions.  The
      * 3D engine still works out every frame: a swap shows what was sent the
      * frame before, so a frame it skipped would show stale or empty.  A frame is
-     * shown sooner when 100 ms have passed, so the window never stalls.  Not
+     * shown sooner when a display period (1/60 s) has passed, so the window
+     * keeps its frame rate at any speed, unlimited (left Shift+Tab) included.  Not
      * while the display capture is on: it reads the drawn frame back into
      * VRAM for the game. */
     {
         int ff = run->plat != NULL ? eidos_platform_fast_forward(run->plat) : 1;
 
         run->ff_skip = ff > 1 && run->ff_since + 1u < (u32)ff
-            && eidos_platform_now_ns(run->plat) - run->ff_shown_ns < 100000000ull
+            && eidos_platform_now_ns(run->plat) - run->ff_shown_ns < 16666667ull
             && (bw_io_read32(0x04000064u) & 0x80000000u) == 0u;
         run->ff_since = run->ff_skip ? run->ff_since + 1u : 0u;
     }
