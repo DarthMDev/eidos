@@ -1295,11 +1295,22 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     layout_size(p, &w, &h);
     p->arr_w = (int)w;
     p->arr_h = (int)h;
-    /* The window always opens at the DS's own size for the layout (the saved
-     * window size is not used: a size from a maximized or other-shaped window
-     * opened oddly and could overflow the screen). */
+    /* The window opens at the size the player left it at, when that size
+     * is one for this layout (at least the DS's own size for it) and fits
+     * the desktop; otherwise at the default for the layout.  A maximized
+     * size is never stored (the maximized state is, cfg->maximized), and a
+     * size from another arrangement or a larger screen is not reused. */
     init_w = (int)w * DEFAULT_WINDOW_SCALE;
     init_h = (int)h * DEFAULT_WINDOW_SCALE;
+    if (cfg->win_w >= (int)w && cfg->win_h >= (int)h) {
+        SDL_Rect area;
+
+        if (SDL_GetDisplayUsableBounds(0, &area) != 0
+            || (cfg->win_w <= area.w && cfg->win_h <= area.h)) {
+            init_w = cfg->win_w;
+            init_h = cfg->win_h;
+        }
+    }
     {
         /* For checks only: EIDOS_WINDOW_SIZE=WxH opens the window at that size. */
         const char *ws = getenv("EIDOS_WINDOW_SIZE");
@@ -1329,6 +1340,9 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
             /* For unattended checks: a real window system and GPU, no window
              * on the desktop. */
             flags = (flags & ~(Uint32)SDL_WINDOW_SHOWN) | SDL_WINDOW_HIDDEN;
+        } else if (cfg->maximized
+                   && cfg->display_mode == EIDOS_DISPLAY_WINDOWED) {
+            flags |= SDL_WINDOW_MAXIMIZED;   /* as the player left it */
         }
 
         if (try_gl) {
@@ -1535,6 +1549,15 @@ int eidos_platform_pump(EidosPlatform *p)
             }
             break;
         case SDL_WINDOWEVENT:
+            if ((ev.window.event == SDL_WINDOWEVENT_MAXIMIZED ||
+                 ev.window.event == SDL_WINDOWEVENT_RESTORED) &&
+                p->display_mode == EIDOS_DISPLAY_WINDOWED &&
+                !(SDL_GetWindowFlags(p->window) & SDL_WINDOW_MINIMIZED)) {
+                /* Remembered for the next run (a restore from minimized
+                 * leaves the window as it was). */
+                eidos_settings_on_maximize(
+                    p, (SDL_GetWindowFlags(p->window) & SDL_WINDOW_MAXIMIZED) != 0);
+            }
             if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED &&
                 p->display_mode == EIDOS_DISPLAY_WINDOWED &&
                 !(SDL_GetWindowFlags(p->window) &
@@ -1585,6 +1608,7 @@ int eidos_platform_pump(EidosPlatform *p)
         in.touch_y = p->touch_y;
         bw_input_set_host(&in);
     }
+    eidos_settings_idle(p, SDL_GetTicks());
     return p->quit ? 0 : 1;
 }
 

@@ -72,6 +72,7 @@ enum {
     EIDOS_OPT_DISPLAY_RESOLUTION,   /* 0 = fit, else 1..EIDOS_RESOLUTION_MAX */
     EIDOS_OPT_DISPLAY_WIDTH,        /* hidden: remembered window size     */
     EIDOS_OPT_DISPLAY_HEIGHT,       /* hidden; 0 = 1x the layout          */
+    EIDOS_OPT_DISPLAY_MAXIMIZED,    /* hidden: the window was maximized   */
     EIDOS_OPT_LAYOUT_ARRANGEMENT,
     EIDOS_OPT_LAYOUT_SWAP,
     EIDOS_OPT_LAYOUT_GAP,
@@ -284,6 +285,12 @@ int  eidos_settings_on_toggle(EidosPlatform *p);
 void eidos_settings_on_quit(EidosPlatform *p);
 /* Platform to settings: the windowed size changed (remembered, not dirty). */
 void eidos_settings_on_resize(EidosPlatform *p, int w, int h);
+/* Platform to settings: the window was maximized (1) or restored (0). */
+void eidos_settings_on_maximize(EidosPlatform *p, int maximized);
+/* Platform to settings, once per pump: writes a remembered size or
+ * maximized state once the window has been still for a moment, so that it
+ * survives a run that does not end through the window's close. */
+void eidos_settings_idle(EidosPlatform *p, u32 now_ms);
 
 /* Atomically replace `to` with `from` (plat_replace.c). */
 int  eidos_replace_file(const char *from, const char *to);

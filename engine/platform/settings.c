@@ -49,6 +49,8 @@ static const EidosOption k_options[EIDOS_OPT_COUNT] = {
       NULL, "px", 1, NULL },
     { "Display", "height", "Window height", EIDOS_OPTKIND_INT, 0, 16384, 1, 0,
       NULL, "px", 1, NULL },
+    { "Display", "maximized", "Window maximized", EIDOS_OPTKIND_CHOICE, 0, 1,
+      1, 0, k_offon, "", 1, NULL },
     { "Layout", "arrangement", "Screen layout", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
       EIDOS_LAYOUT_VERTICAL, k_arrangements, "", 0, NULL },
     { "Layout", "swap_screens", "Swap screens", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
@@ -152,6 +154,7 @@ static char g_path[PATH_MAX_LEN + 16];
 static int g_have_path;
 static int g_inited;
 static int g_size_pending;   /* a window resize not yet in the file */
+static u32 g_size_ms;        /* when it was first seen pending (idle)  */
 
 /*
  * The text setting being edited, and the value it had before the edit.
@@ -369,6 +372,8 @@ static int apply_option_group(int id)
     case EIDOS_OPT_DISPLAY_WIDTH:
     case EIDOS_OPT_DISPLAY_HEIGHT:
         return apply_display();
+    case EIDOS_OPT_DISPLAY_MAXIMIZED:
+        return 0;               /* read when the window opens */
     case EIDOS_OPT_DISPLAY_RESOLUTION:
         return 0;               /* the renderer polls internal_scale() */
     case EIDOS_OPT_LAYOUT_ARRANGEMENT:
@@ -2342,6 +2347,7 @@ void eidos_settings_fill_config(EidosPlatformConfig *cfg)
     cfg->gap = g_cur.v[EIDOS_OPT_LAYOUT_GAP];
     cfg->swap_screens = g_cur.v[EIDOS_OPT_LAYOUT_SWAP];
     cfg->display_mode = g_cur.v[EIDOS_OPT_DISPLAY_MODE];
+    cfg->maximized = g_cur.v[EIDOS_OPT_DISPLAY_MAXIMIZED];
 }
 
 void eidos_settings_attach(EidosPlatform *p)
@@ -2410,10 +2416,46 @@ void eidos_settings_on_resize(EidosPlatform *p, int w, int h)
     if (g_saved.v[EIDOS_OPT_DISPLAY_WIDTH] != w ||
         g_saved.v[EIDOS_OPT_DISPLAY_HEIGHT] != h) {
         g_size_pending = 1;
+        g_size_ms = 0;              /* eidos_settings_idle stamps it */
     }
     /* Remembered in the committed state too: a resize is never "dirty". */
     g_cur.v[EIDOS_OPT_DISPLAY_WIDTH] = g_saved.v[EIDOS_OPT_DISPLAY_WIDTH] = w;
     g_cur.v[EIDOS_OPT_DISPLAY_HEIGHT] = g_saved.v[EIDOS_OPT_DISPLAY_HEIGHT] = h;
+}
+
+void eidos_settings_on_maximize(EidosPlatform *p, int maximized)
+{
+    if (p == NULL || p != g_plat) {
+        return;
+    }
+    maximized = maximized != 0;
+    if (g_saved.v[EIDOS_OPT_DISPLAY_MAXIMIZED] != maximized) {
+        g_size_pending = 1;
+        g_size_ms = 0;
+    }
+    g_cur.v[EIDOS_OPT_DISPLAY_MAXIMIZED] = maximized;
+    g_saved.v[EIDOS_OPT_DISPLAY_MAXIMIZED] = maximized;
+}
+
+/*
+ * The window's size and maximized state are written half a second after
+ * the last change (a drag sends many), not only when the window closes: a
+ * run that ends any other way (a crash, the console closed) kept the size
+ * of the run before.
+ */
+void eidos_settings_idle(EidosPlatform *p, u32 now_ms)
+{
+    if (p == NULL || p != g_plat || !g_size_pending) {
+        return;
+    }
+    if (g_size_ms == 0) {
+        g_size_ms = now_ms != 0 ? now_ms : 1u;
+        return;
+    }
+    if (now_ms - g_size_ms >= 500u) {
+        g_size_pending = 0;
+        (void)save_model(&g_saved);
+    }
 }
 
 void eidos_settings_on_quit(EidosPlatform *p)

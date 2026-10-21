@@ -206,6 +206,7 @@ typedef struct EidosPlatformConfig {
     int   gap;               /* DS pixels between the two screens        */
     int   swap_screens;      /* bottom screen first                      */
     int   display_mode;      /* EIDOS_DISPLAY_*; 0 windowed              */
+    int   maximized;         /* windowed: open maximized                 */
     int   audio;             /* non-zero: open the audio device          */
     int   audio_push;        /* non-zero: the program pushes its samples
                                 from its own thread (eidos_platform_queue_
