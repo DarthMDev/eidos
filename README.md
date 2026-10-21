@@ -1,4 +1,4 @@
-# eidos
+<h1><img src="docs/banner.png" alt="eidos"></h1>
 
 A native PC port of Pokémon Black, built from the
 [aletheia](https://github.com/Project-Holon/aletheia) decompilation.
