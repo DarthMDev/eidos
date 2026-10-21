@@ -1,33 +1,3 @@
 {
-  "claims": {
-    "W26-OVLPTR": {
-      "note": "an overlay's own stored pointers reach the registry too",
-      "paths": [
-        "sdk/overlay_image.c",
-        "sdk/overlay_image.h"
-      ],
-      "started": "2026-10-21"
-    },
-    "W26-TEST-INPUT": {
-      "note": "the input injection, in the port's own test suite",
-      "paths": [
-        "tests/test_mod_input.c"
-      ],
-      "started": "2026-10-21"
-    },
-    "W26-TEST-MENU": {
-      "note": "the mod menu's model, in the port's own test suite",
-      "paths": [
-        "tests/test_mod_menu.c"
-      ],
-      "started": "2026-10-21"
-    },
-    "W26-TEST-PANEL": {
-      "note": "the run-status panel's model and its picture, in the port's own test suite",
-      "paths": [
-        "tests/test_mod_panel.c"
-      ],
-      "started": "2026-10-21"
-    }
-  }
+  "claims": {}
 }
