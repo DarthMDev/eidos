@@ -1291,11 +1291,11 @@ static void refuse_battle_action_fight(BwEventCall *call)
     call->ret = 1;
 
     /*
-     * The message the game shows for a blocked move.  The mod's own text
-     * is not available yet (the port's message service is not built,
-     * docs/mod-implementation.md, section 6), so the port fills the
-     * game's own "the Pokemon cannot use this move" message, with the
-     * Pokemon and the move as its arguments.
+     * The message the game shows for a blocked move.  The port's message
+     * service is built (sdk/mod_message.c), but a message it shows would
+     * not be the game's own, so the port fills the game's own "the Pokemon
+     * cannot use this move" message, with the Pokemon and the move as its
+     * arguments.
      */
     if (outMessage != NULL && BTLV_SCU_InitMessage != NULL) {
         u32 pokeId = 0u;

@@ -1825,9 +1825,8 @@ const char *bw_mod_menu_namespace(void)
 
 /*
  * The services table's setting_get (docs/mod-services.md, "Mod settings").
- * The loader does not bind the call into the services table yet, so a mod
- * that calls it gets nothing; when it does, it binds this one and sets the
- * namespace around the calls it makes into the mod.
+ * The loader binds this one, and the mod that calls it is the one whose
+ * namespace is in force.
  */
 int bw_mod_menu_setting_get(const char *key)
 {

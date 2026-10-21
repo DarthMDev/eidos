@@ -13,17 +13,17 @@
   "implicit_decls": 0,
   "link_failed_targets": 0,
   "matched_total": 1374,
-  "note": "the mod layer's own tests: the menu, the panel and the input, and an overlay's stored pointers reach the registry",
+  "note": "the mod layer's remaining tests: the network, the handoff, the restart and the avatars, and the documents read against the code",
   "shim_replaced": 239,
   "stubbed_asm": 17,
   "stubbed_open": 4,
   "tests": {
     "failed": 0,
-    "passed": 77,
-    "total": 77
+    "passed": 81,
+    "total": 81
   },
   "tree": "src/game",
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 26
+  "wave": 27
 }

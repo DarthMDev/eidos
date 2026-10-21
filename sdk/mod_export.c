@@ -90,11 +90,10 @@
  * What is not here
  * -----------------
  *
- * The peer sessions are not built yet (docs/mod-implementation.md, section
- * 6), so the record cannot be sent to another player yet: a Wonderlocke
- * and an Egglocke have nothing to send it through.  The bytes the service
- * produces are the bytes a session would carry, so the two fit together
- * when the sessions arrive.
+ * The peer sessions are built (sdk/mod_net.c), so the record can be sent to
+ * another player: the save handoff carries a Pokemon's export over a
+ * session (sdk/mod_handoff.c), and the bytes the service produces are the
+ * bytes that handoff carries.
  */
 
 #include <stddef.h>

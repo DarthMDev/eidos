@@ -157,8 +157,9 @@ that does not know its own version reports the pin and does not check it.
   the data is written and again after the mods load, so a stored pointer
   reaches the installed hook; an overlay's own stored pointers do the same
   (`docs/mod-interface.md`, section 2). A code pointer the game writes at
-  run time keeps the plain function, and an overlay's unlisted code
-  pointers are not relocated at all.
+  run time keeps the plain function, and so does a code pointer in an
+  overlay's data to a function outside that overlay: the overlay's layer
+  asks the registry only for the overlay's own functions.
 - **A prototype the port cannot read** is reported and not compared, so a
   game-specific type name is never a false refusal.
 - **An overlay row's prototype** is published only when that overlay is

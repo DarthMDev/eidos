@@ -152,15 +152,15 @@ enum {
 ```
 
 The operands are bytes: the game's script holds them as bytes, and its own
-handler reads them off the VM's cursor a halfword or a word at a time. Some
-of the field VM's commands carry an odd number of bytes, so those read a byte
-or two straight off the cursor. The view holds every byte of every command of
-both VMs: the port's own width table gives the width of each command in bytes,
-and the widest is `BW_SCRIPT_ARGS_MAX`, 60 (the battle effect VM's opcode 8;
-the field VM's widest is 22), so a handler reaches the last operand of the
-widest command as well as the first of the narrowest. A handler writes the
-bytes to change the command the game runs, and the port writes them back into
-the script exactly, with nothing rounded to a word.
+handler reads them off the VM's cursor a halfword or a word at a time.
+Eighteen of the field VM's commands carry an odd number of bytes, so those
+read a byte or two straight off the cursor. The view holds every byte of
+every command of both VMs: the port's own width table gives the width of each
+command in bytes, and the widest is `BW_SCRIPT_ARGS_MAX`, 60 (the battle
+effect VM's opcode 8; the field VM's widest is 22), so a handler reaches the
+last operand of the widest command as well as the first of the narrowest. A
+handler writes the bytes to change the command the game runs, and the port
+writes them back into the script exactly, with nothing rounded to a word.
 
 The program counter is a number, not a pointer: it is the hook's own count of
 where the command sits in the script, so the view carries no host pointer and
@@ -191,9 +191,11 @@ badges, flags, the map, the player position and the battle style, and the two
 moves between places. `BwModServices` declares the port services of
 `docs/mod-services.md`: messages, peer sessions, the field avatars, the
 mod's own saved data, the timer, the run restart, the random source, the
-external control, the frame tick, the save handoff and the others. A service
-the port has not built is `NULL` in the table, so a mod that calls one checks
-the pointer first. Each name and signature is frozen within a version.
+external control, the frame tick, the save handoff, the run-status panel, the
+input injection and the others. Every call in the table is bound; a service
+the port has not built is `NULL` in the table, so a mod built against another
+version of the surface checks the pointer first. Each name and signature is
+frozen within a version.
 
 ## 2. What is not in the surface
 
@@ -281,12 +283,16 @@ same everywhere.
 
 ## Still to build
 
-1. **The signature check.** The hash folds in each field's name, its offset
-   and its size, and each table member's name, offset and size. A field that
-   changes its type without changing its size (an unsigned field that becomes
-   a signed one) and a call whose parameters change are both invisible to it,
-   so the test does not fail for them. The interface version is the guard
-   there, and the loader is what enforces it.
+1. **A signature the port cannot see.** The hash folds in each field's
+   name, its offset and its size, and each table member's name, offset and
+   size. A field that changes its type without changing its size (an
+   unsigned field that becomes a signed one) and a call whose parameters
+   change are both invisible to it, so the test does not fail for them. The
+   interface version is the guard there, and the loader is what enforces it.
+   A mod that states a prototype in its manifest is checked against the
+   function's own (`docs/mod-overrides.md`, "The prototype is checked"), so a
+   hook whose stated prototype differs is refused; a mod that states none is
+   not checked.
 2. **The script handler's state.** A script handler registered from the start
    entry point is registered before that entry has returned the mod's state
    pointer, so it is handed a null state. The event handlers do not have this

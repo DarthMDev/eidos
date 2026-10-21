@@ -12,9 +12,10 @@ Each service below says what it does, its calls, and the design choices it
 fixes. The table is `BwModServices` (`sdk/mod_state.h`), and the loader gives
 every mod a table of its own (`sdk/mod_loader.c`): the port says which mod is
 calling by putting that mod's namespace in force around every call it makes
-into a mod, so a service that keeps state keeps it per mod. A call the port
-has not built is `NULL` in the table, so a mod has to check the pointer
-before it calls one.
+into a mod, so a service that keeps state keeps it per mod. Every call in the
+table is bound, so a mod can call any of them; a mod built against another
+version of the surface checks the pointer first, because a call the port does
+not have is `NULL` in the table.
 
 ## Messages
 
@@ -38,14 +39,14 @@ The service is `sdk/mod_message.c`, the queue and the encoding, and
 queue holds eight texts, and one text may be 128 code units; a longer text is
 cut at the cap. The game's text is a run of 16-bit code units, one per
 character, with 0xFFFF ending a string and 0xFFFE a line break, and the
-service encodes the UTF-8 into those units. The built-in answer to "does the
-game font have this character" is the printable ASCII range, because the
-font's own character table is inside the font file (arc 0x17, member 0) and
-the port does not read that file yet; a port that does installs the game's
-own answer. The showing is the port's text path: it builds the game's string
-object out of the code units and prints it with the game's own print queue in
-the window the game has open, the field's talk window or the battle's message
-box.
+service encodes the UTF-8 into those units. The answer to "does the game font
+have this character" is the font's own glyph table, which the port reads
+through the game's own accessor, with the font the text path makes (arc 0x17,
+member 0). With no game under the port there is no font, and the answer is
+the built-in one the message service keeps: the printable ASCII range. The
+showing is the port's text path: it builds the game's string object out of
+the code units and prints it with the game's own print queue in the window
+the game has open, the field's talk window or the battle's message box.
 
 A confirm waits for the answer. The question goes into the queue with the
 other texts, the wait advances the game to the next message point, the port's
@@ -65,21 +66,23 @@ int  (*session_send)(u32 peer, const void *buf, u32 size);   /* peer 0: everyone
 void (*on_session)(BwSessionHandler fn);              /* receive, join, leave */
 ```
 
-**The flow.** A player starts a session from the port's own menu, or the mod
-calls `session_host`. The port connects to the project's relay, which returns
-a short code. The other players enter the code, or the mod calls
-`session_join`, and the relay links them. This follows Archipelago and the
-Minecraft "easy multiplayer" style: nobody opens a port or types an address.
-`session_host` and `session_join` block the calling thread, the game's,
-while the relay answers, for up to three seconds.
+**The flow.** A mod starts a session: it calls `session_host` and the port
+connects to the project's relay, which returns a short code. The other
+players join with `session_join` and that code, and the relay links them.
+This follows Archipelago and the Minecraft "easy multiplayer" style: nobody
+opens a port or types an address. The port's own settings hold where the
+relay is and what the player is called; the port has no menu for the session
+itself yet. `session_host` and `session_join` block the calling thread, the
+game's, while the relay answers, for up to three seconds.
 
 **The relay.** A small server the project runs, which only forwards messages
 between the players of one session. The port can also point the client at
-another relay, for a LAN or a self-hosted one. The port has no relay of its own
-yet: the transport under the client is an interface the port fills (a connect,
-a send, a receive, a close), and the default transport refuses to connect and
-says "no relay". A plain TCP transport is available for a port that has none of
-its own.
+another relay, for a LAN or a self-hosted one: the relay's address and its
+port are the port's own settings, and the port hands them to the service
+before the game runs. The transport under the client is an interface the port
+fills (a connect, a send, a receive, a close), and the port fills it with the
+plain TCP transport the service provides. A port that installs no transport
+gets the default one, which refuses to connect and says "no relay".
 
 **The protocol.** The client speaks it and the relay has to answer it. It is
 a stream of frames, each one a type letter, the payload's length in decimal,
@@ -354,9 +357,9 @@ void (*publish)(const char *topic, const char *json); /* events out */
 The port listens on `127.0.0.1` only, on a port chosen in its settings, and
 only while a mod that uses the service is enabled: the listener starts when
 the first mod binds a command handler and stops at the port's reset. Up to
-eight tools may be connected at once. The port's own settings do not reach
-the service yet: the number comes from the port's call, and the default is 0,
-which is off.
+eight tools may be connected at once. The port's own settings reach the
+service: the control's port is one of them, and 0 is off, so a port that
+leaves it at 0 has no control endpoint at all.
 
 **The wire format.** The control is plain text over TCP, one line each way.
 A tool sends a command as one line of text, ended by a newline (a carriage
@@ -431,10 +434,12 @@ own messages keep their own key.
 confirmation is asked for, and the save is installed: the game save written,
 and the mod's own data written beside it with the checksum of the save that
 was installed, so the mod's file is in step with the save it belongs to. The
-port's confirmation is the port's own user interface, which is not built yet,
-so a save that arrives is reported and dropped, and nothing is installed. The
-reload behind it is the port's own: the boot's handler starts the run again,
-and it loads the save that is now in force.
+port's confirmation is the port's own: it asks the player in the game's own
+yes/no window, and a save the player does not take is reported and dropped,
+and nothing is installed. A port that installs no confirmation reports every
+save that arrives and drops it. The reload behind it is the port's own: the
+boot's handler starts the run again, and it loads the save that is now in
+force.
 
 **The answers.** `save_send` answers 0 when the save is on its way, and one
 of the peer session's own answers when it was not: no session, another save
@@ -520,7 +525,9 @@ namespace is in force, so the answer is the mod's own. The manifest layer
 parses the `settings` key and keeps the path in the mod's record, and the
 menu's model
 (`sdk/mod_menu.c`) parses the options and holds the player's choices beside
-the mod's saved data. The screen that lists them does not exist yet.
+the mod's saved data. The screen that lists them is the port's own Mods
+section: a mod's options are rows under the mod's own row, and the choice the
+player makes there is written beside the mod's saved data.
 
 ## The mod menu
 

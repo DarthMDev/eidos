@@ -58,9 +58,10 @@ void bw_mod_rule_reset(void);
 u32 bw_mod_rule_count(u32 kind);
 
 /*
- * The peer session send.  The service is not built, so the `send` action
- * reports that it is unavailable; the port installs the call here when the
- * service is there.
+ * The peer session send.  The service is built (sdk/mod_net.c), so the
+ * `send` action reaches it: the rule layer calls the session service
+ * itself, and the port may install its own call here to have its own
+ * policy.
  */
 void bw_mod_rule_set_send(int (*send)(const char *value));
 

@@ -101,9 +101,9 @@
  *
  * The field VM's widths are aletheia's tools/assets/scripts.py, the
  * OPERAND_WIDTH table; the battle effect VM's are the same table in
- * tools/assets/btleff.py.  Nine of the field VM's widths are odd (1, 3, 5,
- * 7): those commands read a byte or two straight off the cursor instead of
- * fetching a halfword.
+ * tools/assets/btleff.py.  Eighteen of the field VM's commands have an odd
+ * width (1, 3, 5 or 7 bytes): those commands read a byte or two straight
+ * off the cursor instead of fetching a halfword.
  */
 #define BW_MOD_SCRIPT_WIDTH_NONE 0xFFu
 

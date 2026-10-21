@@ -118,9 +118,9 @@ section 4). Deleting the state
 on removal would rewind a run the player may re-enable, so removal leaves the
 folder and a re-enable reads it again. The orphan report, which tells the
 player that a mod's folder is left over, belongs to the mod menu: its model
-answers it (`sdk/mod_menu.c`), and the screen that would show it does not
-exist yet. A player-facing clear action calls the port's `state_clear`, which
-deletes the state file and leaves the folder.
+answers it (`sdk/mod_menu.c`) and the Mods section of the port's settings
+screen shows it as a row of its own. A player-facing clear action calls the
+port's `state_clear`, which deletes the state file and leaves the folder.
 
 ## 2. The lifecycle
 
@@ -180,8 +180,9 @@ The four constraints are `docs/mod-rules.md`, section 2.
    archives (`sdk/vfs.h`, "The mod list"; `sdk/vfs.c`, `bw_vfs_flush`). The
    state namespace is per mod, so a root rebuild does not move state. Enabling
    a mod adds its root and the load point reads its state. The menu's model
-   is `sdk/mod_menu.c`; the screen that drives it does not exist yet
-   (`docs/mod-services.md`).
+   is `sdk/mod_menu.c` and the screen that drives it is the Mods section of
+   the port's own settings screen (`engine/platform/settings_ui.c`;
+   `docs/mod-services.md`).
 2. Disabling a code mod reverts its slots before its library unloads. The
    registry holds the mod's handler, and a code pointer in data resolves
    through the same lookup (`sdk/overlay_image.c`, `bw_ovl_code_entry`), so
@@ -450,21 +451,20 @@ cover the whole of this document:
   `sdk/mod_loader.c`.
 - **The cells' file.** The rule layer's own namespace and the two calls the
   loader installs for it, in `sdk/mod_rule.c`.
+- **The menu.** The model's own list of mods, their switches, their order and
+  the orphan report, in `sdk/mod_menu.c`, and the screen that draws it, the
+  Mods section of the port's settings screen
+  (`engine/platform/settings_ui.c`).
 
 The tests are `tests/test_mod_savedata.c` (the envelope, the versions and the
 write discipline), `tests/test_mod_manifest.c` (the parse, the namespace, the
 declared check and the override grammar), `tests/test_mod_declare.c` (the
-declared set at run time) and `tests/test_mod_loader.c` (which loads a real
-library).
+declared set at run time), `tests/test_mod_menu.c` (the menu's model) and
+`tests/test_mod_loader.c` (which loads a real library).
 
-## Still to build
+## The port's own choices
 
-1. **The in-game mod menu's screen.** The model behind it is `sdk/mod_menu.c`:
-   the installed mods, the switch, the state clear action and the orphan
-   report. The screen that draws it is the port's own user interface
-   (`docs/mod-services.md`).
-
-The port's own choices, which the documents do not fix:
+The documents leave these to the port:
 
 - The header's version is 1 (`BW_MOD_STATE_VERSION` in `sdk/mod_state.h`).
 - The payload's checksum is a CRC-32 (the reflected IEEE polynomial), and the

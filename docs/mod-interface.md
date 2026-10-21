@@ -254,8 +254,9 @@ code and needs no such trust.
 
 1. **A code pointer the game writes at run time** (a static initialiser, a
    table filled later) keeps the plain function: the port cannot tell it from
-   any other pointer. The same limit holds for an overlay's unlisted code
-   pointers, which are not relocated at all.
+   any other pointer. The same limit holds for a code pointer in an overlay's
+   data to a function outside that overlay: the overlay's layer asks the
+   registry only for the overlay's own functions.
 2. **The game's own type names** in a prototype: the port normalises the
    plain types and the integer typedefs, and the build publishes the
    resolution of the names the declared rows use, but a name only some other

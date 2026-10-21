@@ -19,7 +19,7 @@ A mod is a directory laid out like the data root, with a manifest,
 | Raw hooks | Replace or wrap one declared game function by `(region, address)` | built | `docs/mod-overrides.md` |
 | State API | Read and write party, boxes, money, flags, map and position through accessors | built | `docs/mod-events.md`, section 4 |
 | Mod state | Keep the mod's own data, stored per save slot | built | `docs/mod-state.md` |
-| Port services | Messages, peer sessions, field avatars, timer, run-status panel and the others | built, except the panel, the input injection and the settings | `docs/mod-services.md` |
+| Port services | Messages, peer sessions, field avatars, timer, run-status panel and the others | built | `docs/mod-services.md` |
 | Rules | Write simple rules in a small language instead of C | built | `docs/mod-rules.md`, `docs/mod-rules-language.md` |
 | Code loading | Load a mod's native library at start-up, check its interface version | built | `docs/mod-abi.md`, `docs/mod-implementation.md` |
 
@@ -137,11 +137,12 @@ Some things a mod needs are not game functions. The port provides them
 - **Mod settings** on the port's settings screen, and a **mod menu** to enable,
   disable and order mods.
 
-Most of them are built. The run-status panel and the input injection are not:
-those two calls are `NULL` in the services table, so a mod has to check the
-pointer before it calls one. The mod settings are bound: the loader gives
-the mod the call and the mod's own choices come back. The mod menu's
-model is in `sdk/mod_menu.c`; the screen that draws it does not exist yet.
+All of them are built, and every call in the services table is bound: the
+run-status panel and the input injection included, and the mod settings with
+them. The mod menu's model is `sdk/mod_menu.c` and the screen that draws it is
+the port's own Mods section on the settings screen
+(`engine/platform/settings_ui.c`): the player enables, disables, reorders and
+clears the mods there, and the changes apply when the player leaves the menu.
 
 ## 5. The game modes
 
@@ -233,17 +234,12 @@ trainer parties, base stats and moves are replaced through the data layer.
 
 ## 7. What is still open
 
-1. **The mod menu's screen**: the port's own Mods section for enabling,
-   disabling, ordering the mods and clearing a mod's saved data. The model
-   behind it is `sdk/mod_menu.c`.
-2. **The run-status panel and the input injection**: the two services whose
-   calls are still `NULL` in the services table. The mod settings are bound
-   and the mod's own choices come back, but the screen that lists them does
-   not exist yet.
-3. **The relay server**: the protocol is fixed (`docs/mod-services.md`,
+1. **The relay server**: the protocol is fixed (`docs/mod-services.md`,
    "Peer sessions"), but the server that answers it is not part of the port.
-4. **The move-learning screens:** the TM, tutor and relearner paths of
-   `move.learn` (`docs/mod-events.md`, section 1).
+2. **The move-learning screens:** the TM path, the nurse's relearner path and
+   the script that writes a move are bound in the event layer, but no slot
+   carries the event for them, so `move.learn` fires only from the level-up
+   check and the day care (`docs/mod-events.md`, section 1).
 
 ## Related documents
 

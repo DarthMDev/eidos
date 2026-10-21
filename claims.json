@@ -1,3 +1,42 @@
 {
-  "claims": {}
+  "claims": {
+    "W27-DOC": {
+      "note": "the mod layer's documents, read against the code one last time",
+      "paths": [
+        "docs/mod-abi.md",
+        "docs/mod-events.md",
+        "docs/mod-implementation.md",
+        "docs/mod-interface.md",
+        "docs/mod-overrides.md",
+        "docs/mod-payloads.md",
+        "docs/mod-services.md",
+        "docs/mod-state.md",
+        "docs/modding.md",
+        "docs/status.md"
+      ],
+      "started": "2026-10-21"
+    },
+    "W27-TEST-AVATAR": {
+      "note": "the field avatars, in the port's own test suite",
+      "paths": [
+        "tests/test_mod_avatar.c"
+      ],
+      "started": "2026-10-21"
+    },
+    "W27-TEST-HANDOFF": {
+      "note": "the save handoff and the run restart, in the port's own test suite",
+      "paths": [
+        "tests/test_mod_handoff.c",
+        "tests/test_mod_restart.c"
+      ],
+      "started": "2026-10-21"
+    },
+    "W27-TEST-NET": {
+      "note": "the peer sessions and the external control, in the port's own test suite",
+      "paths": [
+        "tests/test_mod_net.c"
+      ],
+      "started": "2026-10-21"
+    }
+  }
 }

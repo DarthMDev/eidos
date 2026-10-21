@@ -77,7 +77,8 @@ typedef void (*BwEventRefuse)(BwEventCall *call);
 
 One row per stable-event binding of `docs/mod-events.md`, section 1. An event
 bound to several functions (`heal`, `whiteout`, `mon.receive`,
-`battle.action`) has one row per function with the same `kind`.
+`battle.action`, `move.learn` and others) has one row per function with the
+same `kind`.
 
 **Scope.** Some bindings are general functions that only mean the event when
 a particular caller runs them: `BTL_PICK_GetLast` is the player's switch
@@ -85,7 +86,7 @@ choice only inside `BTL_CLIENT_StepSelectSwitchTarget`, and
 `POKEPARTY_SwapMembers` is a `party.swap` only outside the PC's
 `BOX2_MAIN_UpdateBoxSlots`, which fires its own events. The scope function is
 itself a slot (a declared row, with or without events), and every slot pushes
-its `(region, address)` on a per-thread stack on entry and pops it on return.
+its `(region, address)` on the scope stack on entry and pops it on return.
 `bw_mod_event_enter` checks the stack against the binding's scope before it
 builds anything. The table lives in `sdk/mod_event.c`; the builders, appliers
 and refusals live in one file per area (`sdk/mod_event_battle.c`,
@@ -104,17 +105,17 @@ section 1, and its notes):
 |---|---|
 | `trainer.spotted` | returns 0, no event |
 | `npc.talk` | returns 0, no person ahead |
-| `menu.open` | returns NULL, no event; the caller returns 0 to the field check |
+| `menu.open` | the function answers no event, and the refusal makes the return 0, so the field check goes on |
 | `field.move` | returns 0, the move is unusable |
 | `pc.open` | writes 0 to the command's result variable, the value a plain exit leaves, and returns 1 without starting the box process |
 | `encounter.wild` | sets the count to 0 at the return of `FIELD_ENCOUNT_CreateZoneWildMons`; for a roamer, makes the return of `FIELD_ENCOUNT_PickRoamer` no roamer |
 | `mon.evolve` | returns 0, no evolution |
-| `move.learn` | level-up: advances the learnset index past the entry and returns 0xFFFE; daycare: returns without writing |
+| `move.learn` | level-up: advances the learnset index past the entry and returns 0xFFFE; daycare: returns without writing; a script: returns 0 without writing, and the command answers 0 in every path of its own, so the script cannot tell the difference |
 | `mon.release` | returns without clearing; the release step then redraws the slot |
-| `box.deposit`, `box.withdraw` | returns without applying the move, then redraws the current box and the held box (`BOX2_UI_DrawSlot`) so the icons return to their slots |
+| `box.deposit`, `box.withdraw` | returns without applying the move; the box screen's own next step redraws the icons, because the redraw inside the move (`BOX2_UI_DrawSlot`) is the overlay's own function and the port's refusal runs in the ARM9 |
 | `party.swap` | returns 0 without swapping |
 | `trade.ingame` | returns 1 without calling the trade event; the script goes on |
-| `battle.action` | fight: returns 1 and fills the message with the mod's text or a generic "can't be used"; run: returns a blocker with no ability, which takes the "Can't escape!" path; switch: makes the return 6, the "backed out" value |
+| `battle.action` | fight: returns 1 and fills the message with the game's own "the Pokemon cannot use this move", with the Pokemon and the move as its two arguments; run: returns a blocker with no ability, which takes the "Can't escape!" path; switch: makes the return 6, the "backed out" value |
 | `battle.item` | makes the return 0, the "backed out" value |
 | `battle.escape` | returns 0, a failed run |
 | `catch.attempt` | pushes the block command (0x47) for the target and returns 0, so the ball is not taken from the bag |
@@ -246,10 +247,13 @@ All ten steps are built.
 - **The headers.** `sdk/mod_api.h` (the types, the events, the script
   commands, the host table and the entry points), `sdk/mod_state.h` (the state
   calls and the services table), and the port's own `sdk/mod_event.h`,
-  `sdk/mod_context.h`, `sdk/mod_script.h`, `sdk/mod_rule.h`, `sdk/mod_text.h`,
-  `sdk/mod_message.h`, `sdk/mod_net.h`, `sdk/mod_avatar.h`, `sdk/mod_export.h`,
-  `sdk/mod_frame.h`, `sdk/mod_handoff.h`, `sdk/mod_manifest.h`,
-  `sdk/mod_loader.h`, `sdk/mod_timer.h` and `sdk/mod_title.h`.
+  `sdk/mod_context.h`, `sdk/mod_script.h`, `sdk/mod_slot.h`,
+  `sdk/mod_hooks.h`, `sdk/mod_rule.h`, `sdk/mod_text.h`,
+  `sdk/mod_message.h`, `sdk/mod_net.h`, `sdk/mod_avatar.h`,
+  `sdk/mod_export.h`, `sdk/mod_frame.h`, `sdk/mod_handoff.h`,
+  `sdk/mod_manifest.h`, `sdk/mod_loader.h`, `sdk/mod_timer.h`,
+  `sdk/mod_panel.h`, `sdk/mod_input.h`, `sdk/mod_menu.h` and
+  `sdk/mod_title.h`.
 - **The dispatch.** `sdk/mod_event.c` (the binding table, the handler table,
   the scope stack, the fan-out and the refusals), `sdk/mod_context.c` (the two
   contexts), and the five area files that hold the rows:
@@ -268,7 +272,11 @@ All ten steps are built.
   `sdk/mod_export.c` (a Pokemon's export and import), `sdk/mod_net.c` (the
   peer sessions and the external control), `sdk/mod_frame.c` (the frame tick),
   `sdk/mod_avatar.c` (the field avatars), `sdk/mod_restart.c` (the run
-  restart) and `sdk/mod_handoff.c` (the save handoff).
+  restart), `sdk/mod_handoff.c` (the save handoff), `sdk/mod_panel.c` (the
+  run-status panel), `sdk/mod_input.c` (the input injection) and
+  `sdk/mod_menu.c` (the mod menu's model). Every call of the services table
+  is bound, and the loader binds them all into each mod's own table
+  (`sdk/mod_loader.c`).
 - **The script command hooks.** `sdk/mod_script.c` (the registry, the two
   opcode tables and the hook) and `stubs/reimpl_vm_control.c`, the stand-in
   that takes the game's dispatch function's place.
@@ -284,7 +292,10 @@ calls), `tests/test_mod_manifest.c`, `tests/test_mod_savedata.c`,
 `tests/test_mod_loader.c` (which loads a real library),
 `tests/test_mod_declare.c`, `tests/test_mod_messages.c`,
 `tests/test_mod_text.c`, `tests/test_mod_script.c`, `tests/test_mod_rule.c`,
-`tests/test_mod_timer.c` and `tests/test_mod_export.c`.
+`tests/test_mod_timer.c`, `tests/test_mod_export.c`, `tests/test_mod_panel.c`,
+`tests/test_mod_input.c`, `tests/test_mod_menu.c`, `tests/test_mod_avatar.c`,
+`tests/test_mod_handoff.c`, `tests/test_mod_net.c` and
+`tests/test_mod_restart.c`.
 
 The script command's view carries the operands as bytes, sixty of them, which
 is the widest command of the two tables (the battle effect VM's opcode 8, at
@@ -296,19 +307,26 @@ payload is built once for all the handlers of the event.
 
 What is still to build:
 
-1. **The mod menu's screen**: the port's own Mods section for enabling,
-   disabling, ordering the mods, clearing a mod's saved data and reporting an
-   orphan. The model behind it is `sdk/mod_menu.c`
-   (`docs/mod-services.md`).
-2. **The run-status panel and the input injection**: the two services whose
-   calls are still `NULL` in the services table, and the mod settings, which
-   the menu's model parses but the loader does not bind.
-3. **The relay's address and the control's port.** The network service reads
-   them from the port's own calls, and the port's settings do not reach it
-   yet (`sdk/mod_net.h`).
+1. **The move-learning screens.** The TM path (the party screen's two rows)
+   and the nurse's relearner path of `move.learn` are bound in the event
+   layer (`sdk/mod_event_mon.c`), and the script command that writes a move
+   is bound too, but no slot carries the event for them: the party screen's
+   two addresses and the relearner's are not declared rows at all, and the
+   script command's row is declared with an empty fourth column. The
+   declared set's fourth column names the rows whose slot carries the event
+   calls, so an address goes there to make the event fire.
+2. **The appliers the marked fields without one need.** `mon.nickname`'s
+   `force`, `battle.start`'s `format` and `level_adjust`, `battle.damage`'s
+   `amount` and `catch.attempt`'s `rate` are marked, but the rows that carry
+   them have no applier, so a write to them has no effect
+   (`docs/mod-payloads.md`, section 0).
+3. **The relay server.** The protocol is fixed (`docs/mod-services.md`,
+   "Peer sessions"), but the server that answers it is not part of the port.
 
 The port's own seams are in place: the boot installs the run restart's
-handler and the save handoff's reload (`demo/eidos_boot.c`), and the boot's
+handler, the save handoff's reload and the handoff's confirmation
+(`demo/eidos_boot.c`), it hands the network service the transport, the
+relay's address, the player's name and the control's port, and the boot's
 frame hook runs the mod layer's frame tick, so the mods' handlers and the
 network's queued events reach the mods on the game's frame.
 

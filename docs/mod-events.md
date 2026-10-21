@@ -40,7 +40,7 @@ binding's scope, `docs/mod-implementation.md`, section 1).
 |---|---|---|---|---|
 | `game.new` | `EVENT_MAPCHANGE_NewGameStartEvent` 0x02183C9C | ov020 | - | - |
 | `save.begin` | `SAVE_CONTROL_StartSave` 0x02007150 | arm9 | - | - |
-| `save.done` | `SAVE_CONTROL_MainSave` 0x02007168 | arm9 | - | - |
+| `save.done` | the return of `SAVE_CONTROL_MainSave` 0x02007168 | arm9 | - | - |
 | `save.load` | `GAME_DATA_LoadFromSave` 0x02012C18 | arm9 | - | - |
 | `game.cleared` | `EVENT_GAMECLEAR_Create` 0x0215F8A8, the ending: Hall of Fame (ov180), credits (ov181), save screen (ov205) | ov010 | - | - |
 
@@ -59,7 +59,7 @@ does not happen.
 | `trainer.spotted` | `EVENT_TRAINER_EYE_Check` 0x021AE0CC | ov021 | the trainer does not see the player (the function returns no event) | - |
 | `npc.talk` | `FIELD_EVENT_CHECK_SearchGridFrontMmdl` 0x0218B4B0; on rails `FIELD_EVENT_CHECK_SearchRailFrontMmdl` 0x0218B53C | ov021 | no person is found ahead; the A press goes on to the sign and tile checks | - |
 | `menu.open` | `EVENT_FIELD_MENU_Create` 0x0215FC40 (the X-button menu event) and `EVENT_FIELD_MENU_CreateForZone` 0x0215FCE0 | ov010 | the menu does not open (no event is returned) | - |
-| `menu.build` | `FIELD_MENU_Create` 0x021A836C | ov021 | - | entries (add, hide) |
+| `menu.build` | the return of `FIELD_MENU_Create` 0x021A836C | ov021 | - | entries (add, hide) |
 | `field.move` | `FIELD_SKILL_CHECK_CallHandler` 0x021644C4 | ov010 | the field move shows as unusable | - |
 | `pc.open` | `SCRCMD_PROC_FLD_CallOv170Event` 0x021B4D60, the script command that opens the box screen (the PC, and the battle box with its kind 4) | ov021 | the PC does not open; the script reads a plain exit | - |
 
@@ -89,12 +89,12 @@ area's normal encounter follows and fires its own `encounter.wild`.
 | `mon.create` | `POKE_TOOL_CreateEx` 0x02017430; personality `POKE_TOOL_CreatePersonalRnd` 0x020186C8 | arm9 | - | species, level, shiny, nature |
 | `mon.receive` | catch `EVENT_BATTLE_RETURN_Main` 0x021B9614 (ov092, the store step); gifts `SCRCMD_PROC_AddMonToParty` 0x0215C510, `SCRCMD_PROC_AddMonToBox` 0x0215C4C8, `SCRCMD_PROC_AddEggToParty` 0x0215C2D0 (ov010); `SCRCMD_POKEMON_FLD_ReceiveGiftMon` 0x021B6F18, daycare egg `SODATEYA_ReceiveEgg` 0x021C32F4 (ov021); in-game trade `FLD_TRADE_CreateEvent` 0x021CC500 (ov021) | - | - | - |
 | `mon.nickname` | `EVENT_NAMEIN_Create` 0x021CD2A4 (ov021); after a catch `ZUKAN_NICKNAME_Create` 0x0220B55C (ov207) | - | - | force the prompt |
-| `mon.evolve` | `SHINKA_CHECK_CheckEvolution` 0x0201B2B0 | arm9 | no evolution starts; an evolution stone has no effect | target species |
+| `mon.evolve` | the return of `SHINKA_CHECK_CheckEvolution` 0x0201B2B0 | arm9 | no evolution starts; an evolution stone has no effect | target species |
 | `mon.exp` | the return of `BTL_SERVER_FLOW_CalcPartyExpShares` 0x021CB2D4 (ov093); daycare `SODATEYA_GrantExp` 0x021C3530 (ov021) | - | - | the amount for each Pokemon |
-| `mon.levelup` | `BTL_POKEPARAM_AddExp` 0x021D69B8, inside `BTL_SERVER_FLOW_ApplyPartyExp` 0x021C5350 (the level crossing) | ov093 | - | - |
-| `move.learn` | level-up moves `POKE_TOOL_GetLevelUpMove` 0x02018328 (arm9; battle, party screen, evolution); daycare `SODATEYA_LearnMove` 0x021C360C (ov021); TMs, tutors and the relearner *locate*: the party screen learns through `POKELIST_FindMoveSlot` 0x021BA5B4 and `POKELIST_ReplaceMoveSlot` 0x021BA5E0 (ov091), scripts through `SCRCMD_PROC_SetMonMove` 0x0215BD2C (ov010); the refused outcome there is still to read | - | the move is not learned; the payload names the move and the source | - |
+| `mon.levelup` | the return of `BTL_POKEPARAM_AddExp` 0x021D69B8, inside `BTL_SERVER_FLOW_ApplyPartyExp` 0x021C5350 (the level crossing) | ov093 | - | - |
+| `move.learn` | level-up moves `POKE_TOOL_GetLevelUpMove` 0x02018328 (arm9; battle, party screen, evolution); daycare `SODATEYA_LearnMove` 0x021C360C (ov021). The party screen, the nurse's relearner and the script that writes a move are bound in the event layer, but no slot carries the event for them, so the event does not fire there (the note below) | - | the level-up, the day care and the script: the move is not learned. The party screen's rows and the relearner's cannot be refused; the payload names the move and the source | - |
 | `mon.release` | `BOX2_MAIN_ClearSlot` 0x021DD314, whose only caller is the release step `BOX2_SEQ_StateMoveItemF` 0x021E81D0 | ov170 | the Pokemon stays; the box redraws it | - |
-| `box.deposit` | `BOX2_MAIN_UpdateBoxSlots` 0x021DD530, a party Pokemon placed in a box | ov170 | the move is not applied; the box redraws both slots | - |
+| `box.deposit` | `BOX2_MAIN_UpdateBoxSlots` 0x021DD530, a party Pokemon placed in a box | ov170 | the move is not applied; the box screen's own next step redraws the icons | - |
 | `box.withdraw` | `BOX2_MAIN_UpdateBoxSlots` 0x021DD530, a box Pokemon placed in the party | ov170 | as `box.deposit` | - |
 | `party.swap` | `POKEPARTY_SwapMembers` 0x0201AB8C, not inside `BOX2_MAIN_UpdateBoxSlots` | arm9 | the order does not change; the party screen redraws from the party | - |
 | `mon.helditem` | `POKELIST_SetHeldItem` 0x021BA624 | ov091 | - | - |
@@ -116,7 +116,14 @@ Notes from the callers:
 - **`move.learn`** at `POKE_TOOL_GetLevelUpMove`: the function scans the
   learnset and writes the move into the Pokemon. A refused move is skipped:
   the refusal advances the scan past the entry and returns the "already
-  known" code (0xFFFE), which every caller treats as nothing learned.
+  known" code (0xFFFE), which every caller treats as nothing learned. The
+  day care's row is refused the same way, by writing nothing, and the script
+  command that writes a move is refused by answering 0, which is the answer
+  it gives in every path of its own. The party screen's rows and the nurse's
+  relearner screen print what they are about to do before they write it, so
+  a refusal there would leave the game telling the player something false:
+  they carry no refusal function, and a mod that wants to stop a learn reacts
+  after the fact through the state calls.
 - **The PC** applies every drop in `BOX2_MAIN_UpdateBoxSlots`, after the icon
   animation. An exchange between a box and the party fires both
   `box.deposit` and `box.withdraw`; refusing either refuses the exchange.
@@ -191,7 +198,7 @@ Notes from the callers:
 
 | Event | Game function | Region | Refuse | Modify |
 |---|---|---|---|---|
-| `badge.get` | `BEACON_SetFlag` 0x0200C248 | arm9 | - | - |
+| `badge.get` | the return of `BEACON_SetFlag` 0x0200C248 | arm9 | - | - |
 | `flag.set` | `ZONEDATA_SetEventFlag` 0x02014314 | arm9 | - | - |
 | `dex.register` | `ZUKAN_SAVE_RegisterSeen` 0x0200CFA0; `ZUKAN_SAVE_RegisterCaught` 0x0200CDE0 | arm9 | - | - |
 
@@ -248,12 +255,13 @@ per area (`sdk/mod_event_session.c`, `sdk/mod_event_field.c`,
 **The Pokemon area.**
 
 - `mon.create`'s nature reads 0xFF, the sentinel "leave the roll", because the
-  nature is rolled inside the creation call. The shiny flag reads 0: the roll
-  is the caller's, and a handler that asks for a shiny Pokemon gets one
-  through the applier. The personality is the argument the caller passes, the
-  low half of the 64-bit value, which is the half the game stores; on the
-  row that rolls the personality it reads 0 instead, because the game rolls
-  it inside that call.
+  nature is rolled inside the creation call. The shiny flag reads 0 on the
+  creation row, because the roll is the caller's there; on the row that rolls
+  the personality it is the caller's own request, and a handler that asks for
+  a shiny Pokemon gets one through the applier. The personality is the
+  argument the caller passes, the low half of the 64-bit value, which is the
+  half the game stores; on the row that rolls the personality it reads 0
+  instead, because the game rolls it inside that call.
 - `mon.receive`'s slot reads 0 for a Pokemon that went into a box: the free
   slot inside that box is not named by the call. A Pokemon given while the
   party was full has no record left to read at all, so its shiny flag reads 0
@@ -278,6 +286,16 @@ per area (`sdk/mod_event_session.c`, `sdk/mod_event_field.c`,
 - `move.learn`'s replaced move reads 0: the game asks for that later, in the
   screen that owns the choice. The move slot is the first of the Pokemon's
   four that is empty, or 0xFF when it holds four moves already.
+- `move.learn` fires from two of the six rows the area binds: the level-up
+  check (arm9) and the day care (ov021). The other four name addresses the
+  port has no event-carrying slot for: the party screen's two
+  (`POKELIST_FindMoveSlot` 0x021BA5B4 and `POKELIST_ReplaceMoveSlot`
+  0x021BA5E0, ov091) and the nurse's relearner screen (0x021B6B0C, ov173)
+  are not declared rows at all, and the script command that writes a move
+  (`SCRCMD_PROC_SetMonMove` 0x0215BD2C, ov010) is one, but its fourth column
+  is empty, so its slot carries no event. The declared set's fourth column
+  names the rows whose slot carries the event, so an address goes there to
+  make it fire.
 - `mon.helditem`'s party position reads 0: the party is not carried by the
   call.
 

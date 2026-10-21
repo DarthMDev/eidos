@@ -133,6 +133,32 @@
  * prototype is here.
  */
 extern const char *bw_mod_savedata_namespace(void);
+extern void        bw_mod_savedata_set_namespace(const char *ns);
+
+/*
+ * The namespace a handler runs under.  A mod's own handler must see its own
+ * namespace in force, the way the event path's and the frame tick's handlers
+ * do, so that a state call it makes reaches its own file.  The namespace
+ * that was in force is put back afterwards.
+ */
+static const char *net_enter_mod(const char *ns)
+{
+    const char *saved;
+
+    if (ns == NULL || *ns == '\0') {
+        return NULL;
+    }
+    saved = bw_mod_savedata_namespace();
+    bw_mod_savedata_set_namespace(ns);
+    return saved;
+}
+
+static void net_leave_mod(const char *saved)
+{
+    if (saved != NULL) {
+        bw_mod_savedata_set_namespace(saved);
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /* The limits                                                          */
@@ -2148,8 +2174,11 @@ void bw_mod_net_frame(void)
             BwModNetMod *m = mod_lookup(key);
 
             if (m != NULL && m->session != NULL) {
+                const char *saved = net_enter_mod(m->ns);
+
                 m->session(peer, (int)BW_SESSION_MESSAGE,
                            (const void *)data, size);
+                net_leave_mod(saved);
             }
             continue;
         }
@@ -2159,7 +2188,10 @@ void bw_mod_net_frame(void)
             copy_text_n(line, sizeof(line), (const char *)data, size);
             for (i = 0; i < BW_MOD_NET_MODS_MAX; i++) {
                 if (g_mods[i].used && g_mods[i].command != NULL) {
+                    const char *saved = net_enter_mod(g_mods[i].ns);
+
                     g_mods[i].command(line);
+                    net_leave_mod(saved);
                 }
             }
             continue;

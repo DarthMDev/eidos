@@ -1529,10 +1529,17 @@ endforeach()
 # (docs/mod-services.md); test_mod_menu checks the mod menu's model (the
 # list, the switch, the order, the clear action, the orphan report and the
 # settings); test_mod_panel checks the run-status panel's model and its
-# picture, and test_mod_input the input injection.
+# picture, and test_mod_input the input injection; test_mod_handoff checks
+# the save handoff (the blob, the pieces, the confirmation and the install)
+# and test_mod_restart the run restart (the flags, the two removals and the
+# port's own handler); test_mod_avatar checks the field avatars (the pool's
+# headroom, the walk and the reset); test_mod_net checks the peer sessions
+# and the external control (the relay protocol, the session, the frame and
+# the control's endpoint).
 foreach(t test_mod_surface test_mod_event test_mod_state test_mod_declare test_mod_messages
           test_mod_text test_mod_script test_mod_rule test_mod_timer test_mod_export
-          test_mod_menu test_mod_input)
+          test_mod_menu test_mod_input test_mod_handoff test_mod_restart
+          test_mod_avatar test_mod_net)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)

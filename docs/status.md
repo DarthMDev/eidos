@@ -79,11 +79,13 @@ that changes it. Where an item is only partly done, it says which part.
   (the timer, the splits and the mod's own random source), `sdk/mod_export.c`
   (a Pokemon's export and import), `sdk/mod_net.c` (the peer sessions and the
   external control), `sdk/mod_frame.c` (the frame tick), `sdk/mod_avatar.c`
-  (the field avatars), `sdk/mod_restart.c` (the run restart) and
-  `sdk/mod_handoff.c` (the save handoff). `sdk/mod_script.c` and
+  (the field avatars), `sdk/mod_restart.c` (the run restart),
+  `sdk/mod_handoff.c` (the save handoff), `sdk/mod_panel.c` (the run-status
+  panel), `sdk/mod_input.c` (the input injection) and `sdk/mod_menu.c` (the
+  mod menu's model, which the settings screen draws). `sdk/mod_script.c` and
   `stubs/reimpl_vm_control.c` are the script command hooks, and
-  `sdk/mod_rule.c` the rule interpreter. The tests are the thirteen
-  `tests/test_mod_*.c`. `docs/modding.md` is the overview.
+  `sdk/mod_rule.c` the rule interpreter. The tests are the
+  `tests/test_mod_*.c` files. `docs/modding.md` is the overview.
 
 ## Open, no aletheia dependency
 
@@ -130,17 +132,20 @@ that changes it. Where an item is only partly done, it says which part.
   mechanical coverage, not accuracy.
 - **Milestone 8+**: high-resolution/widescreen rendering, packaging.
 
-- **The mod layer's last pieces**: the run-status panel and the input
-  injection are the two services whose calls are still `NULL` in the services
-  table. The mod menu's screen, the network settings and the handoff's
-  confirmation are in place: the Mods section of the settings screen
-  (`engine/platform/settings_ui.c`) draws the model behind it
-  (`sdk/mod_menu.c`), the player can reorder their mods, the relay's address
-  and the control's port are settings of the port's own, and a save that
-  arrives from a peer is put to the player before it is installed. The
-  documentation pass over the mod layer's own documents is done
-  (`docs/mod-services.md`, `docs/modding.md`, `docs/mod-state.md`,
-  `docs/mod-events.md`, `docs/mod-implementation.md` and this file).
+- **The mod layer's remaining gaps**: the relay server is not part of the
+  port, and the TM path, the nurse's relearner path and the script that
+  writes a move are bound in the event layer but no slot carries the event
+  for them, so `move.learn` fires only from the level-up check and the day
+  care. Five marked payload fields have no applier yet
+  (`mon.nickname`'s `force`, `battle.start`'s `format` and `level_adjust`,
+  `battle.damage`'s `amount` and `catch.attempt`'s `rate`), so a handler's
+  write to them has no effect. The rest of the layer is in place: the Mods
+  section of the settings screen (`engine/platform/settings_ui.c`) draws the
+  model behind it (`sdk/mod_menu.c`), the player can reorder their mods, the
+  run-status panel is shown beside the screens and the player can hide it, the
+  input injection takes a mod's press, the relay's address and the control's
+  port are settings of the port's own, and a save that arrives from a peer is
+  put to the player before it is installed.
 
 ## Open, port integration
 

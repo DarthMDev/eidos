@@ -84,11 +84,12 @@ void bw_mod_handoff_on_save(BwSaveHandler fn);
  * and 0 when it is refused.  `user` is the pointer the port gave when it
  * installed the callback.
  *
- * The confirmation is the port's own user interface, which is not built yet
- * (the port's menu is another wave), so the call has no callback by
+ * The confirmation is the port's own user interface: the port installs a
+ * callback that asks the player through the game's own yes/no window
+ * (engine/platform/mod_options_proc.c), so a save that arrives is taken
+ * only when the player says so.  Without a callback the call has none by
  * default: a save that arrives is then reported and dropped, and nothing
- * is installed.  The port installs the callback when its user interface
- * can ask the player.
+ * is installed.
  */
 typedef int (*BwHandoffConfirmFn)(u32 peer, const void *buf, u32 size,
                                   void *user);

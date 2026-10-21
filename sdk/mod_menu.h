@@ -341,8 +341,7 @@ const char *bw_mod_menu_namespace(void);
  * the value of the option the key names, for the mod that is calling.  -1
  * when the key names no option of that mod, or when no mod is calling.
  *
- * The loader does not bind the call into the services table yet, so a mod
- * that calls it gets nothing.  When it does, it binds this one and sets the
+ * The loader binds this one, and it sets the
  * namespace around the calls it makes into the mod, the way it sets the
  * saved-data layer's (bw_mod_menu_set_namespace).
  */

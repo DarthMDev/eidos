@@ -394,7 +394,9 @@ from the game's own rule.
 caller asks for and the personality value it passes; the row that rolls the
 personality reads 0 for it, because the game rolls it inside that call, and
 the nature reads 0xFF, the sentinel "leave the roll", because the nature is
-rolled inside the creation call as well. `mon.receive` names the Pokemon
+rolled inside the creation call as well. The shiny flag reads 0 on the
+creation row, where the roll is the caller's, and is the caller's own request
+on the row that rolls the personality. `mon.receive` names the Pokemon
 that was received, where it came from and whether it went to a box because
 the party was full; a Pokemon that went into a box has no slot, because the
 free slot inside that box is not named by the call, and a Pokemon given
@@ -412,8 +414,13 @@ because the call carries the Pokemon and not the party. `move.learn`
 carries the move and its source, and the move slot is the first of the
 Pokemon's four that is empty, or 0xFF when it holds four moves already; the
 replaced move reads 0, because the game asks for that later, in the screen
-that owns the choice. `mon.helditem` carries the item given and the item it
-held, but the party position reads 0: the party is not carried by the call.
+that owns the choice. The event fires from two of the area's six rows: the
+level-up check and the day care. The party screen's two rows, the nurse's
+relearner screen and the script command that writes a move name addresses no
+slot carries the event for, so the event does not fire there
+(`docs/mod-events.md`, section 1).
+`mon.helditem` carries the item given and the item it held, but the party
+position reads 0: the party is not carried by the call.
 
 ### Battle
 
