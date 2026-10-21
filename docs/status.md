@@ -130,16 +130,17 @@ that changes it. Where an item is only partly done, it says which part.
   mechanical coverage, not accuracy.
 - **Milestone 8+**: high-resolution/widescreen rendering, packaging.
 
-- **The mod layer's last pieces**: the in-game mod menu's screen (the model
-  behind it is `sdk/mod_menu.c`: the installed mods, the switch, the state
-  clear action and the orphan report) and the documentation pass over the mod
-  layer's own documents (`docs/mod-services.md`, `docs/modding.md`,
-  `docs/mod-state.md`, `docs/mod-events.md`, `docs/mod-implementation.md` and
-  this file). The run-status panel and the input injection are the two
-  services whose calls are still `NULL` in the services table; the mod
-  settings are declared and parsed but the loader does not bind the call. The
-  boot's own restart handler and the handoff's reload are in place
-  (`demo/eidos_boot.c`).
+- **The mod layer's last pieces**: the run-status panel and the input
+  injection are the two services whose calls are still `NULL` in the services
+  table. The mod menu's screen, the network settings and the handoff's
+  confirmation are in place: the Mods section of the settings screen
+  (`engine/platform/settings_ui.c`) draws the model behind it
+  (`sdk/mod_menu.c`), the player can reorder their mods, the relay's address
+  and the control's port are settings of the port's own, and a save that
+  arrives from a peer is put to the player before it is installed. The
+  documentation pass over the mod layer's own documents is done
+  (`docs/mod-services.md`, `docs/modding.md`, `docs/mod-state.md`,
+  `docs/mod-events.md`, `docs/mod-implementation.md` and this file).
 
 ## Open, port integration
 

@@ -106,12 +106,14 @@ original is the one the build publishes at start-up for `arm9`
 own hook out of the chain and leaves the hooks of the other mods where they
 are.
 
-**The switch.** The slot asks `bw_hook_enabled` (`sdk/mod_hooks.h`) with the
-row's function name, the same switch the port's compiled hooks use
+**The switch.** Every hook answers to a switch, and the registry asks
+`bw_hook_enabled` (`sdk/mod_hooks.h`) with it at the dispatch: a hook whose
+switch is off is skipped and the walk goes on inward, so the mod's hook is
+isolated while the others keep working. The switch's name is the manifest's
+`switch=` when the mod states one, and the row's own function name when it
+does not, which is the same switch the port's compiled hooks use
 (`docs/hooks.md`). `EIDOS_HOOKS_OFF` or `bw_hook_set` turns a slot back to the
-original, which isolates one mod while debugging. The switch a slot answers
-is the row's own name; the manifest's `switch=` option is read and kept but
-does not change it (section 3).
+original.
 
 **Code pointers.** A function the game reaches through a pointer stored in
 data does not pass a call site. For overlay windows `bw_ovl_code_entry`
@@ -182,13 +184,12 @@ The `override` grammar:
   chain through `bw_mod_slot_original`; a `replace` takes the slot for
   itself (`docs/mod-overrides.md`).
 - `<symbol>` is the C symbol the mod's library exports for the hook.
-- `sig=` states the prototype the mod expects. The record keeps it
-  (`sdk/mod_manifest.h`, `BwModOverride.sig`), but the port does not compare
-  it with the slot's prototype yet, so a stated prototype is read and kept
-  but not enforced.
-- `switch=` names the key `bw_hook_enabled` answers. The record keeps it,
-  but the switch a slot asks is the row's own function name, so a stated
-  switch name is read and kept but does not change the switch yet.
+- `sig=` states the prototype the mod expects, in the normalised form
+  (`docs/mod-overrides.md`, "The prototype is checked"): `"<return type>
+  (<parameter types>)"`. The port compares it with the function's own
+  prototype and refuses the override when they differ, naming both.
+- `switch=` names the key `bw_hook_enabled` answers for that hook. It
+  defaults to the row's own function name.
 
 The `rule` grammar is `<event> <path>`: a stable event name and a rule file in
 the mod (`docs/mod-rules-language.md`).
@@ -244,15 +245,11 @@ code and needs no such trust.
 
 ## Still to build
 
-1. **The prototype check.** The manifest's `sig=` is parsed and kept in the
-   record, but nothing compares it with the slot's prototype, so a hook whose
-   prototype does not match the function's is installed as it stands
-   (`docs/mod-overrides.md`).
-2. **The switch name.** The manifest's `switch=` is parsed and kept, but the
-   generated slot asks `bw_hook_enabled` with the row's function name, so a
-   stated switch name has no effect yet.
-3. **ARM9 code-pointer coverage.** Make the ARM9 data relocation consult the
+1. **ARM9 code-pointer coverage.** Make the ARM9 data relocation consult the
    registry, as `bw_ovl_code_entry` does for overlays (`docs/armdata.md`).
+2. **The game's own type names** in a prototype: the port normalises the
+   plain types and the integer typedefs, but not names like `WMErrCode`, so
+   those rows are reported and not compared (`docs/mod-overrides.md`).
 
 ## Related documents
 

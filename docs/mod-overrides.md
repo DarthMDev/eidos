@@ -51,18 +51,38 @@ the chain, so the chain is the load order reversed. A wrap nests in that
 chain; a replace takes the slot for itself, and the links under it are
 reported as shadowed.
 
-**The prototype is kept, not checked.** The manifest's `sig=` states the
-prototype the mod expects, and the record keeps it (`sdk/mod_manifest.h`,
-`BwModOverride.sig`). The port does not compare it with the slot's prototype
-yet, so a hook whose prototype does not match the function's is trusted as
-much as one that states no prototype at all, and is installed as it stands.
+**The prototype is checked.** The manifest's `sig=` states the
+prototype the mod expects, and the port compares it with the function's own:
+the generators publish every declared row's name and its normalised
+prototype (`tools/bootlink.py`'s `bw_proto_rows[]`, and the overlays' own
+table in `tools/ovlink.py`'s `ovl_dispatch.c`), and the apply refuses an
+override whose stated prototype differs from it, naming both:
 
-**The switch.** Every slot asks `bw_hook_enabled` (`sdk/mod_hooks.h`) with the
-declared row's function name, and that is the switch that answers. Turning it
-off sends the slot back to the game's function, which isolates one mod's hook
-while debugging. The manifest's `switch=` option is read and kept in the
-record, but the slot does not ask it yet, so a stated switch name has no
-effect.
+```
+eidos: mod mod-e: override arm9:0x02007150 states the prototype 'int (int)',
+but the function's is 'int (void *)'
+```
+
+A mismatch refuses the override, not the mod: the mod still loads, the way a
+declared-address mismatch refuses the row it is on. A prototype the port
+cannot read (a game-specific type name) is reported and not compared, so
+there is no false refusal. A row the build does not carry publishes no
+prototype, and there is nothing to compare.
+
+The normalisation is the same on both sides: `"<return type> (<parameter
+types>)"`, the parameters separated by `", "`, `"void"` when there are none.
+Qualifiers, the function's name and the parameters' names are dropped; any
+pointer, array or function pointer becomes `void *`; an `enum` becomes
+`int`; a struct or union by value becomes `unsigned int`; the game's
+integer typedefs become their C types. A manifest's writer states the
+prototype in that form.
+
+**The switch.** Every hook answers to a switch, and the registry asks
+`bw_hook_enabled` (`sdk/mod_hooks.h`) with it, per hook, at the dispatch: a
+hook whose switch is off is skipped and the walk goes on inward, so a mod can
+be isolated while debugging without the whole chain stepping past the
+function. The switch's name is the manifest's `switch=` when the mod states
+one, and the declared row's own function name when it does not.
 
 ## Several mods on one function
 
@@ -129,19 +149,18 @@ that does not know its own version reports the pin and does not check it.
   so a hook misses those calls (`docs/mod-interface.md`, section 2).
 - **Code pointers into the ARM9 static module** do not consult the registry
   yet; code pointers into overlays do (`docs/mod-interface.md`, section 2).
-- **A prototype is not compared** with the function's, and a stated switch
-  name is not asked.
+- **A prototype the port cannot read** is reported and not compared, so a
+  game-specific type name is never a false refusal.
+- **An overlay row's prototype** is published only when that overlay is
+  compiled in.
 
 ## Still to build
 
-1. **The prototype check.** The manifest's `sig=` is kept in the record, but
-   the loader does not compare it with the slot's prototype, so a hook with a
-   wrong prototype is installed as it stands.
-2. **The switch name.** The manifest's `switch=` is kept in the record, but
-   the generated slot asks `bw_hook_enabled` with the row's function name, so a
-   stated switch name has no effect.
-3. **ARM9 code-pointer coverage**, as `docs/mod-interface.md`, "Still to
+1. **ARM9 code-pointer coverage**, as `docs/mod-interface.md`, "Still to
    build", item 3.
+2. **The game's own type names** in a prototype: the port resolves the plain
+   types and the integer typedefs, but not names like `WMErrCode`, so those
+   rows are reported and not compared.
 
 ## Related documents
 

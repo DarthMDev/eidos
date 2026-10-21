@@ -891,6 +891,12 @@ def slot_function(region_expr, addr, slot):
     (docs/mod-implementation.md, section 1, "At the slot").  Its default is
     the original, so with no mod installed it behaves as the direct call did.
 
+    The switch is not asked here: the registry asks it, per hook, with the
+    name the mod's manifest stated or the row's own name (docs/mod-overrides.md,
+    "The switch").  A hook whose switch is off is skipped and the walk goes
+    on to the next link inward, which a gate here could not do: it would
+    send the whole chain past the function.
+
     `slot` is {name, declared, original, sig, events}: the events are the
     declared set's fourth column, empty for a raw-hook-only row.  Every
     slot pushes its (region, address) on the scope stack and pops it on
@@ -921,7 +927,7 @@ def slot_function(region_expr, addr, slot):
             out.append("        return;")
         out.append("    }")
     cargs = event_call_args(params) if events else args
-    out.append('    if (h != NULL && bw_hook_enabled("%s")) {' % slot["declared"])
+    out.append("    if (h != NULL) {")
     if ret == "void":
         out.append("        ((%s)h)(%s);" % (cast, cargs))
     else:
@@ -1914,6 +1920,7 @@ class Link:
             for addr in sorted(decl):
                 dname = decl[addr]
                 dn, sig = self.target_signature(st, addr, dname)
+                proto = None
                 if dn is not None:
                     if sig is None:
                         # The definition's prototype does not normalise: a
@@ -1924,10 +1931,16 @@ class Link:
                             "not normalise" % (st.ov.tag, addr, dname, dn))
                         continue
                     original = self.own(st, dn)
+                    # The prototype the manifest's `sig=` is compared with
+                    # (docs/mod-overrides.md, "The prototype is checked").
+                    proto = proto_text(sig)
                 elif addr in st.stubs or addr in st.known:
                     # A stub: the slot calls it with no arguments.
                     original = self.own_code(st, addr)
                     sig = ("void", ())
+                    # The game's own prototype is not known: the row
+                    # publishes none, and the manifest's `sig=` is not
+                    # compared with it.
                 else:
                     self.notes.append("%s: declared 0x%08X (%s) is not in the link"
                                       % (st.ov.tag, addr, dname))
@@ -1953,6 +1966,7 @@ class Link:
                     "declared": dname,
                     "original": original,
                     "sig": sig,
+                    "proto": proto,
                     "events": events,
                 })
 
@@ -2693,7 +2707,10 @@ def write_dispatch(link, path, set_name):
                 body.append("        return %s;" % event_value(ret))
             body.append("    }")
         if forward and decl is not None:
-            body.append('    if (h != NULL && bw_hook_enabled("%s")) {' % decl[1])
+            # The registry asks the switch, per hook: a hook whose switch is
+            # off is skipped, and the walk goes on inward (docs/mod-overrides.md,
+            # "The switch").
+            body.append("    if (h != NULL) {")
             if ret == "void":
                 body.append("        ((void (*)(%s))h)(%s);"
                             % (", ".join(params) or "void", cargs))
@@ -2803,6 +2820,26 @@ def write_dispatch(link, path, set_name):
         w("    }")
         w("}")
         w("")
+        # The declared rows' names and their prototypes, published at
+        # start-up: the manifest's check asks them as the mod loads
+        # (docs/mod-overrides.md, "The prototype is checked").  The boot's
+        # link file publishes every row's name; the overlays' rows add their
+        # prototypes here, for the overlays this link compiles.
+        w("/* The declared rows of the overlays this link compiles: their names")
+        w(" * and their prototypes.  The name is the switch a hook on the row")
+        w(" * answers by when the mod's manifest states none; the prototype is")
+        w(" * the function's own, normalised the way tools/ovlink.py's signature")
+        w(" * normalises it, and it is what the manifest's `sig=` is compared")
+        w(" * with.  The boot's link file publishes the same rows' names. */")
+        w("static const BwModSlotProto k_mod_proto_rows[] = {")
+        for oid in publishing:
+            st = link.state[oid]
+            for s in st.mod_slots:
+                w("    { BW_MOD_REGION_OVL(%d), 0x%08Xu, \"%s\", %s }," % (
+                    oid, s["addr"], s["declared"],
+                    "\"%s\"" % s["proto"] if s["proto"] is not None else "NULL"))
+        w("};")
+        w("")
         w("#if defined(_MSC_VER) && !defined(__clang__)")
         w("/* cl.exe: a start-up initialiser in the C run-time's constructor")
         w(" * section. */")
@@ -2814,11 +2851,15 @@ def write_dispatch(link, path, set_name):
         w("static void bw_ovl_mod_register(void)")
         w("{")
         w("    bw_mod_slot_set_overlay_publish(bw_ovl_mod_publish_dispatch);")
+        w("    bw_mod_publish_protos(k_mod_proto_rows, %du);"
+          % sum(len(link.state[oid].mod_slots) for oid in publishing))
         w("}")
         w("#else")
         w("__attribute__((constructor)) static void bw_ovl_mod_register(void)")
         w("{")
         w("    bw_mod_slot_set_overlay_publish(bw_ovl_mod_publish_dispatch);")
+        w("    bw_mod_publish_protos(k_mod_proto_rows, %du);"
+          % sum(len(link.state[oid].mod_slots) for oid in publishing))
         w("}")
         w("#endif")
         w("")

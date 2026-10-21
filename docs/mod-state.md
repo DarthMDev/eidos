@@ -149,6 +149,21 @@ failed. A game save that fails leaves the old state file in place, so the two
 never drift apart. A store made outside that window is written at once, with
 the checksum of the save currently on disk.
 
+The window is the game's own save: the `save.begin` row opens it and the
+`save.done` row closes it, after the handlers have run. A save that never
+finished (the player backed out of it) leaves the window open, and the next
+`save.begin` closes it and drops the payload it held, so a save that did not
+happen writes nothing. A store the mod makes after such a cancellation, while
+the window was still open, is dropped with it.
+
+**One checksum.** The checksum of the save in force is the CRC-32 of the
+save's bytes as the chip holds them: the save's first `<chip size>` bytes,
+with the rest of the chip erased. The layer and the save handoff both use
+that one rule, so the two never disagree about whether a mod's file is in
+step with the save in force. A file shorter than the chip brings its trailer
+along, and a trailer beyond the chip's size is not part of the save in force
+and does not travel.
+
 **Discarded.** A store is the whole file: `bw_save_write_atomic` writes a
 temporary and replaces the file, so there is no partial state. A store that
 fails is reported once per mod and the old file stays. A file the port cannot
@@ -268,7 +283,10 @@ constant, the address in both the even-start and the Thumb-tagged form, the
 mode (`replace` or `wrap`), the symbol, the optional signature and the optional
 switch name. The region token resolves the way `docs/mod-implementation.md`,
 section 6, fixes: `arm9` to `BW_MOD_REGION_ARM9` and `ovNNN` to
-`BW_MOD_REGION_OVL(NNN)` (`sdk/mod_slot.h`).
+`BW_MOD_REGION_OVL(NNN)` (`sdk/mod_slot.h`). The signature is compared with
+the function's own prototype and a mismatch refuses the override; the switch
+name is the key the hook answers to, and it defaults to the row's own
+function name (`docs/mod-overrides.md`).
 
 ### Where it comes from in a packed mod
 

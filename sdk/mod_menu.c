@@ -16,7 +16,8 @@
  *   1. The roots are rebuildable at the menu.  The model never installs the
  *      mod list once and leaves it there: when the player leaves the menu
  *      the list is built again from the switches (bw_clear_mods and
- *      bw_add_mod_root), and every change drops the cached merged archives
+ *      bw_add_mod_root, or bw_mod_set_order when the player has an order
+ *      of their own), and every change drops the cached merged archives
  *      (bw_vfs_flush, inside the file layer).  The state namespace is per
  *      mod, so a rebuild of the roots moves no state: the namespace is the
  *      manifest's `state` key, and the folder it names is the mod's own.
@@ -45,10 +46,33 @@
  * ---------------------
  *
  * The player's list is one file of the port's own, <save dir>/mods.ini:
- * the mods the player knows about and the state of their switches.  It is
- * written the way every other port file is written (a whole file, atomically
- * : sdk/save.h), and it is the only thing of the menu's own that outlives
- * the port, beside the mods' own data.
+ * the mods the player knows about, the state of their switches and the
+ * order the player chose for them.  It is written the way every other port
+ * file is written (a whole file, atomically: sdk/save.h), and it is the
+ * only thing of the menu's own that outlives the port, beside the mods'
+ * own data.
+ *
+ * The player's order
+ * ------------------
+ *
+ * The order the mods load in is the order their overrides and their rules
+ * take effect, so it is the player's to choose (docs/mod-services.md, "The
+ * mod menu": "The order can be changed").  The manifest's `order` key is
+ * the default: it is the mod author's own order, and it decides the list
+ * while the player has not said otherwise.  The model holds the player's
+ * list in the order the player chose (bw_mod_menu_move_up and its
+ * siblings), the apply hands that order to the file layer
+ * (bw_mod_set_order, sdk/vfs.h) and the loader loads the mods in it,
+ * because the loader walks the file layer's list in order
+ * (sdk/mod_loader.c).
+ *
+ * The order is the player's own and it is in the port's record
+ * (<save dir>/mods.ini), so it outlives the port: the start-up restore
+ * reads it back and the list comes up in the order the player left it in.
+ *
+ * The state namespace is per mod, so moving a mod in the list moves no
+ * state: the namespace is the manifest's `state` key and it travels with
+ * the mod, not with the mod's place in the list.
  *
  * The state the model needs from the other layers
  * ------------------------------------------------
@@ -179,6 +203,8 @@ typedef struct BwModMenuMod {
     char ns[BW_MOD_MENU_NS_MAX];        /* the state namespace           */
     char settings[BW_MOD_MENU_SET_MAX]; /* the settings declaration      */
     int  order;                         /* the manifest's order key      */
+    int  player_pos;                    /* the player's place, -1 for none */
+    u32  base_pos;                      /* the place it was built at     */
     int  enabled;                       /* the player's switch           */
     int  running;                       /* the root is in the port's list */
     int  present;                       /* the mod's folder is there     */
@@ -187,15 +213,30 @@ typedef struct BwModMenuMod {
     BwModMenuOption *options;
 } BwModMenuMod;
 
-/* One row of the port's own record: a mod's root and its switch. */
+/* One row of the port's own record: a mod's root, its switch and the
+ * player's place in the list. */
 typedef struct BwModMenuRow {
     char root[BW_MOD_MENU_ROOT_MAX];
     int  enabled;
+    int  order;         /* the player's place in the list, -1 for none */
 } BwModMenuRow;
 
 static BwModMenuMod g_mods[BW_MOD_MENU_MAX];
 static u32          g_count;
 static int          g_built;
+
+/*
+ * The player's own order is in force: the record named an order, or the
+ * player moved a mod.  While it is, the list is the player's and the
+ * manifest's `order` key does not decide it; the file layer is told the
+ * order as it is (bw_mod_set_order).  g_player_order_base is the value it
+ * had when the menu was opened, so the revert can put it back.
+ */
+static int g_player_order;
+static int g_player_order_base;
+
+/* The port's own record of the player's list is there. */
+static int g_have_record;
 
 /* The folders in the save directory that no mod claims. */
 static char g_orphans[BW_MOD_MENU_MAX][BW_MOD_MENU_NS_MAX];
@@ -347,8 +388,9 @@ static int mods_folder_path(char *out, size_t size)
 /* ------------------------------------------------------------------ */
 
 /*
- * Read the record: the mods the player knows about and their switches.
- * The rows come back in the order the file gives them.
+ * Read the record: the mods the player knows about, their switches and
+ * the player's place for each of them.  The rows come back in the order the
+ * file gives them.
  */
 static u32 read_record(BwModMenuRow *rows, u32 max)
 {
@@ -415,10 +457,24 @@ static u32 read_record(BwModMenuRow *rows, u32 max)
                 }
                 copy_str(rows[count].root, sizeof rows[count].root, vs);
                 rows[count].enabled = 0;
+                rows[count].order = -1;
                 count++;
             } else if ((size_t)(ke - ks) == 7 && memcmp(ks, "enabled", 7) == 0) {
                 if (count > 0) {
                     rows[count - 1].enabled = (strtol(vs, NULL, 10) != 0);
+                }
+            } else if ((size_t)(ke - ks) == 5 && memcmp(ks, "order", 5) == 0) {
+                if (count > 0) {
+                    long v = strtol(vs, NULL, 10);
+
+                    /* The player's place in the list: a number the model
+                     * can hold.  A value that is not one is ignored, so a
+                     * hand edit cannot scramble the list: the manifest's
+                     * own order key stands instead. */
+                    if (v < 0 || v >= (long)BW_MOD_MENU_MAX) {
+                        v = -1;
+                    }
+                    rows[count - 1].order = (int)v;
                 }
             }
             /* An unknown key is ignored, the way the manifest reader
@@ -430,12 +486,18 @@ static u32 read_record(BwModMenuRow *rows, u32 max)
 }
 
 /*
- * Write the record: the mods the player knows about and their switches.
- * One block per mod:
+ * Write the record: the mods the player knows about, their switches and
+ * the order the player chose.  One block per mod, in the order the player
+ * left them in:
  *
  *     [mod]
  *     root = <the mod's folder>
  *     enabled = 1
+ *     order = 0
+ *
+ * The `order` key is the player's place in the list, 0 first.  It is not
+ * the manifest's `order` key: that one is the mod author's, and it decides
+ * the list while the player has not said otherwise.
  */
 static int write_record(void)
 {
@@ -451,15 +513,16 @@ static int write_record(void)
     }
     if (text_add(&text, &len, &cap,
                  "# eidos mod record (sdk/mod_menu.c).\n"
-                 "# The mods the player knows about and the state of their\n"
-                 "# switches.  The port owns this file.\n") != 0) {
+                 "# The mods the player knows about, the state of their\n"
+                 "# switches and the order the player chose for them.\n"
+                 "# The port owns this file.\n") != 0) {
         return -1;
     }
     for (i = 0; i < g_count; i++) {
         char block[1024];
         int n = snprintf(block, sizeof block,
-                         "\n[mod]\nroot = %s\nenabled = %d\n",
-                         g_mods[i].root, g_mods[i].enabled ? 1 : 0);
+                         "\n[mod]\nroot = %s\nenabled = %d\norder = %d\n",
+                         g_mods[i].root, g_mods[i].enabled ? 1 : 0, (int)i);
 
         if (n < 0 || (size_t)n >= sizeof block) {
             free(text);
@@ -959,6 +1022,9 @@ static void model_free(void)
     g_count = 0;
     g_built = 0;
     g_orphan_count = 0;
+    g_player_order = 0;
+    g_player_order_base = 0;
+    g_have_record = 0;
 }
 
 /* A new row of the model, or NULL when the model is full. */
@@ -1000,9 +1066,29 @@ static BwModMenuMod *model_find_ns(const char *ns)
     return NULL;
 }
 
-/* The rows in load order: the manifest's order key, and the order the
- * rows were added in for the mods that share one.  The sort is stable, so
- * the mods the port's list holds keep the order the port gave them. */
+/*
+ * The order two rows stand in.
+ *
+ * The player's own place decides when both the rows have one: the list is
+ * the order the player chose.  The manifest's `order` key decides the rest:
+ * a mod the player has not ordered keeps the place its author gave it, and
+ * it comes before the mods the player has ordered, so a mod the player has
+ * never seen does not take a win away from one they have.
+ */
+static int model_before(const BwModMenuMod *a, const BwModMenuMod *b)
+{
+    if ((a->player_pos >= 0) != (b->player_pos >= 0)) {
+        return a->player_pos < 0;
+    }
+    if (a->player_pos >= 0) {
+        return a->player_pos < b->player_pos;
+    }
+    return a->order < b->order;
+}
+
+/* The rows in load order: the player's own order when the record names
+ * one, the manifest's order key otherwise.  The sort is stable, so the
+ * mods the port's list holds keep the order the port gave them. */
 static void model_sort(void)
 {
     u32 i;
@@ -1011,7 +1097,7 @@ static void model_sort(void)
     for (i = 1; i < g_count; i++) {
         BwModMenuMod tmp = g_mods[i];
 
-        for (j = i; j > 0 && g_mods[j - 1].order > tmp.order; j--) {
+        for (j = i; j > 0 && model_before(&tmp, &g_mods[j - 1]); j--) {
             g_mods[j] = g_mods[j - 1];
         }
         g_mods[j] = tmp;
@@ -1021,6 +1107,11 @@ static void model_sort(void)
 /*
  * Build the model: the mods the port's list holds, in load order, and the
  * mods the player's record holds that the list does not.
+ *
+ * The record is the player's own: it names the mods the player knows
+ * about, their switches and the place the player gave each of them in the
+ * list.  A mod the record does not name is one the player has not ordered:
+ * the manifest's `order` key decides where it goes.
  */
 static void model_build(void)
 {
@@ -1045,27 +1136,39 @@ static void model_build(void)
         copy_str(m->root, sizeof m->root, root);
         copy_str(m->name, sizeof m->name, bw_mod_name_at(i));
         m->order = bw_mod_order_at(i);
+        m->player_pos = -1;
         m->running = 1;
         m->enabled = 1;
         m->present = (bw_plat_path_kind(root) == BW_PATH_DIR);
     }
-    /* The mods the player knows about and the port's list does not hold:
-     * the ones the player turned off. */
+    /* The player's record: the mods the player knows about, their switches
+     * and the place the player gave them in the list.  A mod the port's
+     * list holds and the record does not name keeps the switch the port
+     * gave it. */
     row_count = read_record(rows, BW_MOD_MENU_MAX);
+    g_have_record = (row_count > 0);
     for (i = 0; i < row_count; i++) {
         BwModMenuMod *m;
 
-        if (rows[i].root[0] == '\0' || model_find_root(rows[i].root) != NULL) {
+        if (rows[i].root[0] == '\0') {
             continue;
         }
-        m = model_add();
+        m = model_find_root(rows[i].root);
         if (m == NULL) {
-            break;
+            m = model_add();
+            if (m == NULL) {
+                break;
+            }
+            copy_str(m->root, sizeof m->root, rows[i].root);
+            m->running = 0;
+            m->present = (bw_plat_path_kind(rows[i].root) == BW_PATH_DIR);
+            m->player_pos = -1;
         }
-        copy_str(m->root, sizeof m->root, rows[i].root);
         m->enabled = rows[i].enabled;
-        m->running = 0;
-        m->present = (bw_plat_path_kind(rows[i].root) == BW_PATH_DIR);
+        m->player_pos = rows[i].order;
+        if (m->player_pos >= 0) {
+            g_player_order = 1;
+        }
     }
     /* Every mod's own manifest: the name, the namespace, the settings and
      * the order key come from it. */
@@ -1078,8 +1181,10 @@ static void model_build(void)
     }
     model_sort();
     for (i = 0; i < g_count; i++) {
+        g_mods[i].base_pos = i;
         read_settings(&g_mods[i]);
     }
+    g_player_order_base = g_player_order;
     g_built = 1;
 }
 
@@ -1089,6 +1194,99 @@ static void model_ready(void)
     if (!g_built) {
         model_build();
     }
+}
+
+/*
+ * Move the row at `from` to `to`, the rows between them shifting one
+ * place.  The rows move as they are, so a row's own settings (the mod's
+ * options) travel with it and no mod's state namespace moves: the
+ * namespace is the mod's own, not its place in the list.
+ */
+static void model_move(u32 from, u32 to)
+{
+    BwModMenuMod tmp;
+
+    if (from == to || from >= g_count || to >= g_count) {
+        return;
+    }
+    tmp = g_mods[from];
+    if (from < to) {
+        memmove(&g_mods[from], &g_mods[from + 1],
+                (to - from) * sizeof(g_mods[0]));
+    } else {
+        memmove(&g_mods[to + 1], &g_mods[to],
+                (from - to) * sizeof(g_mods[0]));
+    }
+    g_mods[to] = tmp;
+}
+
+/* 1 when the port's list holds the mods that are on, in the order the
+ * model holds them. */
+static int model_list_matches(void)
+{
+    u32 count = bw_mod_count();
+    u32 n = 0;
+    u32 i;
+
+    for (i = 0; i < g_count; i++) {
+        const char *root;
+
+        if (!g_mods[i].enabled) {
+            continue;
+        }
+        if (n >= count) {
+            return 0;
+        }
+        root = bw_mod_root_at(n);
+        if (root == NULL || strcmp(root, g_mods[i].root) != 0) {
+            return 0;
+        }
+        n++;
+    }
+    return n == count;
+}
+
+/*
+ * The roots in force: the mods that are on, in the order the list holds
+ * them.
+ *
+ * The player's own order is handed to the file layer as it is
+ * (bw_mod_set_order), so the loader loads the mods in the order the
+ * player chose.  With no order of the player's the manifest's `order` key
+ * decides it again, the way it always did: the roots are added one at a
+ * time and the file layer sorts them in.
+ */
+static int model_rebuild_roots(void)
+{
+    const char *roots[BW_MOD_MENU_MAX];
+    u32 n = 0;
+    u32 i;
+
+    for (i = 0; i < g_count; i++) {
+        if (!g_mods[i].enabled) {
+            continue;
+        }
+        roots[n++] = g_mods[i].root;
+    }
+    if (!g_player_order) {
+        bw_clear_mods();
+        for (i = 0; i < g_count; i++) {
+            if (!g_mods[i].enabled) {
+                continue;
+            }
+            if (bw_add_mod_root(g_mods[i].root) != 0) {
+                report(g_mods[i].name, "the mod's folder could not be added "
+                       "to the list");
+                return -1;
+            }
+        }
+        return 0;
+    }
+    if (bw_mod_set_order(roots, n) != 0) {
+        report("the mod list", "the list could not be built");
+        return -1;
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1108,13 +1306,10 @@ void bw_mod_menu_open(void)
 
 void bw_mod_menu_start(void)
 {
-    BwModMenuRow rows[BW_MOD_MENU_MAX];
-    u32 row_count;
     u32 i;
 
     model_build();
-    row_count = read_record(rows, BW_MOD_MENU_MAX);
-    if (row_count == 0) {
+    if (!g_have_record) {
         /* No record of the player's own: the port's list stands as it is
          * (the environment's BW_MOD_ROOT, or what an explicit call set),
          * and with no mod root there is no state read and the state
@@ -1125,35 +1320,15 @@ void bw_mod_menu_start(void)
     /* The record holds the player's own switches: the mods the player
      * turned off are off, the ones the player turned on are on.  A mod
      * the record does not mention keeps the state the port's list gave
-     * it. */
-    for (i = 0; i < g_count; i++) {
-        u32 k;
-
-        for (k = 0; k < row_count; k++) {
-            if (strcmp(rows[k].root, g_mods[i].root) == 0) {
-                g_mods[i].enabled = rows[k].enabled;
-                break;
-            }
-        }
-    }
-    /* The list in force is the player's own: the mods that are on.  The
-     * rebuild drops the cached merged archives with it. */
-    {
-        int changed = 0;
-
-        for (i = 0; i < g_count; i++) {
-            if (g_mods[i].enabled != g_mods[i].running) {
-                changed = 1;
-            }
-        }
-        if (changed) {
-            bw_clear_mods();
-            for (i = 0; i < g_count; i++) {
-                if (g_mods[i].enabled) {
-                    bw_add_mod_root(g_mods[i].root);
-                }
-            }
-        }
+     * it.  The model holds them already: it reads the record when it is
+     * built.
+     *
+     * The list in force is the player's own: the mods that are on, in the
+     * order the player chose.  The rebuild drops the cached merged
+     * archives with it, and the loader loads the mods in that order,
+     * because it walks the file layer's list in order. */
+    if (!model_list_matches()) {
+        (void)model_rebuild_roots();
     }
     for (i = 0; i < g_count; i++) {
         g_mods[i].running = g_mods[i].enabled;
@@ -1247,18 +1422,89 @@ int bw_mod_menu_dirty(void)
         if (g_mods[i].enabled != g_mods[i].running) {
             return 1;
         }
+        if (g_mods[i].base_pos != i) {
+            return 1;          /* the player moved a mod */
+        }
     }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* The order                                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Move the mod at `index` one place towards the front of the list.  0 on
+ * success, -1 when there is no such mod or it is already at the front.
+ */
+int bw_mod_menu_move_up(u32 index)
+{
+    model_ready();
+    if (index >= g_count || index == 0) {
+        return -1;
+    }
+    model_move(index, index - 1);
+    g_player_order = 1;
+    return 0;
+}
+
+/*
+ * Move the mod at `index` one place towards the back of the list.  0 on
+ * success, -1 when there is no such mod or it is already at the back.
+ */
+int bw_mod_menu_move_down(u32 index)
+{
+    model_ready();
+    if (index >= g_count || index + 1 >= g_count) {
+        return -1;
+    }
+    model_move(index, index + 1);
+    g_player_order = 1;
+    return 0;
+}
+
+/*
+ * Move the mod at `index` to `to`, the place it takes in the list: 0 is
+ * the front.  A `to` past the end of the list is the last place.  0 on
+ * success, -1 when there is no such mod.
+ */
+int bw_mod_menu_move_to(u32 index, u32 to)
+{
+    model_ready();
+    if (index >= g_count) {
+        return -1;
+    }
+    if (to >= g_count) {
+        to = g_count - 1;
+    }
+    if (to == index) {
+        return 0;
+    }
+    model_move(index, to);
+    g_player_order = 1;
     return 0;
 }
 
 void bw_mod_menu_revert(void)
 {
     u32 i;
+    u32 j;
 
     model_ready();
     for (i = 0; i < g_count; i++) {
         g_mods[i].enabled = g_mods[i].running;
     }
+    /* The order goes back to the one the list had when the menu was
+     * opened: every row to the place it was built at. */
+    for (i = 1; i < g_count; i++) {
+        BwModMenuMod tmp = g_mods[i];
+
+        for (j = i; j > 0 && g_mods[j - 1].base_pos > tmp.base_pos; j--) {
+            g_mods[j] = g_mods[j - 1];
+        }
+        g_mods[j] = tmp;
+    }
+    g_player_order = g_player_order_base;
 }
 
 int bw_mod_menu_apply(void)
@@ -1299,20 +1545,13 @@ int bw_mod_menu_apply(void)
     bw_mod_rule_reset();
 
     /*
-     * 4. The roots are built again from the switches.  Every change
-     *    drops the cached merged archives, so the next open of an archive
-     *    sees the new list (sdk/vfs.c).
+     * 4. The roots are built again from the switches, in the order the
+     *    player chose.  Every change drops the cached merged archives, so
+     *    the next open of an archive sees the new list (sdk/vfs.c).  The
+     *    order is the player's own, so it is handed to the file layer as
+     *    it is (bw_mod_set_order) and the loader loads the mods in it.
      */
-    bw_clear_mods();
-    for (i = 0; i < g_count; i++) {
-        if (!g_mods[i].enabled) {
-            continue;
-        }
-        if (bw_add_mod_root(g_mods[i].root) != 0) {
-            report(g_mods[i].name, "the mod's folder could not be added to "
-                   "the list");
-        }
-    }
+    (void)model_rebuild_roots();
 
     /*
      * 5. The mods that are wanted are loaded again, so the load point
@@ -1322,13 +1561,16 @@ int bw_mod_menu_apply(void)
     (void)bw_mod_loader_load_all();
 
     /*
-     * 6. The player's list is written: the switches are the player's own
-     *    and outlive the port.
+     * 6. The player's list is written: the switches and the order are the
+     *    player's own and outlive the port.
      */
     (void)write_record();
 
     for (i = 0; i < g_count; i++) {
         g_mods[i].running = g_mods[i].enabled;
+        /* The list is the port's list now, so the order the player chose
+         * is the order the list holds: there is nothing left to apply. */
+        g_mods[i].base_pos = i;
     }
     return 0;
 }

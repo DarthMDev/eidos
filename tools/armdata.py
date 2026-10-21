@@ -662,6 +662,32 @@ def read_symbol_txt(path: str):
     return by_addr
 
 
+def load_function_addrs(root: str, region: str):
+    """address -> (name, isa): the tree's own table of the functions it
+    defines (`layout/function_addrs.tsv`).
+
+    The tree's current names come first in the map, because the old
+    layout's per-packet shards still carry the names the tree has since
+    renamed, and a name the tree no longer defines is a name the port
+    cannot link against."""
+    out = {}
+    path = os.path.join(root, "layout", "function_addrs.tsv")
+    if not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 4 or parts[0] != region:
+                continue
+            try:
+                addr = int(parts[1], 16)
+            except ValueError:
+                continue
+            if addr not in out:
+                out[addr] = (parts[2], parts[3])
+    return out
+
+
 def load_function_names(root: str, sources, region: str = None):
     """address -> [names]: the SDK's symbols by address, and every function a
     source of the build says it defines (its `function:`/`address:` header,
@@ -712,6 +738,15 @@ def load_function_names(root: str, sources, region: str = None):
                     by_addr.setdefault(a, []).append(name)
                     if isa in ("arm", "thumb"):
                         isa_by_addr.setdefault(a, isa)
+    # The tree's own table of what it defines comes first: a name the tree
+    # has renamed is not a name the port can link against, and the shards
+    # above still carry the old one.
+    if region:
+        for addr, (name, isa) in load_function_addrs(root, region).items():
+            names = by_addr.get(addr) or []
+            by_addr[addr] = [name] + [n for n in names if n != name]
+            if isa in ("arm", "thumb"):
+                isa_by_addr.setdefault(addr, isa)
     return by_addr, isa_by_addr
 
 

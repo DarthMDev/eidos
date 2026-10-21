@@ -16,13 +16,23 @@
  *
  *     eidos: mod <name>: <what is wrong>
  *
- * and the one report the port fixes is the declared check:
+ * and the reports the port fixes are the declared check and the prototype
+ * check:
  *
  *     eidos: mod <name>: override <region>:<addr> is not a declared address
+ *     eidos: mod <name>: override <region>:<addr> states the prototype
+ *         '<stated>', but the function's is '<expected>'
  *
- * The check is a diagnostic, not a sandbox: the port validates nothing about
+ * A check is a diagnostic, not a sandbox: the port validates nothing about
  * a mod's code (docs/mod-interface.md, section 5), so a mod with an
- * undeclared override still loads and its other keys still apply.
+ * undeclared override still loads and its other keys still apply.  An
+ * override the prototype check refuses is skipped, and the mod keeps the
+ * rest of its manifest.
+ *
+ * The apply hands the switch each override named to the registry
+ * (bw_mod_slot_set_switch): the name is a run-time thing (it comes from the
+ * mod's manifest) and the registry asks it, per hook, when the chain is
+ * walked (docs/mod-overrides.md, "The switch").
  *
  * The loader (sdk/mod_loader.c) calls, in this order:
  *
@@ -248,6 +258,419 @@ static int is_event_name(const char *s, size_t n)
 }
 
 /* ------------------------------------------------------------------ */
+/* The prototype of a stated `sig=`                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The manifest's `sig=` states the prototype the mod expects, and the build
+ * publishes the function's own prototype, normalised (tools/ovlink.py's
+ * signature).  The two are compared in the same shape, so the port can tell
+ * a hook whose prototype does not match the function's
+ * (docs/mod-overrides.md, "The prototype is checked").
+ *
+ * The normalisation is the one tools/ovlink.py's signature applies:
+ *
+ *   - the qualifiers (const, volatile, register, static, extern, inline)
+ *     are dropped;
+ *   - a pointer, an array and a function pointer are all `void *`;
+ *   - the game's integer typedefs are their C types (u32 is unsigned int,
+ *     s16 is short, BOOL is int, and so on);
+ *   - `enum` is int, and a struct or a union by value is the one word the
+ *     port's calling convention carries it in, so it is unsigned int (a row
+ *     whose aggregate is not one word has no slot, and so no prototype);
+ *   - the shape is "<return type> (<parameter types>)", the parameters
+ *     separated by ", " and "void" when there are none.
+ *
+ * A mod that states no prototype is not compared: the port compares what is
+ * stated, and nothing stated is nothing to compare.  A stated prototype the
+ * port cannot read is reported and not compared either.
+ */
+
+/* How long a stated prototype may be. */
+#define BW_MOD_SIG_MAX 512
+
+/* The C type words a prototype may hold. */
+static const char *const g_base_words[] = {
+    "unsigned", "signed", "char", "short", "int", "long", "void"
+};
+
+/* The game's integer typedefs, as tools/ovlink.py's INT_TYPES maps them. */
+static const struct {
+    const char *name;
+    const char *type;
+} g_int_types[] = {
+    { "u8", "unsigned char" }, { "s8", "signed char" },
+    { "vu8", "unsigned char" }, { "vs8", "signed char" },
+    { "u16", "unsigned short" }, { "s16", "short" },
+    { "vu16", "unsigned short" }, { "vs16", "short" },
+    { "u32", "unsigned int" }, { "s32", "int" },
+    { "vu32", "unsigned int" }, { "vs32", "int" },
+    { "u64", "unsigned long long" }, { "s64", "long long" },
+    { "fx64", "long long" },
+    { "fx32", "int" }, { "fx16", "short" },
+    { "BOOL", "int" }, { "bool", "int" }, { "_Bool", "int" },
+    { "size_t", "unsigned int" }, { "OSTick", "unsigned long long" }
+};
+
+/* One identifier, with its bounds in the text it was read from. */
+typedef struct BwModWord {
+    const char *start;
+    size_t      len;
+} BwModWord;
+
+/* How many identifiers one prototype may hold. */
+#define BW_MOD_WORDS_MAX 16
+
+/* Is the word one of the C type words? */
+static int is_base_word(const char *w, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(g_base_words) / sizeof(g_base_words[0]); i++) {
+        if (strlen(g_base_words[i]) == n && memcmp(g_base_words[i], w, n) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* The C type the game's typedef stands for, or NULL. */
+static const char *int_type_of(const char *w, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(g_int_types) / sizeof(g_int_types[0]); i++) {
+        if (strlen(g_int_types[i].name) == n &&
+            memcmp(g_int_types[i].name, w, n) == 0) {
+            return g_int_types[i].type;
+        }
+    }
+    return NULL;
+}
+
+/* The identifiers in [s, e), in order, without the qualifiers: they say
+ * nothing about the type (tools/ovlink.py's _norm_type drops them too). */
+static int words_of(const char *s, const char *e, BwModWord *out, int max)
+{
+    int n = 0;
+
+    while (s < e) {
+        const char *start;
+        size_t len;
+
+        if (!is_alpha(*s) && *s != '_') {
+            s++;
+            continue;
+        }
+        start = s;
+        while (s < e && (is_alpha(*s) || is_digit(*s) || *s == '_')) {
+            s++;
+        }
+        len = (size_t)(s - start);
+        if ((len == 5 && memcmp(start, "const", 5) == 0) ||
+            (len == 8 && memcmp(start, "volatile", 8) == 0) ||
+            (len == 8 && memcmp(start, "register", 8) == 0) ||
+            (len == 6 && memcmp(start, "static", 6) == 0) ||
+            (len == 6 && memcmp(start, "extern", 6) == 0) ||
+            (len == 6 && memcmp(start, "inline", 6) == 0) ||
+            (len == 7 && memcmp(start, "__inline", 7) == 0)) {
+            continue;
+        }
+        if (n < max) {
+            out[n].start = start;
+            out[n].len = len;
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Copy a text into a buffer.  0, or -1 when it does not fit. */
+static int set_text(char *out, size_t size, const char *text)
+{
+    size_t n = strlen(text);
+
+    if (n >= size) {
+        return -1;
+    }
+    memcpy(out, text, n + 1);
+    return 0;
+}
+
+/* The normalised type of [s, e) (a type without a declarator name), or -1
+ * when it does not normalise. */
+static int norm_type(const char *s, const char *e, char *out, size_t size)
+{
+    BwModWord words[BW_MOD_WORDS_MAX];
+    const char *p;
+    int nwords;
+    int i;
+    int all_base = 1;
+    int has_char = 0;
+    int has_short = 0;
+    int has_signed = 0;
+    int has_unsigned = 0;
+    int n_long = 0;
+
+    /* A pointer, an array and a function pointer all travel as void *. */
+    for (p = s; p < e; p++) {
+        if (*p == '*' || *p == '[' || *p == '(') {
+            return set_text(out, size, "void *");
+        }
+    }
+    nwords = words_of(s, e, words, BW_MOD_WORDS_MAX);
+    if (nwords == 0) {
+        return -1;
+    }
+    if (words[0].len == 4 && memcmp(words[0].start, "enum", 4) == 0) {
+        return set_text(out, size, "int");
+    }
+    if ((words[0].len == 6 && memcmp(words[0].start, "struct", 6) == 0) ||
+        (words[0].len == 5 && memcmp(words[0].start, "union", 5) == 0)) {
+        /* A struct or a union by value is the one word the port's calling
+         * convention carries it in (tools/ovlink.py's _word_aggregate). */
+        return set_text(out, size, "unsigned int");
+    }
+    for (i = 0; i < nwords; i++) {
+        if (!is_base_word(words[i].start, words[i].len)) {
+            all_base = 0;
+            break;
+        }
+        if (words[i].len == 4 && memcmp(words[i].start, "char", 4) == 0) {
+            has_char = 1;
+        } else if (words[i].len == 5 && memcmp(words[i].start, "short", 5) == 0) {
+            has_short = 1;
+        } else if (words[i].len == 4 && memcmp(words[i].start, "long", 4) == 0) {
+            n_long++;
+        } else if (words[i].len == 8 &&
+                   memcmp(words[i].start, "unsigned", 8) == 0) {
+            has_unsigned = 1;
+        } else if (words[i].len == 6 && memcmp(words[i].start, "signed", 6) == 0) {
+            has_signed = 1;
+        }
+    }
+    if (all_base) {
+        if (nwords == 1 && words[0].len == 4 &&
+            memcmp(words[0].start, "void", 4) == 0) {
+            return set_text(out, size, "void");
+        }
+        if (has_char) {
+            if (has_unsigned) {
+                return set_text(out, size, "unsigned char");
+            }
+            return set_text(out, size, has_signed ? "signed char" : "char");
+        }
+        if (has_short) {
+            return set_text(out, size, has_unsigned ? "unsigned short" : "short");
+        }
+        if (n_long >= 2) {
+            return set_text(out, size,
+                            has_unsigned ? "unsigned long long" : "long long");
+        }
+        if (n_long == 1) {
+            return set_text(out, size, has_unsigned ? "unsigned long" : "long");
+        }
+        return set_text(out, size, has_unsigned ? "unsigned int" : "int");
+    }
+    if (nwords == 1) {
+        const char *type = int_type_of(words[0].start, words[0].len);
+
+        if (type != NULL) {
+            return set_text(out, size, type);
+        }
+    }
+    return -1;
+}
+
+/* Copy [s, e) into `out` without the word `w`: the text of a type whose
+ * declarator name is dropped (tools/ovlink.py's _strip_declarator_name). */
+static void copy_without(const char *s, const char *e, const BwModWord *w,
+                         char *out, size_t size)
+{
+    size_t head = (size_t)(w->start - s);
+    size_t tail = (size_t)(e - (w->start + w->len));
+    size_t n = head + tail;
+
+    if (n >= size) {
+        n = size - 1;
+    }
+    memcpy(out, s, head < n ? head : n);
+    if (tail > 0 && head < n) {
+        size_t room = n - head;
+
+        memcpy(out + head, w->start + w->len, room < tail ? room : tail);
+    }
+    out[n] = '\0';
+}
+
+/* The type of a parameter: its own text without the declarator name. */
+static int norm_param(const char *s, const char *e, char *out, size_t size)
+{
+    BwModWord words[BW_MOD_WORDS_MAX];
+    char buf[BW_MOD_SIG_MAX];
+    int nwords = words_of(s, e, words, BW_MOD_WORDS_MAX);
+
+    if (nwords >= 2) {
+        const BwModWord *last = &words[nwords - 1];
+
+        if (!is_base_word(last->start, last->len) &&
+            int_type_of(last->start, last->len) == NULL) {
+            copy_without(s, e, last, buf, sizeof(buf));
+            s = buf;
+            e = buf + strlen(buf);
+        }
+    }
+    return norm_type(s, e, out, size);
+}
+
+/* The normalised return type of a prototype: the text before the function's
+ * name, less the name. */
+static int norm_ret(const char *s, const char *e, char *out, size_t size)
+{
+    BwModWord words[BW_MOD_WORDS_MAX];
+    char buf[BW_MOD_SIG_MAX];
+    int nwords = words_of(s, e, words, BW_MOD_WORDS_MAX);
+    const BwModWord *last;
+
+    if (nwords == 0) {
+        /* No return type at all: C89's implicit int. */
+        return set_text(out, size, "int");
+    }
+    last = &words[nwords - 1];
+    if (is_base_word(last->start, last->len) ||
+        int_type_of(last->start, last->len) != NULL) {
+        /* The last word is a type word: the prototype names no function, so
+         * the whole text is the return type. */
+        return norm_type(s, e, out, size);
+    }
+    if (nwords == 1) {
+        /* One word that is not a type: it is the function's name, and the
+         * return type is the implicit int. */
+        return set_text(out, size, "int");
+    }
+    copy_without(s, e, last, buf, sizeof(buf));
+    return norm_type(buf, buf + strlen(buf), out, size);
+}
+
+/* The normalised parameter list of a prototype: the types, separated by
+ * ", ", or "void" when there are none. */
+static int norm_params(const char *s, const char *e, char *out, size_t size)
+{
+    char list[BW_MOD_SIG_MAX];
+    const char *p = s;
+    size_t n = 0;
+    int count = 0;
+
+    list[0] = '\0';
+    while (p < e && is_space(*p)) {
+        p++;
+    }
+    while (e > p && is_space(e[-1])) {
+        e--;
+    }
+    if (e == p) {
+        /* "()": no parameters. */
+        return set_text(out, size, "void");
+    }
+    if (e - p == 4 && memcmp(p, "void", 4) == 0) {
+        /* "(void)": no parameters. */
+        return set_text(out, size, "void");
+    }
+    while (p <= e) {
+        const char *q = p;
+        int depth = 0;
+        char type[64];
+
+        while (q < e) {
+            if (*q == '(' || *q == '[') {
+                depth++;
+            } else if (*q == ')' || *q == ']') {
+                depth--;
+            } else if (*q == ',' && depth == 0) {
+                break;
+            }
+            q++;
+        }
+        if (norm_param(p, q, type, sizeof(type)) != 0) {
+            return -1;
+        }
+        if (strcmp(type, "void") == 0) {
+            /* A parameter of type void is not a prototype. */
+            return -1;
+        }
+        n += (size_t)snprintf(list + n, sizeof(list) - n, "%s%s",
+                              count > 0 ? ", " : "", type);
+        if (n >= sizeof(list)) {
+            return -1;
+        }
+        count++;
+        if (q >= e) {
+            break;
+        }
+        p = q + 1;
+    }
+    if (count == 0) {
+        return set_text(out, size, "void");
+    }
+    return set_text(out, size, list);
+}
+
+/* The normalised prototype of a stated `sig=`, in the shape the build
+ * publishes: "<return type> (<parameter types>)".  0, or -1 when the text
+ * cannot be read. */
+static int norm_sig(const char *sig, char *out, size_t size)
+{
+    char work[BW_MOD_SIG_MAX];
+    char ret[64];
+    char params[BW_MOD_SIG_MAX];
+    const char *open;
+    const char *close;
+    const char *p;
+    int depth;
+    size_t n;
+
+    if (sig == NULL) {
+        return -1;
+    }
+    n = strlen(sig);
+    if (n == 0 || n >= sizeof(work)) {
+        return -1;
+    }
+    memcpy(work, sig, n + 1);
+    open = strchr(work, '(');
+    if (open == NULL) {
+        return -1;
+    }
+    depth = 0;
+    close = NULL;
+    for (p = open; *p != '\0'; p++) {
+        if (*p == '(') {
+            depth++;
+        } else if (*p == ')') {
+            depth--;
+            if (depth == 0) {
+                close = p;
+                break;
+            }
+        }
+    }
+    if (close == NULL) {
+        return -1;
+    }
+    if (norm_ret(work, open, ret, sizeof(ret)) != 0) {
+        return -1;
+    }
+    if (norm_params(open + 1, close, params, sizeof(params)) != 0) {
+        return -1;
+    }
+    n = (size_t)snprintf(out, size, "%s (%s)", ret, params);
+    if (n >= size) {
+        return -1;
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* The reports                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -316,6 +739,9 @@ void bw_mod_manifest_free(void *manifest)
         return;
     }
     if (m->magic == BW_MOD_MANIFEST_MAGIC) {
+        /* The switch names the record handed to the registry are the
+         * record's own, and they go with it (sdk/mod_slot.c). */
+        bw_mod_slot_forget_switches(m->name);
         for (i = 0; i < m->override_count; i++) {
             free(m->overrides[i].symbol);
             free(m->overrides[i].sig);
@@ -1203,6 +1629,40 @@ void bw_mod_manifest_applied_clear(void)
 /* ------------------------------------------------------------------ */
 
 /*
+ * The mod's stated prototype against the one the build published for the
+ * row.  1 when the override may be installed, 0 when it is refused.
+ *
+ * The build publishes a prototype for every row whose definition it
+ * carries; a row it does not carry has none, and there is nothing to
+ * compare with.  A stated prototype the port cannot read is reported and not
+ * compared: the port does not know what it says, so it does not refuse the
+ * hook over it.  A stated prototype that reads and does not match is
+ * refused, and the report names both.
+ */
+static int sig_agrees(const BwModManifest *m, const BwModOverride *o,
+                       const char *region)
+{
+    const char *expected = bw_mod_slot_prototype(o->region, o->addr);
+    char stated[BW_MOD_SIG_MAX];
+
+    if (o->sig == NULL || expected == NULL) {
+        return 1;
+    }
+    if (norm_sig(o->sig, stated, sizeof(stated)) != 0) {
+        mod_report(m, "override %s:0x%08X states a prototype the port cannot "
+                   "read: '%s' (the function's is '%s')",
+                   region, o->addr, o->sig, expected);
+        return 1;
+    }
+    if (strcmp(stated, expected) != 0) {
+        mod_report(m, "override %s:0x%08X states the prototype '%s', but the "
+                   "function's is '%s'", region, o->addr, stated, expected);
+        return 0;
+    }
+    return 1;
+}
+
+/*
  * Turn one manifest into registrations.  One call per mod, in load order.
  *
  *   1. Check `api`, and `port` when the mod has raw hooks, against the
@@ -1210,7 +1670,10 @@ void bw_mod_manifest_applied_clear(void)
  *   2. Derive the namespace from `state`, or from the name when `state` is
  *      absent, and check it is one path component.
  *   3. Check every override against the declared table; a pair that is not
- *      declared is reported and skipped.
+ *      declared is reported and skipped.  Check the stated prototype against
+ *      the one the build published for the row; a mismatch is reported and
+ *      the override is skipped.  Hand the switch the row named to the
+ *      registry, which asks it when the chain is walked.
  *   4. Leave the rule list and the settings path in the record, for the
  *      interpreter and the settings surface.
  *
@@ -1262,23 +1725,39 @@ int bw_mod_manifest_apply(void *manifest)
         }
     }
 
-    /* 3. The declared check.  The address is normalised first: the low bit
-     * is masked, so the even start and the Thumb-tagged value a code pointer
-     * holds are the same function. */
+    /* 3. The declared check, the prototype check and the switch.  The
+     * address is normalised first: the low bit is masked, so the even start
+     * and the Thumb-tagged value a code pointer holds are the same
+     * function. */
     keep = 0;
     for (i = 0; i < m->override_count; i++) {
         BwModOverride *o = &m->overrides[i];
         char region_buf[16];
+        const char *region;
 
+        region = region_token(o->region, region_buf, sizeof(region_buf));
         if (!bw_mod_slot_declared(o->region, o->addr)) {
             mod_report(m, "override %s:0x%08X is not a declared address",
-                       region_token(o->region, region_buf, sizeof(region_buf)),
-                       o->addr);
+                       region, o->addr);
             free(o->symbol);
             free(o->sig);
             free(o->switch_name);
             continue;
         }
+        if (!sig_agrees(m, o, region)) {
+            /* The stated prototype is not the function's: the override is
+             * refused, and the mod keeps the rest of its manifest. */
+            free(o->symbol);
+            free(o->sig);
+            free(o->switch_name);
+            continue;
+        }
+        /* The switch: the name the mod stated, or the row's own name when
+         * it stated none.  The apply hands it to the registry, which asks
+         * it when the chain is walked: a switch that is off skips that
+         * mod's hook and the walk goes on inward (docs/mod-overrides.md,
+         * "The switch"). */
+        bw_mod_slot_set_switch(m->name, o->region, o->addr, o->switch_name);
         if (keep != i) {
             m->overrides[keep] = m->overrides[i];
         }

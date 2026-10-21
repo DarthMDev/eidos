@@ -63,8 +63,35 @@
  * whether that file was written with the save in force: the answer is
  * per mod, because every mod has a file of its own.
  *
+ * One rule takes that checksum: the CRC-32 of the save's bytes as the
+ * chip holds them.  The chip's image is the save file's first <chip
+ * size> bytes with the rest of the chip erased (0xFF, sdk/arm7/fs.c),
+ * so the checksum of the chip's image and the checksum of the save's
+ * bytes are one number when the rule is applied to both.  The handoff
+ * (sdk/mod_handoff.c) installs a save and drops the chip's image, so
+ * it cannot read the image afterwards; it gives the layer the bytes it
+ * installed and the layer takes their checksum the same way.  One
+ * source, one answer: a file with a trailer, or one shorter than the
+ * chip, cannot make the two disagree about whether a mod's file is in
+ * step with the save in force.
+ *
  * The layer keeps no game state of its own: it is a file and an envelope
  * around a payload the mod owns.
+ *
+ * The window and a save that was cancelled
+ * -----------------------------------------
+ *
+ * The window is the game's own save: the game's save.begin opens it and
+ * the game's save.done closes it (sdk/mod_event_session.c).  The game's
+ * own SAVE_CONTROL_CancelSave has no row, so the port hears nothing
+ * when the player cancels a save: the window stays open, and the next
+ * save.begin finds it open.  A window that is still open when a save
+ * begins belongs to a save that never finished, so the port closes it
+ * and drops the payload it held, the way a failed write drops it: a
+ * save that did not happen writes nothing.  The port cannot tell a
+ * cancelled save from a save that is still in progress at that moment,
+ * and it does not have to: a new save begins only after the old one is
+ * over.
  */
 
 #include <stdarg.h>
@@ -104,8 +131,14 @@ void bw_mod_savedata_set_save_check(u32 check);
 u32  bw_mod_savedata_save_check(void);
 int  bw_mod_savedata_in_step(void);
 
+/* The save in force is the save that was just installed: the handoff gives
+ * the layer the bytes it wrote and the chip's size, and the layer takes
+ * their checksum the one way it takes every checksum. */
+void bw_mod_savedata_set_save_bytes(const void *save, u32 len, u32 chip_size);
+
 /* The save handoff: the port's save.begin and save.done. */
 void bw_mod_savedata_save_begin(void);
+void bw_mod_savedata_save_start(void);
 int  bw_mod_savedata_save_done(int ok, u32 check);
 
 /* Forget everything the layer holds: at power-on and at every reset
@@ -269,11 +302,24 @@ static void crc_table_build(void)
     g_crc_table_ready = 1;
 }
 
+/*
+ * The CRC of `size` bytes, continued from `crc`.  The one place the
+ * checksum is computed, so the erased bytes a chip reads can be folded
+ * into the same number as the save's own bytes.
+ */
+static u32 crc_update(u32 crc, const u8 *p, u32 size)
+{
+    u32 i;
+
+    for (i = 0; i < size; i++) {
+        crc = g_crc_table[(crc ^ p[i]) & 0xFFu] ^ (crc >> 8);
+    }
+    return crc;
+}
+
 u32 bw_mod_savedata_crc(const void *data, u32 size)
 {
     const u8 *p = (const u8 *)data;
-    u32 crc = 0xFFFFFFFFu;
-    u32 i;
 
     if (p == NULL) {
         return 0;
@@ -281,8 +327,51 @@ u32 bw_mod_savedata_crc(const void *data, u32 size)
     if (!g_crc_table_ready) {
         crc_table_build();
     }
-    for (i = 0; i < size; i++) {
-        crc = g_crc_table[(crc ^ p[i]) & 0xFFu] ^ (crc >> 8);
+    return crc_update(0xFFFFFFFFu, p, size) ^ 0xFFFFFFFFu;
+}
+
+/*
+ * The checksum of a save: the CRC-32 of the save's bytes as the chip holds
+ * them.  The chip's image (sdk/arm7/fs.c) is the save file's first <chip
+ * size> bytes with the rest of the chip erased (0xFF), so this is the
+ * checksum of the chip's image for the same save.
+ *
+ * The layer's own answer (the chip's image) and the handoff's answer (the
+ * bytes it installed, sdk/mod_handoff.c) are one answer because both come
+ * from here.  A file with a trailer, or one shorter than the chip, cannot
+ * make the two disagree about whether a mod's file is in step with the save
+ * in force.
+ *
+ * `chip_size` is the chip's size.  Zero means there is no chip to cut the
+ * save at: the save is exactly the bytes given.
+ */
+static u32 save_check_of(const void *save, u32 len, u32 chip_size)
+{
+    u8 erased[256];                /* the erased cells of a flash chip */
+    u32 crc;
+    u32 i;
+
+    if (save == NULL) {
+        return 0;
+    }
+    if (!g_crc_table_ready) {
+        crc_table_build();
+    }
+    if (chip_size == 0u) {
+        chip_size = len;
+    }
+    if (len > chip_size) {
+        len = chip_size;              /* the chip's image cuts the save here */
+    }
+    memset(erased, 0xFF, sizeof erased);
+    crc = crc_update(0xFFFFFFFFu, (const u8 *)save, len);
+    for (i = len; i < chip_size; i += (u32)sizeof erased) {
+        u32 n = chip_size - i;
+
+        if (n > (u32)sizeof erased) {
+            n = (u32)sizeof erased;
+        }
+        crc = crc_update(crc, erased, n);
     }
     return crc ^ 0xFFFFFFFFu;
 }
@@ -297,6 +386,10 @@ u32 bw_mod_savedata_crc(const void *data, u32 size)
  * (docs/mod-state.md, section 1), and the image is what the file
  * pokeblack.sav holds, so the checksum names the save the player is
  * playing.
+ *
+ * The image is the chip's own bytes, so the rule takes its checksum
+ * (save_check_of) and the answer is the same one the handoff's answer
+ * is: one source for the checksum of the save in force.
  *
  * 0 when the state could be read, -1 when there is none: a link without
  * the ARM7 layer, or a chip that has not been identified yet.
@@ -313,7 +406,7 @@ static int save_state_check(u32 *out)
     if (image == NULL || size == 0) {
         return -1;
     }
-    *out = bw_mod_savedata_crc(image, size);
+    *out = save_check_of(image, size, size);
     return 0;
 }
 
@@ -323,7 +416,7 @@ static int save_state_check(u32 *out)
  *
  * The state is read when the layer has not been told which save is in
  * force.  The port tells it when it installs a save from a peer
- * (bw_mod_savedata_set_save_check), and the game's own save tells it
+ * (bw_mod_savedata_set_save_bytes), and the game's own save tells it
  * when the window opens and when the window closes.
  */
 static u32 save_check_in_force(void)
@@ -834,6 +927,24 @@ void bw_mod_savedata_set_save_check(u32 check)
 }
 
 /*
+ * The save in force is the save that was just installed: the handoff wrote
+ * it and dropped the chip's image, so the image is not there to be read.
+ * The layer takes the checksum of the bytes the handoff wrote the one way
+ * it takes every checksum (save_check_of): the save's bytes as the chip
+ * holds them.  The chip's image that the port reads after the reload is
+ * those bytes, so the layer's answer and the handoff's answer are one
+ * answer.
+ *
+ * `chip_size` is the chip's size, which the handoff takes before the image
+ * goes.  Zero means there is no chip to cut the save at.
+ */
+void bw_mod_savedata_set_save_bytes(const void *save, u32 len, u32 chip_size)
+{
+    g_save_check = save_check_of(save, len, chip_size);
+    g_save_check_known = 1;
+}
+
+/*
  * The checksum of the game save in force.  The layer reads the port's own
  * save state when nobody has told it which save is in force, so the
  * answer is the save the game is playing.
@@ -909,6 +1020,35 @@ void bw_mod_savedata_save_begin(void)
         g_save_check = check;
         g_save_check_known = 1;
     }
+}
+
+/*
+ * The game's own save begins.  A window that is still open here belongs to
+ * a save that never finished: the game cancelled it (its own
+ * SAVE_CONTROL_CancelSave has no row, so the port hears nothing when it
+ * happens) or the run was interrupted.  The window is closed and the
+ * payload it held is dropped, the way a failed write drops it: a save that
+ * did not happen writes nothing.
+ *
+ * The port cannot tell a cancelled save from a save that is still in
+ * progress, and it does not have to: a new save begins only after the old
+ * one is over, so a window that is still open is a window whose save is
+ * not going to finish.
+ *
+ * The port's own window (the mod menu's flush, sdk/mod_menu.c) opens the
+ * window without this step: it is not a game save, and it ends the window
+ * it opens.
+ */
+void bw_mod_savedata_save_start(void)
+{
+    u32 i;
+
+    if (g_save_pending) {
+        for (i = 0; i < g_mod_count; i++) {
+            drop_staged(&g_mods[i]);
+        }
+    }
+    bw_mod_savedata_save_begin();
 }
 
 /*

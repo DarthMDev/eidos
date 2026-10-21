@@ -63,10 +63,42 @@ typedef struct PadCtl {
     int index;
 } PadCtl;
 
+/* ------------------------------------------------------------------ */
+/* The network settings                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The settings the network service needs (sdk/mod_net.h): the relay's
+ * address, the relay's port, the control's port and the player's name.
+ *
+ * They are the port's own settings: they live in settings.ini under
+ * [network], the settings screen shows them and the player changes them
+ * there, and the boot hands them to the service at the port's start-up
+ * (bw_mod_net_set_relay, bw_mod_net_set_name and
+ * bw_mod_net_control_set_port).
+ *
+ * They are not rows of the option table above because two of them are
+ * text and that table holds numbers.  They are part of the same model,
+ * so the same commit, revert and defaults reach them.
+ */
+
+/* The lengths of the port's own buffers. */
+#define EIDOS_NET_RELAY_MAX 64
+#define EIDOS_NET_NAME_MAX 32
+#define EIDOS_NET_PORT_MAX 65535
+
+typedef struct NetModel {
+    char relay[EIDOS_NET_RELAY_MAX];    /* the relay's address           */
+    int  relay_port;                    /* the relay's port              */
+    int  control_port;                  /* the control's port: 0 is off  */
+    char name[EIDOS_NET_NAME_MAX];      /* the player's name             */
+} NetModel;
+
 typedef struct Model {
     int v[EIDOS_OPT_COUNT];
     int key[NBTN][EIDOS_BIND_SLOTS];
     PadCtl pad[NBTN][EIDOS_BIND_SLOTS];
+    NetModel net;
 } Model;
 
 static Model g_cur, g_saved;
@@ -78,6 +110,18 @@ static int g_have_path;
 static int g_inited;
 static int g_size_pending;   /* a window resize not yet in the file */
 
+/*
+ * The text setting being edited, and the value it had before the edit.
+ * The screen edits one text at a time: it begins the edit, the keys the
+ * player types go in, and the edit ends with the value kept (Enter) or
+ * dropped (Escape).  The value itself is the model's, so the screen shows
+ * what the player has typed.
+ */
+static struct {
+    int  which;                   /* 0 the relay, 1 the name, -1: none */
+    char saved[EIDOS_NET_RELAY_MAX];
+} g_text;
+
 static void model_defaults(Model *m);
 
 static void ensure_init(void)
@@ -86,6 +130,7 @@ static void ensure_init(void)
         g_inited = 1;
         model_defaults(&g_cur);
         g_saved = g_cur;
+        g_text.which = -1;          /* no text is being edited */
     }
 }
 
@@ -139,6 +184,13 @@ static void model_defaults(Model *m)
             }
         }
     }
+    /* The network settings start empty: the port has no relay of its own
+     * (the session calls say "no relay"), the control is off and the
+     * player has no name yet (the service's own default stands). */
+    m->net.relay[0] = '\0';
+    m->net.relay_port = 0;
+    m->net.control_port = 0;
+    m->net.name[0] = '\0';
 }
 
 static void model_reset_bindings(Model *m)
@@ -318,6 +370,243 @@ const char *eidos_settings_value_text(int id, char *buf, size_t n)
         }
     }
     return buf;
+}
+
+/* ------------------------------------------------------------------ */
+/* The network settings                                                */
+/* ------------------------------------------------------------------ */
+
+/* The buffer a text setting keeps, and its size. */
+static char *net_text_buf(int which, size_t *size)
+{
+    if (which == 0) {
+        *size = sizeof g_cur.net.relay;
+        return g_cur.net.relay;
+    }
+    if (which == 1) {
+        *size = sizeof g_cur.net.name;
+        return g_cur.net.name;
+    }
+    *size = 0;
+    return NULL;
+}
+
+static void net_text_copy(char *dst, size_t size, const char *src)
+{
+    size_t n;
+
+    if (size == 0) {
+        return;
+    }
+    n = strlen(src);
+    if (n >= size) {
+        n = size - 1;
+    }
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+const char *eidos_settings_net_relay(void)
+{
+    ensure_init();
+    return g_cur.net.relay;
+}
+
+void eidos_settings_net_set_relay(const char *host)
+{
+    ensure_init();
+    net_text_copy(g_cur.net.relay, sizeof g_cur.net.relay,
+                  host != NULL ? host : "");
+}
+
+int eidos_settings_net_relay_port(void)
+{
+    ensure_init();
+    return g_cur.net.relay_port;
+}
+
+void eidos_settings_net_set_relay_port(int port)
+{
+    ensure_init();
+    if (port < 0) {
+        port = 0;
+    }
+    if (port > EIDOS_NET_PORT_MAX) {
+        port = EIDOS_NET_PORT_MAX;
+    }
+    g_cur.net.relay_port = port;
+}
+
+int eidos_settings_net_control_port(void)
+{
+    ensure_init();
+    return g_cur.net.control_port;
+}
+
+void eidos_settings_net_set_control_port(int port)
+{
+    ensure_init();
+    if (port < 0) {
+        port = 0;
+    }
+    if (port > EIDOS_NET_PORT_MAX) {
+        port = EIDOS_NET_PORT_MAX;
+    }
+    g_cur.net.control_port = port;
+}
+
+const char *eidos_settings_net_name(void)
+{
+    ensure_init();
+    return g_cur.net.name;
+}
+
+void eidos_settings_net_set_name(const char *name)
+{
+    ensure_init();
+    net_text_copy(g_cur.net.name, sizeof g_cur.net.name,
+                  name != NULL ? name : "");
+}
+
+/*
+ * The character a key of the host keyboard stands for: the ASCII the
+ * player types.  0 when the key is not a character (a function key, a
+ * modifier).  The port has no keyboard of its own on the DS screens, so
+ * the player types on the host.
+ */
+int eidos_settings_scancode_char(int scancode)
+{
+    if (scancode >= SDL_SCANCODE_A && scancode <= SDL_SCANCODE_Z) {
+        return 'a' + (scancode - SDL_SCANCODE_A);
+    }
+    if (scancode >= SDL_SCANCODE_1 && scancode <= SDL_SCANCODE_9) {
+        return '1' + (scancode - SDL_SCANCODE_1);
+    }
+    if (scancode >= SDL_SCANCODE_KP_0 && scancode <= SDL_SCANCODE_KP_9) {
+        return '0' + (scancode - SDL_SCANCODE_KP_0);
+    }
+    switch (scancode) {
+    case SDL_SCANCODE_0:           return '0';
+    case SDL_SCANCODE_SPACE:       return ' ';
+    case SDL_SCANCODE_MINUS:       return '-';
+    case SDL_SCANCODE_EQUALS:      return '=';
+    case SDL_SCANCODE_LEFTBRACKET: return '[';
+    case SDL_SCANCODE_RIGHTBRACKET:return ']';
+    case SDL_SCANCODE_BACKSLASH:   return '\\';
+    case SDL_SCANCODE_SEMICOLON:   return ';';
+    case SDL_SCANCODE_APOSTROPHE:  return '\'';
+    case SDL_SCANCODE_GRAVE:       return '`';
+    case SDL_SCANCODE_COMMA:       return ',';
+    case SDL_SCANCODE_PERIOD:      return '.';
+    case SDL_SCANCODE_SLASH:       return '/';
+    case SDL_SCANCODE_KP_PERIOD:   return '.';
+    case SDL_SCANCODE_KP_DIVIDE:   return '/';
+    case SDL_SCANCODE_KP_MINUS:    return '-';
+    case SDL_SCANCODE_KP_PLUS:     return '+';
+    default:                       return 0;
+    }
+}
+
+/* The text settings: the screen edits them. */
+void eidos_settings_net_relay_text_begin(void)
+{
+    ensure_init();
+    g_text.which = 0;
+    memcpy(g_text.saved, g_cur.net.relay, sizeof g_cur.net.relay);
+}
+
+void eidos_settings_net_name_text_begin(void)
+{
+    ensure_init();
+    g_text.which = 1;
+    memcpy(g_text.saved, g_cur.net.name, sizeof g_cur.net.name);
+}
+
+int eidos_settings_net_text_editing(void)
+{
+    return g_text.which >= 0;
+}
+
+/* The edit is given up: the value the text had before it stands. */
+void eidos_settings_net_text_cancel(void)
+{
+    char *buf;
+    size_t size;
+
+    if (g_text.which < 0) {
+        return;
+    }
+    buf = net_text_buf(g_text.which, &size);
+    if (buf != NULL) {
+        memcpy(buf, g_text.saved, size);
+    }
+    g_text.which = -1;
+}
+
+/*
+ * One key of the host keyboard goes into the text being edited.  Returns 0
+ * while the text is still being edited, 1 when the edit ended and the
+ * value was kept, and 2 when it ended and the value was dropped.
+ */
+int eidos_settings_net_text_key(int scancode)
+{
+    char *buf;
+    size_t size, len;
+    int c;
+
+    if (g_text.which < 0) {
+        return 0;
+    }
+    buf = net_text_buf(g_text.which, &size);
+    if (buf == NULL) {
+        g_text.which = -1;
+        return 2;
+    }
+    len = strlen(buf);
+    if (scancode == SDL_SCANCODE_ESCAPE) {
+        eidos_settings_net_text_cancel();
+        return 2;
+    }
+    if (scancode == SDL_SCANCODE_RETURN || scancode == SDL_SCANCODE_KP_ENTER) {
+        g_text.which = -1;
+        return 1;                   /* the value is kept */
+    }
+    if (scancode == SDL_SCANCODE_BACKSPACE || scancode == SDL_SCANCODE_DELETE) {
+        if (len > 0) {
+            buf[len - 1] = '\0';
+        }
+        return 0;
+    }
+    c = eidos_settings_scancode_char(scancode);
+    if (c != 0 && len + 1 < size) {
+        buf[len] = (char)c;
+        buf[len + 1] = '\0';
+    }
+    return 0;
+}
+
+/* The defaults, and the last committed state. */
+void eidos_settings_net_defaults(void)
+{
+    ensure_init();
+    g_cur.net.relay[0] = '\0';
+    g_cur.net.relay_port = 0;
+    g_cur.net.control_port = 0;
+    g_cur.net.name[0] = '\0';
+    g_text.which = -1;
+}
+
+void eidos_settings_net_revert(void)
+{
+    ensure_init();
+    g_cur.net = g_saved.net;
+    g_text.which = -1;
+}
+
+int eidos_settings_net_dirty(void)
+{
+    ensure_init();
+    return memcmp(&g_cur.net, &g_saved.net, sizeof g_cur.net) != 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -875,6 +1164,32 @@ static void parse_file(FILE *fp, Model *m)
         val = trim(eq + 1);
         lower_into(key, strlen(key) + 1, key);
 
+        if (strcmp(section, "network") == 0) {
+            /* The port's own network settings: the relay's address and the
+             * player's name are text, the two ports are numbers. */
+            if (strcmp(key, "relay") == 0) {
+                net_text_copy(m->net.relay, sizeof m->net.relay, val);
+            } else if (strcmp(key, "name") == 0) {
+                net_text_copy(m->net.name, sizeof m->net.name, val);
+            } else if (strcmp(key, "relay_port") == 0 ||
+                       strcmp(key, "control_port") == 0) {
+                long n = strtol(val, NULL, 10);
+
+                if (n < 0 || n > EIDOS_NET_PORT_MAX) {
+                    fprintf(stderr, "eidos: settings.ini:%d: bad value '%s' "
+                            "for network.%s, kept the default\n", lineno, val,
+                            key);
+                } else if (strcmp(key, "relay_port") == 0) {
+                    m->net.relay_port = (int)n;
+                } else {
+                    m->net.control_port = (int)n;
+                }
+            } else {
+                fprintf(stderr, "eidos: settings.ini:%d: unknown key '%s' in "
+                        "[network], ignored\n", lineno, key);
+            }
+            continue;
+        }
         if (strcmp(section, "keys") == 0 || strcmp(section, "pad") == 0) {
             int b;
 
@@ -961,6 +1276,13 @@ static int write_file(FILE *fp, const Model *m)
             fprintf(fp, "\n");
         }
     }
+    /* The port's own network settings: the relay, the two ports and the
+     * player's name. */
+    fprintf(fp, "\n[network]\n");
+    fprintf(fp, "relay = %s\n", m->net.relay);
+    fprintf(fp, "relay_port = %d\n", m->net.relay_port);
+    fprintf(fp, "control_port = %d\n", m->net.control_port);
+    fprintf(fp, "name = %s\n", m->net.name);
     return ferror(fp) ? -1 : 0;
 }
 
@@ -1067,6 +1389,8 @@ int eidos_settings_dirty(void)
             c.v[i] = g_saved.v[i];
         }
     }
+    /* The whole model, the network settings among it: the struct has no
+     * padding, so the comparison is exact. */
     return memcmp(&c, &g_saved, sizeof(c)) != 0;
 }
 

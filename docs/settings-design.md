@@ -3,7 +3,8 @@
 Pinned aletheia 71f6d529b. Addresses are DS addresses; file names are
 `src/matched/ov/ov088_func_<addr>.c` unless noted. The screen has four tabs:
 Display, Layout, Controls and Sound (Sound holds one item: master
-volume).
+volume). The port's own screen adds two more sections, Mods and Network,
+which scroll in the section list; the game's own screen is the four it has.
 
 ## (a) The title menu (overlay 88)
 
@@ -118,7 +119,8 @@ Reusable at run time from the player's own data: arc 0x1B members 0, 1, 2
 (bars, palette), 7, 8, 9 (backdrop), the cursor sprites (4..6, 11..12), the
 menu frame (arc 0x23 member 7) and the font. No new art is needed: a tab is
 a bar; four tabs fit in one 256 px row as 64 px bars cut from the bar tiles
-(left cap, middle, right cap).
+(left cap, middle, right cap). The port's own screen has six sections, and
+the section list scrolls for the ones that do not fit.
 
 ## (c) Design
 
@@ -163,8 +165,9 @@ The screen is built, in the shape the title menu already has: the menu proc
 of overlay 88 started again in "settings mode" (design 1, through the game's
 own bg, bar tiles, font and print queue). Files:
 
-- `engine/platform/settings_ui.c` (model, no game calls): four tabs, a row
-  table per tab, navigation, value changes, capture, Revert and Restore
+- `engine/platform/settings_ui.c` (model, no game calls): six sections (the
+  game's four, plus Mods and Network), a row
+  table per section, navigation, value changes, capture, Revert and Restore
   defaults rows, and one marked table of UI text ("UI TEXT"). It talks to
   `settings.h` only. Test: `tests/test_settings_ui.c`.
 - `stubs/ov/reimpl_ov088_func_021BB4B4.c`: the row list is one kind per

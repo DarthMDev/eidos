@@ -79,6 +79,7 @@
 #include "mod_hooks.h"
 #include "mod_loader.h"
 #include "mod_menu.h"
+#include "mod_net.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,6 +87,7 @@
 #include "frame.h"
 #include "plat_crash.h"
 #include "port.h"
+#include "settings.h"
 
 #ifndef EIDOS_DEFAULT_DATA_ROOT
 #define EIDOS_DEFAULT_DATA_ROOT ""
@@ -1235,6 +1237,13 @@ typedef enum BootRunNext {
 void bw_mod_restart_set_handler(void (*fn)(u32 flags));
 int  bw_mod_restart_take(u32 *flags);
 
+/*
+ * The port's own confirmation for a save that arrives from a peer.  It lives
+ * with the port's options screen (engine/platform/mod_options_proc.c), which
+ * has no header of its own, so the prototype is here.
+ */
+void eidos_mod_handoff_install_confirm(void);
+
 /* The request that waits for the frame loop, and what it asks for. */
 static BootRunNext g_run_next = BOOT_RUN_TITLE;
 static int         g_restart_pending;
@@ -1603,6 +1612,18 @@ static int boot_run_start(EidosFrameHooks *hooks, int own_thread)
      * the port does with a save that arrived from a peer. */
     bw_mod_restart_set_handler(boot_restart);
     bw_mod_handoff_set_reload(boot_reload);
+    /* The port's own confirmation for a save that arrives: the player is
+     * asked before anything is installed. */
+    eidos_mod_handoff_install_confirm();
+    /* The network service's own settings: the relay the sessions reach, the
+     * port the external control listens on, and the name the player is
+     * known by.  Without a transport the sessions answer "no relay", and a
+     * control port of 0 is the control off (engine/platform/settings.h). */
+    bw_mod_net_set_transport(bw_mod_net_tcp_transport());
+    bw_mod_net_set_relay(eidos_settings_net_relay(),
+                         (u16)eidos_settings_net_relay_port());
+    bw_mod_net_set_name(eidos_settings_net_name());
+    bw_mod_net_control_set_port(eidos_settings_net_control_port());
     /* The player's own mod list: the menu's record restores the roots the
      * player chose, before the loader reads them (sdk/mod_menu.h). */
     bw_mod_menu_start();

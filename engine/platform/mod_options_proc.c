@@ -16,6 +16,10 @@
  * back to the title menu when the player leaves.  What the screen shows and how
  * its buttons behave is engine/platform/settings_ui.c; this file only draws.
  *
+ * The file holds one more thing of the port's own: the confirmation the save
+ * handoff asks the player with, the one question the port asks outside its
+ * own menu (the end of the file).
+ *
  * Layout (docs/settings-design.md): the main screen is a list of six bars, the
  * sixth the grey one; the other screen is the dark grid with the help text of
  * the highlighted row.
@@ -799,4 +803,51 @@ static const struct {
 const void *eidos_opt_proc_table(void)
 {
     return &k_proc;
+}
+
+/* ------------------------------------------------------------------ */
+/* The save handoff's confirmation                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A save that arrives from a peer is the port's own: the player is asked
+ * whether it is taken, and the save is installed only when the player
+ * says yes (sdk/mod_handoff.h, "The port's own calls").  Without this
+ * callback the handoff reports the save on stderr and drops it: nothing
+ * is installed without the player's question.
+ *
+ * The question goes to the port's own text path: the game's own yes/no
+ * window, the one a mod's question uses as well (sdk/mod_message.h).  A
+ * question the port cannot ask answers no, so a save that arrives where
+ * the player cannot be asked is not installed either.
+ *
+ * The SDK's headers are not included here: they carry the SDK's own
+ * typedefs, and this file has its own (a second typedef of the same name
+ * in one translation unit is a constraint violation in C99).
+ */
+extern int  bw_mod_message_confirm(const char *text);
+extern void bw_mod_handoff_set_confirm(int (*fn)(u32 peer, const void *buf,
+                                                  u32 size, void *user),
+                                        void *user);
+
+static int handoff_confirm(u32 peer, const void *buf, u32 size, void *user)
+{
+    char text[96];
+
+    (void)buf;
+    (void)size;
+    (void)user;
+    snprintf(text, sizeof text, "Peer %u sent a save. Take it?",
+             (unsigned int)peer);
+    return bw_mod_message_confirm(text);
+}
+
+/*
+ * The port's own confirmation for the save handoff.  The boot calls this
+ * where the port starts, beside bw_mod_handoff_set_reload(): the
+ * confirmation is the port's, and the port installs it when it starts.
+ */
+void eidos_mod_handoff_install_confirm(void)
+{
+    bw_mod_handoff_set_confirm(handoff_confirm, NULL);
 }

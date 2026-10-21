@@ -13,14 +13,24 @@
  * ZUKAN_DETAIL_FORM_SignalAnimDone in ov208), so the overlay id is part of
  * the key.
  *
- * The on/off switch is sdk/mod_hooks.h's bw_hook_enabled: a generated slot
- * asks it by the row's function name, and with the hook off calls the
- * original, the same rule a compiled hook follows (docs/hooks.md).
+ * The on/off switch is sdk/mod_hooks.h's bw_hook_enabled, and the registry
+ * asks it: every link of a chain carries the switch its mod's manifest
+ * named, and a link whose switch is off is skipped, so the walk goes on to
+ * the next link inward instead of falling past the whole chain.  The switch
+ * a link answers by is the name the manifest stated, or the row's own
+ * function name when the manifest stated none (docs/mod-overrides.md, "The
+ * switch").
  *
  * The declared set is here too: the build emits the whole of
  * mod/declared_set.txt as one table and registers it at start-up, and
  * bw_mod_slot_declared answers whether a (region, address) pair is
  * declared (docs/mod-state.md, section 4).
+ *
+ * The rows' own names and their normalised prototypes come with it: the
+ * build publishes them beside the table (bw_mod_publish_protos), the name is
+ * the switch a link without one answers by, and the prototype is what the
+ * manifest's `sig=` is compared with (docs/mod-overrides.md, "The prototype
+ * is checked").
  */
 
 #ifndef BW_PORT_MOD_SLOT_H
@@ -57,11 +67,41 @@ typedef struct BwModDeclared {
     unsigned int addr;     /* the even function start */
 } BwModDeclared;
 
+/* One declared row's own name and its normalised prototype, as the build
+ * publishes them (docs/mod-overrides.md, "The prototype is checked").  The
+ * name is the function name the row carries in mod/declared_set.txt, and it
+ * is the switch a hook on the row answers by when the mod's manifest states
+ * none.  The prototype is the game's own prototype, normalised the way
+ * tools/ovlink.py's signature normalises it: "<return type> (<parameter
+ * types>)", the parameters separated by ", " and "void" when there are none.
+ * A row the build does not carry has no prototype, and the manifest's
+ * `sig=` cannot be compared with it. */
+typedef struct BwModSlotProto {
+    unsigned int region;   /* BW_MOD_REGION_ARM9 or BW_MOD_REGION_OVL(id) */
+    unsigned int addr;     /* the even function start */
+    const char *name;      /* the row's function name, or NULL */
+    const char *proto;     /* the normalised prototype, or NULL */
+} BwModSlotProto;
+
 /* Register the declared set: the whole table of mod/declared_set.txt, as
  * the build emits it.  The build calls this at start-up (bw_boot_link_init),
  * before any mod loads, so the manifest's check answers for every region
  * whether or not that region has loaded. */
 void bw_mod_declare_table(const BwModDeclared *rows, unsigned int count);
+
+/* Publish the declared rows' names and prototypes.  The build calls this at
+ * start-up, beside the declared set: the boot's rows from
+ * bw_boot_link_init, the overlays' rows from the generated dispatcher.  A
+ * later call adds rows and fills in what an earlier one left out; it does
+ * not take the earlier ones away. */
+void bw_mod_publish_protos(const BwModSlotProto *rows, unsigned int count);
+
+/* The row's own name, its normalised prototype, or NULL when the build did
+ * not publish that row.  The address may be the even start or the
+ * Thumb-tagged value a code pointer holds: the low bit is masked before the
+ * lookup. */
+const char *bw_mod_slot_row_name(unsigned int region, unsigned int addr);
+const char *bw_mod_slot_prototype(unsigned int region, unsigned int addr);
 
 /* Is (region, addr) a declared address?  1 when it is, 0 when it is not.
  * The address may be the even start or the Thumb-tagged value a code
@@ -69,12 +109,29 @@ void bw_mod_declare_table(const BwModDeclared *rows, unsigned int count);
 int bw_mod_slot_declared(unsigned int region, unsigned int addr);
 
 /* The override installed for (region, addr), or NULL.  A generated slot asks
- * this before it calls anything. */
+ * this before it calls anything.  The link the answer is the first link of
+ * the chain whose switch is on: a link whose switch is off is skipped, and
+ * the walk goes on to the next link inward. */
 void *bw_mod_slot_lookup(unsigned int region, unsigned int addr);
 
 /* The original function for (region, addr) as the build published it, or
- * NULL when nothing published one.  A wrap override calls it. */
+ * NULL when nothing published one.  A wrap override calls it.  The walk
+ * goes on inward the same way: a link whose switch is off is skipped. */
 void *bw_mod_slot_original(unsigned int region, unsigned int addr);
+
+/* The switch a mod's hook on (region, addr) answers by: the name the mod's
+ * manifest stated, or NULL when it stated none and the row's own name
+ * stands.  The manifest's apply hands the name to the registry
+ * (sdk/mod_manifest.c), because the loader resolves the symbol and
+ * installs the hook itself and does not carry the name; the install takes
+ * it from here.  `owner` names the mod, the way the install's owner does. */
+void bw_mod_slot_set_switch(const char *owner, unsigned int region,
+                            unsigned int addr, const char *switch_name);
+
+/* Forget the switch names a mod handed over: the mod's manifest is going
+ * away, and the names it carried went with it.  The manifest's release path
+ * calls this before it frees the record (sdk/mod_manifest.c). */
+void bw_mod_slot_forget_switches(const char *owner);
 
 /* Install `override` for (region, addr).  `owner` names the installing mod
  * for the conflict report.  A later install of one pair wins and the earlier

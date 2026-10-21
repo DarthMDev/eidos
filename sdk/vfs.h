@@ -50,6 +50,11 @@ extern "C" {
  * same way the first time the list is consulted, unless a call came first.
  * bw_add_mod_root appends one root and re-sorts.  Every change drops the
  * cached merged archives (bw_vfs_flush).
+ *
+ * The order above is the mod author's: it is the manifest's `order` key.
+ * The player may want another one, because the order the mods load in is
+ * the order their overrides and their rules take effect.  bw_mod_set_order
+ * is the seam for that: "this list, in this order".
  */
 void        bw_clear_mods(void);
 int         bw_add_mod_root(const char *path);   /* 0, or -1 (empty, no memory) */
@@ -57,6 +62,24 @@ u32         bw_mod_count(void);
 const char *bw_mod_root_at(u32 i);   /* load order: 0 loads first, wins least */
 const char *bw_mod_name_at(u32 i);
 int         bw_mod_order_at(u32 i);
+
+/*
+ * The player's own order: this list, in this order.
+ *
+ * The list is replaced, not added to, so this is the way the roots are
+ * rebuilt at the menu (docs/mod-state.md, section 2, constraint 1): the
+ * caller hands over the whole list in the order the player chose.  The
+ * manifest's `order` key does not decide anything while the player's order
+ * is in force, and a root added later (bw_add_mod_root) goes at the end of
+ * the list instead of being sorted in.  bw_clear_mods drops the player's
+ * order with the list, and bw_set_mod_root (sdk/port.h) puts the port's own
+ * list back, which the manifest's key decides again.
+ *
+ * `roots` holds `count` paths, in load order: 0 loads first and wins
+ * least.  A NULL or empty path is skipped.  0 on success, -1 when a root
+ * could not be added (the list holds the ones that could).
+ */
+int         bw_mod_set_order(const char *const *roots, u32 count);
 
 /*
  * The layer `rel` resolves to at file granularity: -1 for the data root,

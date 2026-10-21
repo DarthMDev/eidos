@@ -115,6 +115,44 @@ int  eidos_settings_dirty(void);
 int  eidos_settings_commit(void);
 
 /* ------------------------------------------------------------------ */
+/* The network settings                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The relay the peer sessions reach, the port it listens on, the port the
+ * external control listens on (0 is off), and the name the player is
+ * known by.  They are the port's own: the network service reads them from
+ * the port's calls (sdk/mod_net.h), and the port hands them over at its
+ * start-up.
+ */
+const char *eidos_settings_net_relay(void);
+void        eidos_settings_net_set_relay(const char *host);
+int         eidos_settings_net_relay_port(void);
+void        eidos_settings_net_set_relay_port(int port);
+int         eidos_settings_net_control_port(void);
+void        eidos_settings_net_set_control_port(int port);
+const char *eidos_settings_net_name(void);
+void        eidos_settings_net_set_name(const char *name);
+
+/* The two text settings are edited a character at a time: the screen calls
+ * the begin, then a key for every stroke, and either keeps the value
+ * (Enter) or drops it (Escape). */
+void        eidos_settings_net_relay_text_begin(void);
+void        eidos_settings_net_name_text_begin(void);
+int         eidos_settings_net_text_editing(void);
+int         eidos_settings_net_text_key(int scancode);
+void        eidos_settings_net_text_cancel(void);
+
+/* The network settings on their own: the defaults, the undo of an
+ * uncommitted change, and whether they differ from the committed state. */
+void        eidos_settings_net_defaults(void);
+void        eidos_settings_net_revert(void);
+int         eidos_settings_net_dirty(void);
+
+/* The character a host key stands for, or 0 when it stands for none. */
+int         eidos_settings_scancode_char(int scancode);
+
+/* ------------------------------------------------------------------ */
 /* Key bindings                                                        */
 /* ------------------------------------------------------------------ */
 

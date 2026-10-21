@@ -4,9 +4,35 @@
 #include "settings_ui.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "settings.h"
+#include "mod_menu.h"
+
+/*
+ * The port's own network settings (engine/platform/settings.c): the
+ * relay's address, the relay's port, the control's port and the player's
+ * name.  They are declared here because settings.h does not carry them
+ * yet: the header is not this wave's file.  The screen shows them and the
+ * player changes them there; the boot hands them to the network service
+ * at the port's start-up (sdk/mod_net.h).
+ */
+extern const char *eidos_settings_net_relay(void);
+extern void        eidos_settings_net_set_relay(const char *host);
+extern int         eidos_settings_net_relay_port(void);
+extern void        eidos_settings_net_set_relay_port(int port);
+extern int         eidos_settings_net_control_port(void);
+extern void        eidos_settings_net_set_control_port(int port);
+extern const char *eidos_settings_net_name(void);
+extern void        eidos_settings_net_set_name(const char *name);
+extern void        eidos_settings_net_relay_text_begin(void);
+extern void        eidos_settings_net_name_text_begin(void);
+extern int         eidos_settings_net_text_editing(void);
+extern int         eidos_settings_net_text_key(int scancode);
+extern void        eidos_settings_net_text_cancel(void);
+extern void        eidos_settings_net_defaults(void);
+extern void        eidos_settings_net_revert(void);
 
 /* ================================================================== */
 /* UI TEXT: every string the settings screen shows.  ASCII only.       */
@@ -14,7 +40,9 @@
 /* ================================================================== */
 
 #define STR_TITLE "Settings"
-static const char *const k_tab_names[] = { "Display", "Layout", "Controls", "Sound" };
+static const char *const k_tab_names[] = {
+    "Display", "Layout", "Controls", "Sound", "Mods", "Network"
+};
 
 /* Short button names for the Controls rows (the backend labels are long). */
 static const char *const k_button_short[] = {
@@ -50,10 +78,39 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_SECTION_LAYOUT   "Screen arrangement, swap and gap."
 #define HELP_SECTION_CONTROLS "Keyboard and gamepad bindings."
 #define HELP_SECTION_SOUND    "Master volume."
+#define HELP_SECTION_MODS     "The installed mods and their settings."
+#define HELP_SECTION_NETWORK  "The relay, the control and the name."
 #define HELP_KEYS_L0   "Up/Down: choose   A: open"
 #define HELP_KEYS_L0B  "B: save and go back"
 #define HELP_KEYS_L1   "Up/Down: choose   Left/Right: change"
 #define HELP_KEYS_L1B  "A: select   B: back"
+
+/* The Mods section: the mods, their switches, their own settings, the
+ * clear action and the folders no mod claims. */
+#define HELP_MOD_SWITCH1 "Turn the mod on or off."
+#define HELP_MOD_SWITCH2 "L and R move it in the list."
+#define HELP_MOD_OPTION1 "The mod's own setting."
+#define HELP_MOD_OPTION2 "The choice is kept with its data."
+#define HELP_MOD_CLEAR1  "Delete the mod's saved data."
+#define HELP_MOD_CLEAR2  "The mod's own folder stays."
+#define HELP_MOD_REVERT1 "The switches go back as they were."
+#define HELP_MOD_REVERT2 "The change applies when you leave."
+#define HELP_ORPHAN1     "A folder no installed mod claims."
+#define HELP_ORPHAN2     "A removed mod left it behind."
+
+/* The Network section: the port's own settings for the network service. */
+#define HELP_NET_RELAY1  "The relay the sessions reach."
+#define HELP_NET_RELAY2  "Empty: the port has no relay."
+#define HELP_NET_RPORT1  "The port the relay listens on."
+#define HELP_NET_RPORT2  "0: no relay."
+#define HELP_NET_CPORT1  "The port the control listens on."
+#define HELP_NET_CPORT2  "0: the control is off."
+#define HELP_NET_NAME1   "The name the other players see."
+#define HELP_NET_NAME2   "Empty: the default name."
+#define HELP_NET_DEFAULTS1 "Put the network settings back"
+#define HELP_NET_DEFAULTS2 "to their defaults."
+#define HELP_TEXT_EDIT1  "Type the text on the keyboard."
+#define HELP_TEXT_EDIT2  "Enter keeps it, Esc gives it up."
 
 /* Row labels by option id (EIDOS_OPT_*); NULL for hidden options. */
 static const char *const k_option_labels[EIDOS_OPT_COUNT] = {
@@ -97,14 +154,45 @@ static const ValueName k_choice_names[] = {
 #define STR_PRESS_KEY   "Press a key"
 #define STR_UNBOUND     "None"
 
+/* The Mods and Network sections' own labels. */
+#define STR_MOD_CLEAR   "  Clear saved data"
+#define STR_MOD_REVERT  "Revert changes"
+#define STR_ORPHAN      "orphan"
+#define STR_NET_RELAY   "Relay address"
+#define STR_NET_RPORT   "Relay port"
+#define STR_NET_CPORT   "Control port"
+#define STR_NET_NAME    "Player name"
+#define STR_NONE        "(none)"
+
 /* ================================================================== */
 
-enum { ROW_OPTION, ROW_BIND, ROW_DEFAULTS, ROW_SECTION };
+/*
+ * The rows of the screen.  The first four kinds are the port's own
+ * settings; the rest are the Mods section (the model of sdk/mod_menu.c)
+ * and the Network section (the port's own network settings).
+ */
+enum {
+    ROW_OPTION,           /* an option of the port's own                  */
+    ROW_BIND,             /* a key binding                               */
+    ROW_DEFAULTS,         /* "Restore defaults"                          */
+    ROW_SECTION,          /* a section of the list                       */
+    ROW_MOD_SWITCH,       /* a mod's switch: arg is the mod              */
+    ROW_MOD_OPTION,       /* a mod's own setting: arg the mod, arg2 it  */
+    ROW_MOD_CLEAR,        /* "Clear saved data": arg is the mod          */
+    ROW_MOD_REVERT,       /* the switches back to the port's list        */
+    ROW_ORPHAN,           /* a saved-data folder no installed mod claims */
+    ROW_NET_RELAY,        /* the relay's address (text)                  */
+    ROW_NET_RELAY_PORT,   /* the relay's port (a number)                 */
+    ROW_NET_CONTROL_PORT, /* the control's port (a number)               */
+    ROW_NET_NAME,         /* the player's name (text)                    */
+    ROW_NET_DEFAULTS      /* the network settings back to their default  */
+};
 
-typedef struct Row { int type; int arg; } Row;
+typedef struct Row { int type; int arg; int arg2; } Row;
 
-#define MAX_ROWS 24
-#define TAB_COUNT 4
+#define TAB_COUNT 6
+#define TAB_MODS 4
+#define TAB_NETWORK 5
 
 static struct {
     int level;        /* 0 section list, 1 inside a section      */
@@ -112,51 +200,108 @@ static struct {
     int cursor;       /* index into the tab's rows                */
     int scroll;       /* first visible row                        */
     int capturing;    /* button index + 1, 0 when not capturing   */
+    int editing;      /* a text of the Network section is edited  */
+    int mods_open;    /* the Mods section was entered             */
     int wait_release; /* a capture just ended: ignore buttons until all are up */
     int hold_dir;     /* held direction bit being repeated        */
     int hold_frames;
-    Row rows[MAX_ROWS];
+    Row *rows;        /* the rows of the section                  */
     int nrows;
+    int rowcap;
 } g;
 
-static void add_row(int *n, int type, int arg)
+/* One more row.  The list grows as it needs: the Mods section holds a
+ * row per mod, per setting and per folder. */
+static void add_row(int type, int arg, int arg2)
 {
-    g.rows[*n].type = type;
-    g.rows[*n].arg = arg;
-    (*n)++;
+    if (g.nrows >= g.rowcap) {
+        int cap = g.rowcap != 0 ? g.rowcap * 2 : 32;
+        Row *rows = (Row *)realloc(g.rows, (size_t)cap * sizeof(Row));
+
+        if (rows == NULL) {
+            return;                 /* the row is dropped */
+        }
+        g.rows = rows;
+        g.rowcap = cap;
+    }
+    g.rows[g.nrows].type = type;
+    g.rows[g.nrows].arg = arg;
+    g.rows[g.nrows].arg2 = arg2;
+    g.nrows++;
+}
+
+/*
+ * The Mods section: the installed mods in load order, each with its
+ * switch, its own settings under its name and the clear action; then the
+ * folders in the save directory that no installed mod claims.
+ */
+static void build_mods_rows(void)
+{
+    u32 count = bw_mod_menu_count();
+    u32 i, o;
+
+    for (i = 0; i < count; i++) {
+        add_row(ROW_MOD_SWITCH, (int)i, 0);
+        for (o = 0; o < bw_mod_menu_option_count(i); o++) {
+            add_row(ROW_MOD_OPTION, (int)i, (int)o);
+        }
+        if (bw_mod_menu_namespace_at(i)[0] != '\0') {
+            add_row(ROW_MOD_CLEAR, (int)i, 0);
+        }
+    }
+    for (i = 0; i < bw_mod_menu_orphan_count(); i++) {
+        add_row(ROW_ORPHAN, (int)i, 0);
+    }
+    add_row(ROW_MOD_REVERT, 0, 0);
+}
+
+/* The Network section: the port's own settings for the network service. */
+static void build_net_rows(void)
+{
+    add_row(ROW_NET_RELAY, 0, 0);
+    add_row(ROW_NET_RELAY_PORT, 0, 0);
+    add_row(ROW_NET_CONTROL_PORT, 0, 0);
+    add_row(ROW_NET_NAME, 0, 0);
+    add_row(ROW_NET_DEFAULTS, 0, 0);
 }
 
 static void build_rows(void)
 {
-    int n = 0, i;
+    int i;
+
+    g.nrows = 0;
     if (g.level == 0) {
         for (i = 0; i < TAB_COUNT; i++) {
-            add_row(&n, ROW_SECTION, i);
+            add_row(ROW_SECTION, i, 0);
         }
-        g.nrows = n;
         return;
     }
     switch (g.tab) {
     case 0:
-        add_row(&n, ROW_OPTION, EIDOS_OPT_DISPLAY_MODE);
-        add_row(&n, ROW_OPTION, EIDOS_OPT_DISPLAY_RESOLUTION);
+        add_row(ROW_OPTION, EIDOS_OPT_DISPLAY_MODE, 0);
+        add_row(ROW_OPTION, EIDOS_OPT_DISPLAY_RESOLUTION, 0);
         break;
     case 1:
-        add_row(&n, ROW_OPTION, EIDOS_OPT_LAYOUT_ARRANGEMENT);
-        add_row(&n, ROW_OPTION, EIDOS_OPT_LAYOUT_SWAP);
-        add_row(&n, ROW_OPTION, EIDOS_OPT_LAYOUT_GAP);
+        add_row(ROW_OPTION, EIDOS_OPT_LAYOUT_ARRANGEMENT, 0);
+        add_row(ROW_OPTION, EIDOS_OPT_LAYOUT_SWAP, 0);
+        add_row(ROW_OPTION, EIDOS_OPT_LAYOUT_GAP, 0);
         break;
     case 2:
-        for (i = 0; i < eidos_settings_button_count() && n < MAX_ROWS - 2; i++) {
-            add_row(&n, ROW_BIND, i);
+        for (i = 0; i < eidos_settings_button_count(); i++) {
+            add_row(ROW_BIND, i, 0);
         }
         break;
-    default:
-        add_row(&n, ROW_OPTION, EIDOS_OPT_SOUND_VOLUME);
+    case 3:
+        add_row(ROW_OPTION, EIDOS_OPT_SOUND_VOLUME, 0);
         break;
+    case TAB_MODS:
+        build_mods_rows();
+        return;
+    default:
+        build_net_rows();
+        return;
     }
-    add_row(&n, ROW_DEFAULTS, 0);
-    g.nrows = n;
+    add_row(ROW_DEFAULTS, 0, 0);
 }
 
 /* The cursor runs over the rows and then one more place: the grey bar
@@ -187,7 +332,12 @@ static void clamp_scroll(void)
 
 void eidos_sui_enter(void)
 {
+    Row *rows = g.rows;
+    int rowcap = g.rowcap;
+
     memset(&g, 0, sizeof g);
+    g.rows = rows;               /* the list's own storage is kept */
+    g.rowcap = rowcap;
     build_rows();
 }
 
@@ -196,6 +346,18 @@ void eidos_sui_leave(void)
     if (g.capturing) {
         eidos_settings_capture_cancel();
         g.capturing = 0;
+    }
+    if (g.editing) {
+        /* The text being edited is given up: the value before the edit
+         * stands. */
+        eidos_settings_net_text_cancel();
+        g.editing = 0;
+    }
+    if (g.mods_open) {
+        /* The mods the player changed: the switches apply now, when the
+         * player leaves the menu (sdk/mod_menu.h). */
+        (void)bw_mod_menu_apply();
+        g.mods_open = 0;
     }
     eidos_settings_commit();
 }
@@ -206,6 +368,13 @@ static void enter_section(int t)
     g.level = 1;
     g.cursor = 0;
     g.scroll = 0;
+    if (t == TAB_MODS) {
+        /* The Mods section: the model is built again from the port's list
+         * and the player's record, the way sdk/mod_menu.h says: the
+         * screen calls it once, when the section is entered. */
+        bw_mod_menu_open();
+        g.mods_open = 1;
+    }
     build_rows();
 }
 
@@ -245,6 +414,110 @@ static int change_option(int id, int d, int wrap)
     return eidos_settings_set(id, nv) == 0;
 }
 
+/*
+ * A mod's own setting: a bool turns on and off, a choice steps through
+ * its names and wraps around.  The choice is kept beside the mod's saved
+ * data at once (sdk/mod_menu.h).
+ */
+static int change_mod_option(int mod, int option, int d)
+{
+    int kind = bw_mod_menu_option_kind((u32)mod, (u32)option);
+    int count = bw_mod_menu_option_choice_count((u32)mod, (u32)option);
+    int value = bw_mod_menu_option_value((u32)mod, (u32)option);
+
+    if (kind == BW_MOD_SETTING_BOOL) {
+        value = value != 0 ? 0 : 1;
+    } else {
+        if (count <= 0) {
+            return 0;
+        }
+        value += d;
+        if (value < 0) {
+            value = count - 1;
+        } else if (value >= count) {
+            value = 0;
+        }
+    }
+    return bw_mod_menu_option_set((u32)mod, (u32)option, value) == 0;
+}
+
+/* The port's own port number: the relay's or the control's. */
+static void change_net_port(int type, int d)
+{
+    if (type == ROW_NET_RELAY_PORT) {
+        eidos_settings_net_set_relay_port(eidos_settings_net_relay_port() + d);
+    } else {
+        eidos_settings_net_set_control_port(eidos_settings_net_control_port() + d);
+    }
+}
+
+/* The player's switch of a mod. */
+static int toggle_mod(int mod)
+{
+    int on = bw_mod_menu_enabled_at((u32)mod);
+
+    return bw_mod_menu_set_enabled((u32)mod, !on) == 0;
+}
+
+/* The row of a mod's switch in the list that is built now. */
+static int mod_row(u32 mod)
+{
+    int i;
+
+    for (i = 0; i < g.nrows; i++) {
+        if (g.rows[i].type == ROW_MOD_SWITCH && (u32)g.rows[i].arg == mod) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/*
+ * The player's own order: the order the mods load in is the order the
+ * player chose (sdk/mod_menu.h, "The order").  L and R move the mod the
+ * cursor is on; the list is built again and the cursor follows the mod.
+ */
+static int move_mod(int mod, int up)
+{
+    u32 index = (u32)mod;
+    int row;
+
+    if (up) {
+        if (bw_mod_menu_move_up(index) != 0) {
+            return 0;
+        }
+        index--;
+    } else {
+        if (bw_mod_menu_move_down(index) != 0) {
+            return 0;
+        }
+        index++;
+    }
+    build_rows();
+    row = mod_row(index);
+    if (row >= 0) {
+        g.cursor = row;
+    }
+    clamp_scroll();
+    return 1;
+}
+
+/*
+ * The text being edited: the player types on the host keyboard, and the
+ * keys come in one at a time through the platform's capture, the same one
+ * the key bindings use.
+ */
+static void begin_text_edit(int type)
+{
+    if (type == ROW_NET_RELAY) {
+        eidos_settings_net_relay_text_begin();
+    } else {
+        eidos_settings_net_name_text_begin();
+    }
+    g.editing = 1;
+    eidos_settings_capture_begin();
+}
+
 static int poll_capture(void)
 {
     EidosCaptured c;
@@ -265,6 +538,40 @@ static int poll_capture(void)
     g.capturing = 0;
     g.wait_release = 1;
     return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+}
+
+/*
+ * One key of the host keyboard goes into the text being edited.  The
+ * capture is armed again for the next key, and the edit ends when the
+ * player presses Enter (the value is kept) or Escape (it is dropped).
+ */
+static int poll_text(void)
+{
+    EidosCaptured c;
+    int r, done = 0;
+
+    memset(&c, 0, sizeof c);
+    r = eidos_settings_capture_poll(&c);
+    if (r == EIDOS_CAPTURE_KEY) {
+        done = eidos_settings_net_text_key(c.scancode);
+        eidos_settings_capture_begin();     /* the next key */
+    } else if (r == EIDOS_CAPTURE_CANCELLED) {
+        eidos_settings_net_text_cancel();
+        done = 2;
+    } else if (r == EIDOS_CAPTURE_NONE) {
+        /* No keyboard to type on: the text ends with the value it has. */
+        done = 1;
+    } else {
+        return 0;
+    }
+    if (done != 0) {
+        eidos_settings_capture_cancel();
+        g.editing = 0;
+        g.wait_release = 1;
+        return EIDOS_SUI_REDRAW |
+               (done == 1 ? EIDOS_SUI_SFX_SELECT : EIDOS_SUI_SFX_BACK);
+    }
+    return EIDOS_SUI_REDRAW;
 }
 
 /* Direction repeat: the first press acts at once, then after 20 frames every
@@ -299,6 +606,10 @@ int eidos_sui_input(unsigned pressed, unsigned held)
     unsigned act;
     const Row *r;
     int res;
+
+    if (g.editing) {
+        return poll_text();
+    }
 
     if (g.capturing) {
         res = poll_capture();
@@ -365,6 +676,56 @@ int eidos_sui_input(unsigned pressed, unsigned held)
         }
         return 0;
     }
+    if (r->type == ROW_MOD_SWITCH) {
+        int d = (act & 0x10u) ? 1 : (act & 0x20u) ? -1 : 0;
+        if (d == 0 && (pressed & 1u)) {
+            d = 1;
+        }
+        if (d != 0 && toggle_mod(r->arg)) {
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        /* The player's own order: L moves the mod towards the front of the
+         * list, R towards the back. */
+        if (pressed & 0x200u) {
+            if (move_mod(r->arg, 1)) {
+                return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
+            }
+        }
+        if (pressed & 0x100u) {
+            if (move_mod(r->arg, 0)) {
+                return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
+            }
+        }
+        return 0;
+    }
+    if (r->type == ROW_MOD_OPTION) {
+        int d = (act & 0x10u) ? 1 : (act & 0x20u) ? -1 : 0;
+        if (d == 0 && (pressed & 1u)) {
+            d = 1;
+        }
+        if (d != 0 && change_mod_option(r->arg, r->arg2, d)) {
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return 0;
+    }
+    if (r->type == ROW_NET_RELAY_PORT || r->type == ROW_NET_CONTROL_PORT) {
+        int d = (act & 0x10u) ? 1 : (act & 0x20u) ? -1 : 0;
+        if (d == 0 && (pressed & 1u)) {
+            d = 1;
+        }
+        if (d != 0) {
+            change_net_port(r->type, d);
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return 0;
+    }
+    if (r->type == ROW_NET_RELAY || r->type == ROW_NET_NAME) {
+        if (pressed & 1u) {
+            begin_text_edit(r->type);
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return 0;
+    }
     if (pressed & 1u) {
         switch (r->type) {
         case ROW_BIND:
@@ -373,6 +734,20 @@ int eidos_sui_input(unsigned pressed, unsigned held)
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         case ROW_DEFAULTS:
             eidos_settings_defaults();
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        case ROW_MOD_CLEAR:
+            /* The player's "clear saved data" for one mod: the mod's own
+             * state file goes and its folder stays (sdk/mod_menu.h). */
+            if (bw_mod_menu_clear((u32)r->arg) == 0) {
+                return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            }
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
+        case ROW_MOD_REVERT:
+            /* The switches go back to the port's list. */
+            bw_mod_menu_revert();
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        case ROW_NET_DEFAULTS:
+            eidos_settings_net_defaults();
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         default:
             break;
@@ -403,11 +778,22 @@ int eidos_sui_cursor_row(void)
 /* 1 when left and right change the row's value (an option row). */
 int eidos_sui_row_adjustable(int row)
 {
+    const Row *r;
+
     if (row < 1 || row == eidos_sui_row_count() - 1
         || g.scroll + row - 1 >= g.nrows) {
         return 0;
     }
-    return g.rows[g.scroll + row - 1].type == ROW_OPTION;
+    r = &g.rows[g.scroll + row - 1];
+    switch (r->type) {
+    case ROW_OPTION:
+    case ROW_MOD_OPTION:
+    case ROW_NET_RELAY_PORT:
+    case ROW_NET_CONTROL_PORT:
+        return 1;
+    default:
+        return 0;
+    }
 }
 
 /*
@@ -430,6 +816,10 @@ int eidos_sui_touch(int row, int zone)
         eidos_settings_capture_cancel();
         g.capturing = 0;
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
+    }
+    if (g.editing) {
+        /* The text is being edited: the keyboard is the player's now. */
+        return 0;
     }
     if (row == eidos_sui_row_count() - 1) {
         if (g.level == 0) {
@@ -466,6 +856,53 @@ int eidos_sui_touch(int row, int zone)
         }
         break;
     }
+    case ROW_MOD_SWITCH:
+        /* The switch is drawn as two choices, off and on. */
+        if (zone >= 0 && zone <= 1) {
+            if (bw_mod_menu_set_enabled((u32)r->arg, zone) == 0) {
+                res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            }
+        } else if (was && toggle_mod(r->arg)) {
+            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        break;
+    case ROW_MOD_OPTION:
+        if (was && (zone == EIDOS_SUI_ZONE_DEC || zone == EIDOS_SUI_ZONE_INC)) {
+            if (change_mod_option(r->arg, r->arg2,
+                                  zone == EIDOS_SUI_ZONE_INC ? 1 : -1)) {
+                res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            }
+        }
+        break;
+    case ROW_MOD_CLEAR:
+        if (was) {
+            if (bw_mod_menu_clear((u32)r->arg) == 0) {
+                res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            } else {
+                res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
+            }
+        }
+        break;
+    case ROW_MOD_REVERT:
+        if (was) {
+            bw_mod_menu_revert();
+            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        break;
+    case ROW_NET_RELAY:
+    case ROW_NET_NAME:
+        if (was) {
+            begin_text_edit(r->type);
+            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        break;
+    case ROW_NET_RELAY_PORT:
+    case ROW_NET_CONTROL_PORT:
+        if (was && (zone == EIDOS_SUI_ZONE_DEC || zone == EIDOS_SUI_ZONE_INC)) {
+            change_net_port(r->type, zone == EIDOS_SUI_ZONE_INC ? 1 : -1);
+            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        break;
     case ROW_BIND:
         eidos_settings_capture_begin();
         g.capturing = r->arg + 1;
@@ -473,6 +910,12 @@ int eidos_sui_touch(int row, int zone)
     case ROW_DEFAULTS:
         if (was) {
             eidos_settings_defaults();
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        break;
+    case ROW_NET_DEFAULTS:
+        if (was) {
+            eidos_settings_net_defaults();
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
         break;
@@ -581,9 +1024,17 @@ static void bind_value(int button, char *out, int n)
     }
 }
 
+/* A text of the port's own settings: what is not set says so. */
+static const char *net_text(const char *s)
+{
+    return (s != NULL && s[0] != '\0') ? s : STR_NONE;
+}
+
 void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
 {
     const Row *r;
+    char buf[96];
+
     if (nl > 0) { label[0] = '\0'; }
     if (nv > 0) { value[0] = '\0'; }
     if (row == 0) {
@@ -617,6 +1068,49 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         }
         break;
     }
+    case ROW_MOD_SWITCH:
+        /* The mod's name and its switch. */
+        put(label, nl, bw_mod_menu_name_at((u32)r->arg));
+        put(value, nv, bw_mod_menu_enabled_at((u32)r->arg) ? "On" : "Off");
+        break;
+    case ROW_MOD_OPTION:
+        /* The mod's own setting, under the mod's name. */
+        snprintf(buf, sizeof buf, "  %s",
+                 bw_mod_menu_option_label((u32)r->arg, (u32)r->arg2));
+        put(label, nl, buf);
+        bw_mod_menu_option_text((u32)r->arg, (u32)r->arg2, buf, sizeof buf);
+        put(value, nv, buf);
+        break;
+    case ROW_MOD_CLEAR:
+        put(label, nl, STR_MOD_CLEAR);
+        break;
+    case ROW_MOD_REVERT:
+        put(label, nl, STR_MOD_REVERT);
+        break;
+    case ROW_ORPHAN: {
+        const char *name = bw_mod_menu_orphan_at((u32)r->arg);
+        put(label, nl, name != NULL ? name : "");
+        put(value, nv, STR_ORPHAN);
+        break;
+    }
+    case ROW_NET_RELAY:
+        put(label, nl, STR_NET_RELAY);
+        put(value, nv, net_text(eidos_settings_net_relay()));
+        break;
+    case ROW_NET_RELAY_PORT:
+        put(label, nl, STR_NET_RPORT);
+        snprintf(buf, sizeof buf, "%d", eidos_settings_net_relay_port());
+        put(value, nv, buf);
+        break;
+    case ROW_NET_CONTROL_PORT:
+        put(label, nl, STR_NET_CPORT);
+        snprintf(buf, sizeof buf, "%d", eidos_settings_net_control_port());
+        put(value, nv, buf);
+        break;
+    case ROW_NET_NAME:
+        put(label, nl, STR_NET_NAME);
+        put(value, nv, net_text(eidos_settings_net_name()));
+        break;
     default:
         put(label, nl, STR_DEFAULTS);
         break;
@@ -634,6 +1128,15 @@ int eidos_sui_row_choices(int row, int *active, char names[3][20])
         return 0;
     }
     r = &g.rows[g.scroll + row - 1];
+    if (r->type == ROW_MOD_SWITCH) {
+        /* The mod's switch: two choices, off and on. */
+        put(names[0], 20, "Off");
+        put(names[1], 20, "On");
+        if (active != NULL) {
+            *active = bw_mod_menu_enabled_at((u32)r->arg) ? 1 : 0;
+        }
+        return 2;
+    }
     if (r->type != ROW_OPTION) {
         return 0;
     }
@@ -683,13 +1186,17 @@ void eidos_sui_help_line(int i, char *out, int n)
     if (g.capturing) {
         l[0] = HELP_CAPTURE1;
         l[1] = HELP_CAPTURE2;
+    } else if (g.editing) {
+        l[0] = HELP_TEXT_EDIT1;
+        l[1] = HELP_TEXT_EDIT2;
     } else if (on_back()) {
         l[0] = g.level == 0 ? HELP_BACK_L0 : HELP_BACK_L1;
         l[2] = g.level == 0 ? HELP_KEYS_L0 : HELP_KEYS_L1;
         l[3] = g.level == 0 ? HELP_KEYS_L0B : HELP_KEYS_L1B;
     } else if (g.level == 0 && r != NULL) {
         static const char *const sec[] = {
-            HELP_SECTION_DISPLAY, HELP_SECTION_LAYOUT, HELP_SECTION_CONTROLS, HELP_SECTION_SOUND };
+            HELP_SECTION_DISPLAY, HELP_SECTION_LAYOUT, HELP_SECTION_CONTROLS,
+            HELP_SECTION_SOUND, HELP_SECTION_MODS, HELP_SECTION_NETWORK };
         l[0] = sec[r->arg];
         l[2] = HELP_KEYS_L0;
         l[3] = HELP_KEYS_L0B;
@@ -702,6 +1209,46 @@ void eidos_sui_help_line(int i, char *out, int n)
         case ROW_BIND:
             l[0] = HELP_BIND1;
             l[1] = HELP_BIND2;
+            break;
+        case ROW_MOD_SWITCH:
+            l[0] = HELP_MOD_SWITCH1;
+            l[1] = HELP_MOD_SWITCH2;
+            break;
+        case ROW_MOD_OPTION:
+            l[0] = HELP_MOD_OPTION1;
+            l[1] = HELP_MOD_OPTION2;
+            break;
+        case ROW_MOD_CLEAR:
+            l[0] = HELP_MOD_CLEAR1;
+            l[1] = HELP_MOD_CLEAR2;
+            break;
+        case ROW_MOD_REVERT:
+            l[0] = HELP_MOD_REVERT1;
+            l[1] = HELP_MOD_REVERT2;
+            break;
+        case ROW_ORPHAN:
+            l[0] = HELP_ORPHAN1;
+            l[1] = HELP_ORPHAN2;
+            break;
+        case ROW_NET_RELAY:
+            l[0] = HELP_NET_RELAY1;
+            l[1] = HELP_NET_RELAY2;
+            break;
+        case ROW_NET_RELAY_PORT:
+            l[0] = HELP_NET_RPORT1;
+            l[1] = HELP_NET_RPORT2;
+            break;
+        case ROW_NET_CONTROL_PORT:
+            l[0] = HELP_NET_CPORT1;
+            l[1] = HELP_NET_CPORT2;
+            break;
+        case ROW_NET_NAME:
+            l[0] = HELP_NET_NAME1;
+            l[1] = HELP_NET_NAME2;
+            break;
+        case ROW_NET_DEFAULTS:
+            l[0] = HELP_NET_DEFAULTS1;
+            l[1] = HELP_NET_DEFAULTS2;
             break;
         default:
             l[0] = HELP_DEFAULTS1;

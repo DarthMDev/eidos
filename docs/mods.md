@@ -25,7 +25,13 @@ answers from the data root alone.
 
 The mod list is in load order: index 0 loads first and wins least, the last
 index wins most. The order is the list order, re-sorted by each mod's
-manifest `order` key (`sdk/vfs.h`, "The mod list").
+manifest `order` key (`sdk/vfs.h`, "The mod list"). The player may choose
+another order: the mod menu's model keeps it and hands the list to the vfs
+as it is (`bw_mod_set_order`), and the player's own record carries it
+(`<save dir>/mods.ini`, an `order` key per mod). A mod the record does not
+name keeps the manifest's order and comes before the mods the player did
+order, so a mod the player has never seen does not take a win away from one
+they have.
 
 | Function | Declared in | Returns |
 |---|---|---|
@@ -82,6 +88,7 @@ order = 10
 |---|---|---|
 | `bw_set_mod_root(path)` | `sdk/port.h` | replaces the whole list with the roots in `path`, which may name several separated by `;`; NULL or `""` clears the list |
 | `bw_add_mod_root(path)` | `sdk/vfs.h` | appends one root and re-sorts, returns 0 or -1 (empty path or no memory) |
+| `bw_mod_set_order(roots, count)` | `sdk/vfs.h` | replaces the whole list with the roots in the order given, without sorting them by the manifest's `order` key: this is the order the player chose, and it is the order the mods load in |
 | `bw_clear_mods()` | `sdk/vfs.h` | clears the list |
 
 The separator is `;` on every host, because a Windows drive letter uses `:`

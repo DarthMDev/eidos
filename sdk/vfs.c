@@ -90,6 +90,15 @@ static u32    g_mod_count;
 static u32    g_mod_cap;
 static int    g_mods_set;
 
+/*
+ * The player's own order is in force: the list is the one the player
+ * chose and the manifest's `order` key does not decide it.  A root added
+ * while it holds goes at the end of the list instead of being sorted in
+ * (bw_mod_set_order).  It is dropped with the list (bw_clear_mods) and
+ * with the port's own list (bw_set_mod_root).
+ */
+static int g_player_order;
+
 static char *dup_n(const char *s, size_t n)
 {
     char *d = (char *)malloc(n + 1);
@@ -205,6 +214,9 @@ void bw_clear_mods(void)
     g_mod_count = 0;
     g_mod_cap = 0;
     g_mods_set = 1;
+    /* The list is gone, so the player's order is gone with it: the next
+     * root added is sorted in by the manifest's key again. */
+    g_player_order = 0;
     bw_vfs_flush();
 }
 
@@ -246,11 +258,15 @@ static int add_root_n(const char *path, size_t n)
         g_mod_cap = cap;
     }
 
-    /* Stable insertion: after every mod whose order is <= this one's. */
+    /* Stable insertion: after every mod whose order is <= this one's.
+     * The player's own order stands when it is in force: the root goes at
+     * the end of the list, where the player put it. */
     at = g_mod_count;
-    while (at > 0 && g_mods[at - 1].order > m.order) {
-        g_mods[at] = g_mods[at - 1];
-        at--;
+    if (!g_player_order) {
+        while (at > 0 && g_mods[at - 1].order > m.order) {
+            g_mods[at] = g_mods[at - 1];
+            at--;
+        }
     }
     g_mods[at] = m;
     g_mod_count++;
@@ -267,7 +283,41 @@ int bw_add_mod_root(const char *path)
     return add_root_n(path, strlen(path));
 }
 
-/* Replace the list with the ';'-separated roots in `list` (NULL clears). */
+/*
+ * The player's own order: this list, in this order.
+ *
+ * The whole list is replaced, so this is the way the roots are rebuilt at
+ * the menu (docs/mod-state.md, section 2, constraint 1).  The roots are
+ * taken in the order they are given and the manifest's `order` key does
+ * not decide anything while the player's order is in force: the list is
+ * the player's own.
+ */
+int bw_mod_set_order(const char *const *roots, u32 count)
+{
+    u32 i;
+    int rc = 0;
+
+    bw_clear_mods();
+    if (roots == NULL) {
+        return 0;
+    }
+    g_player_order = 1;
+    for (i = 0; i < count; i++) {
+        if (roots[i] == NULL || roots[i][0] == '\0') {
+            continue;
+        }
+        if (add_root_n(roots[i], strlen(roots[i])) != 0) {
+            fprintf(stderr, "vfs: the mod root %s could not be added\n",
+                    roots[i]);
+            rc = -1;
+        }
+    }
+    return rc;
+}
+
+/* Replace the list with the ';'-separated roots in `list` (NULL clears).
+ * This is the port's own list, so the manifest's `order` key decides the
+ * order again (bw_clear_mods drops the player's order with the list). */
 static void set_mod_list(const char *list)
 {
     bw_clear_mods();

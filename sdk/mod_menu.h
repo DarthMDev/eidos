@@ -21,11 +21,11 @@
  * section 2 ("The in-game management constraints") states them:
  *
  *   1. The roots are rebuildable at the menu, not installed once at
- *      start-up.  bw_set_mod_root, bw_add_mod_root and bw_clear_mods set
- *      them, and every change drops the cached merged archives
- *      (bw_vfs_flush).  The state namespace is per mod, so a root rebuild
- *      moves no state.  Enabling a mod adds its root, and the load point
- *      reads its state.
+ *      start-up.  bw_set_mod_root, bw_add_mod_root, bw_mod_set_order and
+ *      bw_clear_mods set them, and every change drops the cached merged
+ *      archives (bw_vfs_flush).  The state namespace is per mod, so a root
+ *      rebuild moves no state.  Enabling a mod adds its root, and the load
+ *      point reads its state.
  *   2. A code mod is disabled in order: the mod's state is flushed, then
  *      every (region, address) pair it installed is reverted to its
  *      original, and only then is its library unloaded.  The model drives
@@ -45,11 +45,21 @@
  * --------------------
  *
  * The port's own record of the player's list is <save dir>/mods.ini: the
- * mods the player knows about and the state of their switches.  It is the
- * port's file, written the way every other port file is written (a whole
- * file, atomically: sdk/save.h).  With no record and no mod root the port
- * starts with no mods, which is constraint 4; with a record the player has
- * already chosen, and the list is restored.
+ * mods the player knows about, the state of their switches and the order
+ * the player chose for them.  It is the port's file, written the way every
+ * other port file is written (a whole file, atomically: sdk/save.h).  With
+ * no record and no mod root the port starts with no mods, which is
+ * constraint 4; with a record the player has already chosen, and the list
+ * is restored -- the switches and the order.
+ *
+ * The order the player chose is the player's own, because the order the
+ * mods load in is the order their overrides and their rules take effect
+ * (docs/mod-services.md, "The mod menu": "The order can be changed").  The
+ * manifest's `order` key is the default: it decides the list while the
+ * player has not said otherwise.  The model holds the list in the order
+ * the player chose, the apply hands that order to the file layer
+ * (bw_mod_set_order, sdk/vfs.h) and the loader loads the mods in it.  The
+ * state namespace is per mod, so moving a mod in the list moves no state.
  *
  * A mod's own settings (docs/mod-services.md, "Mod settings") are declared
  * in the file the manifest's `settings` key names and the player's choices
@@ -62,8 +72,9 @@
  *
  * The model is one model for the whole process.  The port opens it when the
  * menu opens (bw_mod_menu_open), the screen asks it questions, the player
- * changes a switch (bw_mod_menu_set_enabled) and the changes are applied
- * when the player leaves the menu (bw_mod_menu_apply).  The port calls
+ * changes a switch (bw_mod_menu_set_enabled) or moves a mod
+ * (bw_mod_menu_move_up and its siblings), and the changes are applied when
+ * the player leaves the menu (bw_mod_menu_apply).  The port calls
  * bw_mod_menu_start once at start-up, before the loader runs.
  */
 
@@ -87,6 +98,9 @@ extern "C" {
  * there is one, and build the model.  The port calls this before the
  * loader runs (bw_mod_loader_load_all), so the mods the player left on are
  * loaded and their state is read at the load point.
+ *
+ * The restore is the player's own: the mods that are on, in the order the
+ * player chose, are the list the port holds from then on.
  *
  * With no record of the player's own (no <save dir>/mods.ini) the port's
  * list stands as it is: the environment's BW_MOD_ROOT, or what an explicit
@@ -131,7 +145,9 @@ const char *bw_mod_menu_settings_at(u32 index);
 /* The mod's own folder, or "" when there is none. */
 const char *bw_mod_menu_root_at(u32 index);
 
-/* The manifest's order key, the load order the port sorts by. */
+/* The manifest's order key: the load order the port sorts by, and the
+ * order a mod keeps when the player has not moved it.  It is the mod
+ * author's own key (sdk/vfs.h, "The mod list"). */
 int bw_mod_menu_order_at(u32 index);
 
 /* The player's switch: 1 when the mod is on. */
@@ -150,6 +166,43 @@ int bw_mod_menu_present_at(u32 index);
 int bw_mod_menu_has_code_at(u32 index);
 
 /* ------------------------------------------------------------------ */
+/* The order                                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The player's own order.
+ *
+ * The list the screen shows is in the order the player chose, and the
+ * order the mods load in is the order their overrides and their rules take
+ * effect, so it is the player's to choose (docs/mod-services.md, "The mod
+ * menu": "The order can be changed").  The move calls change it, and the
+ * change is held until the player leaves the menu, like the switches: the
+ * mods that are running do not change until then.
+ *
+ * The manifest's `order` key is the default: a mod the player has not
+ * moved keeps the place its author gave it (docs/modding.md, section 3).
+ * The player's own order is in the port's record (<save dir>/mods.ini), so
+ * it outlives the port, and the start-up restore reads it back.
+ *
+ * The state namespace is per mod, so a mod that moves in the list keeps
+ * its own state: the namespace is the manifest's `state` key and it
+ * travels with the mod.
+ */
+
+/* Move the mod at `index` one place towards the front of the list.  0 on
+ * success, -1 when there is no such mod or it is already at the front. */
+int bw_mod_menu_move_up(u32 index);
+
+/* Move the mod at `index` one place towards the back of the list.  0 on
+ * success, -1 when there is no such mod or it is already at the back. */
+int bw_mod_menu_move_down(u32 index);
+
+/* Move the mod at `index` to `to`, the place it takes in the list: 0 is
+ * the front.  A `to` past the end of the list is the last place.  0 on
+ * success, -1 when there is no such mod. */
+int bw_mod_menu_move_to(u32 index, u32 to);
+
+/* ------------------------------------------------------------------ */
 /* The switch                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -160,12 +213,13 @@ int bw_mod_menu_has_code_at(u32 index);
  */
 int bw_mod_menu_set_enabled(u32 index, int on);
 
-/* Non-zero when the switches differ from the port's list, so there is
- * something to apply. */
+/* Non-zero when the switches or the order differ from the port's list, so
+ * there is something to apply. */
 int bw_mod_menu_dirty(void);
 
 /*
- * Apply the switches: the changes apply when the player leaves the menu.
+ * Apply the switches and the order: the changes apply when the player
+ * leaves the menu.
  *
  * The order is the one docs/mod-state.md, section 2, constraint 2, fixes:
  * the mods' state is flushed, the mods that are running are stopped (the
@@ -176,6 +230,11 @@ int bw_mod_menu_dirty(void);
  * own state file stays where it is, and so do the game bytes the mod wrote
  * (constraint 3).
  *
+ * The roots are rebuilt in the order the player chose: the order is handed
+ * to the file layer as it is (bw_mod_set_order, sdk/vfs.h), so the loader
+ * loads the mods in it and a later mod wins over an earlier one as the
+ * player chose it.
+ *
  * Every running mod is stopped and loaded again, not only the ones that
  * are going off: the loader loads every mod in the list, so a mod that
  * stays on must not be in the list twice.
@@ -185,7 +244,8 @@ int bw_mod_menu_dirty(void);
  */
 int bw_mod_menu_apply(void);
 
-/* Drop the player's changes: the switches go back to the port's list. */
+/* Drop the player's changes: the switches go back to the port's list and
+ * the order goes back to the one the list had when the menu was opened. */
 void bw_mod_menu_revert(void);
 
 /* ------------------------------------------------------------------ */

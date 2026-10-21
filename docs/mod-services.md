@@ -513,14 +513,18 @@ order, each with an on/off switch, its settings, and "Clear saved data". The
 order can be changed. Changes apply when the player leaves the menu, following
 the rules of `docs/mod-rules.md`, section 2.
 
-**The model is there; the screen is not.** `sdk/mod_menu.c` is the model
+**The model and the screen.** `sdk/mod_menu.c` is the model
 behind the section: it holds the player's list of mods in
 `<save dir>/mods.ini`, answers the screen's questions about each of them (its
 name, its namespace, its switch, whether it is running, its settings file and
 its options), applies the player's changes when the player leaves the menu,
 clears a mod's saved data and reports the saved-data folders on the disk that
-belong to a mod that is no longer installed. The screen that draws it, the
-port's own Mods section on the settings screen, does not exist yet.
+belong to a mod that is no longer installed. The screen draws it: the port's
+own Mods section on the settings screen (`engine/platform/settings_ui.c`),
+where each mod is a row with its switch, its settings are rows under it, and
+"Clear saved data" is a row of its own. The player reorders the list with L
+and R on a mod's row, and the order the player chose is the order the mods
+load in (`docs/mods.md`, "Setting the roots").
 
 ## Related documents
 

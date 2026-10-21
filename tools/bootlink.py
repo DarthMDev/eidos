@@ -1070,6 +1070,21 @@ def generate(args):
         declared.append((value, expr, addr))
     declared.sort(key=lambda row: (row[0], row[2]))
 
+    # The rows' own names and their prototypes, as the registry keeps them
+    # (docs/mod-overrides.md, "The prototype is checked").  Every row's name
+    # is published: it is the switch a hook on the row answers by when the
+    # mod's manifest states none.  The arm9 rows' prototypes are the ones
+    # this link carries; the overlays' rows publish their own, from
+    # tools/ovlink.py, when the overlay is compiled in.
+    proto_rows = []            # (region expression, address, name, prototype)
+    for addr, dname, region, events in read_declared_set():
+        expr, value = region_expr(region)
+        if expr is None:
+            continue
+        sig = arm9_slots.get(addr, {}).get("sig") if region == "arm9" else None
+        proto_rows.append((expr, addr, dname,
+                           ovlink.proto_text(sig) if sig is not None else None))
+
     # Every data spelling the boot uses, by address, so one object stands
     # for one DS address.
     data_names = {}            # address -> set of spellings
@@ -1341,7 +1356,7 @@ def generate(args):
         write_if_changed(os.path.join(incdir, header_name(unit.path)), "\n".join(lines) + "\n")
 
     write_link_c(os.path.join(out, "boot_link.c"), consts, pinned, views, missing_funcs,
-                 arm9_slots, veneer_funcs, declared)
+                 arm9_slots, veneer_funcs, declared, proto_rows)
     # Data the data header does not bind and nothing defines has no
     # storage: the link would fail on it, so the generator does, by name.
     unbound = sorted((canonical[a], a) for a in data_names
@@ -1508,10 +1523,11 @@ def veneer_forwarder(name, target, sig):
 
 
 def write_link_c(path, consts, pinned, views, missing_funcs, slots=None,
-                 veneers=None, declared=None):
+                 veneers=None, declared=None, protos=None):
     slots = slots or {}
     veneers = veneers or {}
     declared = declared or []
+    protos = protos or []
     lines = [LINK_C_HEAD]
     lines.append("/* ---- link-time constants ---- */\n")
     runtime = []               # (name, initial value), set at start-up
@@ -1552,11 +1568,32 @@ def write_link_c(path, consts, pinned, views, missing_funcs, slots=None,
             lines.append("    { %s, 0x%08Xu }," % (expr, addr))
         lines.append("};")
         lines.append("")
+    if protos:
+        lines.append("/* ---- the declared rows: their names and their prototypes ---- */\n")
+        lines.append("/* The name is the switch a hook on the row answers by when the")
+        lines.append(" * mod's manifest states none; the prototype is the function's own,")
+        lines.append(" * normalised the way tools/ovlink.py's signature normalises it,")
+        lines.append(" * and it is what the manifest's `sig=` is compared with")
+        lines.append(" * (docs/mod-overrides.md, \"The prototype is checked\").  Every")
+        lines.append(" * row's name is here; the arm9 rows' prototypes are the ones this")
+        lines.append(" * link carries, and the overlays' rows publish their own, from")
+        lines.append(" * tools/ovlink.py. */")
+        lines.append("static const BwModSlotProto bw_proto_rows[] = {")
+        for expr, addr, dname, proto in protos:
+            lines.append("    { %s, 0x%08Xu, \"%s\", %s }," % (
+                expr, addr, dname,
+                "\"%s\"" % proto if proto is not None else "NULL"))
+        lines.append("};")
+        lines.append("")
     lines.append("void bw_boot_link_init(void)\n{")
     # The declared set first: a mod loads before any overlay does, and the
     # manifest's check asks the set as the mod loads.
     if declared:
         lines.append("    bw_mod_declare_table(bw_declared_rows, %du);" % len(declared))
+    # The rows' names and prototypes beside it: the manifest's check asks
+    # them as the mod loads too.
+    if protos:
+        lines.append("    bw_mod_publish_protos(bw_proto_rows, %du);" % len(protos))
     # Addresses first: a second view of a pinned object copies its pointer.
     for name, value in sorted(runtime, key=lambda r: r[1].startswith("bw_lc_")):
         lines.append("    bw_lc_%s = %s;" % (name, value))

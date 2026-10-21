@@ -10,6 +10,12 @@
  * A hook is on unless it is switched off: by the environment variable
  * EIDOS_HOOKS_OFF (a comma separated list of names, or "all"), or by
  * bw_hook_set(name, 0), which the demo's --no-hook NAME calls.
+ *
+ * The mod layer asks it too, once per hook: a hook a mod installed carries
+ * the switch its manifest named, or the declared row's own function name
+ * when it stated none, and the registry asks it with that name
+ * (sdk/mod_slot.c; docs/mod-overrides.md, "The switch").  A hook whose
+ * switch is off is skipped, and the walk goes on to the next link inward.
  */
 #ifndef BW_PORT_MOD_HOOKS_H
 #define BW_PORT_MOD_HOOKS_H

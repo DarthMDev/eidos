@@ -28,6 +28,12 @@
  * window is therefore the game's own save and not the menu's apply, and a
  * mod's own file is written only when the game saved.
  *
+ * The game's own save can be cancelled, and its SAVE_CONTROL_CancelSave has
+ * no row: the port hears nothing when the player cancels a save.  What it
+ * hears is the next save.begin, and a window that is still open then
+ * belongs to a save that never finished, so the window is closed and the
+ * payload it held is dropped, the way a failed write drops it.
+ *
  * The game's own accessors are declared under the names src/game gives
  * them, the way sdk/mod_state.c does: the port's older address spellings
  * are redirected onto the same names by the build's gamespell header
@@ -131,10 +137,17 @@ extern u32 POKE_TOOL_GetPartyValue(struct PokemonParam *mon, u32 paramId, u32 ar
  * it closes.  The window is the game's own save, not the menu's apply
  * (docs/mod-state.md, section 2).
  *
+ * The game's save.begin is bw_mod_savedata_save_start and not the plain
+ * save_begin: a window that is still open when a save begins belongs to a
+ * save that never finished (the game cancelled it, and its own
+ * SAVE_CONTROL_CancelSave has no row), so the window is closed and the
+ * payload it held is dropped, the way a failed write drops it.
+ *
  * Weak, so that a link without the saved-data layer still succeeds: the
  * rows then only fill their payloads.
  */
 extern void bw_mod_savedata_save_begin(void) BW_PORT_WEAK;
+extern void bw_mod_savedata_save_start(void) BW_PORT_WEAK;
 extern int  bw_mod_savedata_save_done(int ok, u32 check) BW_PORT_WEAK;
 extern u32  bw_mod_savedata_save_check(void) BW_PORT_WEAK;
 
@@ -224,6 +237,12 @@ static void build_game_new(const BwEventCall *call, BwEventPayload *out)
  * handler is held until the game's save is done, so the mod's own file
  * and the game's save are written in the same step
  * (docs/mod-state.md, section 2).
+ *
+ * A window that is still open when the game's save begins belongs to a
+ * save that never finished: the game cancelled it, and its own
+ * SAVE_CONTROL_CancelSave has no row, so the port hears nothing when that
+ * happens.  The window is closed here and the payload it held is dropped,
+ * the way a failed write drops it.
  */
 static void build_save_begin(const BwEventCall *call, BwEventPayload *out)
 {
@@ -233,7 +252,9 @@ static void build_save_begin(const BwEventCall *call, BwEventPayload *out)
     out->save_begin.play_seconds = play_seconds_of_save(save);
     out->save_begin.zone = save_zone(save);
 
-    if (bw_mod_savedata_save_begin != NULL) {
+    if (bw_mod_savedata_save_start != NULL) {
+        bw_mod_savedata_save_start();
+    } else if (bw_mod_savedata_save_begin != NULL) {
         bw_mod_savedata_save_begin();
     }
 }

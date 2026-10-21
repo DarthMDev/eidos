@@ -65,6 +65,11 @@ void        bw_mod_savedata_set_api(u32 api);
 void        bw_mod_savedata_set_save(const char *name);
 void        bw_mod_savedata_set_save_check(u32 check);
 u32         bw_mod_savedata_save_check(void);
+void        bw_mod_savedata_set_save_bytes(const void *save, u32 len,
+                                           u32 chip_size);
+void        bw_mod_savedata_save_start(void);
+int         bw_mod_savedata_save_done(int ok, u32 check);
+u32         bw_mod_savedata_crc(const void *data, u32 size);
 int         bw_mod_savedata_in_step(void);
 s32         bw_mod_savedata_load(void *buf, u32 size);
 int         bw_mod_savedata_store(const void *buf, u32 size);
@@ -388,6 +393,57 @@ int main(void)
     memset(buf, 0, sizeof buf);
     BW_CHECK_EQ("the mod starts from its defaults",
                 (long)bw_mod_savedata_load(buf, (u32)sizeof(buf)), 0);
+
+    printf("a save that never finished\n");
+    /* The game's save.begin opens the window; a store inside it holds the
+     * payload instead of writing it. */
+    bw_mod_savedata_set_namespace(T_NS);
+    bw_mod_savedata_save_start();
+    BW_REQUIRE("the store succeeds",
+               bw_mod_savedata_store(payload, n) == 0);
+    BW_REQUIRE("the state file is where the port says",
+               state_path(path, sizeof path, "") == 0);
+    BW_CHECK_EQ("and the payload is held, not written",
+                file_exists(path), 0);
+    /* The next save begins, so the one before it never finished: its
+     * payload is dropped and nothing is written. */
+    bw_mod_savedata_save_start();
+    BW_CHECK_EQ("a save that did not happen writes nothing",
+                file_exists(path), 0);
+    /* A window that is closed by a save that did happen writes the payload
+     * with the save in force's checksum. */
+    bw_mod_savedata_save_start();
+    BW_REQUIRE("the store succeeds",
+               bw_mod_savedata_store(payload, n) == 0);
+    BW_CHECK_EQ("the payload is still held",
+                file_exists(path), 0);
+    bw_mod_savedata_save_done(1, bw_mod_savedata_save_check());
+    BW_CHECK_EQ("the payload is written when the save ends",
+                file_exists(path), 1);
+    BW_REQUIRE("the header is there", bw_mod_savedata_info(&h) == 0);
+    BW_CHECK_EQ("and it carries the save in force's checksum",
+                (long)h.save_check, (long)bw_mod_savedata_save_check());
+
+    printf("one checksum for the save in force\n");
+    {
+        u8 save[64];
+        u8 image[128];
+        u32 chip = 128;
+
+        memset(save, 0x5A, sizeof save);
+        memset(image, 0xFF, sizeof image);
+        memcpy(image, save, sizeof save);
+        bw_mod_savedata_set_save_bytes(save, (u32)sizeof save, chip);
+        BW_CHECK_EQ("the checksum is the chip's image's",
+                    (long)bw_mod_savedata_save_check(),
+                    (long)bw_mod_savedata_crc(image, (u32)sizeof image));
+        /* A file shorter than the chip brings its trailer along, and the
+         * handoff and the layer agree on that one checksum. */
+        bw_mod_savedata_set_save_bytes(image, (u32)sizeof image, chip);
+        BW_CHECK_EQ("and it is the same when the file is the chip's size",
+                    (long)bw_mod_savedata_save_check(),
+                    (long)bw_mod_savedata_crc(image, (u32)sizeof image));
+    }
 
     printf("a namespace that is not one path component\n");
     bw_mod_savedata_set_namespace("bad/name");

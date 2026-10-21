@@ -13,7 +13,7 @@
   "implicit_decls": 0,
   "link_failed_targets": 0,
   "matched_total": 1374,
-  "note": "the restart entry point, the save window from the game's own events, the wrap chain, and the last four documents",
+  "note": "the mod menu's screen, the player's order, the switch name and the prototype check, and the save window's last gaps",
   "shim_replaced": 239,
   "stubbed_asm": 17,
   "stubbed_open": 4,
@@ -25,5 +25,5 @@
   "tree": "src/game",
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 22
+  "wave": 23
 }

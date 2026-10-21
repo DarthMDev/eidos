@@ -49,13 +49,13 @@ int main(void)
     row(0);
     BW_CHECK_EQ("header", strcmp(g_label, "Settings"), 0);
     BW_CHECK_EQ("header has no counter", g_value[0], 0);
-    BW_CHECK_EQ("section rows", eidos_sui_row_count(), 1 + 4 + 1);
-    row(5);
+    BW_CHECK_EQ("section rows", eidos_sui_row_count(), 1 + 5 + 1);
+    row(6);
     BW_CHECK_EQ("grey bar on the list", strcmp(g_label, "Done"), 0);
     row(1);
     BW_CHECK_EQ("first section", strcmp(g_label, "Display"), 0);
-    row(4);
-    BW_CHECK_EQ("last section", strcmp(g_label, "Sound"), 0);
+    row(5);
+    BW_CHECK_EQ("last section shown", strcmp(g_label, "Mods"), 0);
     r = press(L);
     BW_CHECK_EQ("L does nothing", r, 0);
     r = press(RIGHT);

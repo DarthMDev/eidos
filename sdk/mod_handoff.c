@@ -73,6 +73,23 @@
  * comes from the network, so it is never used to build a path here: the
  * saved-data layer is the one that checks it (bw_mod_savedata_set_namespace
  * refuses a name that is not one path component).
+ *
+ * The checksum of the save in force
+ * --------------------------------
+ *
+ * One source: the saved-data layer's rule (sdk/mod_savedata.c), which is
+ * the CRC-32 of the save's bytes as the chip holds them.  The chip's image
+ * (sdk/arm7/fs.c) is the save file's first <chip size> bytes with the rest
+ * of the chip erased (0xFF), so the rule gives the same number for the
+ * chip's image and for the file it came from.
+ *
+ * The handoff cannot read the chip's image after it installs a save: it
+ * drops the image, so the game loads the file that was written and not the
+ * image it had.  It therefore gives the layer the bytes it wrote and the
+ * chip's size, and the layer takes their checksum the one way.  The answer
+ * the layer reads from the chip after the reload is the same number, so a
+ * mod's file cannot be out of step with the save in force because of a file
+ * with a trailer or one shorter than the chip.
  */
 
 #include <stdio.h>
@@ -106,6 +123,8 @@
 extern const char *bw_mod_savedata_namespace(void) BW_PORT_WEAK;
 extern void        bw_mod_savedata_set_namespace(const char *ns) BW_PORT_WEAK;
 extern void        bw_mod_savedata_set_save_check(u32 check) BW_PORT_WEAK;
+extern void        bw_mod_savedata_set_save_bytes(const void *save, u32 len,
+                                                  u32 chip_size) BW_PORT_WEAK;
 extern s32         bw_mod_savedata_load(void *buf, u32 size) BW_PORT_WEAK;
 extern int         bw_mod_savedata_store(const void *buf, u32 size) BW_PORT_WEAK;
 extern int         bw_mod_savedata_info(BwModStateHeader *out) BW_PORT_WEAK;
@@ -668,6 +687,26 @@ static int send_transfer(u32 max, int *err)
 /* ------------------------------------------------------------------ */
 
 /*
+ * The chip's size: the size of the chip's image, or the port's own chip
+ * size when the chip has not been identified yet.  The save that is
+ * installed becomes the chip's image, so the chip's size is what the
+ * save's bytes are cut at and padded to (sdk/mod_savedata.c takes the
+ * checksum of a save the one way).
+ */
+static u32 chip_size(void)
+{
+    u32 size = 0;
+
+    if (bw_arm7_backup_image != NULL) {
+        (void)bw_arm7_backup_image(&size);
+    }
+    if (size == 0u) {
+        size = BW_MOD_HANDOFF_CHIP_MAX;
+    }
+    return size;
+}
+
+/*
  * The save is installed: the game save is written and the mod's own data
  * is written beside it, with the checksum of the save that was installed
  * (docs/mod-state.md, section 2).  The mod's own handler is told, and then
@@ -679,6 +718,14 @@ static void install_save(u32 peer, const char *name, const u8 *save,
     char path[BW_MOD_HANDOFF_PATH_MAX];
     char saved_ns[BW_MOD_HANDOFF_NS_MAX + 1];
     BwSaveHandler fn;
+    u32 chip;
+
+    /*
+     * The chip's size is taken before the image goes: the save that is
+     * installed is the chip's image, and the checksum of the save in force
+     * is the checksum of the chip's bytes.
+     */
+    chip = chip_size();
 
     /*
      * The chip's own image goes first: the game must load the file that is
@@ -698,8 +745,17 @@ static void install_save(u32 peer, const char *name, const u8 *save,
                         "written; the old one is kept\n", (unsigned int)peer);
         return;
     }
-    /* The mod's own data, with the checksum of the save now in force. */
-    if (bw_mod_savedata_set_save_check != NULL) {
+    /*
+     * The mod's own data, with the checksum of the save now in force.  The
+     * saved-data layer takes that checksum the one way it takes every
+     * checksum: the save's bytes as the chip holds them, so the layer's
+     * answer and this one are one answer (a file with a trailer, or one
+     * shorter than the chip, cannot make the two disagree).  A link without
+     * the layer falls back on the handoff's own checksum of the bytes.
+     */
+    if (bw_mod_savedata_set_save_bytes != NULL) {
+        bw_mod_savedata_set_save_bytes(save, save_len, chip);
+    } else if (bw_mod_savedata_set_save_check != NULL) {
         bw_mod_savedata_set_save_check(handoff_crc(save, save_len));
     }
     copy_text(saved_ns, sizeof(saved_ns), current_namespace());

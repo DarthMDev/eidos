@@ -27,6 +27,7 @@
 
 #include "port.h"
 #include "port_test.h"
+#include "vfs.h"
 
 #ifdef _WIN32
 #include <direct.h>
@@ -43,6 +44,9 @@
 #define T_ROOT "vfs_test_tmp"
 #define T_BASE T_ROOT "/base"
 #define T_MOD  T_ROOT "/mod"
+#define T_A    T_ROOT "/a"
+#define T_B    T_ROOT "/b"
+#define T_C    T_ROOT "/c"
 
 static int write_file(const char *path, const char *text)
 {
@@ -92,15 +96,20 @@ static void build_tree(void)
     write_file(T_MOD "/shared.txt", "mod");
     write_file(T_MOD "/only_mod.txt", "m");
 }
-
 static void clean_tree(void)
 {
     remove(T_BASE "/shared.txt");
     remove(T_BASE "/only_base.txt");
     remove(T_MOD "/shared.txt");
     remove(T_MOD "/only_mod.txt");
+    remove(T_A "/eidos_mod.txt");
+    remove(T_B "/eidos_mod.txt");
+    remove(T_C "/eidos_mod.txt");
     BW_RMDIR(T_BASE);
     BW_RMDIR(T_MOD);
+    BW_RMDIR(T_A);
+    BW_RMDIR(T_B);
+    BW_RMDIR(T_C);
     BW_RMDIR(T_ROOT);
 }
 
@@ -150,6 +159,50 @@ int main(void)
                 bw_data_path(path, sizeof(path), "only_mod.txt") == 0
                 && starts_with(path, T_BASE), 1);
     BW_CHECK_EQ("and it no longer exists", bw_data_exists("only_mod.txt"), 0);
+
+    printf("the order the player chose\n");
+    /* Three mods, each with a manifest whose order key says where it
+     * belongs: the port's own list is sorted by that key. */
+    BW_MKDIR(T_A);
+    BW_MKDIR(T_B);
+    BW_MKDIR(T_C);
+    write_file(T_A "/eidos_mod.txt", "name = A\norder = 30\n");
+    write_file(T_B "/eidos_mod.txt", "name = B\norder = 10\n");
+    write_file(T_C "/eidos_mod.txt", "name = C\norder = 20\n");
+    bw_set_mod_root("");
+    bw_add_mod_root(T_A);
+    bw_add_mod_root(T_B);
+    bw_add_mod_root(T_C);
+    BW_CHECK_EQ("the list is in the manifest's order",
+                bw_mod_count(), 3);
+    BW_CHECK_EQ("the first is the one with the lowest key",
+                strcmp(bw_mod_root_at(0), T_B), 0);
+    BW_CHECK_EQ("the last is the one with the highest key",
+                strcmp(bw_mod_root_at(2), T_A), 0);
+    {
+        const char *order[3];
+
+        order[0] = T_C;
+        order[1] = T_A;
+        order[2] = T_B;
+        BW_CHECK_EQ("the player's order is taken",
+                    bw_mod_set_order(order, 3), 0);
+        BW_CHECK_EQ("and the list is in it",
+                    strcmp(bw_mod_root_at(0), T_C), 0);
+        BW_CHECK_EQ("the second is the player's too",
+                    strcmp(bw_mod_root_at(1), T_A), 0);
+        BW_CHECK_EQ("and the third",
+                    strcmp(bw_mod_root_at(2), T_B), 0);
+    }
+    bw_set_mod_root("");
+    BW_CHECK_EQ("clearing the list drops the player's order",
+                bw_mod_count(), 0);
+    bw_add_mod_root(T_A);
+    bw_add_mod_root(T_B);
+    bw_add_mod_root(T_C);
+    BW_CHECK_EQ("and the manifest's key is back in charge",
+                strcmp(bw_mod_root_at(0), T_B), 0);
+    bw_set_mod_root("");
 
     clean_tree();
     BW_REPORT("test_vfs");

@@ -93,6 +93,7 @@ function(eidos_armdata prefix)
                 ${_armdata_cut_dep}
                 ${ALETHEIA_ROOT}/layout/layout.json
                 ${ALETHEIA_ROOT}/layout/data_objects.json
+                ${ALETHEIA_ROOT}/layout/function_addrs.tsv
                 ${ALETHEIA_ROOT}/layout/symbols_sdk.txt
                 ${listings}
         COMMENT "Generating ${prefix} (ARM9 data names, relocations) from ${ALETHEIA_ROOT}/layout"
