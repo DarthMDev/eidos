@@ -60,7 +60,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0x0820E36Bu
+#define BW_MOD_API_HASH 0x9868E9E2u
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */

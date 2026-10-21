@@ -1052,6 +1052,7 @@ static void build_battle_setup(const BwPortSetup *setup, BwEventPayload *out)
         return;
     }
     out->battle_start.wild = (u8)(setup->competitor == 0u ? 1u : 0u);
+    bw_mod_state_set_battle_wild((s32)out->battle_start.wild);
     if (g_battle_request.format != BW_PORT_FORMAT_UNKNOWN) {
         out->battle_start.format = g_battle_request.format;
     } else {

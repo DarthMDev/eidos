@@ -105,6 +105,11 @@ static int unfilled_calls(const BwModState *t)
     if (t->mon_release == NULL) { n++; }
     if (t->item_count == NULL) { n++; }
     if (t->item_add == NULL) { n++; }
+    if (t->area_of == NULL) { n++; }
+    if (t->battle_wild == NULL) { n++; }
+    if (t->play_seconds == NULL) { n++; }
+    if (t->item_value == NULL) { n++; }
+    if (t->move_value == NULL) { n++; }
     return n;
 }
 
@@ -248,8 +253,11 @@ int main(void)
     BW_CHECK_EQ("the bag's two follow the release",
                 (long)offsetof(BwModState, item_add)
                 - (long)offsetof(BwModState, party_count), 27 * (long)sizeof(void *));
+    BW_CHECK_EQ("the area, the battle kind, the play time and the data follow",
+                (long)offsetof(BwModState, move_value)
+                - (long)offsetof(BwModState, party_count), 32 * (long)sizeof(void *));
     BW_CHECK_EQ("and nothing follows them",
-                (long)sizeof(BwModState) - (long)offsetof(BwModState, item_add),
+                (long)sizeof(BwModState) - (long)offsetof(BwModState, move_value),
                 (long)sizeof(void *));
 
     printf("the services table\n");
@@ -276,8 +284,12 @@ int main(void)
                 (long)offsetof(BwModServices, state_in_step)
                 - (long)offsetof(BwModServices, state_dir),
                 (long)sizeof(void *));
+    BW_CHECK_EQ("version 4's table read follows it",
+                (long)offsetof(BwModServices, table_get)
+                - (long)offsetof(BwModServices, state_in_step),
+                (long)sizeof(void *));
     BW_CHECK_EQ("and nothing follows it",
-                (long)sizeof(BwModServices) - (long)offsetof(BwModServices, state_in_step),
+                (long)sizeof(BwModServices) - (long)offsetof(BwModServices, table_get),
                 (long)sizeof(void *));
 
     printf("the in-step call\n");
@@ -403,6 +415,9 @@ int main(void)
     BW_CHECK_EQ("an add without a bag fails", (long)(t->item_add(1, 1) != 0), 1);
     BW_CHECK_EQ("an item past the limit is refused",
                 (long)(t->item_add(0xFFFFu, 1) != 0), 1);
+    BW_CHECK_EQ("no battle is running", (long)t->battle_wild(), -1);
+    BW_CHECK_EQ("the area has no answer", (long)(t->area_of(1) < 0), 1);
+    BW_CHECK_EQ("the play time reads 0", (long)t->play_seconds(), 0);
 
     /* A call with no place to answer into fails too. */
     BW_CHECK_EQ("a party reference with no room fails",

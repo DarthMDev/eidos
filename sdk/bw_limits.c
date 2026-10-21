@@ -45,6 +45,15 @@ static const LimitRow k_limits[BW_PORT_LIMIT_COUNT] = {
      * effects from 0x231 (ov093 btlv_effvm.c), so a move past 0x230 has
      * no animation until that routing is remapped. */
     { "limit.moves", 559u, 0xFFFEu },
+    /* BTLV_EFFECT_MOVE_END: the first battle effect id that is not a move
+     * (ov094 btlv_effvm_types.h).  No mod sets it: it is to follow the
+     * move limit once every effect id the battle server sends is written
+     * relative to it, so it stays at the DS value until then. */
+    { NULL, 0x231u, 0x231u },
+    /* FLDMMDL_OBJCODE_TABLE_COUNT: the field object code table (ov010
+     * fldmmdl_types.h).  Not raisable until the code-to-index remap is in
+     * the port. */
+    { NULL, 799u, 799u },
 };
 
 static u32 g_value[BW_PORT_LIMIT_COUNT];
@@ -212,7 +221,12 @@ static void read_manifest_limits(const char *root)
             vs++;
         }
         for (id = 0; id < BW_PORT_LIMIT_COUNT; id++) {
-            size_t kl = strlen(k_limits[id].key);
+            size_t kl;
+
+            if (k_limits[id].key == NULL) {
+                continue;   /* the port sets this one, not a mod */
+            }
+            kl = strlen(k_limits[id].key);
 
             if ((size_t)(ke - ks) != kl || memcmp(ks, k_limits[id].key, kl) != 0) {
                 continue;
@@ -391,7 +405,7 @@ int bw_limits_apply(void)
         read_manifest_limits(bw_mod_root_at(i));
     }
     for (i = 0; i < BW_PORT_LIMIT_COUNT; i++) {
-        if (g_value[i] != k_limits[i].vanilla) {
+        if (g_value[i] != k_limits[i].vanilla && k_limits[i].key != NULL) {
             fprintf(stderr, "eidos: %s raised to %u\n", k_limits[i].key,
                     (unsigned)g_value[i]);
         }

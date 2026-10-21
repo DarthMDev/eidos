@@ -19,7 +19,9 @@ is written as a code mod. The two mix: a mod can ship rules and a library.
 
 ## 2. The grammar
 
-A rule is one text file. The manifest binds it to its event:
+A rule is one text file, and a file holds one rule. The manifest binds it to
+its event; a mod with several rules has several files and several `rule`
+lines:
 
 ```
 rule = <event> <path>
@@ -52,6 +54,8 @@ rule <name> on <event>
 | `sub <target> <expr>` | subtract from a target |
 | `message <expr>` | show a line of text to the player (`docs/mod-services.md`) |
 | `send <expr>` | send a value to the peers of the current session (`docs/mod-services.md`) |
+| `release <expr>` | release a Pokemon of the player's party for good: a mon (a party or a player-side battle reference) or a party position. Applied at the next field step; refused if it would leave no Pokemon that is not an egg (version 4) |
+| `give <item> <count>` | put `count` of `item` in the bag, all or nothing (version 4) |
 
 ### Targets
 
@@ -85,7 +89,19 @@ A target is a modifiable payload field, a game state field or a mod cell:
 <atom>    = <number> | "true" | "false" | <text> | <name> | "(" <expr> ")"
 <name>    = "event" "." <field> | <state-field> [ "[" <expr> "]" ]
           | "state" "." <ident> [ "[" <expr> "]" ]
+          | "setting" "." <ident>
+          | "table" "." <ident> "[" <expr> "]"
 ```
+
+The two-character operators are `==`, `!=`, `<=`, `>=`, `&&` and `||`. Any
+other pair of operator characters reads as two tokens, so `x*-1` and `a<-1`
+mean what they look like. `=`, `&` and `|` alone are errors.
+
+- `setting.<key>` reads one of the mod's own settings (the settings
+  declaration in its manifest); a key the mod does not declare reads -1.
+- `table.<name>[key]` reads the mod's own data table (`docs/mod-tables.md`);
+  a key the table does not list reads the table's default. A rule that names
+  a table its mod does not declare is refused at load.
 
 ### Types
 
@@ -162,15 +178,33 @@ names:
 | `type1[m]`, `type2[m]` | a Pokemon's types | read |
 | `shiny[m]` | whether a Pokemon is shiny | read |
 | `held_item[m]` | a Pokemon's held item | read |
+| `personality[m]`, `ot_id[m]`, `exp[m]`, `friendship[m]`, `ability[m]` | a Pokemon's own fields (version 4) | read |
+| `move1[m]` .. `move4[m]` | a Pokemon's moves (version 4) | read |
+| `is_egg[m]`, `gender[m]`, `form[m]`, `nature[m]`, `has_nickname[m]` | (version 4) | read |
+| `place[m]`, `side[m]` | where a reference points: `BW_MON_*`, and in a battle the side (0 the player's) (version 4) | read |
 | `species_type1[s]`, `species_type2[s]` | a species' types | read |
 | `species_bst[s]` | a species' base stat total | read |
+| `species_stage[s]`, `catch_rate[s]`, `gender_ratio[s]`, `growth[s]`, `egg_group1[s]`, `egg_group2[s]` | a species' data (version 4) | read |
 | `caught[s]` | whether a species is registered caught | read |
+| `owned[s]` | whether the party or a box holds a Pokemon of species `s` that is not an egg (version 4) | read |
+| `party_max_level`, `party_alive` | the highest level in the party; how many party Pokemon have HP, eggs left out (version 4) | read |
+| `party_has_type[t]` | whether a party Pokemon (not an egg) has type `t` (version 4) | read |
 | `item_count[i]` | how many of item `i` the bag holds | read |
-| `battle_style` | shift or set | read, write |
+| `item_pocket[i]` | the bag pocket of item `i` (version 4) | read |
+| `move_type[v]`, `move_power[v]`, `move_class[v]` | a move's type, power and damage class, as the move data stores them (version 4) | read |
+| `area` | the current area: the place name the game shows on entry; every floor of a cave and every building of a town share it (version 4) | read |
+| `area_of[z]` | the area of zone `z` (version 4) | read |
+| `wild_battle` | the battle in progress is a wild one (version 4) | read |
+| `play_seconds` | the play time in seconds (version 4) | read |
+| `battle_style` | shift or set | read |
 | `in_battle` | a battle is in progress | read |
 
-`m` is a Pokemon reference, usually `event.mon`; `s` a species; `i` an item.
-A name not in the table is a load error.
+`m` is a Pokemon reference, usually `event.mon`, or a party position (0 to
+5); `s` a species; `i` an item; `v` a move; `t` a type; `z` a zone. A name not
+in the table is a load error.
+
+`battle_style` is read-only: the battle reads it once when it starts, so a
+write would not reach the battle in progress.
 
 ## 4. Execution
 

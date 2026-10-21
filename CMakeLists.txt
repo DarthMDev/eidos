@@ -448,6 +448,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/inflate.c       # DEFLATE, for packaged mods
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_bw.c        # `.bw` mod packages, unpacked to a cache
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/bw_limits.c     # content limits mods raise (bw_limit_get)
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_table.c     # a mod's own data tables (`table` lines)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_hooks.c     # on/off switch for port-side code hooks (docs/hooks.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_slot.c      # the mod seam's slot registry (docs/mod-interface.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event.c     # the event dispatch: bindings, handlers, the scope stack
@@ -1647,6 +1648,11 @@ endforeach()
 add_test(NAME test_vfs_msg COMMAND test_vfs_msg ${BW_DATA_ROOT_ABS})
 add_test(NAME test_vfs_sdat COMMAND test_vfs_sdat ${BW_DATA_ROOT_ABS})
 add_test(NAME test_mod_bw COMMAND test_mod_bw WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# A mod's own data tables: the file format and the reads.
+add_executable(test_mod_table ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_table.c)
+target_include_directories(test_mod_table PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_mod_table PRIVATE eidos)
+add_test(NAME test_mod_table COMMAND test_mod_table WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # Loading an overlay whose code is not in the build must stop at the load and
 # say which overlay and which function.  The process aborts, so the check
 # runs through tests/expect_panic.cmake (see its header for why).

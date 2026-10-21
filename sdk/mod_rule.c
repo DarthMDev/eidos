@@ -101,6 +101,7 @@
 #include "mod_net.h"
 #include "mod_rule.h"
 #include "mod_state.h"
+#include "mod_table.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -239,6 +240,7 @@ enum {
     BW_RULE_OP_STATE,       /* a state field */
     BW_RULE_OP_CELL,        /* state.<cell> */
     BW_RULE_OP_SETTING,     /* setting.<key> */
+    BW_RULE_OP_TABLE,       /* table.<name>[key] */
     BW_RULE_OP_NEG,         /* - */
     BW_RULE_OP_NOT,         /* ! */
     BW_RULE_OP_ADD,         /* + */
@@ -871,6 +873,83 @@ static const BwRuleStateField g_state_fields[] = {
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
     { .name = "item_count", .kind = BW_RULE_SK_INT, .writable = 0,
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
+
+    /* Interface version 4: more of a Pokemon's own fields. */
+    { .name = "personality", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_PERSONALITY },
+    { .name = "ot_id", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_OT_ID },
+    { .name = "exp", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_EXP },
+    { .name = "friendship", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_FRIENDSHIP },
+    { .name = "ability", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_ABILITY },
+    { .name = "move1", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_MOVE1 },
+    { .name = "move2", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_MOVE2 },
+    { .name = "move3", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_MOVE3 },
+    { .name = "move4", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_MOVE4 },
+    { .name = "is_egg", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_IS_EGG },
+    { .name = "gender", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_GENDER },
+    { .name = "form", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_FORM },
+    { .name = "nature", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_NATURE },
+    { .name = "has_nickname", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_HAS_NICKNAME },
+    /* Where a reference points: its place (BW_MON_*) and, in a battle,
+     * its side (0 the player's). */
+    { .name = "place", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "side", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+
+    /* Interface version 4: the species data by name. */
+    { .name = "species_stage", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "gender_ratio", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "egg_group1", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "egg_group2", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "growth", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "catch_rate", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+
+    /* Interface version 4: the world, the battle, the party as a whole,
+     * item and move data. */
+    { .name = "area", .kind = BW_RULE_SK_PLAIN, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "area_of", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "wild_battle", .kind = BW_RULE_SK_PLAIN, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "play_seconds", .kind = BW_RULE_SK_PLAIN, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "owned", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "party_max_level", .kind = BW_RULE_SK_PLAIN, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "party_alive", .kind = BW_RULE_SK_PLAIN, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "party_has_type", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "item_pocket", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "move_type", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "move_power", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "move_class", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
     { .name = "battle_style", .kind = BW_RULE_SK_PLAIN, .writable = 1,
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
     { .name = "in_battle", .kind = BW_RULE_SK_PLAIN, .writable = 0,
@@ -1341,9 +1420,12 @@ static int scan_next(BwRuleScan *s, BwRuleToken *t, char *err, size_t err_size)
                 memcpy(t->text, op, n + 1u);
                 return 0;
             }
-            snprintf(err, err_size, "the operator '%s' is not in the language",
-                     op);
-            return -1;
+            /* Not a pair the language has: the first character is an
+             * operator on its own and the second starts the next token, so
+             * `x*-1` and `a<-1` read as they look. */
+            s->p--;
+            n = 1u;
+            op[1] = '\0';
         }
         if (strcmp(op, "=") == 0) {
             snprintf(err, err_size,
@@ -1559,6 +1641,60 @@ static int parse_name(BwRuleParse *p)
         if (p_advance(p) != 0) {
             return -1;
         }
+        return node;
+    }
+
+    /* table.<name>[key]: a value of one of the mod's own data tables
+     * (sdk/mod_table.h); a key the table does not have reads its
+     * default. */
+    if (tok_is_ident(p, "table")) {
+        int sub;
+
+        if (p_advance(p) != 0) {
+            return -1;
+        }
+        if (p->tok.kind != BW_RULE_TK_DOT) {
+            parse_error(p, p->err_line, "a '.' was expected after 'table'");
+            return -1;
+        }
+        if (p_advance(p) != 0) {
+            return -1;
+        }
+        if (p->tok.kind != BW_RULE_TK_IDENT) {
+            parse_error(p, p->err_line, "a table's name was expected");
+            return -1;
+        }
+        if (!bw_mod_table_exists(p->rule->ns, p->tok.text)) {
+            parse_error(p, p->err_line, "the mod has no table '%s' (a "
+                        "`table` line in its manifest)", p->tok.text);
+            return -1;
+        }
+        node = new_node(p, BW_RULE_OP_TABLE, BW_RULE_T_INT);
+        if (node < 0) {
+            return -1;
+        }
+        p->rule->nodes[node].text = rule_string(p->rule, p->tok.text);
+        if (p->rule->nodes[node].text == NULL) {
+            parse_error(p, p->err_line, "no room for the table's name");
+            return -1;
+        }
+        if (p_advance(p) != 0) {
+            return -1;
+        }
+        sub = parse_subscript(p);
+        if (p->err[0] != '\0') {
+            return -1;
+        }
+        if (sub == BW_RULE_NO_NODE) {
+            parse_error(p, p->err_line, "a table is read with a key: "
+                        "table.<name>[key]");
+            return -1;
+        }
+        if (!type_is_number(p->rule->nodes[sub].type)) {
+            parse_error(p, p->err_line, "a table's key must be a number");
+            return -1;
+        }
+        p->rule->nodes[node].sub = (u16)sub;
         return node;
     }
 
@@ -3245,6 +3381,204 @@ static int state_in_battle(void)
     return 0;
 }
 
+/* The species data ids the rules name (POKE_PERSONAL_GetParam). */
+static const struct {
+    const char *name;
+    u32         id;
+} k_species_fields[] = {
+    { "catch_rate", 8u },
+    { "gender_ratio", 20u },
+    { "growth", 23u },
+    { "egg_group1", 24u },
+    { "egg_group2", 25u },
+    { "species_stage", 36u }
+};
+
+/* The item and move data ids the rules name (FILE_UTIL_GetItemParam,
+ * WAZA_TOOL_GetParam). */
+#define BW_RULE_ITEM_POCKET 5u
+#define BW_RULE_MOVE_TYPE   0u
+#define BW_RULE_MOVE_CLASS  2u
+#define BW_RULE_MOVE_POWER  3u
+
+/* A party member's field, by position. */
+static int party_field(const BwModState *st, u32 slot, u32 field, u32 *out)
+{
+    BwMonRef ref;
+
+    if (st->party_ref == NULL || st->party_get == NULL ||
+        st->party_ref(slot, &ref) != 0) {
+        return -1;
+    }
+    return st->party_get(ref, field, out);
+}
+
+/* Whether the player has a Pokemon of this species, in the party or a
+ * box.  An egg does not count. */
+static int state_owned(const BwModState *st, u32 species)
+{
+    u32 n, i, box, slot, v, egg;
+    BwMonRef ref;
+
+    if (st->party_count != NULL) {
+        n = st->party_count();
+        for (i = 0; i < n; i++) {
+            if (party_field(st, i, BW_MON_FIELD_SPECIES, &v) == 0 && v == species &&
+                party_field(st, i, BW_MON_FIELD_IS_EGG, &egg) == 0 && egg == 0u) {
+                return 1;
+            }
+        }
+    }
+    if (st->box_count == NULL || st->box_ref == NULL || st->box_get == NULL) {
+        return 0;
+    }
+    n = st->box_count();
+    for (box = 0; box < n; box++) {
+        for (slot = 0; slot < 30u; slot++) {
+            if (st->box_ref(box, slot, &ref) != 0) {
+                continue;
+            }
+            if (st->box_get(ref, BW_MON_FIELD_SPECIES, &v) == 0 && v == species &&
+                st->box_get(ref, BW_MON_FIELD_IS_EGG, &egg) == 0 && egg == 0u) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/*
+ * The state fields interface version 4 added.  Returns 1 when `f` is one
+ * of them (the answer is in *out and the result in *rc), 0 otherwise.
+ */
+static int state_read_v4(const BwModState *st, const BwRuleStateField *f,
+                         const BwRuleValue *sub, s32 *out, int *rc)
+{
+    u32 i, v = 0;
+
+    *rc = 0;
+    for (i = 0; i < (u32)(sizeof(k_species_fields) / sizeof(k_species_fields[0])); i++) {
+        if (strcmp(f->name, k_species_fields[i].name) == 0) {
+            if (st->species_value == NULL || sub == NULL ||
+                st->species_value((u16)sub->i, k_species_fields[i].id, &v) != 0) {
+                *rc = -1;
+                return 1;
+            }
+            *out = (s32)v;
+            return 1;
+        }
+    }
+    if (strcmp(f->name, "area") == 0 || strcmp(f->name, "area_of") == 0) {
+        s32 a;
+        u32 zone;
+
+        if (st->area_of == NULL) {
+            *rc = -1;
+            return 1;
+        }
+        if (strcmp(f->name, "area") == 0) {
+            if (st->zone == NULL) {
+                *rc = -1;
+                return 1;
+            }
+            zone = st->zone();
+        } else {
+            if (sub == NULL) {
+                *rc = -1;
+                return 1;
+            }
+            zone = (u32)sub->i;
+        }
+        a = st->area_of((u16)zone);
+        if (a < 0) {
+            *rc = -1;
+            return 1;
+        }
+        *out = a;
+        return 1;
+    }
+    if (strcmp(f->name, "wild_battle") == 0) {
+        *out = (st->battle_wild != NULL && st->battle_wild() == 1) ? 1 : 0;
+        return 1;
+    }
+    if (strcmp(f->name, "play_seconds") == 0) {
+        *out = st->play_seconds != NULL ? (s32)(st->play_seconds() & 0x7FFFFFFFu) : 0;
+        return 1;
+    }
+    if (strcmp(f->name, "owned") == 0) {
+        if (sub == NULL) {
+            *rc = -1;
+            return 1;
+        }
+        *out = state_owned(st, (u32)sub->i);
+        return 1;
+    }
+    if (strcmp(f->name, "party_max_level") == 0 ||
+        strcmp(f->name, "party_alive") == 0 ||
+        strcmp(f->name, "party_has_type") == 0) {
+        u32 n = st->party_count != NULL ? st->party_count() : 0u;
+        s32 best = 0;
+
+        for (i = 0; i < n; i++) {
+            u32 egg = 0, x = 0, t1 = 0, t2 = 0;
+
+            if (party_field(st, i, BW_MON_FIELD_IS_EGG, &egg) != 0 || egg != 0u) {
+                continue;
+            }
+            if (strcmp(f->name, "party_max_level") == 0) {
+                if (party_field(st, i, BW_MON_FIELD_LEVEL, &x) == 0 && (s32)x > best) {
+                    best = (s32)x;
+                }
+            } else if (strcmp(f->name, "party_alive") == 0) {
+                if (party_field(st, i, BW_MON_FIELD_HP, &x) == 0 && x > 0u) {
+                    best++;
+                }
+            } else if (sub != NULL &&
+                       party_field(st, i, BW_MON_FIELD_TYPE1, &t1) == 0 &&
+                       party_field(st, i, BW_MON_FIELD_TYPE2, &t2) == 0 &&
+                       (t1 == (u32)sub->i || t2 == (u32)sub->i)) {
+                best = 1;
+            }
+        }
+        *out = best;
+        return 1;
+    }
+    if (strcmp(f->name, "item_pocket") == 0) {
+        if (st->item_value == NULL || sub == NULL || sub->i < 0 ||
+            st->item_value((u16)sub->i, BW_RULE_ITEM_POCKET, &v) != 0) {
+            *rc = -1;
+            return 1;
+        }
+        *out = (s32)v;
+        return 1;
+    }
+    if (strcmp(f->name, "move_type") == 0 || strcmp(f->name, "move_power") == 0 ||
+        strcmp(f->name, "move_class") == 0) {
+        u32 id = strcmp(f->name, "move_type") == 0 ? BW_RULE_MOVE_TYPE :
+                 (strcmp(f->name, "move_power") == 0 ? BW_RULE_MOVE_POWER
+                                                     : BW_RULE_MOVE_CLASS);
+
+        if (st->move_value == NULL || sub == NULL || sub->i < 0 ||
+            st->move_value((u16)sub->i, id, &v) != 0) {
+            *rc = -1;
+            return 1;
+        }
+        *out = (s32)v;
+        return 1;
+    }
+    if (strcmp(f->name, "place") == 0 || strcmp(f->name, "side") == 0) {
+        BwMonRef mon;
+
+        if (sub == NULL || state_mon(sub, &mon) != 0) {
+            *rc = -1;
+            return 1;
+        }
+        *out = strcmp(f->name, "place") == 0 ? (s32)mon.place : (s32)mon.side;
+        return 1;
+    }
+    return 0;
+}
+
 /*
  * Read a state field.  Returns 0, or -1 when the port cannot answer the
  * field; the caller reads 0 then, because a loaded rule cannot fail.
@@ -3299,6 +3633,13 @@ static int state_read(const BwRuleStateField *f, const BwRuleValue *sub,
     if (strcmp(f->name, "in_battle") == 0) {
         *out = state_in_battle();
         return 0;
+    }
+    {
+        int rc;
+
+        if (state_read_v4(st, f, sub, out, &rc)) {
+            return rc;
+        }
     }
     if (strcmp(f->name, "badge") == 0) {
         if (st->badge_has == NULL || sub == NULL) {
@@ -3686,6 +4027,18 @@ static int eval_node(BwRuleVm *vm, u32 index, BwRuleValue *out)
         }
         keyed = n->sub != BW_RULE_NO_NODE;
         out->i = cell_read(vm->owner, n->text, keyed, sub.i);
+        return 0;
+    }
+
+    case BW_RULE_OP_TABLE: {
+        BwRuleValue key;
+        s32 v = 0;
+
+        if (eval_sub(vm, n, &key) != 0) {
+            return -1;
+        }
+        (void)bw_mod_table_get(vm->rule->ns, n->text, value_number(&key), &v);
+        out->i = v;
         return 0;
     }
 

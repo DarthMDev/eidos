@@ -279,6 +279,24 @@ extern void *GAME_DATA_GetMyItem(const struct GameData *gd)
 extern u32 MYITEM_SAVEDATA_AddItem(struct MyItem *bag, u16 itemId,
                                    u16 quantity, u16 heapId)
     __attribute__((weak));                                    /* 0x02007E50 */
+/* The zones, the play time, the item and move data: src/game/arm9/
+ * zonedata.c, playtime.c, file_util.c and waza_tool.c. */
+extern u32 ZONEDATA_GetPlaceNameId(u32 id) __attribute__((weak));
+extern struct PlayTime *GAME_DATA_GetPlayTime(struct GameData *gd)
+    __attribute__((weak));
+extern u16 PLAYTIME_GetHours(const struct PlayTime *playtime)
+    __attribute__((weak));
+extern u8 PLAYTIME_GetMinutes(const struct PlayTime *playtime)
+    __attribute__((weak));
+extern u8 PLAYTIME_GetSeconds(const struct PlayTime *playtime)
+    __attribute__((weak));
+extern u32 FILE_UTIL_GetItemParam(u32 item, u32 sel, u32 heap)
+    __attribute__((weak));
+extern u32 WAZA_TOOL_GetParam(u32 move, u32 param) __attribute__((weak));
+
+/* The battle in progress is wild (1), a trainer's (0), or none (-1). */
+static s32 g_battle_wild = -1;
+
 extern u32 MYITEM_SAVEDATA_GetItemQuantity(struct MyItem *bag, u16 itemId,
                                            u16 heapId)
     __attribute__((weak));
@@ -321,6 +339,14 @@ void bw_mod_state_set_game_data(void *game_data)
 void bw_mod_state_set_battle(void *battle_main)
 {
     g_battle_main = battle_main;
+    if (battle_main == NULL) {
+        g_battle_wild = -1;
+    }
+}
+
+void bw_mod_state_set_battle_wild(s32 wild)
+{
+    g_battle_wild = wild;
 }
 
 /* Bind the field player (a struct FieldPlayer *). */
@@ -335,6 +361,7 @@ void bw_mod_state_reset(void)
 {
     g_game_data = NULL;
     g_battle_main = NULL;
+    g_battle_wild = -1;
     g_field_player = NULL;
     bw_mod_state_drop_moves();
 }
@@ -686,7 +713,23 @@ static int state_battle_get(BwMonRef mon, u32 field, u32 *out)
         break;
     }
     id = battle_value_id(field);
-    if (id < 0 || BTL_POKEPARAM_GetValue == NULL) {
+    if (id < 0) {
+        /* The battle keeps no value of its own for this id: the party
+         * record the battle copied holds it (the personality, the trainer
+         * id, the nature and the like do not change in a battle). */
+        struct PokemonParam *source;
+
+        if (BTL_POKEPARAM_GetMon == NULL || POKE_TOOL_GetPartyValue == NULL) {
+            return -1;
+        }
+        source = BTL_POKEPARAM_GetMon(record);
+        if (source == NULL) {
+            return -1;
+        }
+        *out = POKE_TOOL_GetPartyValue(source, field, 0);
+        return 0;
+    }
+    if (BTL_POKEPARAM_GetValue == NULL) {
         return -1;
     }
     *out = (u32)BTL_POKEPARAM_GetValue(record, id);
@@ -1279,6 +1322,60 @@ static int state_item_add(u16 item, u16 count)
                ? 0 : -1;
 }
 
+/* ------------------------------------------------------------------ */
+/* The area, the battle kind, the play time, item and move data        */
+/* ------------------------------------------------------------------ */
+
+static s32 state_area_of(u16 zone)
+{
+    if (ZONEDATA_GetPlaceNameId == NULL || g_game_data == NULL) {
+        return -1;
+    }
+    return (s32)ZONEDATA_GetPlaceNameId((u32)zone);
+}
+
+static s32 state_battle_wild(void)
+{
+    return g_battle_wild;
+}
+
+static u32 state_play_seconds(void)
+{
+    struct PlayTime *t;
+
+    if (GAME_DATA_GetPlayTime == NULL || PLAYTIME_GetHours == NULL ||
+        PLAYTIME_GetMinutes == NULL || PLAYTIME_GetSeconds == NULL ||
+        g_game_data == NULL) {
+        return 0;
+    }
+    t = GAME_DATA_GetPlayTime(live_game_data());
+    if (t == NULL) {
+        return 0;
+    }
+    return (u32)PLAYTIME_GetHours(t) * 3600u +
+           (u32)PLAYTIME_GetMinutes(t) * 60u + (u32)PLAYTIME_GetSeconds(t);
+}
+
+static int state_item_value(u16 item, u32 field, u32 *out)
+{
+    if (out == NULL || FILE_UTIL_GetItemParam == NULL ||
+        (u32)item > bw_limit_get(BW_PORT_LIMIT_ITEM_LAST)) {
+        return -1;
+    }
+    *out = FILE_UTIL_GetItemParam((u32)item, field, BW_STATE_BAG_HEAP);
+    return 0;
+}
+
+static int state_move_value(u16 move, u32 field, u32 *out)
+{
+    if (out == NULL || WAZA_TOOL_GetParam == NULL ||
+        (u32)move > bw_limit_get(BW_PORT_LIMIT_MOVE_LAST)) {
+        return -1;
+    }
+    *out = WAZA_TOOL_GetParam((u32)move, field);
+    return 0;
+}
+
 /*
  * The table the host hands to a mod (sdk/mod_api.h, BwModHost).  The
  * entries are in the order of the struct (sdk/mod_state.h); that struct
@@ -1325,7 +1422,13 @@ const BwModState bw_mod_state = {
     state_mon_release,
 
     state_item_count,
-    state_item_add
+    state_item_add,
+
+    state_area_of,
+    state_battle_wild,
+    state_play_seconds,
+    state_item_value,
+    state_move_value
 };
 
 int bw_mod_state_party_slot(const void *mon)

@@ -132,6 +132,7 @@
 #include "mod_net.h"
 #include "mod_panel.h"
 #include "mod_rule.h"
+#include "mod_table.h"
 #include "mod_script.h"
 #include "mod_slot.h"
 #include "mod_state.h"
@@ -169,6 +170,8 @@ extern u32         bw_mod_manifest_override_count(const void *manifest);
 extern const void *bw_mod_manifest_override_at(const void *manifest, u32 i);
 extern u32         bw_mod_manifest_rule_count(const void *manifest);
 extern const void *bw_mod_manifest_rule_at(const void *manifest, u32 i);
+extern u32         bw_mod_manifest_table_count(const void *manifest);
+extern const void *bw_mod_manifest_table_at(const void *manifest, u32 i);
 extern const char *bw_mod_manifest_name(const void *manifest);
 extern const char *bw_mod_manifest_code(const void *manifest);
 extern const char *bw_mod_manifest_state(const void *manifest);
@@ -930,6 +933,33 @@ static int loader_load(u32 index)
     copy_str(m->name, sizeof(m->name), mod_label(name, label));
     copy_str(m->ns, sizeof(m->ns), ns != NULL ? ns : label);
 
+    /* The tables, before the rules: a rule that reads a table is checked
+     * against the tables the mod has (sdk/mod_table.h).  The path is
+     * relative to the mod's folder, like a rule's. */
+    {
+        u32 tcount = bw_mod_manifest_table_count(manifest);
+        u32 t;
+
+        for (t = 0; t < tcount; t++) {
+            const BwModRule *table =
+                (const BwModRule *)bw_mod_manifest_table_at(manifest, t);
+            char path[1024];
+            int n;
+
+            if (table == NULL || table->event == NULL || table->path == NULL) {
+                continue;
+            }
+            if (root != NULL && *root != '\0') {
+                n = snprintf(path, sizeof path, "%s/%s", root, table->path);
+            } else {
+                n = snprintf(path, sizeof path, "%s/%s", dir_name, table->path);
+            }
+            if (n > 0 && (size_t)n < sizeof path) {
+                (void)bw_mod_table_load(m->ns, table->event, path, m->name);
+            }
+        }
+    }
+
     /* The rules: the manifest's rule lines, bound to their events.  A rule
      * that is refused is reported by the rule layer and the mod keeps the
      * rest of its manifest. */
@@ -1047,6 +1077,8 @@ static int loader_load(u32 index)
     /* The mod's own settings: the menu holds the player's choices, and the
      * mod reads them (sdk/mod_menu.h). */
     m->services.setting_get    = bw_mod_menu_setting_get;
+    /* The mod's own data tables (sdk/mod_table.h), for the calling mod. */
+    m->services.table_get      = bw_mod_table_get_calling;
     /* The run-status panel: the model's sixteen lines (sdk/mod_panel.h). */
     m->services.panel_set      = bw_mod_panel_set;
     m->services.panel_clear    = bw_mod_panel_clear;

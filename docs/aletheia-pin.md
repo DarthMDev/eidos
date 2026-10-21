@@ -8,9 +8,15 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `1b2d89887a697b6b16ccc052b46173e0bc3deab4`
-- Date: 2026-10-21 18:41:16 +0100
-- Subject: Named move limit: MOVE_LAST (src/game/arm9/move.h, BW_LIMIT_MOVE_LAST = 1)
+- Revision: `4d377d121c8c8d29045d9cf9af034fed83f86583`
+- Date: 2026-10-21 18:54:55 +0100
+- Subject: btlv_effvm.c: the 0x256 threshold and the 0x261..0x262 window are relative to BTLV_EFFECT_MOVE_END
+
+The step from `1b2d89887a`: the battle view's split between move effects
+and other effects is a name, `BTLV_EFFECT_MOVE_END` (0x231), and the field
+object code table count is `FLDMMDL_OBJCODE_TABLE_COUNT` (799). The port
+keeps both at their DS values for now (sdk/bw_limits.c): the split follows
+the move limit once the battle server's effect ids are named too.
 
 The step from `768f1f31d6`: the move limit is a name, `MOVE_LAST`, that the
 DS build keeps as 559 and the port answers with bw_limit_get, and the

@@ -107,6 +107,7 @@
 #include "mod_manifest.h"
 #include "mod_menu.h"
 #include "mod_rule.h"
+#include "mod_table.h"
 #include "plat_dir.h"
 #include "save.h"
 #include "vfs.h"
@@ -1545,6 +1546,7 @@ int bw_mod_menu_apply(void)
     bw_mod_event_reset();
     bw_mod_event_bind_all();
     bw_mod_rule_reset();
+    bw_mod_table_reset();
 
     /*
      * 4. The roots are built again from the switches, in the order the

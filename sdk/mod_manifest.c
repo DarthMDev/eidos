@@ -76,6 +76,8 @@
  *     const void *bw_mod_manifest_override_at(const void *manifest, u32 i);
  *     u32  bw_mod_manifest_rule_count(const void *manifest);
  *     const void *bw_mod_manifest_rule_at(const void *manifest, u32 i);
+ *     u32  bw_mod_manifest_table_count(const void *manifest);
+ *     const void *bw_mod_manifest_table_at(const void *manifest, u32 i);
  *     const char *bw_mod_manifest_name(const void *manifest);
  *     const char *bw_mod_manifest_code(const void *manifest);
  *     const char *bw_mod_manifest_state(const void *manifest);
@@ -844,6 +846,11 @@ void bw_mod_manifest_free(void *manifest)
             free(m->rules[i].event);
             free(m->rules[i].path);
         }
+        for (i = 0; i < m->table_count; i++) {
+            free(m->tables[i].event);
+            free(m->tables[i].path);
+        }
+        free(m->tables);
         free(m->name);
         free(m->port);
         free(m->code);
@@ -1393,6 +1400,54 @@ static int parse_rule(BwModManifest *m, const char *value, size_t value_len)
     return 0;
 }
 
+/*
+ * Parse one `table` value: `<name> <path>`.  The name is a word of letters,
+ * digits and `_`, the way the rules spell it (`table.<name>[key]`).  The
+ * record reuses the rule's two strings: `event` holds the name.
+ */
+static int parse_table(BwModManifest *m, const char *value, size_t value_len)
+{
+    const char *tok[4];
+    size_t len[4];
+    BwModRule t;
+    size_t i;
+    int ntok;
+
+    ntok = tokenize(value, value + value_len, tok, len, 4);
+    if (ntok != 2 || len[0] == 0 || len[0] >= 32 || len[1] == 0) {
+        return -1;
+    }
+    for (i = 0; i < len[0]; i++) {
+        char c = tok[0][i];
+
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' ||
+              (i > 0 && c >= '0' && c <= '9'))) {
+            return -1;
+        }
+    }
+    t.event = dup_n(tok[0], len[0]);
+    t.path = dup_n(tok[1], len[1]);
+    if (t.event == NULL || t.path == NULL) {
+        free(t.event);
+        free(t.path);
+        return -1;
+    }
+    if (m->table_count == m->table_cap) {
+        u32 cap = m->table_cap == 0 ? 4u : m->table_cap * 2u;
+        BwModRule *grown = (BwModRule *)realloc(m->tables, (size_t)cap * sizeof(*grown));
+
+        if (grown == NULL) {
+            free(t.event);
+            free(t.path);
+            return -1;
+        }
+        m->tables = grown;
+        m->table_cap = cap;
+    }
+    m->tables[m->table_count++] = t;
+    return 0;
+}
+
 /* A signed integer, whole text only. */
 static int parse_int(const char *s, size_t n, long *out)
 {
@@ -1532,6 +1587,10 @@ int bw_mod_manifest_parse(void *manifest, const char *text, const char *dir_name
         } else if (key_len == 4 && memcmp(ks, "rule", 4) == 0) {
             if (parse_rule(m, vs, (size_t)(ve - vs)) != 0) {
                 mod_report(m, "bad rule '%.*s', ignored", (int)(ve - vs), vs);
+            }
+        } else if (key_len == 5 && memcmp(ks, "table", 5) == 0) {
+            if (parse_table(m, vs, (size_t)(ve - vs)) != 0) {
+                mod_report(m, "bad table '%.*s', ignored", (int)(ve - vs), vs);
             }
         } else if (key_len == 8 && memcmp(ks, "settings", 8) == 0) {
             if (ve == vs) {
@@ -1900,6 +1959,23 @@ const void *bw_mod_manifest_rule_at(const void *manifest, u32 i)
         return NULL;
     }
     return &m->rules[i];
+}
+
+u32 bw_mod_manifest_table_count(const void *manifest)
+{
+    const BwModManifest *m = (const BwModManifest *)manifest;
+
+    return m != NULL ? m->table_count : 0u;
+}
+
+const void *bw_mod_manifest_table_at(const void *manifest, u32 i)
+{
+    const BwModManifest *m = (const BwModManifest *)manifest;
+
+    if (m == NULL || i >= m->table_count) {
+        return NULL;
+    }
+    return &m->tables[i];
 }
 
 /*

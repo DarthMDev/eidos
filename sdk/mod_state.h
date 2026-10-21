@@ -45,7 +45,25 @@ enum {
     BW_MON_FIELD_SPATK     = 0xA5,
     BW_MON_FIELD_SPDEF     = 0xA6,
     BW_MON_FIELD_TYPE1     = 0xAE,
-    BW_MON_FIELD_TYPE2     = 0xAF
+    BW_MON_FIELD_TYPE2     = 0xAF,
+
+    /* Interface version 4: more of the game's own ids by name.  The party
+     * and box calls always took any id; these are the ones the rules name.
+     * For a Pokemon in battle, an id the battle keeps no value for is read
+     * from the party record the battle copied. */
+    BW_MON_FIELD_PERSONALITY  = 0x00,
+    BW_MON_FIELD_OT_ID        = 0x07,
+    BW_MON_FIELD_FRIENDSHIP   = 0x09,
+    BW_MON_FIELD_ABILITY      = 0x0A,
+    BW_MON_FIELD_MOVE1        = 0x36,
+    BW_MON_FIELD_MOVE2        = 0x37,
+    BW_MON_FIELD_MOVE3        = 0x38,
+    BW_MON_FIELD_MOVE4        = 0x39,
+    BW_MON_FIELD_IS_EGG       = 0x4C,
+    BW_MON_FIELD_GENDER       = 0x6E,
+    BW_MON_FIELD_FORM         = 0x6F,
+    BW_MON_FIELD_NATURE       = 0x70,
+    BW_MON_FIELD_HAS_NICKNAME = 0x75
 };
 
 /*
@@ -123,6 +141,24 @@ typedef struct BwModState {
      * a refused add puts nothing in. */
     s32 (*item_count)(u16 item);
     int (*item_add)(u16 item, u16 count);
+
+    /* The area a zone belongs to: the place name the game shows on entry
+     * (ZONEDATA_GetPlaceNameId).  Every floor of a cave and every building
+     * of a town share their place's area; a season does not change a
+     * zone.  A negative number when the zone data is not loaded. */
+    s32 (*area_of)(u16 zone);
+
+    /* The battle in progress: 1 wild, 0 a trainer, -1 no battle. */
+    s32 (*battle_wild)(void);
+
+    /* The play time of the save in force, in seconds. */
+    u32 (*play_seconds)(void);
+
+    /* An item's or a move's own data, by the game's field ids
+     * (FILE_UTIL_GetItemParam, WAZA_TOOL_GetParam; docs/mod-state.md).
+     * 0, or non-zero past the item or move limit. */
+    int (*item_value)(u16 item, u32 field, u32 *out);
+    int (*move_value)(u16 move, u32 field, u32 *out);
 } BwModState;
 
 /* ------------------------------------------------------------------ */
@@ -266,6 +302,13 @@ typedef struct BwModServices {
      * the question cannot be answered (no state file, or no save in
      * force). */
     int  (*state_in_step)(void);
+
+    /* Interface version 4. */
+    /* The mod's own data tables (manifest `table = <name> <path>`,
+     * docs/mod-tables.md).  0 when the key is in the table, 1 when it is
+     * not and *out holds the table's default, -1 when the mod has no such
+     * table. */
+    int  (*table_get)(const char *name, s32 key, s32 *out);
 } BwModServices;
 
 /* ------------------------------------------------------------------ */
@@ -288,6 +331,10 @@ typedef struct BwModServices {
 void bw_mod_state_set_game_data(void *game_data);
 void bw_mod_state_set_battle(void *battle_main);
 void bw_mod_state_set_field_player(void *field_player);
+
+/* Whether the battle that is starting is a wild one (1) or a trainer's
+ * (0); the battle's end sets -1 (bw_mod_state_set_battle(NULL)). */
+void bw_mod_state_set_battle_wild(s32 wild);
 
 /* The table the host table hands to a mod. */
 const BwModState *bw_mod_state_table(void);

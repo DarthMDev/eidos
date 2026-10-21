@@ -26,6 +26,7 @@
 
 #include "mod_api.h"
 #include "mod_rule.h"
+#include "mod_table.h"
 #include "port_test.h"
 
 #ifdef _WIN32
@@ -248,6 +249,51 @@ int main(void)
     payload = make_payload(2);
     BW_CHECK_EQ("the rule refuses the event",
                 bw_mod_rule_run(kind, (BwEvent *)&payload), 1);
+
+    printf("an operator next to a minus\n");
+    /* `*-` and `<-` are not pairs of the language: each reads as an
+     * operator and a negative number. */
+    BW_REQUIRE("the rule is written",
+               write_rule(T_DIR, "negops.rule",
+                   "language 1\n"
+                   "rule negops on encounter.wild\n"
+                   "    when event.level*-1 <-1\n"
+                   "    do set event.level 7\n") == 0);
+    bw_mod_rule_reset();
+    BW_REQUIRE("the rule binds",
+               bw_mod_rule_bind(kind, T_DIR "/negops.rule", T_NS, T_LABEL) == 0);
+    payload = make_payload(2);
+    bw_mod_rule_run(kind, (BwEvent *)&payload);
+    BW_CHECK_EQ("the guard read -2 < -1", (long)payload.level, 7);
+
+    printf("a table read\n");
+    BW_REQUIRE("the table is written",
+               write_rule(T_DIR, "caps.txt", "1 = 9\ndefault = 3\n") == 0);
+    BW_REQUIRE("the table loads",
+               bw_mod_table_load(T_NS, "caps", T_DIR "/caps.txt", T_LABEL) == 0);
+    BW_REQUIRE("the rule is written",
+               write_rule(T_DIR, "table.rule",
+                   "language 1\n"
+                   "rule cap on encounter.wild\n"
+                   "    do set event.level table.caps[event.level] + table.caps[50]\n") == 0);
+    BW_REQUIRE("the rule is written",
+               write_rule(T_DIR, "notable.rule",
+                   "language 1\n"
+                   "rule cap on encounter.wild\n"
+                   "    do set event.level table.nope[1]\n") == 0);
+    bw_mod_rule_reset();
+    BW_REQUIRE("the rule binds",
+               bw_mod_rule_bind(kind, T_DIR "/table.rule", T_NS, T_LABEL) == 0);
+    payload = make_payload(1);
+    bw_mod_rule_run(kind, (BwEvent *)&payload);
+    BW_CHECK_EQ("a key and the default", (long)payload.level, 12);
+    BW_CHECK_EQ("a rule that reads a table the mod has not is refused",
+                bw_mod_rule_bind(kind, T_DIR "/notable.rule", T_NS, T_LABEL) != 0, 1);
+    bw_mod_table_reset();
+    remove(T_DIR "/negops.rule");
+    remove(T_DIR "/table.rule");
+    remove(T_DIR "/notable.rule");
+    remove(T_DIR "/caps.txt");
 
     printf("the manifest's binding\n");
     /* The manifest's rule line is `rule = <event> <path>`, and the path is

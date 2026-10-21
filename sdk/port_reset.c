@@ -54,6 +54,7 @@
 #include "mod_net.h"
 #include "mod_panel.h"
 #include "mod_rule.h"
+#include "mod_table.h"
 #include "mod_script.h"
 #include "mod_state.h"
 #include "mod_text.h"
@@ -105,6 +106,7 @@ void bw_port_reset(void)
     bw_mod_message_reset();
     bw_mod_text_reset();
     bw_mod_rule_reset();
+    bw_mod_table_reset();
     bw_mod_script_reset();
     bw_mod_timer_reset();
     bw_mod_export_reset();
