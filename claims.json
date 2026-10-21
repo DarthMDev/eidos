@@ -1,34 +1,3 @@
 {
-  "claims": {
-    "W19-ABI": {
-      "note": "the script command's operands and the per-mod answer, both in the mod's surface",
-      "paths": [
-        "sdk/mod_api.h",
-        "sdk/mod_event.c",
-        "sdk/mod_script.c",
-        "sdk/mod_script.h",
-        "sdk/mod_state.h",
-        "tests/test_mod_script.c",
-        "tests/test_mod_state.c",
-        "tests/test_mod_surface.c"
-      ],
-      "started": "2026-10-21"
-    },
-    "W19-BLD": {
-      "note": "the build wiring for the new sources",
-      "paths": [
-        "CMakeLists.txt"
-      ],
-      "started": "2026-10-21"
-    },
-    "W19-NET": {
-      "note": "the peer sessions and the external control: the port's own client",
-      "paths": [
-        "sdk/mod_net.c",
-        "sdk/mod_net.h",
-        "tests/test_mod_net.c"
-      ],
-      "started": "2026-10-21"
-    }
-  }
+  "claims": {}
 }
