@@ -58,8 +58,8 @@
  * The hash of the frozen surface on each layout the port is built at.
  *
  *   pointers  hash
- *   4         0x5C25A051u  the number in sdk/mod_api.h
- *   8         0xF02A401Eu
+ *   4         0x34B59816u  the number in sdk/mod_api.h
+ *   8         0xECA08949u
  *
  * The 32-bit one is the number the header carries.  The other is the same
  * surface on the other layout: the three tables hold host pointers, so
@@ -68,11 +68,11 @@
  */
 static unsigned int expected_hash(void)
 {
-    return (sizeof(void *) == 4) ? 0x5C25A051u : 0xF02A401Eu;
+    return (sizeof(void *) == 4) ? 0x34B59816u : 0xECA08949u;
 }
 
 /* The number in sdk/mod_api.h: the frozen one, the 32-bit hash. */
-#define BW_SURFACE_HASH_FROZEN 0x5C25A051u
+#define BW_SURFACE_HASH_FROZEN 0x34B59816u
 
 /* The running hash. */
 static unsigned int h;
@@ -309,7 +309,7 @@ int main(void)
     PL(BwShopBuy, F(BwShopBuy, item), F(BwShopBuy, price));
     PL(BwMoneyChange, F(BwMoneyChange, delta), F(BwMoneyChange, before),
        F(BwMoneyChange, source));
-    PL(BwHeal, F(BwHeal, source), F(BwHeal, mask));
+    PL(BwHeal, F(BwHeal, source), F(BwHeal, mask), F(BwHeal, script_id));
     PL(BwHealHp, F(BwHealHp, mon), F(BwHealHp, hp), F(BwHealHp, max_hp),
        F(BwHealHp, amount), F(BwHealHp, source));
     PL(BwMonRevive, F(BwMonRevive, mon), F(BwMonRevive, hp), F(BwMonRevive, max_hp),

@@ -239,9 +239,9 @@ The version moves when the surface moves.
   `heal.hp`, `mon.revive`, `mon.cure`, `mon.pp`, `mon.form`,
   `battle.trainer_mon` and `battle.exp`;
   `encounter.wild`, `mon.exp`, `mon.levelup`, `catch.attempt`, `item.add`
-  and `money.change` gain fields at their ends. Version 4 is
-  still open: more appended calls land before it is frozen and
-  `sdk/api/v4` is published.
+  and `money.change` gain fields at their ends; `heal` gains `script_id`.
+  Version 4 is frozen: the surface in `sdk/api/v4` does not change any
+  more, and what comes next is version 5 (`docs/mod-backlog.md`).
 
 The number cannot be forgotten. A test recomputes the hash of the surface out
 of the headers themselves and compares it with the number the header carries,
@@ -274,8 +274,8 @@ width and the hash follows it: the number beside the version number is the
 
 | Pointers | Hash |
 |---|---|
-| 32-bit | 0x5C25A051 (the number in `sdk/mod_api.h`) |
-| 64-bit | 0xF02A401E |
+| 32-bit | 0x34B59816 (the number in `sdk/mod_api.h`) |
+| 64-bit | 0xECA08949 |
 
 The payload structs, the ids and the enums hold no pointer and hash the
 same everywhere.

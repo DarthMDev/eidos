@@ -60,7 +60,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0x5C25A051u
+#define BW_MOD_API_HASH 0x34B59816u
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
@@ -1009,6 +1009,9 @@ typedef struct BwHeal {
     BwEvent h;
     u8  source;     /* BW_HEAL_* */
     u8  mask;       /* *mod: one bit per party position to heal */
+    /* Version 4. */
+    u16 script_id;  /* BW_HEAL_SCRIPT: the id of the script that heals (the
+                     * Centre's nurse runs her own); 0 otherwise */
 } BwHeal;
 
 /*

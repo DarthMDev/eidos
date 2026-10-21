@@ -681,7 +681,8 @@ static const BwRuleField g_f_money_change[] = {
 
 static const BwRuleField g_f_heal[] = {
     BW_RULE_FIELD(BwHeal, source, BW_RULE_FK_INT, 0),
-    BW_RULE_FIELD(BwHeal, mask, BW_RULE_FK_INT, BW_RULE_FF_MOD)
+    BW_RULE_FIELD(BwHeal, mask, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwHeal, script_id, BW_RULE_FK_INT, 0)
 };
 
 static const BwRuleField g_f_mon_cure[] = {
@@ -858,7 +859,7 @@ static const BwRuleEvent g_events[] = {
     { .kind = BW_EVENT_MONEY_CHANGE, .name = "money.change", .refusable = 0,
       .fields = g_f_money_change, .field_count = 3 },
     { .kind = BW_EVENT_HEAL, .name = "heal", .refusable = 1,
-      .fields = g_f_heal, .field_count = 2 },
+      .fields = g_f_heal, .field_count = 3 },
     { .kind = BW_EVENT_HEAL_HP, .name = "heal.hp", .refusable = 1,
       .fields = g_f_heal_hp, .field_count = 5 },
     { .kind = BW_EVENT_MON_REVIVE, .name = "mon.revive", .refusable = 1,

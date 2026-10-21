@@ -697,6 +697,7 @@ game's call runs inside. A caller outside the port's hookable set reads
 |---|---|---|
 | `source` | u8 | Pokemon Centre or script, the HP-restore power |
 | `mask` | u8, *mod* | one bit per party position to heal |
+| `script_id` | u16 | version 4: for a script heal, the id of the script that heals (the Centre's nurse runs one script of her own); 0 for the power |
 
 **`mon.revive`** (version 4)
 

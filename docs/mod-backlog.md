@@ -4,13 +4,13 @@ What the mod interface does not cover yet, and why each item waits. Every
 item is verified against the game's code before it is built; one that
 cannot be verified stays here rather than shipping half-working.
 
-## Before the freeze
+## Settled at the freeze
 
-| Item | Why it waits |
+| Item | Outcome |
 |---|---|
-| `heal` source `CENTRE` | The Pokemon Centre nurse and other scripts run the same heal command; telling them apart needs the nurse script's id. |
-| `item.add` refusal | Some scripts check for room, then say the item was received even when the add answers 0; each caller's outcome must be checked first. |
-| `mon.evolve` before the post-battle scene | The event fires at the evolution check; the post-battle path is still to be read to confirm no scene starts first. |
+| `heal` from a Pokemon Centre | `heal` carries `script_id`, the id of the script that heals; the Centre's nurse is one script, so a mod tells her heal from the others by its id. A named `CENTRE` source waits until the nurse's id is confirmed from the script data. |
+| `item.add` refusal | Not refusable in version 4. Some callers say the item was received whatever the add answers (a script checks for room first; a shop has taken the money), so a refusal would not have a clean outcome. Setting `count` to 0 keeps the item out of the bag; the game's text still says it was received. |
+| `mon.evolve` after a battle | Verified: the post-battle step (`EVENT_BATTLE_RETURN_Main`) runs the evolution check for each member that levelled up and starts the scene only when the check answers a species, so a refusal skips that member's scene and the others go on. |
 
 ## After the freeze
 
@@ -20,6 +20,8 @@ cannot be verified stays here rather than shipping half-working.
 | `pc.open` screen mode | The box screen's mode (organise, deposit, withdraw, Battle Box) is a script operand of `SCRCMD_PROC_FLD_CallOv170Event`. |
 | `item.use` from the bag | `item.use` fires at the party screen's item check only. Field items used from the bag (Escape Rope, Repel, the bicycle, the Dowsing Machine) go through the bag's own use step (`ITEMMENU_HandleActionMenuChoice`, action 0) and do not fire it. |
 | Field moves on the party screen | Cut, Surf, Fly, Dig, Teleport and the others used from the party screen do not fire any event yet. `field.move` is the field action slot check the bag and the Y menu read (slot 0 the bicycle), not the party screen's moves; its other slots are still to be mapped. |
+| `item.add` refusal | Refusable only at callers whose outcome is clean once each one is read (a gift that stays with the person, a held item that stays held). |
+| `heal` source `CENTRE` | Once the nurse script's id is confirmed from the script data. |
 | `shop.buy` quantity | The event fires when an item is picked, before the quantity screen. A purchase is visible as `item.add` and `money.change` (source purchase). |
 | Disobedience | A refusable obedience check, for level caps. |
 | Type matchups | A writable type effectiveness in a battle. |

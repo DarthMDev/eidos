@@ -167,6 +167,7 @@ SIZE(BwHeal, 12);
 LAYOUT(BwHeal, h, 0);
 LAYOUT(BwHeal, source, 8);
 LAYOUT(BwHeal, mask, 9);
+LAYOUT(BwHeal, script_id, 10);
 SIZE(BwHealHp, 24);
 LAYOUT(BwHealHp, h, 0);
 LAYOUT(BwHealHp, mon, 8);

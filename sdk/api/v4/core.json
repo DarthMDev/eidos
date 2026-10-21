@@ -1,4 +1,5 @@
 {
+  "status": "frozen",
   "api": 4,
   "import_module": "eidos",
   "imports": [

@@ -1,4 +1,5 @@
 {
+  "status": "frozen",
   "api": 4,
   "line": "option <key> <kind> \"<label>\" <value>",
   "kinds": [

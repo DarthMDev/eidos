@@ -83,6 +83,9 @@ extern struct PokemonParam *POKEPARTY_GetMember(struct Party *party, u32 pos)
     BW_PORT_WEAK;                                        /* 0x0201AB28 */
 extern void POKE_TOOL_HealFull(struct PokemonParam *mon)
     BW_PORT_WEAK;                                        /* 0x0201B9F0 */
+
+/* The script that runs a script command (src/game/ov010/scrcmd_work.c). */
+extern u16 SCRCMD_WORK_GetScriptId(void *work) BW_PORT_WEAK;
 extern u32 POKE_TOOL_GetPartyValue(struct PokemonParam *mon, u32 paramId,
                                    u32 arg) BW_PORT_WEAK;
 extern void POKE_TOOL_SetPartyValue(struct PokemonParam *mon, u32 paramId,
@@ -576,6 +579,11 @@ static void build_heal_script(const BwEventCall *call, BwEventPayload *out)
     memset(&out->heal, 0, sizeof(out->heal));
     out->heal.source = (u8)BW_HEAL_SCRIPT;
     out->heal.mask = party_mask(party);
+    /* The script that runs the heal: a Pokemon Centre's nurse is one
+     * script, and a mod tells it from the others by its id. */
+    if (SCRCMD_WORK_GetScriptId != NULL && call->a[1] != 0u) {
+        out->heal.script_id = SCRCMD_WORK_GetScriptId((void *)call->a[1]);
+    }
 }
 
 /*

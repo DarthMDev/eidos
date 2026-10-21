@@ -1,4 +1,5 @@
 {
+  "status": "frozen",
   "api": 4,
   "events": [
     {
@@ -3085,6 +3086,17 @@
           "rule_name": "mask",
           "doc": "one bit per party position to heal",
           "c_type": "u8"
+        },
+        {
+          "name": "script_id",
+          "type": "uint16_t",
+          "offset": 10,
+          "size": 2,
+          "count": null,
+          "writable": false,
+          "rule_name": "script_id",
+          "doc": "for a script heal, the id of the script that heals (the Centre's nurse runs one script of her own); 0 for the power",
+          "c_type": "u16"
         }
       ]
     },
