@@ -180,7 +180,7 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 static const char *const k_option_labels[EIDOS_OPT_COUNT] = {
     "Window mode",     /* DISPLAY_MODE        */
     "Resolution",      /* DISPLAY_RESOLUTION  */
-    NULL, NULL,        /* width, height: hidden */
+    NULL, NULL, NULL,  /* width, height, maximized: hidden */
     "Screen layout",   /* LAYOUT_ARRANGEMENT  */
     "Swap screens",    /* LAYOUT_SWAP         */
     "Screen gap",      /* LAYOUT_GAP          */
