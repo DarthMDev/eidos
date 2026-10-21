@@ -357,16 +357,25 @@ enum {
 
 /* session */
 
+/*
+ * game.new: the player starts a new game, when the first map is set up.
+ */
 typedef struct BwGameNew {
     BwEvent h;
 } BwGameNew;
 
+/*
+ * save.begin: the game starts writing a save.
+ */
 typedef struct BwSaveBegin {
     BwEvent h;
     u32 play_seconds;   /* play time */
     u16 zone;           /* where the player saves */
 } BwSaveBegin;
 
+/*
+ * save.done: a save has been written (or failed: ok says which).
+ */
 typedef struct BwSaveDone {
     BwEvent h;
     u32 play_seconds;
@@ -374,6 +383,9 @@ typedef struct BwSaveDone {
     u8  ok;             /* the save was written */
 } BwSaveDone;
 
+/*
+ * save.load: a save has been read and the game is about to run from it.
+ */
 typedef struct BwSaveLoad {
     BwEvent h;
     u32 play_seconds;
@@ -383,6 +395,10 @@ typedef struct BwSaveLoad {
                          * mod asks the services table's state_in_step */
 } BwSaveLoad;
 
+/*
+ * game.cleared: the player beat the Champion; the ending (Hall of Fame,
+ * credits, the save screen) starts.
+ */
 typedef struct BwGameCleared {
     BwEvent h;
     u32 play_seconds;
@@ -392,6 +408,10 @@ typedef struct BwGameCleared {
 
 /* world */
 
+/*
+ * route.change: the player walks into another zone without a warp (a route
+ * border, a town edge).
+ */
 typedef struct BwRouteChange {
     BwEvent h;
     u16 zone;       /* the new zone */
@@ -399,6 +419,10 @@ typedef struct BwRouteChange {
     u8  season;
 } BwRouteChange;
 
+/*
+ * map.warp: the player is about to warp to another map (a door, stairs,
+ * Fly, a cave exit); the destination can be changed.
+ */
 typedef struct BwMapWarp {
     BwEvent h;
     u16 zone;       /* where the warp starts */
@@ -407,6 +431,9 @@ typedef struct BwMapWarp {
     s16 dest_z;     /* *mod */
 } BwMapWarp;
 
+/*
+ * player.step: the player finished a step on the field.
+ */
 typedef struct BwPlayerStep {
     BwEvent h;
     u16 zone;
@@ -415,6 +442,10 @@ typedef struct BwPlayerStep {
     u8  mode;       /* walking, running, cycling, surfing */
 } BwPlayerStep;
 
+/*
+ * trainer.spotted: a trainer saw the player and is about to walk up for a
+ * battle; refused, the trainer does not see the player.
+ */
 typedef struct BwTrainerSpotted {
     BwEvent h;
     u16 trainer_id;
@@ -422,6 +453,10 @@ typedef struct BwTrainerSpotted {
     u8  distance;   /* cells between them */
 } BwTrainerSpotted;
 
+/*
+ * npc.talk: the player pressed A at a person or object; refused, nothing
+ * happens.
+ */
 typedef struct BwNpcTalk {
     BwEvent h;
     u16 zone;
@@ -429,27 +464,47 @@ typedef struct BwNpcTalk {
     u16 script_id;  /* the script the talk runs */
 } BwNpcTalk;
 
+/*
+ * menu.open: the player opened the field menu (X); refused, it does not
+ * open.
+ */
 typedef struct BwMenuOpen {
     BwEvent h;
 } BwMenuOpen;
 
+/*
+ * menu.build: the field menu lists its entries; the list can be changed.
+ */
 typedef struct BwMenuBuild {
     BwEvent h;
     u32 entries;    /* *mod: one bit per menu entry shown */
 } BwMenuBuild;
 
+/*
+ * field.move: the player uses a field move (Cut, Surf, Strength, Fly...);
+ * refused, the move cannot be used.
+ */
 typedef struct BwFieldMove {
     BwEvent h;
     u16 move;       /* the field move */
     BwMonRef user;  /* the Pokemon using it */
 } BwFieldMove;
 
+/*
+ * pc.open: the player opens the Pokemon storage system; refused, it does
+ * not open.
+ */
 typedef struct BwPcOpen {
     BwEvent h;
 } BwPcOpen;
 
 /* encounters */
 
+/*
+ * encounter.wild: a wild Pokemon was rolled on the field, before the battle
+ * starts; species, level and shiny can be changed, or the roll done again;
+ * refused, there is no encounter.
+ */
 typedef struct BwEncounterWild {
     BwEvent h;
     u16 zone;
@@ -465,6 +520,10 @@ typedef struct BwEncounterWild {
     u16 species2;   /* *mod: the same; 0 when there is no second */
 } BwEncounterWild;
 
+/*
+ * encounter.static: a story or fixed battle with a wild Pokemon is about to
+ * start (a legendary, a gift battle); species and level can be changed.
+ */
 typedef struct BwEncounterStatic {
     BwEvent h;
     u16 zone;
@@ -473,6 +532,9 @@ typedef struct BwEncounterStatic {
     u8  kind;       /* static, legendary, scripted */
 } BwEncounterStatic;
 
+/*
+ * encounter.trainer: a trainer battle is about to be set up.
+ */
 typedef struct BwEncounterTrainer {
     BwEvent h;
     u16 trainer_id;
@@ -482,6 +544,10 @@ typedef struct BwEncounterTrainer {
 
 /* pokemon */
 
+/*
+ * mon.create: the game creates a Pokemon (wild, gift, egg, a trainer's);
+ * species, level, shiny and nature can be changed.
+ */
 typedef struct BwMonCreate {
     BwEvent h;
     u16 species;    /* *mod */
@@ -491,6 +557,10 @@ typedef struct BwMonCreate {
     u32 personality; /* the personality value the game rolled */
 } BwMonCreate;
 
+/*
+ * mon.receive: the player gets a Pokemon (a catch, a gift, a static
+ * encounter, an egg, a trade), when it is stored.
+ */
 typedef struct BwMonReceive {
     BwEvent h;
     BwMonRef mon;
@@ -502,6 +572,10 @@ typedef struct BwMonReceive {
     u16 zone;
 } BwMonReceive;
 
+/*
+ * mon.nickname: the nickname screen opens for a Pokemon (after a catch or
+ * from a person).
+ */
 typedef struct BwMonNickname {
     BwEvent h;
     BwMonRef mon;
@@ -549,6 +623,10 @@ typedef struct BwMonForm {
     u8  source;     /* BW_FORM_* */
 } BwMonForm;
 
+/*
+ * mon.evolve: the game found that a Pokemon evolves (level, item, trade,
+ * friendship), before the evolution scene; refused, it does not evolve.
+ */
 typedef struct BwMonEvolve {
     BwEvent h;
     BwMonRef mon;
@@ -557,6 +635,10 @@ typedef struct BwMonEvolve {
     u8  method;     /* BW_EVOLVE_* */
 } BwMonEvolve;
 
+/*
+ * mon.exp: a party Pokemon is about to gain experience (once per member in
+ * a battle, or at the day care); the amount can be changed.
+ */
 typedef struct BwMonExp {
     BwEvent h;
     BwMonRef mon;
@@ -568,6 +650,9 @@ typedef struct BwMonExp {
     u8  wild;       /* a battle source: 1 the battle is a wild one */
 } BwMonExp;
 
+/*
+ * mon.levelup: a Pokemon reached a new level.
+ */
 typedef struct BwMonLevelup {
     BwEvent h;
     BwMonRef mon;
@@ -578,6 +663,10 @@ typedef struct BwMonLevelup {
     u16 item;       /* BW_LEVELUP_ITEM: the item (a Rare Candy) */
 } BwMonLevelup;
 
+/*
+ * move.learn: a Pokemon is about to learn a move (level-up, the day care, a
+ * tutor); refused, it does not learn it.
+ */
 typedef struct BwMoveLearn {
     BwEvent h;
     BwMonRef mon;
@@ -587,12 +676,20 @@ typedef struct BwMoveLearn {
     u16 replaced;   /* the move it replaces, or 0 */
 } BwMoveLearn;
 
+/*
+ * mon.release: the player releases a Pokemon in the storage system;
+ * refused, it stays.
+ */
 typedef struct BwMonRelease {
     BwEvent h;
     BwMonRef mon;
     u16 species;
 } BwMonRelease;
 
+/*
+ * box.deposit: the player moves a party Pokemon into a box; refused, it
+ * stays in the party.
+ */
 typedef struct BwBoxDeposit {
     BwEvent h;
     BwMonRef mon;   /* the Pokemon, where it is now */
@@ -600,6 +697,10 @@ typedef struct BwBoxDeposit {
     u8  slot;       /* the box slot */
 } BwBoxDeposit;
 
+/*
+ * box.withdraw: the player moves a box Pokemon into the party; refused, it
+ * stays in the box.
+ */
 typedef struct BwBoxWithdraw {
     BwEvent h;
     BwMonRef mon;
@@ -607,11 +708,18 @@ typedef struct BwBoxWithdraw {
     u8  slot;
 } BwBoxWithdraw;
 
+/*
+ * party.swap: two party positions are swapped (the party screen, the
+ * storage system); refused, the order stays.
+ */
 typedef struct BwPartySwap {
     BwEvent h;
     u8  slot_a, slot_b;  /* the two party positions */
 } BwPartySwap;
 
+/*
+ * mon.helditem: a party Pokemon's held item changes on the party screen.
+ */
 typedef struct BwMonHelditem {
     BwEvent h;
     BwMonRef mon;
@@ -619,12 +727,19 @@ typedef struct BwMonHelditem {
     u16 previous;   /* the item it held, or 0 */
 } BwMonHelditem;
 
+/*
+ * egg.hatch: an egg hatches.
+ */
 typedef struct BwEggHatch {
     BwEvent h;
     BwMonRef mon;
     u16 species;
 } BwEggHatch;
 
+/*
+ * trade.ingame: a trade with a person in the game is about to happen;
+ * refused, there is no trade.
+ */
 typedef struct BwTradeIngame {
     BwEvent h;
     u16 trade_id;
@@ -634,6 +749,10 @@ typedef struct BwTradeIngame {
 
 /* battle */
 
+/*
+ * battle.start: a battle is set up and about to start; the format and a
+ * level change for the opposing Pokemon can be set.
+ */
 typedef struct BwBattleStart {
     BwEvent h;
     u8  wild;
@@ -643,6 +762,10 @@ typedef struct BwBattleStart {
     u32 opponent_party; /* a handle to the opposing party */
 } BwBattleStart;
 
+/*
+ * battle.action: a Pokemon of either side picks its action for the turn
+ * (fight, item, switch, run); refused, the choice is not allowed.
+ */
 typedef struct BwBattleAction {
     BwEvent h;
     BwMonRef mon;   /* the Pokemon choosing */
@@ -652,6 +775,10 @@ typedef struct BwBattleAction {
     u8  switch_to;  /* for switch: the party position */
 } BwBattleAction;
 
+/*
+ * battle.switch: a Pokemon is sent into battle (by choice, after a faint,
+ * or forced).
+ */
 typedef struct BwBattleSwitch {
     BwEvent h;
     BwMonRef out;   /* the Pokemon leaving, or empty after a faint */
@@ -659,11 +786,18 @@ typedef struct BwBattleSwitch {
     u8  forced;     /* the switch follows a faint or a move that forces it */
 } BwBattleSwitch;
 
+/*
+ * battle.escape: a Pokemon tries to run from a wild battle; refused, it
+ * cannot escape.
+ */
 typedef struct BwBattleEscape {
     BwEvent h;
     BwMonRef mon;   /* the Pokemon trying to flee */
 } BwBattleEscape;
 
+/*
+ * battle.move: a Pokemon used a move.
+ */
 typedef struct BwBattleMove {
     BwEvent h;
     BwMonRef user;
@@ -672,6 +806,10 @@ typedef struct BwBattleMove {
     u16 turn;
 } BwBattleMove;
 
+/*
+ * battle.damage: a move's damage on one target was worked out, before it is
+ * dealt; the damage can be changed.
+ */
 typedef struct BwBattleDamage {
     BwEvent h;
     BwMonRef attacker;
@@ -684,6 +822,9 @@ typedef struct BwBattleDamage {
     u8  effectiveness;
 } BwBattleDamage;
 
+/*
+ * battle.faint: a Pokemon fainted in a battle.
+ */
 typedef struct BwBattleFaint {
     BwEvent h;
     BwMonRef mon;       /* the Pokemon that fainted */
@@ -694,6 +835,10 @@ typedef struct BwBattleFaint {
     u16 turn;
 } BwBattleFaint;
 
+/*
+ * battle.item: the player picked an item from the battle bag; refused, the
+ * item is not used.
+ */
 typedef struct BwBattleItem {
     BwEvent h;
     u16 item;       /* the item chosen from the bag */
@@ -702,6 +847,10 @@ typedef struct BwBattleItem {
     u8  revive;     /* the item revives a fainted Pokemon */
 } BwBattleItem;
 
+/*
+ * catch.attempt: the player throws a ball; the catch rate can be changed;
+ * refused, the throw does nothing.
+ */
 typedef struct BwCatchAttempt {
     BwEvent h;
     BwMonRef target;
@@ -715,6 +864,9 @@ typedef struct BwCatchAttempt {
                      * started the battle), 0 for a wild roll */
 } BwCatchAttempt;
 
+/*
+ * catch.result: a thrown ball shook and the catch succeeded or failed.
+ */
 typedef struct BwCatchResult {
     BwEvent h;
     BwMonRef target;
@@ -724,6 +876,9 @@ typedef struct BwCatchResult {
     u8  shakes;     /* the shakes shown */
 } BwCatchResult;
 
+/*
+ * battle.end: a battle ended (won, lost, ran, caught).
+ */
 typedef struct BwBattleEnd {
     BwEvent h;
     u8  outcome;    /* BW_OUTCOME_* */
@@ -746,6 +901,10 @@ typedef struct BwBattleExp {
     u32 total;      /* the experience of every share together */
 } BwBattleExp;
 
+/*
+ * whiteout: the player lost a battle with no Pokemon left (the battle half)
+ * and is taken back to heal (the field half).
+ */
 typedef struct BwWhiteout {
     BwEvent h;
     u8  in_battle;  /* 1 the battle half, 0 the field half */
@@ -778,6 +937,9 @@ typedef struct BwBattleTrainerMon {
 
 /* items, money and healing */
 
+/*
+ * item.add: an item is about to go into the bag; the count can be changed.
+ */
 typedef struct BwItemAdd {
     BwEvent h;
     u16 item;
@@ -787,18 +949,30 @@ typedef struct BwItemAdd {
     u8  source;     /* BW_ITEM_FROM_* */
 } BwItemAdd;
 
+/*
+ * item.use: the party screen checks whether an item works on a Pokemon,
+ * before it is used; refused, the item has no effect and stays in the bag.
+ */
 typedef struct BwItemUse {
     BwEvent h;
     u16 item;
     BwMonRef target;  /* the Pokemon it is used on, or empty */
 } BwItemUse;
 
+/*
+ * shop.buy: the player picked an item in a shop, before choosing how many;
+ * the price of one can be changed; refused, the shop goes back to its list.
+ */
 typedef struct BwShopBuy {
     BwEvent h;
     u16 item;
     u32 price;      /* *mod: the price of one */
 } BwShopBuy;
 
+/*
+ * money.change: the player's money is about to go up or down; the change
+ * can be changed.
+ */
 typedef struct BwMoneyChange {
     BwEvent h;
     s32 delta;      /* *mod: the change, positive or negative */
@@ -807,6 +981,10 @@ typedef struct BwMoneyChange {
     u8  source;     /* BW_MONEY_* */
 } BwMoneyChange;
 
+/*
+ * heal: the whole party is about to be healed (a Pokemon Centre or another
+ * script, the HP-restore power); refused, nobody is healed.
+ */
 typedef struct BwHeal {
     BwEvent h;
     u8  source;     /* BW_HEAL_* */
@@ -846,18 +1024,27 @@ typedef struct BwHealHp {
 
 /* progress */
 
+/*
+ * badge.get: the player gets a gym badge.
+ */
 typedef struct BwBadgeGet {
     BwEvent h;
     u8  badge;      /* the badge, 0 to 7 */
     u8  count;      /* badges held after it */
 } BwBadgeGet;
 
+/*
+ * flag.set: a story flag is set or cleared.
+ */
 typedef struct BwFlagSet {
     BwEvent h;
     u16 flag;       /* the event flag */
     u8  value;      /* set or cleared */
 } BwFlagSet;
 
+/*
+ * dex.register: a species is registered in the Pokedex as seen or caught.
+ */
 typedef struct BwDexRegister {
     BwEvent h;
     u16 species;

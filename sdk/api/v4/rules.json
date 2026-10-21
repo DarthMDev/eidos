@@ -19,434 +19,496 @@
       "subscript": null,
       "readable": true,
       "writable": true,
-      "writable_declared": true
+      "writable_declared": true,
+      "doc": "the player's money"
     },
     {
       "name": "badges",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the number of badges"
     },
     {
       "name": "badge",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "whether badge `n` is held"
     },
     {
       "name": "zone",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the current zone"
     },
     {
       "name": "party_count",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "Pokemon in the party"
     },
     {
       "name": "species",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's species"
     },
     {
       "name": "level",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's level"
     },
     {
       "name": "hp",
       "subscript": "mon",
       "readable": true,
       "writable": true,
-      "writable_declared": true
+      "writable_declared": true,
+      "doc": "a Pokemon's HP and maximum HP"
     },
     {
       "name": "max_hp",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's HP and maximum HP"
     },
     {
       "name": "type1",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's types"
     },
     {
       "name": "type2",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's types"
     },
     {
       "name": "shiny",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "whether a Pokemon is shiny"
     },
     {
       "name": "held_item",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's held item"
     },
     {
       "name": "species_type1",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a species' types"
     },
     {
       "name": "species_type2",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a species' types"
     },
     {
       "name": "species_bst",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a species' base stat total"
     },
     {
       "name": "caught",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "whether a species is registered caught"
     },
     {
       "name": "item_count",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "how many of item `i` the bag holds"
     },
     {
       "name": "personality",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's own fields (version 4)"
     },
     {
       "name": "ot_id",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's own fields (version 4)"
     },
     {
       "name": "exp",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's own fields (version 4)"
     },
     {
       "name": "friendship",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's own fields (version 4)"
     },
     {
       "name": "ability",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's own fields (version 4)"
     },
     {
       "name": "move1",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's moves (version 4)"
     },
     {
       "name": "move2",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's moves (version 4)"
     },
     {
       "name": "move3",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's moves (version 4)"
     },
     {
       "name": "move4",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a Pokemon's moves (version 4)"
     },
     {
       "name": "is_egg",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "(version 4)"
     },
     {
       "name": "gender",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "(version 4)"
     },
     {
       "name": "form",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "(version 4)"
     },
     {
       "name": "nature",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "(version 4)"
     },
     {
       "name": "has_nickname",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "(version 4)"
     },
     {
       "name": "fateful",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "where and how a Pokemon was met (version 4)"
     },
     {
       "name": "origin_game",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "where and how a Pokemon was met (version 4)"
     },
     {
       "name": "met_location",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "where and how a Pokemon was met (version 4)"
     },
     {
       "name": "ball",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "where and how a Pokemon was met (version 4)"
     },
     {
       "name": "met_level",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "where and how a Pokemon was met (version 4)"
     },
     {
       "name": "place",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "where a reference points: `EIDOS_MON_*`, and in a battle the side (0 the player's) (version 4)"
     },
     {
       "name": "side",
       "subscript": "mon",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "where a reference points: `EIDOS_MON_*`, and in a battle the side (0 the player's) (version 4)"
     },
     {
       "name": "species_stage",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a species' data (version 4)"
     },
     {
       "name": "gender_ratio",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a species' data (version 4)"
     },
     {
       "name": "egg_group1",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a species' data (version 4)"
     },
     {
       "name": "egg_group2",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a species' data (version 4)"
     },
     {
       "name": "growth",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a species' data (version 4)"
     },
     {
       "name": "catch_rate",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a species' data (version 4)"
     },
     {
       "name": "species_base",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the first stage of species `s`'s evolution line; two species are in one line when their bases are equal (version 4)"
     },
     {
       "name": "area",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the current area: the place name the game shows on entry; every floor of a cave and every building of a town share it (version 4)"
     },
     {
       "name": "area_of",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the area of zone `z` (version 4)"
     },
     {
       "name": "wild_battle",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the battle in progress is a wild one (version 4)"
     },
     {
       "name": "battle_trainer",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the opposing trainers of the battle in progress, 0 for none (version 4)"
     },
     {
       "name": "battle_trainer2",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the opposing trainers of the battle in progress, 0 for none (version 4)"
     },
     {
       "name": "play_seconds",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the play time in seconds (version 4)"
     },
     {
       "name": "owned",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "whether the party or a box holds a Pokemon of species `s` that is not an egg (version 4)"
     },
     {
       "name": "party_max_level",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the highest level in the party; how many party Pokemon have HP, eggs left out (version 4)"
     },
     {
       "name": "party_alive",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the highest level in the party; how many party Pokemon have HP, eggs left out (version 4)"
     },
     {
       "name": "party_has_type",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "whether a party Pokemon (not an egg) has type `t` (version 4)"
     },
     {
       "name": "item_pocket",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "the bag pocket of item `i` (version 4)"
     },
     {
       "name": "move_type",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a move's type, power and damage class, as the move data stores them (version 4)"
     },
     {
       "name": "move_power",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a move's type, power and damage class, as the move data stores them (version 4)"
     },
     {
       "name": "move_class",
       "subscript": "int",
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a move's type, power and damage class, as the move data stores them (version 4)"
     },
     {
       "name": "battle_style",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": true
+      "writable_declared": true,
+      "doc": "shift or set"
     },
     {
       "name": "in_battle",
       "subscript": null,
       "readable": true,
       "writable": false,
-      "writable_declared": false
+      "writable_declared": false,
+      "doc": "a battle is in progress"
     }
   ],
   "names": [

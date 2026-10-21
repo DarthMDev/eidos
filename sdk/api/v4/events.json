@@ -4,10 +4,13 @@
     {
       "id": 1,
       "name": "game.new",
+      "category": "session",
+      "since": 3,
       "refusable": false,
-      "struct": "BwGameNew",
+      "struct": "EidosGameNew",
+      "c_struct": "BwGameNew",
       "size": 8,
-      "doc": "session",
+      "doc": "The player starts a new game, when the first map is set up.",
       "where": "`EVENT_MAPCHANGE_NewGameStartEvent` 0x02183C9C",
       "refuse": null,
       "modify": null,
@@ -16,427 +19,487 @@
     {
       "id": 2,
       "name": "save.begin",
+      "category": "session",
+      "since": 3,
       "refusable": false,
-      "struct": "BwSaveBegin",
+      "struct": "EidosSaveBegin",
+      "c_struct": "BwSaveBegin",
       "size": 16,
-      "doc": "",
+      "doc": "The game starts writing a save.",
       "where": "`SAVE_CONTROL_StartSave` 0x02007150",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "play_seconds",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 8,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "play_seconds",
-          "doc": "play time"
+          "doc": "play time",
+          "c_type": "u32"
         },
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 12,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": "where the player saves"
+          "doc": "where the player saves",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 3,
       "name": "save.done",
+      "category": "session",
+      "since": 3,
       "refusable": false,
-      "struct": "BwSaveDone",
+      "struct": "EidosSaveDone",
+      "c_struct": "BwSaveDone",
       "size": 16,
-      "doc": "",
+      "doc": "A save has been written (or failed: ok says which).",
       "where": "the return of `SAVE_CONTROL_MainSave` 0x02007168",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "play_seconds",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 8,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "play_seconds",
-          "doc": ""
+          "doc": "play time",
+          "c_type": "u32"
         },
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 12,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": ""
+          "doc": "where the player saves",
+          "c_type": "u16"
         },
         {
           "name": "ok",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 14,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "ok",
-          "doc": "the save was written"
+          "doc": "`save.done` only: the save was written",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 4,
       "name": "save.load",
+      "category": "session",
+      "since": 3,
       "refusable": false,
-      "struct": "BwSaveLoad",
+      "struct": "EidosSaveLoad",
+      "c_struct": "BwSaveLoad",
       "size": 16,
-      "doc": "",
+      "doc": "A save has been read and the game is about to run from it.",
       "where": "`GAME_DATA_LoadFromSave` 0x02012C18",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "play_seconds",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 8,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "play_seconds",
-          "doc": ""
+          "doc": "play time of the loaded save",
+          "c_type": "u32"
         },
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 12,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": ""
+          "doc": "where the save resumes",
+          "c_type": "u16"
         },
         {
           "name": "state_in_step",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 14,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "state_in_step",
-          "doc": "the port's own saved data; the port does not"
+          "doc": "reads 0: whether the mod's own saved data was written with this save is a per-mod answer, and the payload is built once for every handler of the event, so the mod asks the services table's `state_in_step` (`docs/mod-state.md`, section 2)",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 5,
       "name": "game.cleared",
+      "category": "session",
+      "since": 3,
       "refusable": false,
-      "struct": "BwGameCleared",
+      "struct": "EidosGameCleared",
+      "c_struct": "BwGameCleared",
       "size": 64,
-      "doc": "",
+      "doc": "The player beat the Champion; the ending (Hall of Fame, credits, the save screen) starts.",
       "where": "`EVENT_GAMECLEAR_Create` 0x0215F8A8, the ending: Hall of Fame (ov180), credits (ov181), save screen (ov205)",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "play_seconds",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 8,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "play_seconds",
-          "doc": ""
+          "doc": "play time at the Hall of Fame",
+          "c_type": "u32"
         },
         {
           "name": "team_count",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 12,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "team_count",
-          "doc": ""
+          "doc": "Pokemon entered",
+          "c_type": "u8"
         },
         {
           "name": "team",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 16,
           "size": 48,
           "count": 6,
           "writable": false,
           "rule_name": "team",
-          "doc": ""
+          "doc": "the team",
+          "c_type": "BwMonRef"
         }
       ]
     },
     {
       "id": 10,
       "name": "route.change",
+      "category": "world",
+      "since": 3,
       "refusable": false,
-      "struct": "BwRouteChange",
+      "struct": "EidosRouteChange",
+      "c_struct": "BwRouteChange",
       "size": 16,
-      "doc": "world",
+      "doc": "The player walks into another zone without a warp (a route border, a town edge).",
       "where": "`FIELD_MAP_CHANGE_SetupZone` 0x021643E8",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": "the new zone"
+          "doc": "the new zone",
+          "c_type": "u16"
         },
         {
           "name": "prev_zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "prev_zone",
-          "doc": "the zone left"
+          "doc": "the zone left",
+          "c_type": "u16"
         },
         {
           "name": "season",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 12,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "season",
-          "doc": ""
+          "doc": "the current season",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 11,
       "name": "map.warp",
+      "category": "world",
+      "since": 3,
       "refusable": false,
-      "struct": "BwMapWarp",
+      "struct": "EidosMapWarp",
+      "c_struct": "BwMapWarp",
       "size": 16,
-      "doc": "",
+      "doc": "The player is about to warp to another map (a door, stairs, Fly, a cave exit); the destination can be changed.",
       "where": "`EVENT_MAPCHANGE_ChangeFieldEvent` 0x021841C0",
       "refuse": null,
       "modify": "destination",
       "fields": [
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": "where the warp starts"
+          "doc": "where the warp starts",
+          "c_type": "u16"
         },
         {
           "name": "dest_zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "dest_zone",
-          "doc": "where it leads"
+          "doc": "where it leads",
+          "c_type": "u16"
         },
         {
           "name": "dest_x",
-          "type": "s16",
+          "type": "int16_t",
           "offset": 12,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "dest_x",
-          "doc": "the arrival cell"
+          "doc": "the arrival cell",
+          "c_type": "s16"
         },
         {
           "name": "dest_z",
-          "type": "s16",
+          "type": "int16_t",
           "offset": 14,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "dest_z",
-          "doc": ""
+          "doc": "the arrival cell",
+          "c_type": "s16"
         }
       ]
     },
     {
       "id": 12,
       "name": "player.step",
+      "category": "world",
+      "since": 3,
       "refusable": false,
-      "struct": "BwPlayerStep",
+      "struct": "EidosPlayerStep",
+      "c_struct": "BwPlayerStep",
       "size": 20,
-      "doc": "",
+      "doc": "The player finished a step on the field.",
       "where": "`FIELD_EVENT_CHECK_CheckStepEvents` 0x0218A9B0",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": ""
+          "doc": "the current zone",
+          "c_type": "u16"
         },
         {
           "name": "x",
-          "type": "s16",
+          "type": "int16_t",
           "offset": 10,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "x",
-          "doc": "the cell after the step"
+          "doc": "the cell after the step",
+          "c_type": "s16"
         },
         {
           "name": "y",
-          "type": "s16",
+          "type": "int16_t",
           "offset": 12,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "y",
-          "doc": "the cell after the step"
+          "doc": "the cell after the step",
+          "c_type": "s16"
         },
         {
           "name": "z",
-          "type": "s16",
+          "type": "int16_t",
           "offset": 14,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "z",
-          "doc": "the cell after the step"
+          "doc": "the cell after the step",
+          "c_type": "s16"
         },
         {
           "name": "dir",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "dir",
-          "doc": "the facing"
+          "doc": "the facing",
+          "c_type": "u8"
         },
         {
           "name": "mode",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 17,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "mode",
-          "doc": "walking, running, cycling, surfing"
+          "doc": "walking, running, cycling, surfing",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 13,
       "name": "trainer.spotted",
+      "category": "world",
+      "since": 3,
       "refusable": true,
-      "struct": "BwTrainerSpotted",
+      "struct": "EidosTrainerSpotted",
+      "c_struct": "BwTrainerSpotted",
       "size": 16,
-      "doc": "",
+      "doc": "A trainer saw the player and is about to walk up for a battle; refused, the trainer does not see the player.",
       "where": "`EVENT_TRAINER_EYE_Check` 0x021AE0CC",
       "refuse": "the trainer does not see the player (the function returns no event)",
       "modify": null,
       "fields": [
         {
           "name": "trainer_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "trainer_id",
-          "doc": ""
+          "doc": "the trainer who saw the player",
+          "c_type": "u16"
         },
         {
           "name": "partner_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "partner_id",
-          "doc": "the second trainer of a double, or 0"
+          "doc": "the second trainer of a double, or 0",
+          "c_type": "u16"
         },
         {
           "name": "distance",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 12,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "distance",
-          "doc": "cells between them"
+          "doc": "cells between them",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 14,
       "name": "npc.talk",
+      "category": "world",
+      "since": 3,
       "refusable": true,
-      "struct": "BwNpcTalk",
+      "struct": "EidosNpcTalk",
+      "c_struct": "BwNpcTalk",
       "size": 16,
-      "doc": "",
+      "doc": "The player pressed A at a person or object; refused, nothing happens.",
       "where": "`FIELD_EVENT_CHECK_SearchGridFrontMmdl` 0x0218B4B0; on rails `FIELD_EVENT_CHECK_SearchRailFrontMmdl` 0x0218B53C",
       "refuse": "no person is found ahead; the A press goes on to the sign and tile checks",
       "modify": null,
       "fields": [
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": ""
+          "doc": "the zone",
+          "c_type": "u16"
         },
         {
           "name": "object_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "object_id",
-          "doc": "the person or object talked to"
+          "doc": "the person or object talked to",
+          "c_type": "u16"
         },
         {
           "name": "script_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 12,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "script_id",
-          "doc": "the script the talk runs"
+          "doc": "the script the talk runs",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 15,
       "name": "menu.open",
+      "category": "world",
+      "since": 3,
       "refusable": true,
-      "struct": "BwMenuOpen",
+      "struct": "EidosMenuOpen",
+      "c_struct": "BwMenuOpen",
       "size": 8,
-      "doc": "",
+      "doc": "The player opened the field menu (X); refused, it does not open.",
       "where": "`EVENT_FIELD_MENU_Create` 0x0215FC40 (the X-button menu event) and `EVENT_FIELD_MENU_CreateForZone` 0x0215FCE0",
       "refuse": "the menu does not open (no event is returned)",
       "modify": null,
@@ -445,66 +508,78 @@
     {
       "id": 16,
       "name": "menu.build",
+      "category": "world",
+      "since": 3,
       "refusable": false,
-      "struct": "BwMenuBuild",
+      "struct": "EidosMenuBuild",
+      "c_struct": "BwMenuBuild",
       "size": 12,
-      "doc": "",
+      "doc": "The field menu lists its entries; the list can be changed.",
       "where": "the return of `FIELD_MENU_Create` 0x021A836C",
       "refuse": null,
       "modify": "entries (a cleared entry is hidden; one added is not built)",
       "fields": [
         {
           "name": "entries",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 8,
           "size": 4,
           "count": null,
           "writable": true,
           "rule_name": "entries",
-          "doc": "one bit per menu entry shown"
+          "doc": "one bit per menu entry shown",
+          "c_type": "u32"
         }
       ]
     },
     {
       "id": 17,
       "name": "field.move",
+      "category": "world",
+      "since": 3,
       "refusable": true,
-      "struct": "BwFieldMove",
+      "struct": "EidosFieldMove",
+      "c_struct": "BwFieldMove",
       "size": 20,
-      "doc": "",
+      "doc": "The player uses a field move (Cut, Surf, Strength, Fly...); refused, the move cannot be used.",
       "where": "`FIELD_SKILL_CHECK_CallHandler` 0x021644C4",
       "refuse": "the field move shows as unusable",
       "modify": null,
       "fields": [
         {
           "name": "move",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "move",
-          "doc": "the field move"
+          "doc": "the field move",
+          "c_type": "u16"
         },
         {
           "name": "user",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 12,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "user",
-          "doc": "the Pokemon using it"
+          "doc": "the Pokemon using it",
+          "c_type": "BwMonRef"
         }
       ]
     },
     {
       "id": 18,
       "name": "pc.open",
+      "category": "world",
+      "since": 3,
       "refusable": true,
-      "struct": "BwPcOpen",
+      "struct": "EidosPcOpen",
+      "c_struct": "BwPcOpen",
       "size": 8,
-      "doc": "",
+      "doc": "The player opens the Pokemon storage system; refused, it does not open.",
       "where": "`SCRCMD_PROC_FLD_CallOv170Event` 0x021B4D60, the script command that opens the box screen (the PC, and the battle box with its kind 4)",
       "refuse": "the PC does not open; the script reads a plain exit",
       "modify": null,
@@ -513,2392 +588,2706 @@
     {
       "id": 30,
       "name": "encounter.wild",
+      "category": "encounters",
+      "since": 3,
       "refusable": true,
-      "struct": "BwEncounterWild",
+      "struct": "EidosEncounterWild",
+      "c_struct": "BwEncounterWild",
       "size": 24,
-      "doc": "encounters",
+      "doc": "A wild Pokemon was rolled on the field, before the battle starts; species, level and shiny can be changed, or the roll done again; refused, there is no encounter.",
       "where": "the return of `FIELD_ENCOUNT_CreateZoneWildMons` 0x021A954C; roamers the return of `FIELD_ENCOUNT_PickRoamer` 0x021A957C",
       "refuse": "no battle; the player keeps walking; the payload names the area, the method (grass, surf, fishing, shaking grass) and the slot",
       "modify": "species, level, shiny; the second Pokemon of a double; a reroll",
       "fields": [
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": ""
+          "doc": "the zone",
+          "c_type": "u16"
         },
         {
           "name": "method",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 10,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "method",
-          "doc": "BW_ENCOUNTER_*"
+          "doc": "grass, dark grass, surf, fishing, shaking grass, rippling water, dust",
+          "c_type": "u8"
         },
         {
           "name": "slot",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 11,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "slot",
-          "doc": "the encounter table slot rolled"
+          "doc": "the encounter table slot rolled",
+          "c_type": "u8"
         },
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 12,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "species",
-          "doc": ""
+          "doc": "the species",
+          "c_type": "u16"
         },
         {
           "name": "level",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 14,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "level",
-          "doc": ""
+          "doc": "the level",
+          "c_type": "u8"
         },
         {
           "name": "shiny",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 15,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "shiny",
-          "doc": "1 forces shiny, 0 leaves the roll"
+          "doc": "1 forces shiny, 0 leaves the roll",
+          "c_type": "u8"
         },
         {
           "name": "double_",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "double",
-          "doc": "a double wild battle"
+          "doc": "a double wild battle",
+          "c_type": "u8"
         },
         {
           "name": "reroll",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 17,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "reroll",
-          "doc": "1 rolls the encounter again and fires again"
+          "doc": "version 4: 1 rolls the encounter again with the game's own roll and fires the event again, at most 16 times; the last answer stands",
+          "c_type": "u8"
         },
         {
           "name": "level2",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 18,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "level2",
-          "doc": "the second Pokemon of a double (dark grass)"
+          "doc": "version 4: the second Pokemon of a double (dark grass), 0 when there is none",
+          "c_type": "u8"
         },
         {
           "name": "species2",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 20,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "species2",
-          "doc": "the same; 0 when there is no second"
+          "doc": "version 4: the same",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 31,
       "name": "encounter.static",
+      "category": "encounters",
+      "since": 3,
       "refusable": false,
-      "struct": "BwEncounterStatic",
+      "struct": "EidosEncounterStatic",
+      "c_struct": "BwEncounterStatic",
       "size": 16,
-      "doc": "",
+      "doc": "A story or fixed battle with a wild Pokemon is about to start (a legendary, a gift battle); species and level can be changed.",
       "where": "`EVENT_BATTLE_CreateScriptedBattle` 0x0216E7C8",
       "refuse": null,
       "modify": "species, level",
       "fields": [
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": ""
+          "doc": "the zone",
+          "c_type": "u16"
         },
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "species",
-          "doc": ""
+          "doc": "the species",
+          "c_type": "u16"
         },
         {
           "name": "level",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 12,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "level",
-          "doc": ""
+          "doc": "the level",
+          "c_type": "u8"
         },
         {
           "name": "kind",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 13,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "kind",
-          "doc": "static, legendary, scripted"
+          "doc": "static, legendary, scripted",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 32,
       "name": "encounter.trainer",
+      "category": "encounters",
+      "since": 3,
       "refusable": false,
-      "struct": "BwEncounterTrainer",
+      "struct": "EidosEncounterTrainer",
+      "c_struct": "BwEncounterTrainer",
       "size": 16,
-      "doc": "",
+      "doc": "A trainer battle is about to be set up.",
       "where": "`FIELD_ENCOUNT_SetupTrainerBattle` 0x021AA5CC",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "trainer_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "trainer_id",
-          "doc": ""
+          "doc": "the trainer",
+          "c_type": "u16"
         },
         {
           "name": "partner_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "partner_id",
-          "doc": "the second trainer, or 0"
+          "doc": "the second trainer, or 0",
+          "c_type": "u16"
         },
         {
           "name": "format",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 12,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "format",
-          "doc": "BW_FORMAT_*"
+          "doc": "single, double, triple, rotation, multi",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 40,
       "name": "mon.create",
+      "category": "pokemon",
+      "since": 3,
       "refusable": false,
-      "struct": "BwMonCreate",
+      "struct": "EidosMonCreate",
+      "c_struct": "BwMonCreate",
       "size": 20,
-      "doc": "pokemon",
+      "doc": "The game creates a Pokemon (wild, gift, egg, a trainer's); species, level, shiny and nature can be changed.",
       "where": "`POKE_TOOL_CreateEx` 0x02017430; personality `POKE_TOOL_CreatePersonalRnd` 0x020186C8",
       "refuse": null,
       "modify": "species, level, shiny, nature",
       "fields": [
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "species",
-          "doc": ""
+          "doc": "the species",
+          "c_type": "u16"
         },
         {
           "name": "level",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 10,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "level",
-          "doc": ""
+          "doc": "the level",
+          "c_type": "u8"
         },
         {
           "name": "shiny",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 11,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "shiny",
-          "doc": ""
+          "doc": "1 forces shiny, 0 leaves the roll",
+          "c_type": "u8"
         },
         {
           "name": "nature",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 12,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "nature",
-          "doc": "the nature, or 0xFF to leave the roll"
+          "doc": "the nature, or 0xFF to leave the roll",
+          "c_type": "u8"
         },
         {
           "name": "personality",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 16,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "personality",
-          "doc": "the personality value the game rolled"
+          "doc": "the personality value the game rolled",
+          "c_type": "u32"
         }
       ]
     },
     {
       "id": 41,
       "name": "mon.receive",
+      "category": "pokemon",
+      "since": 3,
       "refusable": false,
-      "struct": "BwMonReceive",
+      "struct": "EidosMonReceive",
+      "c_struct": "BwMonReceive",
       "size": 24,
-      "doc": "",
+      "doc": "The player gets a Pokemon (a catch, a gift, a static encounter, an egg, a trade), when it is stored.",
       "where": "catch `EVENT_BATTLE_RETURN_Main` 0x021B9614 (ov092, the store step); gifts `SCRCMD_PROC_AddMonToParty` 0x0215C510, `SCRCMD_PROC_AddMonToBox` 0x0215C4C8, `SCRCMD_PROC_AddEggToParty` 0x0215C2D0 (ov010); `SCRCMD_POKEMON_FLD_ReceiveGiftMon` 0x021B6F18, daycare egg `SODATEYA_ReceiveEgg` 0x021C32F4 (ov021); in-game trade `FLD_TRADE_CreateEvent` 0x021CC500 (ov021)",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_RECEIVE_*"
+          "doc": "catch, gift, static, egg, in-game trade",
+          "c_type": "u8"
         },
         {
           "name": "to_box",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 17,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "to_box",
-          "doc": "it goes to a box because the party is full"
+          "doc": "it goes to a box because the party is full",
+          "c_type": "u8"
         },
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "species",
-          "doc": ""
+          "doc": "the species",
+          "c_type": "u16"
         },
         {
           "name": "level",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 20,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "level",
-          "doc": ""
+          "doc": "the level",
+          "c_type": "u8"
         },
         {
           "name": "shiny",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 21,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "shiny",
-          "doc": ""
+          "doc": "shiny",
+          "c_type": "u8"
         },
         {
           "name": "zone",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 22,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "zone",
-          "doc": ""
+          "doc": "where it was received",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 42,
       "name": "mon.nickname",
+      "category": "pokemon",
+      "since": 3,
       "refusable": false,
-      "struct": "BwMonNickname",
+      "struct": "EidosMonNickname",
+      "c_struct": "BwMonNickname",
       "size": 20,
-      "doc": "",
+      "doc": "The nickname screen opens for a Pokemon (after a catch or from a person).",
       "where": "`EVENT_NAMEIN_Create` 0x021CD2A4 (ov021); after a catch `ZUKAN_NICKNAME_Create` 0x0220B55C (ov207)",
       "refuse": null,
       "modify": "force the prompt (marked, but the row carries no applier, so a write to it has no effect)",
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon; empty on the prompt's own row, the caught Pokemon on the catch screen's",
+          "c_type": "BwMonRef"
         },
         {
           "name": "force",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "force",
-          "doc": "1 opens the prompt even when the game would skip it"
+          "doc": "1 opens the prompt even when the game would skip it (reads 0; the row has no applier)",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 43,
       "name": "mon.evolve",
+      "category": "pokemon",
+      "since": 3,
       "refusable": true,
-      "struct": "BwMonEvolve",
+      "struct": "EidosMonEvolve",
+      "c_struct": "BwMonEvolve",
       "size": 24,
-      "doc": "",
+      "doc": "The game found that a Pokemon evolves (level, item, trade, friendship), before the evolution scene; refused, it does not evolve.",
       "where": "the return of `SHINKA_CHECK_CheckEvolution` 0x0201B2B0",
       "refuse": "no evolution starts; an evolution stone has no effect",
       "modify": "target species",
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "from",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "from",
-          "doc": "its species"
+          "doc": "its species",
+          "c_type": "u16"
         },
         {
           "name": "to",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "to",
-          "doc": "the species it evolves into"
+          "doc": "the species it evolves into",
+          "c_type": "u16"
         },
         {
           "name": "method",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 20,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "method",
-          "doc": "BW_EVOLVE_*"
+          "doc": "level, item, trade, friendship, other",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 44,
       "name": "mon.exp",
+      "category": "pokemon",
+      "since": 3,
       "refusable": false,
-      "struct": "BwMonExp",
+      "struct": "EidosMonExp",
+      "c_struct": "BwMonExp",
       "size": 28,
-      "doc": "",
+      "doc": "A party Pokemon is about to gain experience (once per member in a battle, or at the day care); the amount can be changed.",
       "where": "the return of `BTL_SERVER_FLOW_CalcPartyExpShares` 0x021CB2D4 (ov093); daycare `SODATEYA_GrantExp` 0x021C3530 (ov021)",
       "refuse": null,
       "modify": "the amount",
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "amount",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 16,
           "size": 4,
           "count": null,
           "writable": true,
           "rule_name": "amount",
-          "doc": "the experience to add"
+          "doc": "the experience to add",
+          "c_type": "u32"
         },
         {
           "name": "exp",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 20,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "exp",
-          "doc": "its experience before"
+          "doc": "its experience before",
+          "c_type": "u32"
         },
         {
           "name": "level",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 24,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "level",
-          "doc": "its level before"
+          "doc": "its level before",
+          "c_type": "u8"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 25,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_EXP_*"
+          "doc": "version 4: `EIDOS_EXP_BATTLE` or `EIDOS_EXP_DAYCARE`",
+          "c_type": "u8"
         },
         {
           "name": "wild",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 26,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "wild",
-          "doc": "a battle source: 1 the battle is a wild one"
+          "doc": "version 4: for a battle, 1 when the battle is a wild one",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 45,
       "name": "mon.levelup",
+      "category": "pokemon",
+      "since": 3,
       "refusable": false,
-      "struct": "BwMonLevelup",
+      "struct": "EidosMonLevelup",
+      "c_struct": "BwMonLevelup",
       "size": 24,
-      "doc": "",
+      "doc": "A Pokemon reached a new level.",
       "where": "the return of `BTL_POKEPARAM_AddExp` 0x021D69B8, inside `BTL_SERVER_FLOW_ApplyPartyExp` 0x021C5350 (the level crossing)",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "from",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "from",
-          "doc": "the level before"
+          "doc": "the level before",
+          "c_type": "u8"
         },
         {
           "name": "to",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 17,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "to",
-          "doc": "the level reached"
+          "doc": "the level reached",
+          "c_type": "u8"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 18,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_LEVELUP_*"
+          "doc": "version 4: `EIDOS_LEVELUP_BATTLE`, or `EIDOS_LEVELUP_ITEM` (a Rare Candy on the party screen)",
+          "c_type": "u8"
         },
         {
           "name": "item",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 20,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "item",
-          "doc": "BW_LEVELUP_ITEM: the item (a Rare Candy)"
+          "doc": "version 4: the item, for `EIDOS_LEVELUP_ITEM`",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 46,
       "name": "move.learn",
+      "category": "pokemon",
+      "since": 3,
       "refusable": true,
-      "struct": "BwMoveLearn",
+      "struct": "EidosMoveLearn",
+      "c_struct": "BwMoveLearn",
       "size": 24,
-      "doc": "",
+      "doc": "A Pokemon is about to learn a move (level-up, the day care, a tutor); refused, it does not learn it.",
       "where": "level-up `POKE_TOOL_GetLevelUpMove` 0x02018328 (arm9); daycare `SODATEYA_LearnMove` 0x021C360C (ov021); the party screen's `POKELIST_TryLearnMove` 0x021BA5B4 and `POKELIST_ReplaceMoveSlot` 0x021BA5E0 (ov091); the nurse's relearner `POKE_SUMMARY_MAIN_ApplyMove` 0x021B6B0C (ov173); the script command that writes a move `SCRCMD_PROC_SetMonMove` 0x0215BD2C (ov010)",
       "refuse": "the level-up, the day care and the script: the move is not learned. The party screen's rows and the relearner's cannot be refused; the payload names the move and the source",
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "move",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "move",
-          "doc": ""
+          "doc": "the move",
+          "c_type": "u16"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 18,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_MOVE_SOURCE_*"
+          "doc": "level, TM, tutor, relearner; 0 also stands for the rows that name no teacher",
+          "c_type": "u8"
         },
         {
           "name": "slot",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 19,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "slot",
-          "doc": "the move slot it goes into, or 0xFF for a free one"
+          "doc": "the move slot it goes into, or 0xFF when the row names none",
+          "c_type": "u8"
         },
         {
           "name": "replaced",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 20,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "replaced",
-          "doc": "the move it replaces, or 0"
+          "doc": "the move it replaces, or 0",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 47,
       "name": "mon.release",
+      "category": "pokemon",
+      "since": 3,
       "refusable": true,
-      "struct": "BwMonRelease",
+      "struct": "EidosMonRelease",
+      "c_struct": "BwMonRelease",
       "size": 20,
-      "doc": "",
+      "doc": "The player releases a Pokemon in the storage system; refused, it stays.",
       "where": "`BOX2_MAIN_ClearSlot` 0x021DD314, whose only caller is the release step `BOX2_SEQ_StateMoveItemF` 0x021E81D0, not inside `BOX2_MAIN_UpdateBoxSlots`",
       "refuse": "the Pokemon stays; the box redraws it",
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "species",
-          "doc": ""
+          "doc": "its species",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 48,
       "name": "box.deposit",
+      "category": "pokemon",
+      "since": 3,
       "refusable": true,
-      "struct": "BwBoxDeposit",
+      "struct": "EidosBoxDeposit",
+      "c_struct": "BwBoxDeposit",
       "size": 20,
-      "doc": "",
+      "doc": "The player moves a party Pokemon into a box; refused, it stays in the party.",
       "where": "`BOX2_MAIN_UpdateBoxSlots` 0x021DD530, a party Pokemon placed in a box",
       "refuse": "the move is not applied; the box screen's own next step redraws the icons",
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": "the Pokemon, where it is now"
+          "doc": "the Pokemon, where it is now",
+          "c_type": "BwMonRef"
         },
         {
           "name": "box",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "box",
-          "doc": "the box it moves into or out of"
+          "doc": "the box it moves into or out of",
+          "c_type": "u8"
         },
         {
           "name": "slot",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 17,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "slot",
-          "doc": "the box slot"
+          "doc": "the box slot",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 49,
       "name": "box.withdraw",
+      "category": "pokemon",
+      "since": 3,
       "refusable": true,
-      "struct": "BwBoxWithdraw",
+      "struct": "EidosBoxWithdraw",
+      "c_struct": "BwBoxWithdraw",
       "size": 20,
-      "doc": "",
+      "doc": "The player moves a box Pokemon into the party; refused, it stays in the box.",
       "where": "`BOX2_MAIN_UpdateBoxSlots` 0x021DD530, a box Pokemon placed in the party",
       "refuse": "as `box.deposit`",
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon, where it is now",
+          "c_type": "BwMonRef"
         },
         {
           "name": "box",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "box",
-          "doc": ""
+          "doc": "the box it moves into or out of",
+          "c_type": "u8"
         },
         {
           "name": "slot",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 17,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "slot",
-          "doc": ""
+          "doc": "the box slot",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 50,
       "name": "party.swap",
+      "category": "pokemon",
+      "since": 3,
       "refusable": true,
-      "struct": "BwPartySwap",
+      "struct": "EidosPartySwap",
+      "c_struct": "BwPartySwap",
       "size": 12,
-      "doc": "",
+      "doc": "Two party positions are swapped (the party screen, the storage system); refused, the order stays.",
       "where": "`POKEPARTY_SwapMembers` 0x0201AB8C, not inside `BOX2_MAIN_UpdateBoxSlots`",
       "refuse": "the order does not change; the party screen redraws from the party",
       "modify": null,
       "fields": [
         {
           "name": "slot_a",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 8,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "slot_a",
-          "doc": "the two party positions"
+          "doc": "the two party positions",
+          "c_type": "u8"
         },
         {
           "name": "slot_b",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 9,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "slot_b",
-          "doc": "the two party positions"
+          "doc": "the two party positions",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 51,
       "name": "mon.helditem",
+      "category": "pokemon",
+      "since": 3,
       "refusable": false,
-      "struct": "BwMonHelditem",
+      "struct": "EidosMonHelditem",
+      "c_struct": "BwMonHelditem",
       "size": 20,
-      "doc": "",
+      "doc": "A party Pokemon's held item changes on the party screen.",
       "where": "`POKELIST_SetHeldItem` 0x021BA624",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "item",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "item",
-          "doc": "the item given"
+          "doc": "the item given",
+          "c_type": "u16"
         },
         {
           "name": "previous",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "previous",
-          "doc": "the item it held, or 0"
+          "doc": "the item it held, or 0",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 52,
       "name": "egg.hatch",
+      "category": "pokemon",
+      "since": 3,
       "refusable": false,
-      "struct": "BwEggHatch",
+      "struct": "EidosEggHatch",
+      "c_struct": "BwEggHatch",
       "size": 20,
-      "doc": "",
+      "doc": "An egg hatches.",
       "where": "`SCRCMD_POKEMON_FLD_StartEggHatch` 0x021B63D4",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the hatching Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "species",
-          "doc": ""
+          "doc": "its species",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 53,
       "name": "trade.ingame",
+      "category": "pokemon",
+      "since": 3,
       "refusable": true,
-      "struct": "BwTradeIngame",
+      "struct": "EidosTradeIngame",
+      "c_struct": "BwTradeIngame",
       "size": 24,
-      "doc": "",
+      "doc": "A trade with a person in the game is about to happen; refused, there is no trade.",
       "where": "`SCRCMD_POKEMON_FLD_StartTradeEvent` 0x021B654C",
       "refuse": "the trade does not happen and the script goes on",
       "modify": null,
       "fields": [
         {
           "name": "trade_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "trade_id",
-          "doc": ""
+          "doc": "the in-game trade",
+          "c_type": "u16"
         },
         {
           "name": "given",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 12,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "given",
-          "doc": "the player's Pokemon"
+          "doc": "the player's Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "received_species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 20,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "received_species",
-          "doc": "the species offered"
+          "doc": "the species offered",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 54,
       "name": "mon.cure",
+      "category": "pokemon",
+      "since": 4,
       "refusable": true,
-      "struct": "BwMonCure",
+      "struct": "EidosMonCure",
+      "c_struct": "BwMonCure",
       "size": 20,
-      "doc": "mon.cure (version 4): a status is about to be cured.  status is the game's own number: 1 paralysis, 2 sleep, 3 freeze, 4 burn, 5 poison; in a battle, 6 and up are the battle's own conditions (confusion and the others).  A refusal keeps the status (on the party screen the item is not used; in a battle the game's text may still say it was cured).",
-      "where": "`PLIST_DEMO_CheckItemUsable` 0x021BDD78 (ov091); `BTL_SERVER_FLOW_CureSick` 0x021C5620 (ov093); after the party heals of `heal`",
+      "doc": "A status is about to be cured.  status is the game's own number: 1 paralysis, 2 sleep, 3 freeze, 4 burn, 5 poison; in a battle, 6 and up are the battle's own conditions (confusion and the others).  A refusal keeps the status (on the party screen the item is not used; in a battle the game's text may still say it was cured).",
+      "where": "`PLIST_DEMO_CheckItemUsable` 0x021BDD78 (ov091); `BTL_SERVER_FLOW_CureSick` 0x021C5620 (ov093); after the party heals of `heal`, for each member they cured",
       "refuse": "the status stays; an item on the party screen is kept",
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "status",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "status",
-          "doc": ""
+          "doc": "1 paralysis, 2 sleep, 3 freeze, 4 burn, 5 poison; in a battle 6 and up are the battle's own conditions",
+          "c_type": "u8"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 17,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_CURE_*"
+          "doc": "`EIDOS_CURE_FIELD_ITEM`, `_BATTLE` (item, move, ability, berry), `_PARTY` (a party heal)",
+          "c_type": "u8"
         },
         {
           "name": "item",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "item",
-          "doc": "the item, or 0"
+          "doc": "the item, or 0",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 55,
       "name": "mon.pp",
+      "category": "pokemon",
+      "since": 4,
       "refusable": true,
-      "struct": "BwMonPp",
+      "struct": "EidosMonPp",
+      "c_struct": "BwMonPp",
       "size": 24,
-      "doc": "mon.pp (version 4): a move is about to get PP back.  amount is the PP it gets, before the cap at its max.  A refusal gives none.",
+      "doc": "A move is about to get PP back.  amount is the PP it gets, before the cap at its max.  A refusal gives none.",
       "where": "`POKE_TOOL_RestorePP` 0x0201B970 (arm9); `BTL_SERVER_FLOW_RestoreMovePp` 0x021C6080 (ov093)",
       "refuse": "no PP",
       "modify": "the PP",
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "slot",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "slot",
-          "doc": "the move slot, 0 to 3"
+          "doc": "the move slot, 0 to 3",
+          "c_type": "u8"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 17,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_PP_*"
+          "doc": "`EIDOS_PP_FIELD_ITEM` or `EIDOS_PP_BATTLE`",
+          "c_type": "u8"
         },
         {
           "name": "move",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "move",
-          "doc": "the move, or 0 when the port cannot read it"
+          "doc": "the move (0 in a battle for now)",
+          "c_type": "u16"
         },
         {
           "name": "amount",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 20,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "amount",
-          "doc": ""
+          "doc": "the PP it gets, before the cap at its max",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 56,
       "name": "mon.form",
+      "category": "pokemon",
+      "since": 4,
       "refusable": true,
-      "struct": "BwMonForm",
+      "struct": "EidosMonForm",
+      "c_struct": "BwMonForm",
       "size": 24,
-      "doc": "mon.form (version 4): a Pokemon is about to change form.  A refusal keeps the form it has; `to` can be changed.",
+      "doc": "A Pokemon is about to change form.  A refusal keeps the form it has; `to` can be changed.",
       "where": "`POKE_TOOL_ChangeForm` 0x02017988 (arm9); `BTL_SERVER_FLOW_ProcHandExChangeForm` 0x021CA748 (ov093)",
       "refuse": "the form stays",
       "modify": "the new form",
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "species",
-          "doc": ""
+          "doc": "its species",
+          "c_type": "u16"
         },
         {
           "name": "from",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 18,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "from",
-          "doc": ""
+          "doc": "the form it has",
+          "c_type": "u8"
         },
         {
           "name": "to",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 19,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "to",
-          "doc": ""
+          "doc": "the form it changes to",
+          "c_type": "u8"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 20,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_FORM_*"
+          "doc": "`EIDOS_FORM_FIELD` (an item, the season, a script) or `EIDOS_FORM_BATTLE` (an ability, a move, a held item)",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 70,
       "name": "battle.start",
+      "category": "battle",
+      "since": 3,
       "refusable": false,
-      "struct": "BwBattleStart",
+      "struct": "EidosBattleStart",
+      "c_struct": "BwBattleStart",
       "size": 20,
-      "doc": "battle",
+      "doc": "A battle is set up and about to start; the format and a level change for the opposing Pokemon can be set.",
       "where": "`BTL_SETUP_Create` 0x02013090 (arm9); the return of the setups: the wild `BTL_SETUP_SetupWild` 0x0201347C (arm9), the trainer `FIELD_ENCOUNT_SetupTrainerBattle` 0x021AA5CC (ov021), the scripted `EVENT_BATTLE_CreateScriptedBattle` 0x0216E7C8 (ov010)",
       "refuse": null,
       "modify": "format, levels; the payload names the trainer ids and whether the battle is wild",
       "fields": [
         {
           "name": "wild",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 8,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "wild",
-          "doc": ""
+          "doc": "a wild battle; 0 at the row that creates the setup",
+          "c_type": "u8"
         },
         {
           "name": "format",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 9,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "format",
-          "doc": "BW_FORMAT_*"
+          "doc": "single, double, triple, rotation, multi; 0xFF where the port does not know the format yet (the row that creates the setup)",
+          "c_type": "u8"
         },
         {
           "name": "trainer_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 4,
           "count": 2,
           "writable": false,
           "rule_name": "trainer_id",
-          "doc": "the opposing trainers, or 0"
+          "doc": "the opposing trainers, or 0",
+          "c_type": "u16"
         },
         {
           "name": "level_adjust",
-          "type": "s8",
+          "type": "int8_t",
           "offset": 14,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "level_adjust",
-          "doc": "added to every opposing Pokemon's level"
+          "doc": "added to every opposing Pokemon's level",
+          "c_type": "s8"
         },
         {
           "name": "opponent_party",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 16,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "opponent_party",
-          "doc": "a handle to the opposing party"
+          "doc": "a handle to the opposing party; a handler edits it through the state calls",
+          "c_type": "u32"
         }
       ]
     },
     {
       "id": 71,
       "name": "battle.action",
+      "category": "battle",
+      "since": 3,
       "refusable": true,
-      "struct": "BwBattleAction",
+      "struct": "EidosBattleAction",
+      "c_struct": "BwBattleAction",
       "size": 24,
-      "doc": "",
+      "doc": "A Pokemon of either side picks its action for the turn (fight, item, switch, run); refused, the choice is not allowed.",
       "where": "fight `BTL_CLIENT_IsMoveSelectionBlocked` 0x021CF5B0; run `BTL_CLIENT_GetEscapeBlockerForSide` 0x021CF918 (inside `BTL_CLIENT_StepSelectRun`); switch the return of `BTL_PICK_GetLast` 0x0689CB1C (ov095, inside `BTL_CLIENT_StepSelectSwitchTarget`)",
       "refuse": "the choice is not accepted and the action menu stays; the payload names the action and, for fight, the move",
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": "the Pokemon choosing"
+          "doc": "the Pokemon choosing",
+          "c_type": "BwMonRef"
         },
         {
           "name": "side",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "side",
-          "doc": "0 the player's, 1 the opponent's"
+          "doc": "0 the player's, 1 the opponent's (the AI asks the move check too)",
+          "c_type": "u8"
         },
         {
           "name": "action",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 17,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "action",
-          "doc": "BW_ACTION_*"
+          "doc": "fight, switch, run",
+          "c_type": "u8"
         },
         {
           "name": "move",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "move",
-          "doc": "for fight: the move checked"
+          "doc": "for fight: the move checked",
+          "c_type": "u16"
         },
         {
           "name": "switch_to",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 20,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "switch_to",
-          "doc": "for switch: the party position"
+          "doc": "for switch: the party position",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 72,
       "name": "battle.item",
+      "category": "battle",
+      "since": 3,
       "refusable": true,
-      "struct": "BwBattleItem",
+      "struct": "EidosBattleItem",
+      "c_struct": "BwBattleItem",
       "size": 24,
-      "doc": "",
+      "doc": "The player picked an item from the battle bag; refused, the item is not used.",
       "where": "the return of `BTLV_CORE_GetSelectedItem` 0x021EA01C, inside `BTL_CLIENT_StepSelectItem`",
       "refuse": "back to the action menu; the item stays in the bag and the turn is not spent",
       "modify": null,
       "fields": [
         {
           "name": "item",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "item",
-          "doc": "the item chosen from the bag"
+          "doc": "the item chosen from the bag",
+          "c_type": "u16"
         },
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 12,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": "the Pokemon whose turn it is"
+          "doc": "the Pokemon whose turn it is",
+          "c_type": "BwMonRef"
         },
         {
           "name": "ball",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 20,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "ball",
-          "doc": "the item is a ball"
+          "doc": "the item is a ball",
+          "c_type": "u8"
         },
         {
           "name": "revive",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 21,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "revive",
-          "doc": "the item revives a fainted Pokemon"
+          "doc": "the item revives a fainted Pokemon",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 73,
       "name": "battle.switch",
+      "category": "battle",
+      "since": 3,
       "refusable": false,
-      "struct": "BwBattleSwitch",
+      "struct": "EidosBattleSwitch",
+      "c_struct": "BwBattleSwitch",
       "size": 28,
-      "doc": "",
+      "doc": "A Pokemon is sent into battle (by choice, after a faint, or forced).",
       "where": "`BTL_SERVER_FLOW_ProcMemberIn` 0x021BD9D4",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "out",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "out",
-          "doc": "the Pokemon leaving, or empty after a faint"
+          "doc": "the Pokemon leaving, or empty after a faint",
+          "c_type": "BwMonRef"
         },
         {
           "name": "in",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 16,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "in",
-          "doc": "the Pokemon sent out"
+          "doc": "the Pokemon sent out",
+          "c_type": "BwMonRef"
         },
         {
           "name": "forced",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 24,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "forced",
-          "doc": "the switch follows a faint or a move that forces it"
+          "doc": "the switch follows a faint or a move that forces it",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 74,
       "name": "battle.escape",
+      "category": "battle",
+      "since": 3,
       "refusable": true,
-      "struct": "BwBattleEscape",
+      "struct": "EidosBattleEscape",
+      "c_struct": "BwBattleEscape",
       "size": 16,
-      "doc": "",
+      "doc": "A Pokemon tries to run from a wild battle; refused, it cannot escape.",
       "where": "`BTL_SERVER_FLOW_TryEscape` 0x021BD60C",
       "refuse": "the escape fails as a failed run: \"Can't escape!\" and the turn is spent",
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": "the Pokemon trying to flee"
+          "doc": "the Pokemon trying to flee",
+          "c_type": "BwMonRef"
         }
       ]
     },
     {
       "id": 75,
       "name": "battle.move",
+      "category": "battle",
+      "since": 3,
       "refusable": false,
-      "struct": "BwBattleMove",
+      "struct": "EidosBattleMove",
+      "c_struct": "BwBattleMove",
       "size": 32,
-      "doc": "",
+      "doc": "A Pokemon used a move.",
       "where": "`BTL_SERVER_FLOW_RunMoveUsedEvent` 0x021C1A10",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "user",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "user",
-          "doc": ""
+          "doc": "the Pokemon using the move",
+          "c_type": "BwMonRef"
         },
         {
           "name": "move",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "move",
-          "doc": ""
+          "doc": "the move",
+          "c_type": "u16"
         },
         {
           "name": "target",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 20,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "target",
-          "doc": "the first target"
+          "doc": "the first target",
+          "c_type": "BwMonRef"
         },
         {
           "name": "turn",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 28,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "turn",
-          "doc": ""
+          "doc": "the turn",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 76,
       "name": "battle.damage",
+      "category": "battle",
+      "since": 3,
       "refusable": false,
-      "struct": "BwBattleDamage",
+      "struct": "EidosBattleDamage",
+      "c_struct": "BwBattleDamage",
       "size": 40,
-      "doc": "",
+      "doc": "A move's damage on one target was worked out, before it is dealt; the damage can be changed.",
       "where": "the return of `BTL_SERVER_FLOW_CalcMoveDamage` 0x021C1E74",
       "refuse": null,
       "modify": "the amount; the payload names attacker, target, move and the target's HP before",
       "fields": [
         {
           "name": "attacker",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "attacker",
-          "doc": ""
+          "doc": "the attacker",
+          "c_type": "BwMonRef"
         },
         {
           "name": "target",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 16,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "target",
-          "doc": ""
+          "doc": "the target",
+          "c_type": "BwMonRef"
         },
         {
           "name": "move",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 24,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "move",
-          "doc": ""
+          "doc": "the move",
+          "c_type": "u16"
         },
         {
           "name": "amount",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 28,
           "size": 4,
           "count": null,
           "writable": true,
           "rule_name": "amount",
-          "doc": "the damage"
+          "doc": "the damage",
+          "c_type": "u32"
         },
         {
           "name": "target_hp",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 32,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "target_hp",
-          "doc": "the target's HP before the hit"
+          "doc": "the target's HP before the hit",
+          "c_type": "u16"
         },
         {
           "name": "target_max_hp",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 34,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "target_max_hp",
-          "doc": ""
+          "doc": "the target's maximum HP",
+          "c_type": "u16"
         },
         {
           "name": "critical",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 36,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "critical",
-          "doc": ""
+          "doc": "a critical hit",
+          "c_type": "u8"
         },
         {
           "name": "effectiveness",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 37,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "effectiveness",
-          "doc": ""
+          "doc": "no effect, not very, neutral, super effective",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 77,
       "name": "battle.faint",
+      "category": "battle",
+      "since": 3,
       "refusable": false,
-      "struct": "BwBattleFaint",
+      "struct": "EidosBattleFaint",
+      "c_struct": "BwBattleFaint",
       "size": 40,
-      "doc": "",
+      "doc": "A Pokemon fainted in a battle.",
       "where": "`BTL_SERVER_FLOW_ProcFaintedPoke` 0x021C4F64",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": "the Pokemon that fainted"
+          "doc": "the Pokemon that fainted",
+          "c_type": "BwMonRef"
         },
         {
           "name": "side",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "side",
-          "doc": "0 the player's, 1 the opponent's"
+          "doc": "0 the player's, 1 the opponent's",
+          "c_type": "u8"
         },
         {
           "name": "cause",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 20,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "cause",
-          "doc": "the last attacker, or empty"
+          "doc": "the last attacker, or empty",
+          "c_type": "BwMonRef"
         },
         {
           "name": "cause_move",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 28,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "cause_move",
-          "doc": "the last move, or 0"
+          "doc": "the last move, or 0",
+          "c_type": "u16"
         },
         {
           "name": "cause_damage",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 32,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "cause_damage",
-          "doc": "the last damage, or 0"
+          "doc": "the last damage, or 0 for weather, a hazard or a status",
+          "c_type": "u32"
         },
         {
           "name": "turn",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 36,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "turn",
-          "doc": ""
+          "doc": "the turn",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 78,
       "name": "catch.attempt",
+      "category": "battle",
+      "since": 3,
       "refusable": true,
-      "struct": "BwCatchAttempt",
+      "struct": "EidosCatchAttempt",
+      "c_struct": "BwCatchAttempt",
       "size": 24,
-      "doc": "",
+      "doc": "The player throws a ball; the catch rate can be changed; refused, the throw does nothing.",
       "where": "`BTL_SERVER_FLOW_TryThrowBall` 0x021CBA40",
       "refuse": "the ball is blocked as in a trainer battle: the block message shows, the ball stays in the bag, the turn is spent; the payload names the ball and the target's species and level",
       "modify": "catch rate (`BTL_SERVER_FLOW_GetBallCatchRate` 0x021CBD48)",
       "fields": [
         {
           "name": "target",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "target",
-          "doc": ""
+          "doc": "the wild Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "species",
-          "doc": ""
+          "doc": "its species",
+          "c_type": "u16"
         },
         {
           "name": "level",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 18,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "level",
-          "doc": ""
+          "doc": "its level",
+          "c_type": "u8"
         },
         {
           "name": "shiny",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 19,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "shiny",
-          "doc": ""
+          "doc": "shiny",
+          "c_type": "u8"
         },
         {
           "name": "ball",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 20,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "ball",
-          "doc": ""
+          "doc": "the ball item",
+          "c_type": "u16"
         },
         {
           "name": "rate",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 22,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "rate",
-          "doc": "the catch rate the roll uses"
+          "doc": "the catch rate the roll uses, as a percentage of the game's own factor",
+          "c_type": "u8"
         },
         {
           "name": "static_",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 23,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "static",
-          "doc": "1 for a story or static encounter (encounter.static"
+          "doc": "version 4: 1 when `encounter.static` started the battle (a story or fixed Pokemon), 0 for a wild roll",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 79,
       "name": "catch.result",
+      "category": "battle",
+      "since": 3,
       "refusable": false,
-      "struct": "BwCatchResult",
+      "struct": "EidosCatchResult",
+      "c_struct": "BwCatchResult",
       "size": 24,
-      "doc": "",
+      "doc": "A thrown ball shook and the catch succeeded or failed.",
       "where": "the return of `BTL_SERVER_FLOW_CalcCaptureShakes` 0x021CBB34",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "target",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "target",
-          "doc": ""
+          "doc": "the wild Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "species",
-          "doc": ""
+          "doc": "its species",
+          "c_type": "u16"
         },
         {
           "name": "ball",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "ball",
-          "doc": ""
+          "doc": "the ball item",
+          "c_type": "u16"
         },
         {
           "name": "caught",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 20,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "caught",
-          "doc": "the catch succeeded"
+          "doc": "the catch succeeded",
+          "c_type": "u8"
         },
         {
           "name": "shakes",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 21,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "shakes",
-          "doc": "the shakes shown"
+          "doc": "the shakes shown",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 80,
       "name": "battle.end",
+      "category": "battle",
+      "since": 3,
       "refusable": false,
-      "struct": "BwBattleEnd",
+      "struct": "EidosBattleEnd",
+      "c_struct": "BwBattleEnd",
       "size": 16,
-      "doc": "",
+      "doc": "A battle ended (won, lost, ran, caught).",
       "where": "`EVENT_BATTLE_NotifyBattleEnd` 0x0216EE7C",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "outcome",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 8,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "outcome",
-          "doc": "BW_OUTCOME_*"
+          "doc": "win, loss, fled, caught, draw",
+          "c_type": "u8"
         },
         {
           "name": "wild",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 9,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "wild",
-          "doc": ""
+          "doc": "a wild battle",
+          "c_type": "u8"
         },
         {
           "name": "trainer_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 4,
           "count": 2,
           "writable": false,
           "rule_name": "trainer_id",
-          "doc": ""
+          "doc": "the opposing trainers, or 0",
+          "c_type": "u16"
         },
         {
           "name": "turns",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 14,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "turns",
-          "doc": ""
+          "doc": "turns taken",
+          "c_type": "u16"
         }
       ]
     },
     {
       "id": 81,
       "name": "whiteout",
+      "category": "battle",
+      "since": 3,
       "refusable": false,
-      "struct": "BwWhiteout",
+      "struct": "EidosWhiteout",
+      "c_struct": "BwWhiteout",
       "size": 16,
-      "doc": "",
+      "doc": "The player lost a battle with no Pokemon left (the battle half) and is taken back to heal (the field half).",
       "where": "`BTL_CLIENT_StepShowBlackoutMessages` 0x021D1960 (ov093); `SCRIPT_SYS_RunRecoverScript` 0x02158A20 (ov010)",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "in_battle",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 8,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "in_battle",
-          "doc": "1 the battle half, 0 the field half"
+          "doc": "1 the battle half, 0 the field half",
+          "c_type": "u8"
         },
         {
           "name": "money_lost",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 12,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "money_lost",
-          "doc": ""
+          "doc": "the money the game takes",
+          "c_type": "u32"
         }
       ]
     },
     {
       "id": 82,
       "name": "battle.trainer_mon",
+      "category": "battle",
+      "since": 4,
       "refusable": true,
-      "struct": "BwBattleTrainerMon",
+      "struct": "EidosBattleTrainerMon",
+      "c_struct": "BwBattleTrainerMon",
       "size": 28,
-      "doc": "battle.trainer_mon (version 4): one Pokemon of the opposing trainer's party, after the game built the party and before the battle starts.  It fires once per member, in party order.  A refusal takes the member out of the party (the last one always stays).  A changed field is written to the Pokemon with the game's own setters: a new species or level works out the stats again, a new move gets its full PP.  0 in a *mod field leaves the game's value.",
+      "doc": "One Pokemon of the opposing trainer's party, after the game built the party and before the battle starts.  It fires once per member, in party order.  A refusal takes the member out of the party (the last one always stays).  A changed field is written to the Pokemon with the game's own setters: a new species or level works out the stats again, a new move gets its full PP.  0 in a *mod field leaves the game's value.",
       "where": "the rows that build a trainer battle's setup (`battle.start`), once per opposing member",
       "refuse": "the member leaves the party (the last stays)",
       "modify": "species, level, item, moves, ability, form",
       "fields": [
         {
           "name": "trainer_id",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "trainer_id",
-          "doc": "the trainer the party belongs to"
+          "doc": "the trainer",
+          "c_type": "u16"
         },
         {
           "name": "index",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 10,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "index",
-          "doc": "the position in the party, 0 first"
+          "doc": "the position in the party, 0 first",
+          "c_type": "u8"
         },
         {
           "name": "level",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 11,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "level",
-          "doc": ""
+          "doc": "the level",
+          "c_type": "u8"
         },
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 12,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "species",
-          "doc": ""
+          "doc": "the species",
+          "c_type": "u16"
         },
         {
           "name": "item",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 14,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "item",
-          "doc": "the held item"
+          "doc": "the held item",
+          "c_type": "u16"
         },
         {
           "name": "move1",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "move1",
-          "doc": ""
+          "doc": "the moves",
+          "c_type": "u16"
         },
         {
           "name": "move2",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "move2",
-          "doc": ""
+          "doc": "the moves",
+          "c_type": "u16"
         },
         {
           "name": "move3",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 20,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "move3",
-          "doc": ""
+          "doc": "the moves",
+          "c_type": "u16"
         },
         {
           "name": "move4",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 22,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "move4",
-          "doc": ""
+          "doc": "the moves",
+          "c_type": "u16"
         },
         {
           "name": "ability",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 24,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "ability",
-          "doc": ""
+          "doc": "the ability",
+          "c_type": "u16"
         },
         {
           "name": "form",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 26,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "form",
-          "doc": "the form, written when species is written"
+          "doc": "the form",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 83,
       "name": "battle.exp",
+      "category": "battle",
+      "since": 4,
       "refusable": true,
-      "struct": "BwBattleExp",
+      "struct": "EidosBattleExp",
+      "c_struct": "BwBattleExp",
       "size": 16,
-      "doc": "battle.exp (version 4): an opposing Pokemon fainted and the battle hands out experience to the party, as a whole.  It fires before mon.exp fires for each member that gains.  A refusal gives nobody any experience (and mon.exp does not fire); scale changes every member's share.",
+      "doc": "An opposing Pokemon fainted and the battle hands out experience to the party, as a whole.  It fires before mon.exp fires for each member that gains.  A refusal gives nobody any experience (and mon.exp does not fire); scale changes every member's share.",
       "where": "the return of `BTL_SERVER_FLOW_CalcPartyExpShares` 0x021CB2D4 (ov093), before `mon.exp`",
       "refuse": "nobody gains",
       "modify": "the scale of every share",
       "fields": [
         {
           "name": "members",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 8,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "members",
-          "doc": "bit i: party position i gains experience"
+          "doc": "bit i: party position i gains",
+          "c_type": "u8"
         },
         {
           "name": "wild",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 9,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "wild",
-          "doc": "1 in a wild battle"
+          "doc": "1 in a wild battle",
+          "c_type": "u8"
         },
         {
           "name": "scale",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "scale",
-          "doc": "a percentage of every share, 100 to leave them"
+          "doc": "a percentage of every share; 100 leaves them",
+          "c_type": "u16"
         },
         {
           "name": "total",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 12,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "total",
-          "doc": "the experience of every share together"
+          "doc": "every share together",
+          "c_type": "u32"
         }
       ]
     },
     {
       "id": 90,
       "name": "item.add",
+      "category": "items, money and healing",
+      "since": 3,
       "refusable": false,
-      "struct": "BwItemAdd",
+      "struct": "EidosItemAdd",
+      "c_struct": "BwItemAdd",
       "size": 16,
-      "doc": "items, money and healing",
+      "doc": "An item is about to go into the bag; the count can be changed.",
       "where": "`MYITEM_SAVEDATA_AddItem` 0x02007E50",
       "refuse": null,
       "modify": "count",
       "fields": [
         {
           "name": "item",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "item",
-          "doc": ""
+          "doc": "the item",
+          "c_type": "u16"
         },
         {
           "name": "count",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 10,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "count",
-          "doc": "how many"
+          "doc": "how many",
+          "c_type": "u16"
         },
         {
           "name": "pocket",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 12,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "pocket",
-          "doc": "the bag pocket"
+          "doc": "the bag pocket",
+          "c_type": "u8"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 13,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_ITEM_FROM_*"
+          "doc": "version 4: `EIDOS_ITEM_FROM_SCRIPT` (an item on the ground, a gift from a person), `_GIFT`, `_PURCHASE`, `_BATTLE`, `_RETURN` (a held item or mail back to the bag), `_REWARD`, `_OTHER`",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 91,
       "name": "item.use",
+      "category": "items, money and healing",
+      "since": 3,
       "refusable": true,
-      "struct": "BwItemUse",
+      "struct": "EidosItemUse",
+      "c_struct": "BwItemUse",
       "size": 20,
-      "doc": "",
+      "doc": "The party screen checks whether an item works on a Pokemon, before it is used; refused, the item has no effect and stays in the bag.",
       "where": "`PLIST_DEMO_CheckItemUsable` 0x021BDD78",
       "refuse": "the game's \"it won't have any effect\"; the item stays",
       "modify": null,
       "fields": [
         {
           "name": "item",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "item",
-          "doc": ""
+          "doc": "the item",
+          "c_type": "u16"
         },
         {
           "name": "target",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 12,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "target",
-          "doc": "the Pokemon it is used on, or empty"
+          "doc": "the Pokemon it is used on, or empty",
+          "c_type": "BwMonRef"
         }
       ]
     },
     {
       "id": 92,
       "name": "shop.buy",
+      "category": "items, money and healing",
+      "since": 3,
       "refusable": true,
-      "struct": "BwShopBuy",
+      "struct": "EidosShopBuy",
+      "c_struct": "BwShopBuy",
       "size": 16,
-      "doc": "",
+      "doc": "The player picked an item in a shop, before choosing how many; the price of one can be changed; refused, the shop goes back to its list.",
       "where": "`SCRCMD_PROC_FLD_PickQuantityOutcome` 0x021B3370",
       "refuse": "back to the item list; no money changes hands",
       "modify": "price",
       "fields": [
         {
           "name": "item",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "item",
-          "doc": ""
+          "doc": "the item picked",
+          "c_type": "u16"
         },
         {
           "name": "price",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 12,
           "size": 4,
           "count": null,
           "writable": true,
           "rule_name": "price",
-          "doc": "the price of one"
+          "doc": "the price of one; the shop shows and charges it",
+          "c_type": "u32"
         }
       ]
     },
     {
       "id": 93,
       "name": "money.change",
+      "category": "items, money and healing",
+      "since": 3,
       "refusable": false,
-      "struct": "BwMoneyChange",
+      "struct": "EidosMoneyChange",
+      "c_struct": "BwMoneyChange",
       "size": 20,
-      "doc": "",
+      "doc": "The player's money is about to go up or down; the change can be changed.",
       "where": "`BEACON_AddPoints` 0x0200C278; `BEACON_SubPoints` 0x0200C29C",
       "refuse": null,
       "modify": "the amount",
       "fields": [
         {
           "name": "delta",
-          "type": "s32",
+          "type": "int32_t",
           "offset": 8,
           "size": 4,
           "count": null,
           "writable": true,
           "rule_name": "delta",
-          "doc": "the change, positive or negative"
+          "doc": "the change, positive or negative",
+          "c_type": "s32"
         },
         {
           "name": "before",
-          "type": "u32",
+          "type": "uint32_t",
           "offset": 12,
           "size": 4,
           "count": null,
           "writable": false,
           "rule_name": "before",
-          "doc": "the money before"
+          "doc": "the money before",
+          "c_type": "u32"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 16,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_MONEY_*"
+          "doc": "version 4: `EIDOS_MONEY_SCRIPT`, `_PURCHASE`, `_SALE`, `_BATTLE` (a prize when the delta is positive, a loss when it is negative), `_OTHER`",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 94,
       "name": "heal",
+      "category": "items, money and healing",
+      "since": 3,
       "refusable": true,
-      "struct": "BwHeal",
+      "struct": "EidosHeal",
+      "c_struct": "BwHeal",
       "size": 12,
-      "doc": "",
+      "doc": "The whole party is about to be healed (a Pokemon Centre or another script, the HP-restore power); refused, nobody is healed.",
       "where": "`SCRCMD_PROC_HealParty` 0x0215B5A8 (ov010, a centre or a script); `GPOWER_UseHpRestore` 0x0201104C (arm9, the HP-restore power)",
       "refuse": "the heal does not happen; the script's own text still plays",
       "modify": "which Pokemon heal",
       "fields": [
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 8,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_HEAL_*"
+          "doc": "Pokemon Centre or script, the HP-restore power",
+          "c_type": "u8"
         },
         {
           "name": "mask",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 9,
           "size": 1,
           "count": null,
           "writable": true,
           "rule_name": "mask",
-          "doc": "one bit per party position to heal"
+          "doc": "one bit per party position to heal",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 95,
       "name": "heal.hp",
+      "category": "items, money and healing",
+      "since": 4,
       "refusable": true,
-      "struct": "BwHealHp",
+      "struct": "EidosHealHp",
+      "c_struct": "BwHealHp",
       "size": 24,
-      "doc": "heal.hp (version 4): a Pokemon that has HP gets more.  The amount is the HP the game is about to add, before the cap at max_hp; a handler changes it, or refuses the event and the Pokemon gets nothing.  A fainted Pokemon coming back is mon.revive, not this event.  On the field the item is still used up: a mod that wants the item kept refuses item.use instead.",
-      "where": "`PLIST_DEMO_RestoreHp` 0x021BE914 (ov091, an item on the field); `BTL_SERVER_FLOW_ApplyHpRecover` 0x021C33E8 (ov093, every restore in a battle)",
+      "doc": "A Pokemon that has HP gets more.  The amount is the HP the game is about to add, before the cap at max_hp; a handler changes it, or refuses the event and the Pokemon gets nothing.  A fainted Pokemon coming back is mon.revive, not this event.  On the field the item is still used up: a mod that wants the item kept refuses item.use instead.",
+      "where": "`PLIST_DEMO_RestoreHp` 0x021BE914 (ov091, an item on the field); `BTL_SERVER_FLOW_ApplyHpRecover` 0x021C33E8 (ov093, every restore in a battle); after the party heals of `heal`, for each member they gave HP to",
       "refuse": "no HP is added",
       "modify": "the HP added",
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon that gets HP back",
+          "c_type": "BwMonRef"
         },
         {
           "name": "hp",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "hp",
-          "doc": "the HP before the restore"
+          "doc": "the HP before the restore",
+          "c_type": "u16"
         },
         {
           "name": "max_hp",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "max_hp",
-          "doc": ""
+          "doc": "the max HP",
+          "c_type": "u16"
         },
         {
           "name": "amount",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 20,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "amount",
-          "doc": "the HP to add"
+          "doc": "the HP to add, before the cap at max HP",
+          "c_type": "u16"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 22,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_HEAL_HP_*"
+          "doc": "field (an item from the bag or the party screen) or battle (any restore: bag item, held item, move, ability)",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 96,
       "name": "mon.revive",
+      "category": "items, money and healing",
+      "since": 4,
       "refusable": true,
-      "struct": "BwMonRevive",
+      "struct": "EidosMonRevive",
+      "c_struct": "BwMonRevive",
       "size": 28,
-      "doc": "mon.revive (version 4): a fainted Pokemon is about to come back.  A refusal keeps it fainted; for an item, the item is not used up.  The hp is what it comes back with, at least 1, at most max_hp.",
-      "where": "`PLIST_DEMO_CheckItemUsable` 0x021BDD78 and `PLIST_DEMO_RestoreHp` 0x021BE914 (ov091); `BTL_SERVER_FLOW_ItemEffectRevive` 0x021CC008 (ov093); before the party heals of `heal`",
+      "doc": "A fainted Pokemon is about to come back.  A refusal keeps it fainted; for an item, the item is not used up.  The hp is what it comes back with, at least 1, at most max_hp.",
+      "where": "`PLIST_DEMO_CheckItemUsable` 0x021BDD78 and `PLIST_DEMO_RestoreHp` 0x021BE914 (ov091); `BTL_SERVER_FLOW_ItemEffectRevive` 0x021CC008 (ov093); after the party heals of `heal`, for each member they revived",
       "refuse": "the Pokemon stays fainted; an item is kept where the game allows (`docs/mod-payloads.md`)",
       "modify": "the HP",
       "fields": [
         {
           "name": "mon",
-          "type": "BwMonRef",
+          "type": "EidosMonRef",
           "offset": 8,
           "size": 8,
           "count": null,
           "writable": false,
           "rule_name": "mon",
-          "doc": ""
+          "doc": "the Pokemon",
+          "c_type": "BwMonRef"
         },
         {
           "name": "hp",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 16,
           "size": 2,
           "count": null,
           "writable": true,
           "rule_name": "hp",
-          "doc": "the HP it comes back with"
+          "doc": "the HP it comes back with; at least 1, at most `max_hp`",
+          "c_type": "u16"
         },
         {
           "name": "max_hp",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 18,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "max_hp",
-          "doc": ""
+          "doc": "the max HP",
+          "c_type": "u16"
         },
         {
           "name": "item",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 20,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "item",
-          "doc": "the item, or 0"
+          "doc": "the item, or 0",
+          "c_type": "u16"
         },
         {
           "name": "move",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 22,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "move",
-          "doc": "the move, or 0"
+          "doc": "the move, or 0",
+          "c_type": "u16"
         },
         {
           "name": "source",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 24,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "source",
-          "doc": "BW_REVIVE_*"
+          "doc": "`EIDOS_REVIVE_FIELD_ITEM`, `_BATTLE_ITEM`, `_MOVE`, `_CENTRE`, `_POWER`, `_SCRIPT`",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 110,
       "name": "badge.get",
+      "category": "progress",
+      "since": 3,
       "refusable": false,
-      "struct": "BwBadgeGet",
+      "struct": "EidosBadgeGet",
+      "c_struct": "BwBadgeGet",
       "size": 12,
-      "doc": "progress",
+      "doc": "The player gets a gym badge.",
       "where": "the return of `BEACON_SetFlag` 0x0200C248",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "badge",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 8,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "badge",
-          "doc": "the badge, 0 to 7"
+          "doc": "the badge, 0 to 7",
+          "c_type": "u8"
         },
         {
           "name": "count",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 9,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "count",
-          "doc": "badges held after it"
+          "doc": "badges held after it",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 111,
       "name": "flag.set",
+      "category": "progress",
+      "since": 3,
       "refusable": false,
-      "struct": "BwFlagSet",
+      "struct": "EidosFlagSet",
+      "c_struct": "BwFlagSet",
       "size": 12,
-      "doc": "",
+      "doc": "A story flag is set or cleared.",
       "where": "`ZONEDATA_SetEventFlag` 0x02014314",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "flag",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "flag",
-          "doc": "the event flag"
+          "doc": "the event flag",
+          "c_type": "u16"
         },
         {
           "name": "value",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 10,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "value",
-          "doc": "set or cleared"
+          "doc": "set or cleared",
+          "c_type": "u8"
         }
       ]
     },
     {
       "id": 112,
       "name": "dex.register",
+      "category": "progress",
+      "since": 3,
       "refusable": false,
-      "struct": "BwDexRegister",
+      "struct": "EidosDexRegister",
+      "c_struct": "BwDexRegister",
       "size": 12,
-      "doc": "",
+      "doc": "A species is registered in the Pokedex as seen or caught.",
       "where": "`ZUKAN_SAVE_RegisterSeen` 0x0200CFA0; `ZUKAN_SAVE_RegisterCaught` 0x0200CDE0",
       "refuse": null,
       "modify": null,
       "fields": [
         {
           "name": "species",
-          "type": "u16",
+          "type": "uint16_t",
           "offset": 8,
           "size": 2,
           "count": null,
           "writable": false,
           "rule_name": "species",
-          "doc": ""
+          "doc": "the species",
+          "c_type": "u16"
         },
         {
           "name": "caught",
-          "type": "u8",
+          "type": "uint8_t",
           "offset": 10,
           "size": 1,
           "count": null,
           "writable": false,
           "rule_name": "caught",
-          "doc": "1 caught, 0 seen"
+          "doc": "1 caught, 0 seen",
+          "c_type": "u8"
         }
       ]
     }

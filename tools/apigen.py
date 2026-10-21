@@ -89,6 +89,22 @@ def parse_defines(text, names):
 # Structs
 
 STRUCT_DOCS = {}
+STRUCT_CATEGORY = {}
+STRUCT_SINCE = {}
+
+
+def to_wasm_names(text):
+    """The names of eidos_wasm.h in a line of prose: EIDOS_ constants,
+    Eidos types, <stdint.h> integers."""
+    if not text:
+        return text
+    text = re.sub(r'\bBW_', 'EIDOS_', text)
+    text = re.sub(r'\bBw([A-Z]\w*)', r'Eidos\1', text)
+    for k, v in (('u8', 'uint8_t'), ('s8', 'int8_t'), ('u16', 'uint16_t'),
+                 ('s16', 'int16_t'), ('u32', 'uint32_t'), ('s32', 'int32_t'),
+                 ('u64', 'uint64_t'), ('s64', 'int64_t')):
+        text = re.sub(r'\b%s\b' % k, v, text)
+    return text
 
 
 def struct_doc(text, start):
@@ -107,7 +123,13 @@ def parse_structs(text):
     comment)]}.  Only plain data structs (no function pointers)."""
     structs = {}
     for m in re.finditer(r'typedef struct (\w+) \{\n(.*?)\n\} \1;', text, flags=re.S):
-        STRUCT_DOCS[m.group(1)] = struct_doc(text, m.start())
+        doc = struct_doc(text, m.start())
+        STRUCT_SINCE[m.group(1)] = 4 if '(version 4)' in doc else 3
+        # "name (version 4): the sentence" -> "the sentence", capitalised
+        doc = re.sub(r'^[\w.]+(?: \(version \d\))?: ', '', doc)
+        STRUCT_DOCS[m.group(1)] = doc[:1].upper() + doc[1:]
+        cats = re.findall(r'\n/\* ([a-z ,]+) \*/\n', text[:m.start()])
+        STRUCT_CATEGORY[m.group(1)] = cats[-1] if cats else None
         name, body = m.group(1), m.group(2)
         if '(*' in body:
             continue
@@ -280,6 +302,47 @@ CORE = [
 ]
 
 
+def read_payload_tables():
+    """docs/mod-payloads.md: per event, the meaning of each field."""
+    out = {}
+    cur = None
+    for line in read('docs/mod-payloads.md').split('\n'):
+        if line.startswith('**`'):
+            names = re.findall(r'\*\*`([\w.]+)`\*\*', line)
+            cur = {}
+            for n in names:
+                out[n] = cur       # events that share one table share its rows
+            continue
+        m = re.match(r'^\| `(\w+)`((?:, `\w+`)+) \| [^|]* \| (.*?) \|\s*$', line)
+        if m and cur is not None:
+            for n in [m.group(1)] + re.findall(r'`(\w+)`', m.group(2)):
+                cur[n] = m.group(3).strip()
+            continue
+        m = re.match(r'^\| `(\w+?)(\d*)`(?: \.\. `\w+?(\d*)`)? \| [^|]* \| (.*?) \|\s*$', line)
+        if m and cur is not None:
+            if m.group(3):
+                for k in range(int(m.group(2)), int(m.group(3)) + 1):
+                    cur[m.group(1) + str(k)] = m.group(4).strip()
+            else:
+                cur[m.group(1) + m.group(2)] = m.group(4).strip()
+    return out
+
+
+def read_rule_field_docs():
+    """docs/mod-rules-language.md, the state field table: name -> value."""
+    out = {}
+    for line in read('docs/mod-rules-language.md').split('\n'):
+        m = re.match(r'^\| (`.*?) \| (.*?) \| (.*?) \|\s*$', line)
+        if not m:
+            continue
+        names = re.findall(r'`(\w+?)(\d*)(?:\[\w+\])?`', m.group(1))
+        if ' .. ' in m.group(1) and len(names) == 2 and names[0][0] == names[1][0]:
+            names = [(names[0][0], str(k)) for k in range(int(names[0][1]), int(names[1][1]) + 1)]
+        for base, num in names:
+            out.setdefault(base + num, m.group(2).strip())
+    return out
+
+
 def read_event_table():
     """docs/mod-events.md, section 1: per event, where it fires, what a
     refusal does and what a handler can change."""
@@ -327,6 +390,9 @@ def hook_prototypes(aletheia, hooks):
         sig = ovlink.signature(sc.heads[name], name, sc.typedefs)
         if sig is not None:
             h['prototype'] = '%s %s(%s)' % (sig[0], name, ', '.join(sig[1]) or 'void')
+            h['signature'] = '%s (%s)' % (sig[0], ', '.join(sig[1]) or 'void')
+        h['aletheia_name'] = name
+        h['aliases'] = [name] if name != h['name'] else []
 
 
 def wasm_header(api, enums, events, lay, state, services):
@@ -366,7 +432,7 @@ def wasm_header(api, enums, events, lay, state, services):
     w('};')
     w('')
     seen = set()
-    order = ['BwEvent', 'BwMonRef', 'BwModStateHeader'] + [e['struct'] for e in events]
+    order = ['BwEvent', 'BwMonRef', 'BwModStateHeader'] + [e['c_struct'] for e in events]
     for sname in order:
         if sname in seen or sname not in lay:
             continue
@@ -429,6 +495,7 @@ def generate():
     member_struct = dict((m.group(2), m.group(1)) for m in re.finditer(r'(Bw\w+)\s+(\w+);', union))
     events = []
     table = read_event_table()
+    payload_docs = read_payload_tables()
     for e in rules['events']:
         member = e['name'].replace('.', '_')
         sname = member_struct.get(member)
@@ -436,13 +503,31 @@ def generate():
             raise SystemExit('apigen: no payload member for %s' % e['name'])
         size, _, fields = lay[sname]
         info = table.get(e['name'], {})
+        pdocs = payload_docs.get(e['name'], {})
+        out_fields = []
+        for f in fields:
+            if f['name'] == 'h':
+                continue
+            g = dict(f)
+            g['c_type'] = f['type']
+            g['type'] = PRIM[f['type']][2] if f['type'] in PRIM else 'Eidos' + f['type'][2:]
+            doc = pdocs.get(f['rule_name']) or pdocs.get(f['name']) or f['doc']
+            g['doc'] = to_wasm_names(doc)
+            out_fields.append(g)
         events.append({'id': enum_map[e['kind']], 'name': e['name'],
-                       'refusable': e['refusable'], 'struct': sname, 'size': size,
-                       'doc': STRUCT_DOCS.get(sname, ''),
-                       'where': info.get('where'), 'refuse': info.get('refuse'),
-                       'modify': info.get('modify'),
-                       'fields': [f for f in fields if f['name'] != 'h']})
+                       'category': STRUCT_CATEGORY.get(sname),
+                       'since': STRUCT_SINCE.get(sname, 3),
+                       'refusable': e['refusable'], 'struct': 'Eidos' + sname[2:],
+                       'c_struct': sname, 'size': size,
+                       'doc': to_wasm_names(STRUCT_DOCS.get(sname, '')),
+                       'where': to_wasm_names(info.get('where')),
+                       'refuse': to_wasm_names(info.get('refuse')),
+                       'modify': to_wasm_names(info.get('modify')),
+                       'fields': out_fields})
     events.sort(key=lambda e: e['id'])
+    rule_docs = read_rule_field_docs()
+    for f in rules['state_fields']:
+        f['doc'] = to_wasm_names(rule_docs.get(f['name'], ''))
     rules_out = dict(rules)
     rules_out['events'] = [e['name'] for e in events]
 
@@ -456,17 +541,21 @@ def generate():
         cols = line.split('\t')
         hooks.append({'address': cols[0], 'name': cols[1], 'region': cols[2],
                       'events': [x for x in (cols[3].split(',') if len(cols) > 3 else []) if x],
-                      'prototype': None})
+                      'prototype': None, 'signature': None,
+                      'aletheia_name': cols[1], 'aliases': []})
     if ALETHEIA is not None:
         hook_prototypes(ALETHEIA, hooks)
     else:
         old = os.path.join(ROOT, 'sdk/api/v%d/hooks.json' % api)
         if os.path.exists(old):
             with open(old, encoding='utf-8') as f:
-                kept = dict(((h['region'], h['address'], h['name']), h.get('prototype'))
+                kept = dict(((h['region'], h['address'], h['name']), h)
                             for h in json.load(f).get('hooks', []))
             for h in hooks:
-                h['prototype'] = kept.get((h['region'], h['address'], h['name']))
+                k = kept.get((h['region'], h['address'], h['name']), {})
+                for key in ('prototype', 'signature', 'aletheia_name', 'aliases'):
+                    if key in k:
+                        h[key] = k[key]
 
     settings = {
         'line': 'option <key> <kind> "<label>" <value>',
@@ -482,7 +571,7 @@ def generate():
                 '#include <stddef.h>', '#include "mod_api.h"', '#include "mod_state.h"', '',
                 '#define LAYOUT(s, f, o) _Static_assert(offsetof(s, f) == (o), #s "." #f)',
                 '#define SIZE(s, n) _Static_assert(sizeof(s) == (n), #s)', '']
-    for sname in sorted(set(['BwEvent', 'BwMonRef'] + [e['struct'] for e in events])):
+    for sname in sorted(set(['BwEvent', 'BwMonRef'] + [e['c_struct'] for e in events])):
         size, _, fields = lay[sname]
         layout_c.append('SIZE(%s, %d);' % (sname, size))
         for f in fields:
