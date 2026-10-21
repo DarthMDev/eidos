@@ -65,6 +65,7 @@
 #include "types.h"
 #include "mod_api.h"
 #include "mod_state.h"
+#include "bw_limits.h"
 
 /* ------------------------------------------------------------------ */
 /* The port's own seam                                                 */
@@ -209,6 +210,10 @@ extern void BTL_POKEPARAM_SetItem(struct BtlPokeParam *pp, u16 item)
     __attribute__((weak));                                    /* 0x021D5B44 */
 extern u16 BTL_POKEPARAM_GetItem(struct BtlPokeParam *pp)
     __attribute__((weak));                                    /* 0x021D5B40 */
+extern struct PokemonParam *BTL_POKEPARAM_GetMon(struct BtlPokeParam *pp)
+    __attribute__((weak));
+/* POKE_TOOL_PARAM_IS_EGG (src/game/arm9/poke_tool_param.h). */
+#define BW_PARAM_IS_EGG 0x4Cu
 extern u16 BTL_POKEPARAM_GetSpecies(struct BtlPokeParam *pp)
     __attribute__((weak));                                    /* 0x021D5444 */
 extern void BTL_POKEPARAM_GetTypes(struct BtlPokeParam *pp, u8 *type1,
@@ -274,6 +279,9 @@ extern void *GAME_DATA_GetMyItem(const struct GameData *gd)
 extern u32 MYITEM_SAVEDATA_AddItem(struct MyItem *bag, u16 itemId,
                                    u16 quantity, u16 heapId)
     __attribute__((weak));                                    /* 0x02007E50 */
+extern u32 MYITEM_SAVEDATA_GetItemQuantity(struct MyItem *bag, u16 itemId,
+                                           u16 heapId)
+    __attribute__((weak));
 
 /* ------------------------------------------------------------------ */
 /* The live objects                                                    */
@@ -995,6 +1003,7 @@ static u8 state_battle_style(void)
 /* The move kinds. */
 #define BW_MOVE_TO_BOX    0u
 #define BW_MOVE_TAKE_ITEM 1u
+#define BW_MOVE_RELEASE   2u      /* found by personality, not by slot */
 
 typedef struct BwModMove {
     u8  kind;
@@ -1034,6 +1043,38 @@ static int queue_move(u8 kind, u32 slot)
     move->slot = (u8)slot;
     move->personality = POKE_TOOL_GetPartyValue(member, 0x00u, 0);
     g_move_count++;
+    return 0;
+}
+
+/* Release the party Pokemon with this personality, unless it is the last
+ * one that is not an egg. */
+static int release_by_personality(u32 personality)
+{
+    struct Party *party = live_party();
+    u32 count, i, found = 0xFFFFFFFFu, others = 0;
+
+    if (party == NULL || POKEPARTY_GetCount == NULL ||
+        POKEPARTY_RemoveMember == NULL || POKE_TOOL_GetPartyValue == NULL) {
+        return -1;
+    }
+    count = POKEPARTY_GetCount(party);
+    for (i = 0; i < count; i++) {
+        struct PokemonParam *member = live_member(i);
+
+        if (member == NULL) {
+            continue;
+        }
+        if (found == 0xFFFFFFFFu &&
+            POKE_TOOL_GetPartyValue(member, 0x00u, 0) == personality) {
+            found = i;
+        } else if (POKE_TOOL_GetPartyValue(member, BW_PARAM_IS_EGG, 0) == 0u) {
+            others++;
+        }
+    }
+    if (found == 0xFFFFFFFFu || others == 0u) {
+        return -1;      /* gone already, or the last one: refused */
+    }
+    POKEPARTY_RemoveMember(party, (s32)found);
     return 0;
 }
 
@@ -1119,9 +1160,14 @@ void bw_mod_state_apply_pending(void)
         return;     /* a battle holds the party open */
     }
     for (i = 0; i < g_move_count; i++) {
-        struct PokemonParam *member = live_member(g_moves[i].slot);
+        struct PokemonParam *member;
         int done;
 
+        if (g_moves[i].kind == BW_MOVE_RELEASE) {
+            (void)release_by_personality(g_moves[i].personality);
+            continue;
+        }
+        member = live_member(g_moves[i].slot);
         if (member == NULL || POKE_TOOL_GetPartyValue == NULL) {
             continue;   /* the slot is gone: the move has nothing to do */
         }
@@ -1157,9 +1203,81 @@ static int state_mon_take_item(BwMonRef mon)
     return queue_move(BW_MOVE_TAKE_ITEM, mon.slot);
 }
 
+/*
+ * A party reference, or one of the player's Pokemon in battle: the battle
+ * works on its own copy of the party, whose Pokemon carry the same
+ * personality, and switching reorders the battle's copy, not the party.
+ */
+static int state_mon_release(BwMonRef mon)
+{
+    struct PokemonParam *member = NULL;
+    BwModMove *move;
+
+    if (g_move_count >= BW_MOD_MOVE_QUEUE_MAX || POKE_TOOL_GetPartyValue == NULL) {
+        return -1;
+    }
+    if (mon.place == (u8)BW_MON_PARTY) {
+        member = live_member(mon.slot);
+    } else if (mon.place == (u8)BW_MON_BATTLE && mon.side == 0u &&
+               BTL_POKEPARAM_GetMon != NULL) {
+        struct BtlPokeParam *record = live_battle_record(mon.side, mon.slot);
+
+        if (record != NULL) {
+            member = BTL_POKEPARAM_GetMon(record);
+        }
+    }
+    if (member == NULL) {
+        return -1;
+    }
+    move = &g_moves[g_move_count];
+    move->kind = (u8)BW_MOVE_RELEASE;
+    move->slot = mon.slot;
+    move->personality = POKE_TOOL_GetPartyValue(member, 0x00u, 0);
+    g_move_count++;
+    return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* The table                                                           */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* The bag                                                             */
+/* ------------------------------------------------------------------ */
+
+/* The heap the bag calls take: the game's main heap (see
+ * state_mon_take_item). */
+#define BW_STATE_BAG_HEAP 3u
+
+static s32 state_item_count(u16 item)
+{
+    struct MyItem *bag = live_bag();
+
+    if (bag == NULL || MYITEM_SAVEDATA_GetItemQuantity == NULL) {
+        return -1;
+    }
+    return (s32)MYITEM_SAVEDATA_GetItemQuantity(bag, item, BW_STATE_BAG_HEAP);
+}
+
+/*
+ * The bag is save data, not a screen's copy, so the add is not queued:
+ * the bag screen reads the pockets again when it opens.  The game's own
+ * add takes all of the count or none of it.
+ */
+static int state_item_add(u16 item, u16 count)
+{
+    struct MyItem *bag = live_bag();
+
+    if (item == 0u || count == 0u ||
+        (u32)item > bw_limit_get(BW_PORT_LIMIT_ITEM_LAST)) {
+        return -1;
+    }
+    if (bag == NULL || MYITEM_SAVEDATA_AddItem == NULL) {
+        return -1;
+    }
+    return MYITEM_SAVEDATA_AddItem(bag, item, count, BW_STATE_BAG_HEAP) != 0u
+               ? 0 : -1;
+}
 
 /*
  * The table the host hands to a mod (sdk/mod_api.h, BwModHost).  The
@@ -1202,8 +1320,30 @@ const BwModState bw_mod_state = {
     state_battle_style,
 
     state_mon_to_box,
-    state_mon_take_item
+    state_mon_take_item,
+
+    state_mon_release,
+
+    state_item_count,
+    state_item_add
 };
+
+int bw_mod_state_party_slot(const void *mon)
+{
+    struct Party *party = live_party();
+    u32 count, i;
+
+    if (mon == NULL || party == NULL || POKEPARTY_GetCount == NULL) {
+        return -1;
+    }
+    count = POKEPARTY_GetCount(party);
+    for (i = 0; i < count; i++) {
+        if ((const void *)live_member(i) == mon) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
 
 /* The table, for the host table to point at. */
 const BwModState *bw_mod_state_table(void)

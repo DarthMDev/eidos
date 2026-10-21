@@ -102,6 +102,9 @@ static int unfilled_calls(const BwModState *t)
     if (t->battle_style == NULL) { n++; }
     if (t->mon_to_box == NULL) { n++; }
     if (t->mon_take_item == NULL) { n++; }
+    if (t->mon_release == NULL) { n++; }
+    if (t->item_count == NULL) { n++; }
+    if (t->item_add == NULL) { n++; }
     return n;
 }
 
@@ -236,11 +239,17 @@ int main(void)
     BW_CHECK_EQ("the map follows the badges and the money",
                 (long)offsetof(BwModState, zone)
                 - (long)offsetof(BwModState, party_count), 20 * (long)sizeof(void *));
-    BW_CHECK_EQ("the last call follows the map's three",
+    BW_CHECK_EQ("the item take follows the map's three",
                 (long)offsetof(BwModState, mon_take_item)
                 - (long)offsetof(BwModState, party_count), 24 * (long)sizeof(void *));
-    BW_CHECK_EQ("and nothing follows it",
-                (long)sizeof(BwModState) - (long)offsetof(BwModState, mon_take_item),
+    BW_CHECK_EQ("version 4's release follows it",
+                (long)offsetof(BwModState, mon_release)
+                - (long)offsetof(BwModState, party_count), 25 * (long)sizeof(void *));
+    BW_CHECK_EQ("the bag's two follow the release",
+                (long)offsetof(BwModState, item_add)
+                - (long)offsetof(BwModState, party_count), 27 * (long)sizeof(void *));
+    BW_CHECK_EQ("and nothing follows them",
+                (long)sizeof(BwModState) - (long)offsetof(BwModState, item_add),
                 (long)sizeof(void *));
 
     printf("the services table\n");
@@ -385,7 +394,15 @@ int main(void)
                 (long)(t->mon_to_box(ref) != 0), 1);
     BW_CHECK_EQ("and its held item cannot be taken back",
                 (long)(t->mon_take_item(ref) != 0), 1);
+    BW_CHECK_EQ("a party Pokemon cannot be released without the party",
+                (long)(t->mon_release(ref) != 0), 1);
     BW_CHECK_EQ("nothing is queued", (long)bw_mod_state_pending(), 0);
+
+    /* The bag: no game data, no bag. */
+    BW_CHECK_EQ("the bag count has no answer", (long)(t->item_count(1) < 0), 1);
+    BW_CHECK_EQ("an add without a bag fails", (long)(t->item_add(1, 1) != 0), 1);
+    BW_CHECK_EQ("an item past the limit is refused",
+                (long)(t->item_add(0xFFFFu, 1) != 0), 1);
 
     /* A call with no place to answer into fails too. */
     BW_CHECK_EQ("a party reference with no room fails",

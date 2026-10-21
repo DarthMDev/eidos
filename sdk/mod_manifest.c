@@ -1788,7 +1788,7 @@ int bw_mod_manifest_apply(void *manifest)
     }
 
     /* 1. The versions. */
-    if (m->has_api && m->api != BW_MOD_API_VERSION) {
+    if (m->has_api && (m->api < BW_MOD_API_MIN || m->api > BW_MOD_API_VERSION)) {
         mod_report(m, "api %d does not match the port's %d",
                    m->api, BW_MOD_API_VERSION);
         return -1;

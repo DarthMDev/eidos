@@ -78,6 +78,7 @@
 #include "mod_handoff.h"
 #include "mod_hooks.h"
 #include "mod_loader.h"
+#include "bw_limits.h"
 #include "mod_menu.h"
 #include "mod_net.h"
 #include <stdio.h>
@@ -109,6 +110,12 @@
 static u64         g_shots[BOOT_MAX_SHOTS];
 static int         g_shot_count;
 static const char *g_shot_dir = ".";
+/* --mod FOLDER: run with that one mod only (the player's mod list is not
+ * read); --mod-log FILE: everything the port writes to stderr, the mod
+ * loader's reports and the mods' own log lines with it, goes to FILE.
+ * Both are for a mod tool's "run in eidos" (kenon). */
+static const char *g_only_mod;
+static const char *g_mod_log;
 /* --g3d-trace N: the 3D command trace of frame N (hw3d.c g3d_hw_trace). */
 static u64         g_trace_frame;
 static int         g_trace_on;
@@ -1640,7 +1647,17 @@ static int boot_run_start(EidosFrameHooks *hooks, int own_thread)
     bw_mod_net_control_set_port(eidos_settings_net_control_port());
     /* The player's own mod list: the menu's record restores the roots the
      * player chose, before the loader reads them (sdk/mod_menu.h). */
-    bw_mod_menu_start();
+    if (g_only_mod != NULL) {
+        /* One mod, chosen on the command line: the player's own list
+         * (the menu's record) is neither read nor changed. */
+        bw_set_mod_root(g_only_mod);
+    } else {
+        bw_mod_menu_start();
+    }
+    /* The content limits the mods raise, and the game's per-id tables
+     * extended to match (sdk/limits.h): the mod list is final and the
+     * game's data is bound, and nothing of the game has run yet. */
+    (void)bw_limits_apply();
     /* The mods: the loader runs after the save is chosen and before the
      * game runs (docs/mod-implementation.md, section 3).  The declared
      * table the manifest's address check asks is registered by
@@ -1752,7 +1769,7 @@ static void usage(void)
                     "[--input SCRIPT] [--fullscreen|--borderless|--windowed] "
                     "[--resolution N|fit] "
                     "[--layout vertical|horizontal] [--swap-screens] "
-                    "[--gap N] [--volume N]\n");
+                    "[--gap N] [--volume N] [--mod FOLDER] [--mod-log FILE]\n");
 }
 
 int main(int argc, char **argv)
@@ -1796,6 +1813,10 @@ int main(int argc, char **argv)
 #endif
         if (strcmp(argv[i], "--data-root") == 0 && i + 1 < argc) {
             data_root = argv[++i];
+        } else if (strcmp(argv[i], "--mod") == 0 && i + 1 < argc) {
+            g_only_mod = argv[++i];
+        } else if (strcmp(argv[i], "--mod-log") == 0 && i + 1 < argc) {
+            g_mod_log = argv[++i];
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             char *end = NULL;
             frames = strtoull(argv[++i], &end, 10);
@@ -1859,6 +1880,14 @@ int main(int argc, char **argv)
             usage();
             return 2;
         }
+    }
+
+    if (g_mod_log != NULL) {
+        if (freopen(g_mod_log, "w", stderr) == NULL) {
+            fprintf(stdout, "eidos_boot: cannot write the mod log %s\n", g_mod_log);
+            return 2;
+        }
+        setvbuf(stderr, NULL, _IONBF, 0);   /* a tool reads it while the game runs */
     }
 
     /* Started with no arguments (a double click): the player wants to

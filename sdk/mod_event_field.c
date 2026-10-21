@@ -830,6 +830,14 @@ static void apply_map_warp(const BwEventPayload *in, BwEventCall *call)
  */
 static void build_player_step(const BwEventCall *call, BwEventPayload *out)
 {
+    /* A step on the field is the quiet moment the state calls' queued
+     * moves wait for (sdk/mod_state.h): no battle, no party screen and no
+     * PC hold the party then.  The row is the port's own, so it runs with
+     * or without a handler. */
+    if (bw_mod_state_pending() > 0u) {
+        bw_mod_state_apply_pending();
+    }
+
     const BwPortFieldEventInput *input =
         (const BwPortFieldEventInput *)call->a[0];
     struct FieldMap *fieldMap = (struct FieldMap *)call->a[1];

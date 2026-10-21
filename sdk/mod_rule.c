@@ -96,6 +96,7 @@
  */
 #include "mod_api.h"
 #include "mod_event.h"
+#include "mod_menu.h"
 #include "mod_message.h"
 #include "mod_net.h"
 #include "mod_rule.h"
@@ -237,6 +238,7 @@ enum {
     BW_RULE_OP_EVENT,       /* event.<field> */
     BW_RULE_OP_STATE,       /* a state field */
     BW_RULE_OP_CELL,        /* state.<cell> */
+    BW_RULE_OP_SETTING,     /* setting.<key> */
     BW_RULE_OP_NEG,         /* - */
     BW_RULE_OP_NOT,         /* ! */
     BW_RULE_OP_ADD,         /* + */
@@ -261,7 +263,9 @@ enum {
     BW_RULE_ACT_ADD,        /* add <target> <expr> */
     BW_RULE_ACT_SUB,        /* sub <target> <expr> */
     BW_RULE_ACT_MESSAGE,    /* message <expr> */
-    BW_RULE_ACT_SEND        /* send <expr> */
+    BW_RULE_ACT_SEND,       /* send <expr> */
+    BW_RULE_ACT_RELEASE,    /* release <mon or party position> */
+    BW_RULE_ACT_GIVE        /* give <item> <count> */
 };
 
 /* The kinds of a target. */
@@ -639,6 +643,14 @@ static const BwRuleField g_f_heal[] = {
     BW_RULE_FIELD(BwHeal, mask, BW_RULE_FK_INT, BW_RULE_FF_MOD)
 };
 
+static const BwRuleField g_f_heal_hp[] = {
+    BW_RULE_FIELD(BwHealHp, mon, BW_RULE_FK_MON, 0),
+    BW_RULE_FIELD(BwHealHp, hp, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwHealHp, max_hp, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwHealHp, amount, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwHealHp, source, BW_RULE_FK_INT, 0)
+};
+
 /* progress */
 
 static const BwRuleField g_f_badge_get[] = {
@@ -770,6 +782,8 @@ static const BwRuleEvent g_events[] = {
       .fields = g_f_money_change, .field_count = 2 },
     { .kind = BW_EVENT_HEAL, .name = "heal", .refusable = 1,
       .fields = g_f_heal, .field_count = 2 },
+    { .kind = BW_EVENT_HEAL_HP, .name = "heal.hp", .refusable = 1,
+      .fields = g_f_heal_hp, .field_count = 5 },
 
     { .kind = BW_EVENT_BADGE_GET, .name = "badge.get", .refusable = 0,
       .fields = g_f_badge_get, .field_count = 2 },
@@ -856,7 +870,7 @@ static const BwRuleStateField g_state_fields[] = {
     { .name = "caught", .kind = BW_RULE_SK_INT, .writable = 0,
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
     { .name = "item_count", .kind = BW_RULE_SK_INT, .writable = 0,
-      .readable = 0, .writable_ok = 0, .mon_field = 0 },
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
     { .name = "battle_style", .kind = BW_RULE_SK_PLAIN, .writable = 1,
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
     { .name = "in_battle", .kind = BW_RULE_SK_PLAIN, .writable = 0,
@@ -1542,6 +1556,43 @@ static int parse_name(BwRuleParse *p)
         }
         p->rule->nodes[node].field = (u8)(f - p->event->fields);
         p->rule->nodes[node].text = f->name;
+        if (p_advance(p) != 0) {
+            return -1;
+        }
+        return node;
+    }
+
+    /* setting.<key>: the value of one of the mod's own settings (the
+     * settings declaration in its manifest), read when the rule runs. */
+    if (tok_is_ident(p, "setting")) {
+        if (p_advance(p) != 0) {
+            return -1;
+        }
+        if (p->tok.kind != BW_RULE_TK_DOT) {
+            parse_error(p, p->err_line, "a '.' was expected after 'setting'");
+            return -1;
+        }
+        if (p_advance(p) != 0) {
+            return -1;
+        }
+        if (p->tok.kind != BW_RULE_TK_IDENT) {
+            parse_error(p, p->err_line, "a setting's key was expected");
+            return -1;
+        }
+        if (p->rule->ns[0] == '\0') {
+            parse_error(p, p->err_line,
+                        "the rule has no namespace, so it has no settings");
+            return -1;
+        }
+        node = new_node(p, BW_RULE_OP_SETTING, BW_RULE_T_INT);
+        if (node < 0) {
+            return -1;
+        }
+        p->rule->nodes[node].text = rule_string(p->rule, p->tok.text);
+        if (p->rule->nodes[node].text == NULL) {
+            parse_error(p, p->err_line, "no room for the setting's key");
+            return -1;
+        }
         if (p_advance(p) != 0) {
             return -1;
         }
@@ -2269,6 +2320,55 @@ static int parse_action(BwRuleParse *p, const char *keyword)
         a->op = strcmp(keyword, "message") == 0 ? BW_RULE_ACT_MESSAGE
                                                  : BW_RULE_ACT_SEND;
         a->expr = (u16)expr;
+        r->action_count++;
+        return 0;
+    }
+
+    if (strcmp(keyword, "release") == 0) {
+        expr = parse_expr(p);
+        if (expr < 0) {
+            return -1;
+        }
+        if (p->tok.kind != BW_RULE_TK_END) {
+            parse_error(p, p->err_line, "the action has more than it needs");
+            return -1;
+        }
+        if (r->nodes[expr].type != BW_RULE_T_MON &&
+            r->nodes[expr].type != BW_RULE_T_INT) {
+            parse_error(p, p->err_line, "the value must be a Pokemon or a "
+                        "party position");
+            return -1;
+        }
+        a->op = BW_RULE_ACT_RELEASE;
+        a->expr = (u16)expr;
+        r->action_count++;
+        return 0;
+    }
+
+    if (strcmp(keyword, "give") == 0) {
+        int count;
+
+        expr = parse_expr(p);
+        if (expr < 0) {
+            return -1;
+        }
+        count = parse_expr(p);
+        if (count < 0) {
+            return -1;
+        }
+        if (p->tok.kind != BW_RULE_TK_END) {
+            parse_error(p, p->err_line, "the action has more than it needs");
+            return -1;
+        }
+        if (!type_is_number(r->nodes[expr].type) ||
+            !type_is_number(r->nodes[count].type)) {
+            parse_error(p, p->err_line, "the item and the count must be "
+                        "numbers");
+            return -1;
+        }
+        a->op = BW_RULE_ACT_GIVE;
+        a->expr = (u16)expr;
+        a->sub = (u16)count;    /* the count rides in the subscript slot */
         r->action_count++;
         return 0;
     }
@@ -3251,9 +3351,18 @@ static int state_read(const BwRuleStateField *f, const BwRuleValue *sub,
         return 0;
     }
     if (strcmp(f->name, "item_count") == 0) {
-        /* The port's state table has no call for the bag, so the count
-         * cannot be read yet. */
-        return -1;
+        s32 count;
+
+        if (st->item_count == NULL || sub == NULL || sub->i <= 0 ||
+            sub->i > 0xFFFF) {
+            return -1;
+        }
+        count = st->item_count((u16)sub->i);
+        if (count < 0) {
+            return -1;
+        }
+        *out = count;
+        return 0;
     }
 
     /* The fields that name one Pokemon. */
@@ -3577,6 +3686,18 @@ static int eval_node(BwRuleVm *vm, u32 index, BwRuleValue *out)
         }
         keyed = n->sub != BW_RULE_NO_NODE;
         out->i = cell_read(vm->owner, n->text, keyed, sub.i);
+        return 0;
+    }
+
+    case BW_RULE_OP_SETTING: {
+        /* The settings model answers for the mod whose namespace is in
+         * force; the rule's own is put in for the one read. */
+        char saved[64];
+
+        snprintf(saved, sizeof saved, "%s", bw_mod_menu_namespace());
+        bw_mod_menu_set_namespace(vm->rule->ns);
+        out->i = bw_mod_menu_setting_get(n->text);
+        bw_mod_menu_set_namespace(saved);
         return 0;
     }
 
@@ -3923,6 +4044,38 @@ static int do_action(BwRuleVm *vm, const BwRuleAction *a)
         }
         action_send(vm, &value);
         return 0;
+
+    case BW_RULE_ACT_RELEASE:
+        {
+            const BwModState *st = bw_mod_state_table();
+            BwMonRef mon;
+
+            if (eval_node(vm, a->expr, &value) != 0) {
+                return -1;
+            }
+            if (st == NULL || st->mon_release == NULL ||
+                state_mon(&value, &mon) != 0) {
+                return -1;
+            }
+            return st->mon_release(mon) == 0 ? 0 : -1;
+        }
+
+    case BW_RULE_ACT_GIVE:
+        {
+            const BwModState *st = bw_mod_state_table();
+            s32 item, count;
+
+            if (eval_node(vm, a->expr, &value) != 0) {
+                return -1;
+            }
+            item = value_number(&value);
+            count = value_number(&sub);     /* evaluated above */
+            if (st == NULL || st->item_add == NULL || item <= 0 ||
+                item > 0xFFFF || count <= 0 || count > 0xFFFF) {
+                return -1;
+            }
+            return st->item_add((u16)item, (u16)count) == 0 ? 0 : -1;
+        }
 
     default:
         return -1;

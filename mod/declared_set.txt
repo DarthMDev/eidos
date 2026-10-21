@@ -227,6 +227,7 @@
 0x021BC30C	PLIST_MENU_ShowItemUsedThenContinue	ov091	
 0x021BC350	PLIST_MENU_StartItemUse	ov091	
 0x021BDD78	PLIST_DEMO_CheckItemUsable	ov091	item.use
+0x021BE914	PLIST_DEMO_RestoreHp	ov091	heal.hp
 
 # ov092
 0x021B9614	EVENT_BATTLE_RETURN_Main	ov092	mon.receive
@@ -243,6 +244,7 @@
 0x021C1910	BTL_SERVER_FLOW_RunDamageDealtEvent	ov093	
 0x021C1A10	BTL_SERVER_FLOW_RunMoveUsedEvent	ov093	battle.move
 0x021C1E74	BTL_SERVER_FLOW_CalcMoveDamage	ov093	battle.damage
+0x021C33E8	BTL_SERVER_FLOW_ApplyHpRecover	ov093	heal.hp
 0x021C4F64	BTL_SERVER_FLOW_ProcFaintedPoke	ov093	battle.faint
 0x021C5200	BTL_SERVER_FLOW_ProcFaintRewards	ov093	
 0x021C5350	BTL_SERVER_FLOW_ApplyPartyExp	ov093	

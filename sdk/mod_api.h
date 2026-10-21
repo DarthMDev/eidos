@@ -26,8 +26,9 @@ extern "C" {
 
 /*
  * The interface version.  A mod states the version it was built against in
- * its manifest, and the port refuses a mod whose number differs (the rule in
- * docs/mod-abi.md, section 3).
+ * its manifest, and the port refuses a mod whose number is outside
+ * BW_MOD_API_MIN to BW_MOD_API_VERSION (the rule in docs/mod-abi.md,
+ * section 3).
  *
  * Version 2 added the script command hooks: the host table's script call
  * and the command's view.
@@ -37,8 +38,15 @@ extern "C" {
  * VMs, so a handler can reach an operand past the eighth word.  It added
  * the services table's state_in_step, which answers for the calling mod
  * whether its own saved data was written with the save in force.
+ *
+ * Version 4 appended the state table's mon_release, item_count and
+ * item_add.  Nothing moved, so a
+ * version 3 mod still loads.
  */
-#define BW_MOD_API_VERSION 3
+#define BW_MOD_API_VERSION 4
+/* The oldest interface a mod may state: version 3 mods see the same table
+ * without the entries version 4 appended. */
+#define BW_MOD_API_MIN 3
 
 /*
  * The surface hash: a digest of every struct's size and field offsets,
@@ -52,7 +60,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0xFE6D7989u
+#define BW_MOD_API_HASH 0x0820E36Bu
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
@@ -182,6 +190,7 @@ enum {
     BW_EVENT_SHOP_BUY     = 92,
     BW_EVENT_MONEY_CHANGE = 93,
     BW_EVENT_HEAL         = 94,
+    BW_EVENT_HEAL_HP      = 95,     /* version 4 */
 
     /* progress */
     BW_EVENT_BADGE_GET    = 110,
@@ -260,6 +269,13 @@ enum {
     BW_HEAL_CENTRE = 0,
     BW_HEAL_SCRIPT = 1,
     BW_HEAL_POWER  = 2
+};
+
+/* Where an HP restore happens (heal.hp). */
+enum {
+    BW_HEAL_HP_FIELD  = 0,  /* an item used from the bag or the party screen */
+    BW_HEAL_HP_BATTLE = 1   /* any HP restore in a battle: a bag item, a held
+                             * item, a move or an ability */
 };
 
 /* ------------------------------------------------------------------ */
@@ -634,6 +650,21 @@ typedef struct BwHeal {
     u8  source;     /* BW_HEAL_* */
     u8  mask;       /* *mod: one bit per party position to heal */
 } BwHeal;
+
+/*
+ * heal.hp (version 4): one Pokemon gets HP back.  The amount is the HP the
+ * game is about to add, before the cap at max_hp; a handler changes it, or
+ * refuses the event and the Pokemon gets nothing.  On the field the item is
+ * still used up: a mod that wants the item kept refuses item.use instead.
+ */
+typedef struct BwHealHp {
+    BwEvent h;
+    BwMonRef mon;
+    u16 hp;         /* the HP before the restore */
+    u16 max_hp;
+    u16 amount;     /* *mod: the HP to add */
+    u8  source;     /* BW_HEAL_HP_* */
+} BwHealHp;
 
 /* progress */
 

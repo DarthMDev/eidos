@@ -26,6 +26,7 @@
  */
 #include "mod_event.h"
 #include "mod_slot.h"
+#include "mod_state.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -319,17 +320,31 @@ static void apply_item_add(const BwEventPayload *in, BwEventCall *call)
  * handle (as far as the ABI's u32 holds it; the state layer owns what the
  * handle means), so a mod that has the party can find the position itself.
  */
+/*
+ * A party reference to a game Pokemon record.  The slot is its position in
+ * the party; a record that is not in the party (the screen's own copy, say)
+ * gives the empty reference.
+ */
+static void party_ref_of(BwMonRef *ref, const struct PokemonParam *mon)
+{
+    int slot = bw_mod_state_party_slot(mon);
+
+    memset(ref, 0, sizeof(*ref));
+    if (slot < 0) {
+        return;
+    }
+    ref->handle = (u32)(uintptr_t)mon;
+    ref->place = (u8)BW_MON_PARTY;
+    ref->slot = (u8)slot;
+}
+
 static void build_item_use(const BwEventCall *call, BwEventPayload *out)
 {
     struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
 
     memset(&out->item_use, 0, sizeof(out->item_use));
     out->item_use.item = (u16)call->a[1];
-    out->item_use.target.handle = (u32)(uintptr_t)mon;
-    out->item_use.target.place = (u8)BW_MON_PARTY;
-    out->item_use.target.side = 0u;
-    out->item_use.target.box = 0u;
-    out->item_use.target.slot = 0u;
+    party_ref_of(&out->item_use.target, mon);
 }
 
 /*
@@ -537,6 +552,76 @@ static void refuse_heal_power(BwEventCall *call)
     call->ret = 0xFF;
 }
 
+/*
+ * heal.hp on the field: PLIST_DEMO_RestoreHp(mon, hp, maxHp, amount), the
+ * party screen's HP restore.  The game's amount is a number or a code:
+ * 0xFF is all of max HP, 0xFE half, 0xFD a quarter, and a Pokemon whose
+ * max HP is 1 always gets 1.  The payload carries the HP the code means.
+ */
+static u32 field_heal_amount(u32 maxHp, u32 amount)
+{
+    if (maxHp == 1u) {
+        return 1u;
+    }
+    if (amount == 0xFFu) {
+        return maxHp;
+    }
+    if (amount == 0xFEu) {
+        return maxHp >> 1;
+    }
+    if (amount == 0xFDu) {
+        return maxHp >> 2;
+    }
+    return amount;
+}
+
+static void build_heal_hp_field(const BwEventCall *call, BwEventPayload *out)
+{
+    u32 maxHp = (u32)call->a[2];
+
+    memset(&out->heal_hp, 0, sizeof(out->heal_hp));
+    party_ref_of(&out->heal_hp.mon, (const struct PokemonParam *)call->a[0]);
+    out->heal_hp.hp = (u16)call->a[1];
+    out->heal_hp.max_hp = (u16)maxHp;
+    out->heal_hp.amount = (u16)field_heal_amount(maxHp, (u32)call->a[3]);
+    out->heal_hp.source = (u8)BW_HEAL_HP_FIELD;
+}
+
+/*
+ * The new amount goes back as the game's own argument.  A number the game
+ * reads as a code (0xFD to 0xFF) cannot be passed as it is: the call then
+ * gets the code for "all of max HP" and a max HP of hp + amount, so the
+ * game adds max HP and caps the result at hp + amount, which is the amount
+ * asked for.  The cap is never above the real max HP.
+ */
+static void apply_heal_hp_field(const BwEventPayload *in, BwEventCall *call)
+{
+    u32 hp = (u32)call->a[1];
+    u32 maxHp = (u32)call->a[2];
+    u32 amount = in->heal_hp.amount;
+
+    if (maxHp == 1u) {
+        if (amount == 0u) {
+            call->a[2] = (uintptr_t)hp;     /* the cap keeps the HP it has */
+            call->a[3] = 0u;
+        }
+        return;
+    }
+    if (amount < 0xFDu) {
+        call->a[3] = (uintptr_t)amount;
+        return;
+    }
+    call->a[2] = (uintptr_t)(hp + amount < maxHp ? hp + amount : maxHp);
+    call->a[3] = 0xFFu;
+}
+
+/* heal.hp: the refused outcome is that the HP stays as it is.  The
+ * function answers nothing. */
+static void refuse_heal_hp_field(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* The rows                                                            */
 /* ------------------------------------------------------------------ */
@@ -552,6 +637,10 @@ static const BwEventBinding g_items_rows[] = {
 
     { BW_MOD_REGION_OVL(91), 0x021BDD78u, BW_EVENT_ITEM_USE, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_item_use, NULL, refuse_item_use },
+
+    { BW_MOD_REGION_OVL(91), 0x021BE914u, BW_EVENT_HEAL_HP, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_heal_hp_field, apply_heal_hp_field,
+      refuse_heal_hp_field },
 
     { BW_MOD_REGION_OVL(21), 0x021B3370u, BW_EVENT_SHOP_BUY, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_shop_buy, apply_shop_buy, refuse_shop_buy },

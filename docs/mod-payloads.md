@@ -643,12 +643,22 @@ the amount.
 | `source` | u8 | Pokemon Centre or script, the HP-restore power |
 | `mask` | u8, *mod* | one bit per party position to heal |
 
+**`heal.hp`** (version 4)
+
+| Field | Type | Meaning |
+|---|---|---|
+| `mon` | BwMonRef | the Pokemon that gets HP back |
+| `hp` | u16 | the HP before the restore |
+| `max_hp` | u16 | the max HP |
+| `amount` | u16, *mod* | the HP to add, before the cap at max HP |
+| `source` | u8 | field (an item from the bag or the party screen) or battle (any restore: bag item, held item, move, ability) |
+
 **What the items builder fills.** The items area's rows are in
 `sdk/mod_event_items.c`. `item.add` carries the item and the count from the
 call and the pocket the game puts the item in, read out of the item's own
 data. `item.use` carries the item and the Pokemon the check is made for; the
-target's position in the party reads 0, because the call carries the party
-record but not the party. `shop.buy` carries the item and the price out of
+target's position in the party is found by searching the player's party
+for the record (version 4; it read 0 before). `shop.buy` carries the item and the price out of
 the shop's own fields, so a changed price is the one the shop shows and
 charges. `money.change` carries the change and the money before, read out of
 the misc save block; the row that adds the money applies only a positive
@@ -656,7 +666,11 @@ change and the row that takes it away only a negative one, so a change of
 the other sign is applied as 0 and the money stays as it was. `heal` names
 the party positions the heal covers and says where the heal came from: a
 script for a Pokemon Centre, because the nurse runs the same script command,
-and the power for the HP-restore power.
+and the power for the HP-restore power. `heal.hp` carries the HP the
+game is about to add: on the field the item's code (all, half, a quarter)
+is turned into HP first. A changed amount is what the Pokemon gets, still
+capped at max HP; a refusal adds nothing. On the field the item is used up
+either way: refuse `item.use` to keep it.
 
 ### Progress
 

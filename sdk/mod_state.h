@@ -106,6 +106,23 @@ typedef struct BwModState {
     /* Moves between places. */
     int (*mon_to_box)(BwMonRef mon);
     int (*mon_take_item)(BwMonRef mon);
+
+    /* Interface version 4. */
+    /* Release a Pokemon of the player's party for good: a party reference,
+     * or a reference to one of the player's Pokemon in battle.  Queued like
+     * the moves above and applied at the next quiet moment (the first step
+     * on the field after a battle).  The Pokemon is found by its
+     * personality then, not by its slot.  Refused when it would leave the
+     * party with no Pokemon that is not an egg. */
+    int (*mon_release)(BwMonRef mon);
+
+    /* The bag.  item_count answers how many of an item the bag holds (a
+     * negative number when there is no bag yet).  item_add puts `count`
+     * of an item in the bag at once and answers 0, or non-zero when the
+     * item is past the item limit, the count is 0 or the pocket is full;
+     * a refused add puts nothing in. */
+    s32 (*item_count)(u16 item);
+    int (*item_add)(u16 item, u16 count);
 } BwModState;
 
 /* ------------------------------------------------------------------ */
@@ -274,6 +291,10 @@ void bw_mod_state_set_field_player(void *field_player);
 
 /* The table the host table hands to a mod. */
 const BwModState *bw_mod_state_table(void);
+
+/* The party position of a game Pokemon record, or -1 when it is not in the
+ * player's party (or no game data is bound).  For the event builders. */
+int bw_mod_state_party_slot(const void *mon);
 
 /* Drop the bound objects and the queued moves: at power-on and at every
  * reset (bw_port_reset). */

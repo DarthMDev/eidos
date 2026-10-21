@@ -36,6 +36,8 @@
 #include "port.h"
 #include "vfs.h"
 #include "plat_dir.h"
+#include "vfs_msg.h"
+#include "vfs_sdat.h"
 
 #define FOURCC(a, b, c, d) \
     ((u32)(a) | ((u32)(b) << 8) | ((u32)(c) << 16) | ((u32)(d) << 24))
@@ -266,6 +268,9 @@ typedef struct Collect {
     Override   *list;
     u32         count;
     u32         cap;
+    Override   *msg;        /* `<bank>.msg` line files, every mod's, in order */
+    u32         msg_count;
+    u32         msg_cap;
     u32         mod;
     const char *dir;
     int         error;
@@ -305,14 +310,67 @@ static int member_index(const char *name, u32 *index)
     return 1;
 }
 
+/* `<digits>.msg`: lines for text bank `<digits>` (sdk/vfs_msg.h). */
+static int msg_index(const char *name, u32 *index)
+{
+    size_t n = strlen(name);
+    u32 v = 0;
+    size_t i;
+
+    if (n < 5 || strcmp(name + n - 4, ".msg") != 0) {
+        return 0;
+    }
+    for (i = 0; i < n - 4; i++) {
+        if (name[i] < '0' || name[i] > '9') {
+            return 0;
+        }
+        if (v < BW_NARC_MAX_MEMBERS) {
+            v = v * 10u + (u32)(name[i] - '0');
+        }
+    }
+    if (v >= BW_NARC_MAX_MEMBERS) {
+        return -1;
+    }
+    *index = v;
+    return 1;
+}
+
+static int add_entry(Override **list, u32 *count, u32 *cap, u32 index,
+                     u32 mod, char *path)
+{
+    if (*count == *cap) {
+        u32 grow = *cap == 0 ? 16 : *cap * 2;
+        Override *grown = (Override *)realloc(*list, grow * sizeof(*grown));
+
+        if (grown == NULL) {
+            return -1;
+        }
+        *list = grown;
+        *cap = grow;
+    }
+    (*list)[*count].index = index;
+    (*list)[*count].mod = mod;
+    (*list)[*count].path = path;
+    (*count)++;
+    return 0;
+}
+
 static int collect_one(void *ctx, const char *name)
 {
     Collect *c = (Collect *)ctx;
     u32 index;
-    int kind = member_index(name, &index);
+    int kind;
     size_t need;
     char *path;
+    int is_msg;
 
+    /* A line file is not a member: `70.msg` holds lines for bank 70, it is
+     * not member 70 itself. */
+    kind = msg_index(name, &index);
+    is_msg = kind != 0;
+    if (!is_msg) {
+        kind = member_index(name, &index);
+    }
     if (kind == 0) {
         return 0;
     }
@@ -333,22 +391,12 @@ static int collect_one(void *ctx, const char *name)
         free(path);      /* a subdirectory named like a member: not one */
         return 0;
     }
-    if (c->count == c->cap) {
-        u32 cap = c->cap == 0 ? 16 : c->cap * 2;
-        Override *grown = (Override *)realloc(c->list, cap * sizeof(*grown));
-
-        if (grown == NULL) {
-            free(path);
-            c->error = 1;
-            return 1;
-        }
-        c->list = grown;
-        c->cap = cap;
+    if ((is_msg ? add_entry(&c->msg, &c->msg_count, &c->msg_cap, index, c->mod, path)
+                : add_entry(&c->list, &c->count, &c->cap, index, c->mod, path)) != 0) {
+        free(path);
+        c->error = 1;
+        return 1;
     }
-    c->list[c->count].index = index;
-    c->list[c->count].mod = c->mod;
-    c->list[c->count].path = path;
-    c->count++;
     return 0;
 }
 
@@ -374,6 +422,10 @@ static void free_collect(Collect *c)
         free(c->list[i].path);
     }
     free(c->list);
+    for (i = 0; i < c->msg_count; i++) {
+        free(c->msg[i].path);
+    }
+    free(c->msg);
     memset(c, 0, sizeof(*c));
 }
 
@@ -412,6 +464,7 @@ static int collect(const char *rel, int layer, Collect *c)
     if (c->count == 0) {
         return 0;
     }
+    /* The line files stay in load order (the merge applies them in it). */
     qsort(c->list, c->count, sizeof(*c->list), cmp_override);
     kept = 0;
     for (i = 0; i < c->count; i++) {
@@ -443,7 +496,7 @@ int bw_vfs_member_overrides(const char *rel)
     if (collect(rel, layer, &c) != 0) {
         return -1;
     }
-    n = (int)c.count;
+    n = (int)(c.count + c.msg_count);
     free_collect(&c);
     return n;
 }
@@ -451,6 +504,194 @@ int bw_vfs_member_overrides(const char *rel)
 /* ------------------------------------------------------------------ */
 /* Merging                                                             */
 /* ------------------------------------------------------------------ */
+
+/*
+ * The text bank a `.msg` merge starts from when the bank has no bytes yet
+ * (an index past the archive's end): one language section, no lines.
+ */
+static const u8 k_empty_bank[20] = {
+    1, 0, 0, 0,   4, 0, 0, 0,   0, 0, 0, 0,   16, 0, 0, 0,   4, 0, 0, 0
+};
+
+/*
+ * Apply the `.msg` line files to the members in data[]/sizes[] (count of
+ * them, sized for every bank index a line file names).  Each bank's lines
+ * apply in load order on top of whatever the whole-member layers left.
+ * The merged banks are kept in merged[] (count entries, NULL where none)
+ * for the caller to free.  Returns 0 or -1.
+ */
+static int apply_msg(const char *rel, const Collect *c, const u8 **data,
+                     u32 *sizes, u32 count, u8 **merged)
+{
+    u32 i;
+
+    for (i = 0; i < c->msg_count; i++) {
+        u32 idx = c->msg[i].index;
+        BwMsgLines *lists[64];
+        const BwMsgLines *const_lists[64];
+        u32 n = 0, j;
+        int rc;
+        const u8 *base;
+        u32 base_size;
+
+        if (merged[idx] != NULL) {
+            continue;                       /* done with an earlier entry */
+        }
+        /* every line file for this bank, in load order */
+        for (j = i; j < c->msg_count; j++) {
+            char err[256];
+            u8 *text;
+            u32 text_size;
+
+            if (c->msg[j].index != idx) {
+                continue;
+            }
+            if (n == sizeof(lists) / sizeof(lists[0])) {
+                fprintf(stderr, "vfs: %s bank %u: too many line files\n", rel, idx);
+                break;
+            }
+            lists[n] = (BwMsgLines *)calloc(1, sizeof(BwMsgLines));
+            text = read_whole(c->msg[j].path, &text_size);
+            if (lists[n] == NULL || text == NULL ||
+                bw_msg_parse((const char *)text, text_size, lists[n], err,
+                             sizeof(err)) != 0) {
+                fprintf(stderr, "vfs: %s: %s\n", c->msg[j].path,
+                        text == NULL ? "cannot read" : err);
+                free(text);
+                if (lists[n] != NULL) {
+                    bw_msg_lines_free(lists[n]);
+                    free(lists[n]);
+                }
+                for (j = 0; j < n; j++) {
+                    bw_msg_lines_free(lists[j]);
+                    free(lists[j]);
+                }
+                return -1;
+            }
+            free(text);
+            const_lists[n] = lists[n];
+            n++;
+        }
+        base = idx < count ? data[idx] : NULL;
+        base_size = idx < count ? sizes[idx] : 0;
+        if (base == NULL || base_size < sizeof(k_empty_bank)) {
+            base = k_empty_bank;
+            base_size = sizeof(k_empty_bank);
+        }
+        rc = bw_msg_merge(base, base_size, const_lists, n, &merged[idx], &sizes[idx]);
+        for (j = 0; j < n; j++) {
+            bw_msg_lines_free(lists[j]);
+            free(lists[j]);
+        }
+        if (rc != 0) {
+            fprintf(stderr, "vfs: %s: bank %u: the text lines do not merge\n", rel, idx);
+            merged[idx] = NULL;
+            return -1;
+        }
+        data[idx] = merged[idx];
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* The sound archive                                                   */
+/* ------------------------------------------------------------------ */
+
+#define SDAT_MODS_MAX 32
+
+/*
+ * An SDAT is not a NARC.  A mod holding a directory at its path adds
+ * sequences, banks and wave archives through `sdat.txt` there
+ * (sdk/vfs_sdat.h); the merge keeps every original byte and appends.
+ * Returns 1 with *out set, 0 when no mod adds anything, or -1.
+ */
+static int build_sdat(const char *rel, int layer, u8 **out, u32 *out_size)
+{
+    char dir[1200], path[1400], base_path[1200];
+    u32 n = bw_mod_count();
+    u32 i, k, nadd = 0;
+    BwSdatAdd adds[SDAT_MODS_MAX];
+    BwSdatDecl decls[SDAT_MODS_MAX];
+    BwSdatFile *files[SDAT_MODS_MAX];
+    u8 *base = NULL;
+    u32 base_size;
+    int rc = -1;
+
+    memset(decls, 0, sizeof(decls));
+    memset(files, 0, sizeof(files));
+    for (i = (u32)(layer + 1); i < n && nadd < SDAT_MODS_MAX; i++) {
+        const char *root = bw_mod_root_at(i);
+        u8 *text;
+        u32 text_size;
+        char err[256];
+
+        if (strlen(root) + 1 + strlen(rel) + 16 > sizeof(dir)) {
+            continue;
+        }
+        sprintf(dir, "%s/%s", root, rel);
+        sprintf(path, "%s/sdat.txt", dir);
+        if (bw_plat_path_kind(path) != BW_PATH_FILE) {
+            continue;
+        }
+        text = read_whole(path, &text_size);
+        if (text == NULL || bw_sdat_parse_decl((const char *)text, &decls[nadd],
+                                               err, sizeof(err)) != 0) {
+            fprintf(stderr, "vfs: %s: %s\n", path, text == NULL ? "cannot read" : err);
+            free(text);
+            goto done;
+        }
+        free(text);
+        files[nadd] = (BwSdatFile *)calloc(decls[nadd].count + 1, sizeof(BwSdatFile));
+        if (files[nadd] == NULL) {
+            nadd++;
+            goto done;
+        }
+        for (k = 0; k < decls[nadd].count; k++) {
+            u32 sz = 0;
+            char fp[1400];
+
+            snprintf(fp, sizeof(fp), "%s/%s", dir, decls[nadd].entries[k].file);
+            files[nadd][k].name = decls[nadd].entries[k].file;
+            files[nadd][k].data = read_whole(fp, &sz);
+            files[nadd][k].size = sz;
+            if (files[nadd][k].data == NULL) {
+                fprintf(stderr, "vfs: %s: cannot read\n", fp);
+                nadd++;
+                goto done;
+            }
+        }
+        adds[nadd].mod_name = bw_mod_name_at(i);
+        adds[nadd].decl = &decls[nadd];
+        adds[nadd].files = files[nadd];
+        adds[nadd].file_count = decls[nadd].count;
+        nadd++;
+    }
+    if (nadd == 0) {
+        return 0;
+    }
+    if (bw_data_path(base_path, sizeof(base_path), rel) != 0 ||
+        (base = read_whole(base_path, &base_size)) == NULL) {
+        fprintf(stderr, "vfs: %s: cannot read the sound archive\n", rel);
+        goto done;
+    }
+    if (bw_vfs_sdat_merge(base, base_size, adds, nadd, out, out_size) != 0) {
+        goto done;
+    }
+    rc = 1;
+
+done:
+    for (i = 0; i < nadd; i++) {
+        if (files[i] != NULL) {
+            for (k = 0; k < decls[i].count; k++) {
+                free((void *)files[i][k].data);
+            }
+            free(files[i]);
+        }
+        bw_sdat_decl_free(&decls[i]);
+    }
+    free(base);
+    return rc;
+}
 
 int bw_vfs_build_merged(const char *rel, u8 **out, u32 *out_size)
 {
@@ -463,7 +704,8 @@ int bw_vfs_build_merged(const char *rel, u8 **out, u32 *out_size)
     const u8 **data = NULL;
     u32 *sizes = NULL;
     u8 **owned = NULL;
-    u32 count;
+    u8 **msg_merged = NULL;
+    u32 count = 0;
     u32 i;
     int rc = -1;
 
@@ -481,10 +723,18 @@ int bw_vfs_build_merged(const char *rel, u8 **out, u32 *out_size)
     if (layer == BW_LAYER_NONE) {
         return 0;
     }
+    {
+        size_t rl = strlen(rel);
+
+        if (rl > 5 && strcmp(rel + rl - 5, ".sdat") == 0) {
+            return build_sdat(rel, layer, out, out_size);
+        }
+    }
     if (collect(rel, layer, &c) != 0) {
         return -1;
     }
-    if (c.count == 0) {
+    if (c.count == 0 && c.msg_count == 0) {
+        free_collect(&c);
         return 0;
     }
 
@@ -500,13 +750,19 @@ int bw_vfs_build_merged(const char *rel, u8 **out, u32 *out_size)
     }
 
     count = narc.count;
-    if (c.list[c.count - 1].index + 1 > count) {
+    if (c.count > 0 && c.list[c.count - 1].index + 1 > count) {
         count = c.list[c.count - 1].index + 1;
+    }
+    for (i = 0; i < c.msg_count; i++) {
+        if (c.msg[i].index + 1 > count) {
+            count = c.msg[i].index + 1;
+        }
     }
     data = (const u8 **)calloc(count == 0 ? 1 : count, sizeof(*data));
     sizes = (u32 *)calloc(count == 0 ? 1 : count, sizeof(*sizes));
-    owned = (u8 **)calloc(c.count, sizeof(*owned));
-    if (data == NULL || sizes == NULL || owned == NULL) {
+    owned = (u8 **)calloc(c.count == 0 ? 1 : c.count, sizeof(*owned));
+    msg_merged = (u8 **)calloc(count == 0 ? 1 : count, sizeof(*msg_merged));
+    if (data == NULL || sizes == NULL || owned == NULL || msg_merged == NULL) {
         goto done;
     }
     for (i = 0; i < narc.count; i++) {
@@ -528,6 +784,10 @@ int bw_vfs_build_merged(const char *rel, u8 **out, u32 *out_size)
         data[c.list[i].index] = owned[i];
         sizes[c.list[i].index] = sz;
     }
+    /* The text lines, on top of every whole-member layer. */
+    if (c.msg_count > 0 && apply_msg(rel, &c, data, sizes, count, msg_merged) != 0) {
+        goto done;
+    }
     if (bw_narc_pack(data, sizes, count,
                      narc.btnf != 0 ? base + narc.btnf : NULL, narc.btnf_size,
                      out, out_size) != 0) {
@@ -543,6 +803,12 @@ done:
         }
     }
     free(owned);
+    if (msg_merged != NULL) {
+        for (i = 0; i < count; i++) {
+            bw_msg_free(msg_merged[i]);
+        }
+    }
+    free(msg_merged);
     free(sizes);
     free((void *)data);
     free(base);

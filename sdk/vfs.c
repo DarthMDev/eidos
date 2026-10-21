@@ -28,6 +28,7 @@
 #include "port.h"
 #include "vfs.h"
 #include "plat_dir.h"
+#include "mod_bw.h"
 
 /* ------------------------------------------------------------------ */
 /* Data root                                                           */
@@ -232,6 +233,27 @@ static int add_root_n(const char *path, size_t n)
     copy_root(root, sizeof(root), path, n);
     if (root[0] == '\0') {
         return -1;
+    }
+    {
+        /* A packaged mod (`.bw`, sdk/mod_bw.h) is unpacked into its cache
+         * folder, and that folder is the root from here on. */
+        size_t rl = strlen(root);
+
+        if (rl > 3 && (root[rl - 3] == '.') &&
+            (root[rl - 2] == 'b' || root[rl - 2] == 'B') &&
+            (root[rl - 1] == 'w' || root[rl - 1] == 'W') &&
+            bw_plat_path_kind(root) == BW_PATH_FILE) {
+            char cache[1024];
+            char err[256] = "";
+
+            if (bw_mod_bw_cache_path(root, cache, sizeof(cache)) != 0 ||
+                bw_mod_bw_unpack(root, cache, err, sizeof(err)) != 0) {
+                fprintf(stderr, "eidos: mod package %s refused: %s\n", root,
+                        err[0] != '\0' ? err : "no cache folder");
+                return -1;
+            }
+            copy_root(root, sizeof(root), cache, strlen(cache));
+        }
     }
     m.root = dup_n(root, strlen(root));
     base = m.root == NULL ? NULL : m.root + strlen(m.root);

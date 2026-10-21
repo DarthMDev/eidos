@@ -138,6 +138,7 @@ extern char       *bw_mod_manifest_default_namespace(const char *name);
  * the prototypes are here, the way sdk/mod_loader.c declares them.
  */
 extern void bw_mod_savedata_set_namespace(const char *ns);
+extern const char *bw_mod_savedata_namespace(void);
 extern int  bw_mod_savedata_clear(void);
 extern void bw_mod_savedata_save_begin(void);
 extern int  bw_mod_savedata_save_done(int ok, u32 check);
@@ -1831,13 +1832,20 @@ const char *bw_mod_menu_namespace(void)
 int bw_mod_menu_setting_get(const char *key)
 {
     BwModMenuMod *m;
+    const char *ns = g_namespace;
     u32 i;
 
-    if (key == NULL || g_namespace[0] == '\0') {
+    /* The loader sets the saved-data layer's namespace around every call
+     * into a mod (an event handler, the start, a frame), and not this
+     * one; the mod that is calling is the same, so its name answers. */
+    if (ns[0] == '\0') {
+        ns = bw_mod_savedata_namespace();
+    }
+    if (key == NULL || ns == NULL || ns[0] == '\0') {
         return -1;
     }
     model_ready();
-    m = model_find_ns(g_namespace);
+    m = model_find_ns(ns);
     if (m == NULL) {
         return -1;
     }

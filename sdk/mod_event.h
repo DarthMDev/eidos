@@ -117,6 +117,7 @@ typedef union BwEventPayload {
     BwShopBuy     shop_buy;
     BwMoneyChange money_change;
     BwHeal        heal;
+    BwHealHp      heal_hp;
 
     BwBadgeGet    badge_get;
     BwFlagSet     flag_set;

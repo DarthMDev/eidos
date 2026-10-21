@@ -1916,7 +1916,46 @@ static void refuse_catch_attempt(BwEventCall *call)
  * caught and how many shakes it took, and the throw itself does not roll
  * in a trainer battle.
  */
+/*
+ * heal.hp in a battle: BTL_SERVER_FLOW_ApplyHpRecover(flow, pokeParam,
+ * amount), the one place every HP restore of the battle goes through (a bag
+ * item, a held item, a move, an ability).  The game caps the result at max
+ * HP itself.
+ */
+static void build_heal_hp_battle(const BwEventCall *call, BwEventPayload *out)
+{
+    const BwPortFlowHead *flow = (const BwPortFlowHead *)call->a[0];
+    struct BtlPokeParam *mon = (struct BtlPokeParam *)call->a[1];
+    s32 amount = (s32)call->a[2];
+
+    memset(&out->heal_hp, 0, sizeof(out->heal_hp));
+    fill_battle_ref(&out->heal_hp.mon, mon, main_of_flow(call),
+                    flow != NULL ? flow->pokeCon : NULL);
+    if (mon != NULL && BTL_POKEPARAM_GetValue != NULL) {
+        out->heal_hp.hp = (u16)BTL_POKEPARAM_GetValue(mon, 13);
+        out->heal_hp.max_hp = (u16)BTL_POKEPARAM_GetValue(mon, 14);
+    }
+    out->heal_hp.amount = (u16)(amount < 0 ? 0 : (amount > 0xFFFF ? 0xFFFF : amount));
+    out->heal_hp.source = (u8)BW_HEAL_HP_BATTLE;
+}
+
+static void apply_heal_hp_battle(const BwEventPayload *in, BwEventCall *call)
+{
+    call->a[2] = (uintptr_t)in->heal_hp.amount;
+}
+
+/* heal.hp: the refused outcome is that the HP stays as it is; the game's
+ * own message about the restore may still show. */
+static void refuse_heal_hp_battle(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
 static const BwEventBinding g_battle_rows[] = {
+    { BW_MOD_REGION_OVL(93), 0x021C33E8u, BW_EVENT_HEAL_HP, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_heal_hp_battle, apply_heal_hp_battle,
+      refuse_heal_hp_battle },
+
     { BW_MOD_REGION_ARM9, 0x02013090u, BW_EVENT_BATTLE_START, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_battle_start, apply_battle_start, NULL },
 

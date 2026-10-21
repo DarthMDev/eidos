@@ -8,9 +8,17 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `ed489422cd300f402b4cd26df9337ec96c1924d3`
-- Date: 2026-10-21 14:53:34 +0100
-- Subject: Every src/game header compiles on its own (host and mwcc)
+- Revision: `1b2d89887a697b6b16ccc052b46173e0bc3deab4`
+- Date: 2026-10-21 18:41:16 +0100
+- Subject: Named move limit: MOVE_LAST (src/game/arm9/move.h, BW_LIMIT_MOVE_LAST = 1)
+
+The step from `768f1f31d6`: the move limit is a name, `MOVE_LAST`, that the
+DS build keeps as 559 and the port answers with bw_limit_get, and the
+battle's per-move work table (BTL_CALC_Init) is sized from it.
+
+The step from `ed489422cd`: the item limit is a name, `ITEM_LAST`, that the
+DS build keeps as 626 and the port answers with bw_limit_get
+(sdk/bw_limits.c), so a mod can raise it.
 
 The step from `0934e62e3a`: e96969f058 gives the ov198 bag cursor
 callbacks real functions (they were filed as data, and the battle bag and

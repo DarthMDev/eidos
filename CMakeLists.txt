@@ -443,6 +443,11 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/tcbl.c          # the port's helper over tcbl.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs.c           # data root, mod list, path resolution
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs_narc.c      # member-level NARC overrides, the merged archive
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs_msg.c       # text bank line files (`<bank>.msg`)
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/vfs_sdat.c      # the sound archive append merge
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/inflate.c       # DEFLATE, for packaged mods
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_bw.c        # `.bw` mod packages, unpacked to a cache
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/bw_limits.c     # content limits mods raise (bw_limit_get)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_hooks.c     # on/off switch for port-side code hooks (docs/hooks.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_slot.c      # the mod seam's slot registry (docs/mod-interface.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_event.c     # the event dispatch: bindings, handlers, the scope stack
@@ -1631,6 +1636,17 @@ foreach(t test_fs test_overlay test_vfs_members)
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t} ${BW_DATA_ROOT_ABS})
 endforeach()
+# Mods that add content: text bank lines, the sound archive merge and
+# `.bw` packages.  The first two read the real data when it is there.
+foreach(t test_vfs_msg test_vfs_sdat test_mod_bw)
+    add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
+    target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests
+                                            ${CMAKE_CURRENT_SOURCE_DIR}/engine/audio)
+    target_link_libraries(${t} PRIVATE eidos)
+endforeach()
+add_test(NAME test_vfs_msg COMMAND test_vfs_msg ${BW_DATA_ROOT_ABS})
+add_test(NAME test_vfs_sdat COMMAND test_vfs_sdat ${BW_DATA_ROOT_ABS})
+add_test(NAME test_mod_bw COMMAND test_mod_bw WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # Loading an overlay whose code is not in the build must stop at the load and
 # say which overlay and which function.  The process aborts, so the check
 # runs through tests/expect_panic.cmake (see its header for why).
