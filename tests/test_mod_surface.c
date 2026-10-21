@@ -58,8 +58,8 @@
  * The hash of the frozen surface on each layout the port is built at.
  *
  *   pointers  hash
- *   4         0xE027155Au  the number in sdk/mod_api.h
- *   8         0x16A3F8AAu
+ *   4         0xAC40739Cu  the number in sdk/mod_api.h
+ *   8         0x123BC017u
  *
  * The 32-bit one is the number the header carries.  The other is the same
  * surface on the other layout: the three tables hold host pointers, so
@@ -68,11 +68,11 @@
  */
 static unsigned int expected_hash(void)
 {
-    return (sizeof(void *) == 4) ? 0xE027155Au : 0x16A3F8AAu;
+    return (sizeof(void *) == 4) ? 0xAC40739Cu : 0x123BC017u;
 }
 
 /* The number in sdk/mod_api.h: the frozen one, the 32-bit hash. */
-#define BW_SURFACE_HASH_FROZEN 0xE027155Au
+#define BW_SURFACE_HASH_FROZEN 0xAC40739Cu
 
 /* The running hash. */
 static unsigned int h;
@@ -160,7 +160,7 @@ int main(void)
     EV(BW_EVENT_BATTLE_SWITCH); EV(BW_EVENT_BATTLE_ESCAPE); EV(BW_EVENT_BATTLE_MOVE);
     EV(BW_EVENT_BATTLE_DAMAGE); EV(BW_EVENT_BATTLE_FAINT); EV(BW_EVENT_CATCH_ATTEMPT);
     EV(BW_EVENT_CATCH_RESULT); EV(BW_EVENT_BATTLE_END); EV(BW_EVENT_WHITEOUT);
-    EV(BW_EVENT_BATTLE_TRAINER_MON);
+    EV(BW_EVENT_BATTLE_TRAINER_MON); EV(BW_EVENT_BATTLE_EXP);
     EV(BW_EVENT_ITEM_ADD); EV(BW_EVENT_ITEM_USE); EV(BW_EVENT_SHOP_BUY);
     EV(BW_EVENT_MONEY_CHANGE); EV(BW_EVENT_HEAL); EV(BW_EVENT_HEAL_HP); EV(BW_EVENT_MON_REVIVE);
     EV(BW_EVENT_BADGE_GET); EV(BW_EVENT_FLAG_SET); EV(BW_EVENT_DEX_REGISTER);
@@ -186,8 +186,14 @@ int main(void)
     EN(BW_EVOLVE_LEVEL); EN(BW_EVOLVE_ITEM); EN(BW_EVOLVE_TRADE);
     EN(BW_EVOLVE_FRIENDSHIP); EN(BW_EVOLVE_OTHER);
     EN(BW_HEAL_CENTRE); EN(BW_HEAL_SCRIPT); EN(BW_HEAL_POWER);
-    EN(BW_HEAL_HP_FIELD); EN(BW_HEAL_HP_BATTLE);
+    EN(BW_HEAL_HP_FIELD); EN(BW_HEAL_HP_BATTLE); EN(BW_HEAL_HP_PARTY);
     EN(BW_EXP_BATTLE); EN(BW_EXP_DAYCARE);
+    EN(BW_MONEY_OTHER); EN(BW_MONEY_SCRIPT); EN(BW_MONEY_PURCHASE);
+    EN(BW_MONEY_SALE); EN(BW_MONEY_BATTLE);
+    EN(BW_LEVELUP_BATTLE); EN(BW_LEVELUP_ITEM);
+    EN(BW_ITEM_FROM_OTHER); EN(BW_ITEM_FROM_SCRIPT); EN(BW_ITEM_FROM_GIFT);
+    EN(BW_ITEM_FROM_PURCHASE); EN(BW_ITEM_FROM_BATTLE); EN(BW_ITEM_FROM_RETURN);
+    EN(BW_ITEM_FROM_REWARD);
     EN(BW_REVIVE_FIELD_ITEM); EN(BW_REVIVE_BATTLE_ITEM); EN(BW_REVIVE_MOVE);
     EN(BW_REVIVE_CENTRE); EN(BW_REVIVE_POWER); EN(BW_REVIVE_SCRIPT);
     EN(BW_SESSION_MESSAGE); EN(BW_SESSION_JOIN); EN(BW_SESSION_LEAVE);
@@ -247,7 +253,8 @@ int main(void)
        F(BwMonEvolve, method));
     PL(BwMonExp, F(BwMonExp, mon), F(BwMonExp, amount), F(BwMonExp, exp), F(BwMonExp, level),
        F(BwMonExp, source), F(BwMonExp, wild));
-    PL(BwMonLevelup, F(BwMonLevelup, mon), F(BwMonLevelup, from), F(BwMonLevelup, to));
+    PL(BwMonLevelup, F(BwMonLevelup, mon), F(BwMonLevelup, from), F(BwMonLevelup, to),
+       F(BwMonLevelup, source), F(BwMonLevelup, item));
     PL(BwMoveLearn, F(BwMoveLearn, mon), F(BwMoveLearn, move), F(BwMoveLearn, source),
        F(BwMoveLearn, slot), F(BwMoveLearn, replaced));
     PL(BwMonRelease, F(BwMonRelease, mon), F(BwMonRelease, species));
@@ -277,22 +284,26 @@ int main(void)
        F(BwBattleItem, revive));
     PL(BwCatchAttempt, F(BwCatchAttempt, target), F(BwCatchAttempt, species),
        F(BwCatchAttempt, level), F(BwCatchAttempt, shiny), F(BwCatchAttempt, ball),
-       F(BwCatchAttempt, rate));
+       F(BwCatchAttempt, rate), F(BwCatchAttempt, static_));
     PL(BwCatchResult, F(BwCatchResult, target), F(BwCatchResult, species),
        F(BwCatchResult, ball), F(BwCatchResult, caught), F(BwCatchResult, shakes));
     PL(BwBattleEnd, F(BwBattleEnd, outcome), F(BwBattleEnd, wild), F(BwBattleEnd, trainer_id),
        F(BwBattleEnd, turns));
     PL(BwWhiteout, F(BwWhiteout, in_battle), F(BwWhiteout, money_lost));
+    PL(BwBattleExp, F(BwBattleExp, members), F(BwBattleExp, wild),
+       F(BwBattleExp, scale), F(BwBattleExp, total));
     PL(BwBattleTrainerMon, F(BwBattleTrainerMon, trainer_id), F(BwBattleTrainerMon, index),
        F(BwBattleTrainerMon, level), F(BwBattleTrainerMon, species),
        F(BwBattleTrainerMon, item), F(BwBattleTrainerMon, move1),
        F(BwBattleTrainerMon, move2), F(BwBattleTrainerMon, move3),
        F(BwBattleTrainerMon, move4), F(BwBattleTrainerMon, ability),
        F(BwBattleTrainerMon, form));
-    PL(BwItemAdd, F(BwItemAdd, item), F(BwItemAdd, count), F(BwItemAdd, pocket));
+    PL(BwItemAdd, F(BwItemAdd, item), F(BwItemAdd, count), F(BwItemAdd, pocket),
+       F(BwItemAdd, source));
     PL(BwItemUse, F(BwItemUse, item), F(BwItemUse, target));
     PL(BwShopBuy, F(BwShopBuy, item), F(BwShopBuy, price));
-    PL(BwMoneyChange, F(BwMoneyChange, delta), F(BwMoneyChange, before));
+    PL(BwMoneyChange, F(BwMoneyChange, delta), F(BwMoneyChange, before),
+       F(BwMoneyChange, source));
     PL(BwHeal, F(BwHeal, source), F(BwHeal, mask));
     PL(BwHealHp, F(BwHealHp, mon), F(BwHealHp, hp), F(BwHealHp, max_hp),
        F(BwHealHp, amount), F(BwHealHp, source));
@@ -342,7 +353,7 @@ int main(void)
     S(mon_to_box); S(mon_take_item);
     S(mon_release); S(item_count); S(item_add);
     S(area_of); S(battle_wild); S(play_seconds); S(item_value); S(move_value);
-    S(mon_to_box_n); S(mon_from_box); S(mon_recalc); S(species_base);
+    S(mon_to_box_n); S(mon_from_box); S(mon_recalc); S(species_base); S(battle_trainer);
 #undef S
 
     /* The services table. */

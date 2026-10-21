@@ -199,6 +199,7 @@ names:
 | `area` | the current area: the place name the game shows on entry; every floor of a cave and every building of a town share it (version 4) | read |
 | `area_of[z]` | the area of zone `z` (version 4) | read |
 | `wild_battle` | the battle in progress is a wild one (version 4) | read |
+| `battle_trainer`, `battle_trainer2` | the opposing trainers of the battle in progress, 0 for none (version 4) | read |
 | `play_seconds` | the play time in seconds (version 4) | read |
 | `battle_style` | shift or set | read |
 | `in_battle` | a battle is in progress | read |

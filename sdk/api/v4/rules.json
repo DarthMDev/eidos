@@ -308,6 +308,18 @@
       "writable": false
     },
     {
+      "name": "battle_trainer",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "battle_trainer2",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
       "name": "play_seconds",
       "subscript": null,
       "readable": true,
@@ -441,6 +453,7 @@
     "battle.end",
     "whiteout",
     "battle.trainer_mon",
+    "battle.exp",
     "item.add",
     "item.use",
     "shop.buy",

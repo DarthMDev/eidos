@@ -186,6 +186,11 @@ typedef struct BwModState {
      * (a/0/1/9).  Two species are in the same line when their bases are
      * equal.  A negative number for a species past the data. */
     s32 (*species_base)(u16 species);
+
+    /* The opposing trainers of the battle in progress: n 0 the first, 1
+     * the second of a multi battle.  0 in a wild battle or for no second
+     * trainer, a negative number when no battle runs. */
+    s32 (*battle_trainer)(u32 n);
 } BwModState;
 
 /* ------------------------------------------------------------------ */
@@ -362,6 +367,14 @@ void bw_mod_state_set_field_player(void *field_player);
 /* Whether the battle that is starting is a wild one (1) or a trainer's
  * (0); the battle's end sets -1 (bw_mod_state_set_battle(NULL)). */
 void bw_mod_state_set_battle_wild(s32 wild);
+
+/* Whether the battle that is starting came from encounter.static (1) or a
+ * wild roll (0); read back by catch.attempt.  The battle's end clears it. */
+void bw_mod_state_set_battle_static(int is_static);
+
+/* The opposing trainers' ids, set when the battle starts. */
+void bw_mod_state_set_battle_trainers(u16 first, u16 second);
+int  bw_mod_state_battle_static(void);
 
 /* The table the host table hands to a mod. */
 const BwModState *bw_mod_state_table(void);

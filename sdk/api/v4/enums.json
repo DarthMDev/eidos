@@ -202,6 +202,10 @@
       "value": 82
     },
     {
+      "name": "BW_EVENT_BATTLE_EXP",
+      "value": 83
+    },
+    {
       "name": "BW_EVENT_ITEM_ADD",
       "value": 90
     },
@@ -398,6 +402,62 @@
       "value": 1
     },
     {
+      "name": "BW_LEVELUP_BATTLE",
+      "value": 0
+    },
+    {
+      "name": "BW_LEVELUP_ITEM",
+      "value": 1
+    },
+    {
+      "name": "BW_ITEM_FROM_OTHER",
+      "value": 0
+    },
+    {
+      "name": "BW_ITEM_FROM_SCRIPT",
+      "value": 1
+    },
+    {
+      "name": "BW_ITEM_FROM_GIFT",
+      "value": 2
+    },
+    {
+      "name": "BW_ITEM_FROM_PURCHASE",
+      "value": 3
+    },
+    {
+      "name": "BW_ITEM_FROM_BATTLE",
+      "value": 4
+    },
+    {
+      "name": "BW_ITEM_FROM_RETURN",
+      "value": 5
+    },
+    {
+      "name": "BW_ITEM_FROM_REWARD",
+      "value": 6
+    },
+    {
+      "name": "BW_MONEY_OTHER",
+      "value": 0
+    },
+    {
+      "name": "BW_MONEY_SCRIPT",
+      "value": 1
+    },
+    {
+      "name": "BW_MONEY_PURCHASE",
+      "value": 2
+    },
+    {
+      "name": "BW_MONEY_SALE",
+      "value": 3
+    },
+    {
+      "name": "BW_MONEY_BATTLE",
+      "value": 4
+    },
+    {
       "name": "BW_REVIVE_FIELD_ITEM",
       "value": 0
     },
@@ -428,6 +488,10 @@
     {
       "name": "BW_HEAL_HP_BATTLE",
       "value": 1
+    },
+    {
+      "name": "BW_HEAL_HP_PARTY",
+      "value": 2
     },
     {
       "name": "BW_SCRIPT_VM_FIELD",

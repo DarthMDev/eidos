@@ -465,31 +465,31 @@ static void build_dex_register_seen(const BwEventCall *call,
  */
 static const BwEventBinding g_session_rows[] = {
     { BW_MOD_REGION_OVL(20), 0x02183C9Cu, BW_EVENT_GAME_NEW, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_game_new, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_game_new, NULL, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x02007150u, BW_EVENT_SAVE_BEGIN, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_save_begin, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_save_begin, NULL, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x02007168u, BW_EVENT_SAVE_DONE, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_save_done, apply_save_done, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_save_done, apply_save_done, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x02012C18u, BW_EVENT_SAVE_LOAD, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_save_load, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_save_load, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215F8A8u, BW_EVENT_GAME_CLEARED,
-      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_game_cleared, NULL, NULL },
+      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_game_cleared, NULL, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0200C248u, BW_EVENT_BADGE_GET, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_badge_get, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_badge_get, NULL, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x02014314u, BW_EVENT_FLAG_SET, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_flag_set, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_flag_set, NULL, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0200CDE0u, BW_EVENT_DEX_REGISTER, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_dex_register_caught, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_dex_register_caught, NULL, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0200CFA0u, BW_EVENT_DEX_REGISTER, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_dex_register_seen, NULL, NULL }
+      BW_SCOPE_ANY, 0u, 0u, build_dex_register_seen, NULL, NULL, NULL }
 };
 
 /* The rows of this area, for the dispatch core. */

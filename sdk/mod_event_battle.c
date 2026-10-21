@@ -163,6 +163,7 @@ extern void POKE_TOOL_SetPartyValue(struct PokemonParam *mon, u32 paramId,
                                     u32 value) BW_PORT_WEAK;
 extern void POKE_TOOL_SetMoveSlot(struct PokemonParam *mon, u16 move, u32 slot)
     BW_PORT_WEAK;
+extern void POKEPARTY_RemoveMember(struct Party *party, s32 pos) BW_PORT_WEAK;
 
 /* The battle view's messages. */
 extern void BTLV_SCU_InitMessage(struct BtlvMessage *msg, int kind, int id)
@@ -1064,6 +1065,8 @@ static void build_battle_setup(const BwPortSetup *setup, BwEventPayload *out)
     }
     out->battle_start.level_adjust = g_battle_request.level_adjust;
     fill_setup_trainer_ids(out->battle_start.trainer_id, setup);
+    bw_mod_state_set_battle_trainers(out->battle_start.trainer_id[0],
+                                     out->battle_start.trainer_id[1]);
 
     /*
      * The handle of the opposing party is the party's own address, as far
@@ -1178,7 +1181,17 @@ static void fire_trainer_mons(const BwPortSetup *setup)
         {
             BwBattleTrainerMon before = *t;
 
-            (void)bw_mod_event_fire(BW_EVENT_BATTLE_TRAINER_MON, &p);
+            if (bw_mod_event_fire(BW_EVENT_BATTLE_TRAINER_MON, &p)) {
+                /* Refused: the member leaves the party before the battle.
+                 * The last one stays: a trainer with no Pokemon cannot
+                 * battle. */
+                if (count > 1u && POKEPARTY_RemoveMember != NULL) {
+                    POKEPARTY_RemoveMember(party, (s32)i);
+                    count--;
+                    i--;
+                    continue;
+                }
+            }
             if (t->species != 0u && t->species != before.species) {
                 POKE_TOOL_SetPartyValue(mon, BW_PORT_FIELD_SPECIES_ID, t->species);
                 POKE_TOOL_SetPartyValue(mon, BW_PORT_FIELD_FORM_ID, t->form);
@@ -1654,6 +1667,7 @@ static void build_catch_attempt(const BwEventCall *call, BwEventPayload *out)
     struct BtlPokeParam *target;
 
     memset(&out->catch_attempt, 0, sizeof(out->catch_attempt));
+    out->catch_attempt.static_ = (u8)bw_mod_state_battle_static();
     out->catch_attempt.ball = (u16)call->a[2];
 
     /* The rate of the last throw does not reach this one. */
@@ -2178,77 +2192,77 @@ static const BwEventBinding g_battle_rows[] = {
       refuse_mon_revive_battle, when_battle_fainted },
 
     { BW_MOD_REGION_OVL(93), 0x021CA270u, BW_EVENT_PORT, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_cmd, NULL },
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_cmd, NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021C33E8u, BW_EVENT_HEAL_HP, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_heal_hp_battle, apply_heal_hp_battle,
-      refuse_heal_hp_battle },
+      refuse_heal_hp_battle, NULL },
 
     { BW_MOD_REGION_ARM9, 0x02013090u, BW_EVENT_BATTLE_START, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_battle_start, apply_battle_start, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_battle_start, apply_battle_start, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021AA5CCu, BW_EVENT_BATTLE_START, BW_EVENT_AFTER,
       BW_SCOPE_ANY, 0u, 0u, build_battle_setup_trainer,
-      apply_battle_setup_trainer, NULL },
+      apply_battle_setup_trainer, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0216E7C8u, BW_EVENT_BATTLE_START, BW_EVENT_AFTER,
       BW_SCOPE_ANY, 0u, 0u, build_battle_setup_scripted,
-      apply_battle_setup_scripted, NULL },
+      apply_battle_setup_scripted, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0201347Cu, BW_EVENT_BATTLE_START, BW_EVENT_AFTER,
       BW_SCOPE_ANY, 0u, 0u, build_battle_setup_wild, apply_battle_setup_wild,
-      NULL },
+      NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021CF5B0u, BW_EVENT_BATTLE_ACTION,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_action_fight, NULL,
-      refuse_battle_action_fight },
+      refuse_battle_action_fight, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021CF918u, BW_EVENT_BATTLE_ACTION,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_action_run, NULL,
-      refuse_battle_action_run },
+      refuse_battle_action_run, NULL },
 
     { BW_MOD_REGION_OVL(95), 0x0689CB1Cu, BW_EVENT_BATTLE_ACTION,
       BW_EVENT_AFTER, BW_SCOPE_INSIDE, BW_MOD_REGION_OVL(93), 0x021CEDC0u,
-      build_battle_action_switch, NULL, refuse_battle_action_switch },
+      build_battle_action_switch, NULL, refuse_battle_action_switch, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021EA01Cu, BW_EVENT_BATTLE_ITEM,
       BW_EVENT_AFTER, BW_SCOPE_INSIDE, BW_MOD_REGION_OVL(93), 0x021CEEB8u,
-      build_battle_item, NULL, refuse_battle_item },
+      build_battle_item, NULL, refuse_battle_item, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021BD9D4u, BW_EVENT_BATTLE_SWITCH,
-      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_switch, NULL, NULL },
+      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_switch, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021BD60Cu, BW_EVENT_BATTLE_ESCAPE,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_escape, NULL,
-      refuse_battle_escape },
+      refuse_battle_escape, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021C1A10u, BW_EVENT_BATTLE_MOVE,
-      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_move, NULL, NULL },
+      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_move, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021C1E74u, BW_EVENT_BATTLE_DAMAGE,
       BW_EVENT_AFTER, BW_SCOPE_ANY, 0u, 0u, build_battle_damage,
-      apply_battle_damage, NULL },
+      apply_battle_damage, NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021C4F64u, BW_EVENT_BATTLE_FAINT,
-      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_faint, NULL, NULL },
+      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_faint, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021CBA40u, BW_EVENT_CATCH_ATTEMPT,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_catch_attempt,
-      apply_catch_attempt, refuse_catch_attempt },
+      apply_catch_attempt, refuse_catch_attempt, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021CBB34u, BW_EVENT_CATCH_RESULT,
       BW_EVENT_AFTER, BW_SCOPE_ANY, 0u, 0u, build_catch_result,
-      apply_catch_result, NULL },
+      apply_catch_result, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0216EE7Cu, BW_EVENT_BATTLE_END,
-      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_end, NULL, NULL },
+      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_battle_end, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021D1960u, BW_EVENT_WHITEOUT,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_whiteout_battle, NULL,
-      NULL },
+      NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x02158A20u, BW_EVENT_WHITEOUT,
-      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_whiteout_field, NULL, NULL }
+      BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_whiteout_field, NULL, NULL, NULL }
 };
 
 /* The rows of this area, for the dispatch core. */

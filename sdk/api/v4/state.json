@@ -455,6 +455,16 @@
           "name": "species"
         }
       ]
+    },
+    {
+      "name": "battle_trainer",
+      "ret": "s32",
+      "params": [
+        {
+          "type": "u32",
+          "name": "n"
+        }
+      ]
     }
   ]
 }

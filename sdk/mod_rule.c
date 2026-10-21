@@ -481,7 +481,9 @@ static const BwRuleField g_f_mon_exp[] = {
 static const BwRuleField g_f_mon_levelup[] = {
     BW_RULE_FIELD(BwMonLevelup, mon, BW_RULE_FK_MON, 0),
     BW_RULE_FIELD(BwMonLevelup, from, BW_RULE_FK_INT, 0),
-    BW_RULE_FIELD(BwMonLevelup, to, BW_RULE_FK_INT, 0)
+    BW_RULE_FIELD(BwMonLevelup, to, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonLevelup, source, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonLevelup, item, BW_RULE_FK_INT, 0)
 };
 
 static const BwRuleField g_f_move_learn[] = {
@@ -600,7 +602,13 @@ static const BwRuleField g_f_catch_attempt[] = {
     BW_RULE_FIELD(BwCatchAttempt, level, BW_RULE_FK_INT, 0),
     BW_RULE_FIELD(BwCatchAttempt, shiny, BW_RULE_FK_INT, 0),
     BW_RULE_FIELD(BwCatchAttempt, ball, BW_RULE_FK_INT, 0),
-    BW_RULE_FIELD(BwCatchAttempt, rate, BW_RULE_FK_INT, BW_RULE_FF_MOD)
+    BW_RULE_FIELD(BwCatchAttempt, rate, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwCatchAttempt, static_, BW_RULE_FK_INT, 0),
+    /* `static` is a C keyword, so the struct spells it `static_`; both
+     * names reach it. */
+    { .name = "static", .offset = (u16)offsetof(BwCatchAttempt, static_),
+      .size = (u8)sizeof(((BwCatchAttempt *)0)->static_),
+      .kind = BW_RULE_FK_INT, .flags = 0 }
 };
 
 static const BwRuleField g_f_catch_result[] = {
@@ -623,6 +631,13 @@ static const BwRuleField g_f_whiteout[] = {
     BW_RULE_FIELD(BwWhiteout, money_lost, BW_RULE_FK_INT, 0)
 };
 
+static const BwRuleField g_f_battle_exp[] = {
+    BW_RULE_FIELD(BwBattleExp, members, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwBattleExp, wild, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwBattleExp, scale, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwBattleExp, total, BW_RULE_FK_INT, 0)
+};
+
 static const BwRuleField g_f_battle_trainer_mon[] = {
     BW_RULE_FIELD(BwBattleTrainerMon, trainer_id, BW_RULE_FK_INT, 0),
     BW_RULE_FIELD(BwBattleTrainerMon, index, BW_RULE_FK_INT, 0),
@@ -642,7 +657,8 @@ static const BwRuleField g_f_battle_trainer_mon[] = {
 static const BwRuleField g_f_item_add[] = {
     BW_RULE_FIELD(BwItemAdd, item, BW_RULE_FK_INT, 0),
     BW_RULE_FIELD(BwItemAdd, count, BW_RULE_FK_INT, BW_RULE_FF_MOD),
-    BW_RULE_FIELD(BwItemAdd, pocket, BW_RULE_FK_INT, 0)
+    BW_RULE_FIELD(BwItemAdd, pocket, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwItemAdd, source, BW_RULE_FK_INT, 0)
 };
 
 static const BwRuleField g_f_item_use[] = {
@@ -658,7 +674,8 @@ static const BwRuleField g_f_shop_buy[] = {
 static const BwRuleField g_f_money_change[] = {
     BW_RULE_FIELD(BwMoneyChange, delta, BW_RULE_FK_INT,
                   BW_RULE_FF_MOD | BW_RULE_FF_SIGNED),
-    BW_RULE_FIELD(BwMoneyChange, before, BW_RULE_FK_INT, 0)
+    BW_RULE_FIELD(BwMoneyChange, before, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMoneyChange, source, BW_RULE_FK_INT, 0)
 };
 
 static const BwRuleField g_f_heal[] = {
@@ -761,7 +778,7 @@ static const BwRuleEvent g_events[] = {
     { .kind = BW_EVENT_MON_EXP, .name = "mon.exp", .refusable = 0,
       .fields = g_f_mon_exp, .field_count = 6 },
     { .kind = BW_EVENT_MON_LEVELUP, .name = "mon.levelup", .refusable = 0,
-      .fields = g_f_mon_levelup, .field_count = 3 },
+      .fields = g_f_mon_levelup, .field_count = 5 },
     { .kind = BW_EVENT_MOVE_LEARN, .name = "move.learn", .refusable = 1,
       .fields = g_f_move_learn, .field_count = 5 },
     { .kind = BW_EVENT_MON_RELEASE, .name = "mon.release", .refusable = 1,
@@ -796,15 +813,17 @@ static const BwRuleEvent g_events[] = {
     { .kind = BW_EVENT_BATTLE_FAINT, .name = "battle.faint", .refusable = 0,
       .fields = g_f_battle_faint, .field_count = 6 },
     { .kind = BW_EVENT_CATCH_ATTEMPT, .name = "catch.attempt",
-      .refusable = 1, .fields = g_f_catch_attempt, .field_count = 6 },
+      .refusable = 1, .fields = g_f_catch_attempt, .field_count = 8 },
     { .kind = BW_EVENT_CATCH_RESULT, .name = "catch.result", .refusable = 0,
       .fields = g_f_catch_result, .field_count = 5 },
     { .kind = BW_EVENT_BATTLE_END, .name = "battle.end", .refusable = 0,
       .fields = g_f_battle_end, .field_count = 4 },
     { .kind = BW_EVENT_WHITEOUT, .name = "whiteout", .refusable = 0,
       .fields = g_f_whiteout, .field_count = 2 },
+    { .kind = BW_EVENT_BATTLE_EXP, .name = "battle.exp", .refusable = 1,
+      .fields = g_f_battle_exp, .field_count = 4 },
     { .kind = BW_EVENT_BATTLE_TRAINER_MON, .name = "battle.trainer_mon",
-      .refusable = 0, .fields = g_f_battle_trainer_mon, .field_count = 11 },
+      .refusable = 1, .fields = g_f_battle_trainer_mon, .field_count = 11 },
 
     { .kind = BW_EVENT_ITEM_ADD, .name = "item.add", .refusable = 0,
       .fields = g_f_item_add, .field_count = 3 },
@@ -813,7 +832,7 @@ static const BwRuleEvent g_events[] = {
     { .kind = BW_EVENT_SHOP_BUY, .name = "shop.buy", .refusable = 1,
       .fields = g_f_shop_buy, .field_count = 2 },
     { .kind = BW_EVENT_MONEY_CHANGE, .name = "money.change", .refusable = 0,
-      .fields = g_f_money_change, .field_count = 2 },
+      .fields = g_f_money_change, .field_count = 3 },
     { .kind = BW_EVENT_HEAL, .name = "heal", .refusable = 1,
       .fields = g_f_heal, .field_count = 2 },
     { .kind = BW_EVENT_HEAL_HP, .name = "heal.hp", .refusable = 1,
@@ -977,6 +996,10 @@ static const BwRuleStateField g_state_fields[] = {
     { .name = "area_of", .kind = BW_RULE_SK_INT, .writable = 0,
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
     { .name = "wild_battle", .kind = BW_RULE_SK_PLAIN, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "battle_trainer", .kind = BW_RULE_SK_PLAIN, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "battle_trainer2", .kind = BW_RULE_SK_PLAIN, .writable = 0,
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
     { .name = "play_seconds", .kind = BW_RULE_SK_PLAIN, .writable = 0,
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
@@ -3586,6 +3609,14 @@ static int state_read_v4(const BwModState *st, const BwRuleStateField *f,
             return 1;
         }
         *out = b;
+        return 1;
+    }
+    if (strcmp(f->name, "battle_trainer") == 0 ||
+        strcmp(f->name, "battle_trainer2") == 0) {
+        s32 id = st->battle_trainer != NULL
+                     ? st->battle_trainer(f->name[14] == '2' ? 1u : 0u) : -1;
+
+        *out = id < 0 ? 0 : id;
         return 1;
     }
     if (strcmp(f->name, "wild_battle") == 0) {

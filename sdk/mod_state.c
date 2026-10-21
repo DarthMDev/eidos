@@ -324,6 +324,12 @@ extern void GFL_HEAP_Free(void *memory) __attribute__((weak));
 /* The battle in progress is wild (1), a trainer's (0), or none (-1). */
 static s32 g_battle_wild = -1;
 
+/* The battle in progress came from encounter.static. */
+static int g_battle_static;
+
+/* The opposing trainers of the battle in progress. */
+static u16 g_battle_trainers[2];
+
 extern u32 MYITEM_SAVEDATA_GetItemQuantity(struct MyItem *bag, u16 itemId,
                                            u16 heapId)
     __attribute__((weak));
@@ -368,12 +374,31 @@ void bw_mod_state_set_battle(void *battle_main)
     g_battle_main = battle_main;
     if (battle_main == NULL) {
         g_battle_wild = -1;
+        g_battle_static = 0;
+        g_battle_trainers[0] = 0u;
+        g_battle_trainers[1] = 0u;
     }
 }
 
 void bw_mod_state_set_battle_wild(s32 wild)
 {
     g_battle_wild = wild;
+}
+
+void bw_mod_state_set_battle_trainers(u16 first, u16 second)
+{
+    g_battle_trainers[0] = first;
+    g_battle_trainers[1] = second;
+}
+
+void bw_mod_state_set_battle_static(int is_static)
+{
+    g_battle_static = is_static != 0;
+}
+
+int bw_mod_state_battle_static(void)
+{
+    return g_battle_static;
 }
 
 /* Bind the field player (a struct FieldPlayer *). */
@@ -1558,6 +1583,14 @@ static s32 state_battle_wild(void)
     return g_battle_wild;
 }
 
+static s32 state_battle_trainer(u32 n)
+{
+    if (g_battle_wild < 0 || n > 1u) {
+        return -1;
+    }
+    return (s32)g_battle_trainers[n];
+}
+
 static u32 state_play_seconds(void)
 {
     struct PlayTime *t;
@@ -1653,7 +1686,8 @@ const BwModState bw_mod_state = {
     state_mon_from_box,
     state_mon_recalc,
 
-    state_species_base
+    state_species_base,
+    state_battle_trainer
 };
 
 int bw_mod_state_party_slot(const void *mon)

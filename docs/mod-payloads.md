@@ -352,6 +352,11 @@ gain.
 | `mon` | `BwMonRef` | the Pokemon |
 | `from` | u8 | the level before |
 | `to` | u8 | the level reached |
+| `source` | u8 | version 4: `BW_LEVELUP_BATTLE`, or `BW_LEVELUP_ITEM` (a Rare Candy on the party screen) |
+| `item` | u16 | version 4: the item, for `BW_LEVELUP_ITEM` |
+
+A Rare Candy fires `mon.levelup` after the level went up; to stop it,
+refuse `item.use` (the candy stays).
 
 **`move.learn`**
 
@@ -557,6 +562,7 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 | `shiny` | u8 | shiny |
 | `ball` | u16 | the ball item |
 | `rate` | u8, *mod* | the catch rate the roll uses, as a percentage of the game's own factor |
+| `static` | u8 | version 4: 1 when `encounter.static` started the battle (a story or fixed Pokemon), 0 for a wild roll |
 
 **`catch.result`**
 
@@ -584,10 +590,24 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 | `in_battle` | u8 | 1 the battle half, 0 the field half |
 | `money_lost` | u32 | the money the game takes |
 
+**`battle.exp`** (version 4)
+
+The battle hands out experience after an opposing Pokemon fainted, as a
+whole. It fires before `mon.exp` fires for each member that gains. Refused,
+nobody gains and `mon.exp` does not fire.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `members` | u8 | bit i: party position i gains |
+| `wild` | u8 | 1 in a wild battle |
+| `scale` | u16, *mod* | a percentage of every share; 100 leaves them |
+| `total` | u32 | every share together |
+
 **`battle.trainer_mon`** (version 4)
 
 One Pokemon of the opposing trainer's party, after the game built the party
-and before the battle starts; once per member, in party order. A changed
+and before the battle starts; once per member, in party order. Refused, the
+member leaves the party before the battle; the last one always stays. A changed
 field is written with the game's own setters: a new species, form or level
 works out the experience and the stats again, a new move gets its full PP.
 0 in `level`, `species` or `ability` leaves the game's value.
@@ -642,6 +662,7 @@ the amount.
 | `item` | u16 | the item |
 | `count` | u16, *mod* | how many |
 | `pocket` | u8 | the bag pocket |
+| `source` | u8 | version 4: `BW_ITEM_FROM_SCRIPT` (an item on the ground, a gift from a person), `_GIFT`, `_PURCHASE`, `_BATTLE`, `_RETURN` (a held item or mail back to the bag), `_REWARD`, `_OTHER` |
 
 **`item.use`**
 
@@ -663,6 +684,11 @@ the amount.
 |---|---|---|
 | `delta` | s32, *mod* | the change, positive or negative |
 | `before` | u32 | the money before |
+| `source` | u8 | version 4: `BW_MONEY_SCRIPT`, `_PURCHASE`, `_SALE`, `_BATTLE` (a prize when the delta is positive, a loss when it is negative), `_OTHER` |
+
+The sources of `money.change` and `item.add` come from the function the
+game's call runs inside. A caller outside the port's hookable set reads
+`_OTHER`.
 
 **`heal`**
 
@@ -712,7 +738,11 @@ Where it fires and what a refusal does:
 | `source` | u8 | field (an item from the bag or the party screen) or battle (any restore: bag item, held item, move, ability) |
 
 It fires for a Pokemon that has HP. A fainted Pokemon coming back is
-`mon.revive`.
+`mon.revive`. A party heal (a Centre or another script, the HP-restore
+power) fires it once for each member that has lost HP, with source
+`BW_HEAL_HP_PARTY` and the amount that fills it; refused, that member keeps
+the HP it had. `heal` is the whole party heal: refused, no member event
+fires and nobody is healed.
 
 **What the items builder fills.** The items area's rows are in
 `sdk/mod_event_items.c`. `item.add` carries the item and the count from the

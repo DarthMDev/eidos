@@ -299,6 +299,41 @@ static struct Party *script_party(uintptr_t work)
  * arguments; the pocket is the one the game puts the item in, which the
  * game reads out of the item's own data.
  */
+/* item.add: where the item comes from, read off the function the call
+ * runs inside (the scope stack, as for money.change). */
+static const struct {
+    unsigned int region;
+    unsigned int addr;
+    u8 source;
+} k_item_callers[] = {
+    { BW_MOD_REGION_OVL(21), 0x021AF544u, (u8)BW_ITEM_FROM_SCRIPT },   /* SCRCMD_AddItem */
+    { BW_MOD_REGION_OVL(21), 0x021B6FF0u, (u8)BW_ITEM_FROM_GIFT },     /* SCRCMD_POKEMON_FLD_ReceiveGiftItem */
+    { BW_MOD_REGION_OVL(21), 0x021B76B4u, (u8)BW_ITEM_FROM_GIFT },     /* PDW_POSTMAN_ReceiveItems */
+    { BW_MOD_REGION_OVL(21), 0x021B35A4u, (u8)BW_ITEM_FROM_PURCHASE }, /* SCRCMD_PROC_FLD_StepShop */
+    { BW_MOD_REGION_OVL(18), 0x0218261Cu, (u8)BW_ITEM_FROM_PURCHASE }, /* EVENT_COMM_COMMON_ItemPurchaseEventMain */
+    { BW_MOD_REGION_OVL(93), 0x021B90BCu, (u8)BW_ITEM_FROM_BATTLE },   /* BTL_MAIN_AddItemToBag */
+    { BW_MOD_REGION_OVL(91), 0x021BA688u, (u8)BW_ITEM_FROM_RETURN },   /* POKELIST_ReturnBagItem */
+    { BW_MOD_REGION_OVL(170), 0x021E9010u, (u8)BW_ITEM_FROM_RETURN },  /* BOX2_SEQ_StateUseItem */
+    { BW_MOD_REGION_OVL(170), 0x021E91A0u, (u8)BW_ITEM_FROM_RETURN },  /* BOX2_SEQ_StateUseItemMenu */
+    { BW_MOD_REGION_OVL(10), 0x0216B004u, (u8)BW_ITEM_FROM_REWARD },   /* SCRCMD_SYMBOL_ViewEventMain */
+    { BW_MOD_REGION_OVL(18), 0x02180538u, (u8)BW_ITEM_FROM_REWARD }    /* EVENT_COMM_COMMON_MissionResultEventMain */
+    /* The link and minigame overlays (105, 107, 136, 137) are not in the
+     * port's hookable set yet; their items read BW_ITEM_FROM_OTHER. */
+};
+
+static u8 item_source(void)
+{
+    u32 i;
+
+    for (i = 0; i < (u32)(sizeof(k_item_callers) / sizeof(k_item_callers[0])); i++) {
+        if (bw_mod_event_scope_matches(k_item_callers[i].region,
+                                       k_item_callers[i].addr, BW_SCOPE_INSIDE)) {
+            return k_item_callers[i].source;
+        }
+    }
+    return (u8)BW_ITEM_FROM_OTHER;
+}
+
 static void build_item_add(const BwEventCall *call, BwEventPayload *out)
 {
     struct MyItem *bag = (struct MyItem *)call->a[0];
@@ -310,6 +345,7 @@ static void build_item_add(const BwEventCall *call, BwEventPayload *out)
     memset(&out->item_add, 0, sizeof(out->item_add));
     out->item_add.item = item;
     out->item_add.count = (u16)call->a[2];
+    out->item_add.source = item_source();
     if (bag != NULL) {
         out->item_add.pocket =
             (u8)MYITEM_SAVEDATA_GetPocketOfItem(bag, item, &slots, &count, heap);
@@ -426,12 +462,45 @@ static void refuse_shop_buy(BwEventCall *call)
  * docs/mod-events.md calls BEACON_AddPoints).  The change is the argument;
  * the money before is read out of the misc save block.
  */
+/*
+ * money.change: why.  The game's two money calls take no reason, so the
+ * port reads it off the function the call runs inside: every declared
+ * function is on the scope stack while it runs (sdk/mod_event.c).
+ */
+static const struct {
+    unsigned int region;
+    unsigned int addr;
+    u8 source;
+} k_money_callers[] = {
+    { BW_MOD_REGION_OVL(10), 0x0215C558u, (u8)BW_MONEY_SCRIPT },   /* SCRCMD_PROC_AddMoney */
+    { BW_MOD_REGION_OVL(10), 0x0215C584u, (u8)BW_MONEY_SCRIPT },   /* SCRCMD_PROC_SubMoney */
+    { BW_MOD_REGION_OVL(21), 0x021B72CCu, (u8)BW_MONEY_SCRIPT },   /* SCRCMD_POKEMON_FLD_AddTableValueToPoints */
+    { BW_MOD_REGION_OVL(21), 0x021B3568u, (u8)BW_MONEY_PURCHASE }, /* SCRCMD_PROC_FLD_PayPrice */
+    { BW_MOD_REGION_OVL(18), 0x0218261Cu, (u8)BW_MONEY_PURCHASE }, /* EVENT_COMM_COMMON_ItemPurchaseEventMain */
+    { BW_MOD_REGION_OVL(70), 0x021B7B80u, (u8)BW_MONEY_SALE },     /* ITEMMENU_TaskSellConfirmInput */
+    { BW_MOD_REGION_OVL(92), 0x021B9614u, (u8)BW_MONEY_BATTLE }    /* EVENT_BATTLE_RETURN_Main */
+};
+
+static u8 money_source(void)
+{
+    u32 i;
+
+    for (i = 0; i < (u32)(sizeof(k_money_callers) / sizeof(k_money_callers[0])); i++) {
+        if (bw_mod_event_scope_matches(k_money_callers[i].region,
+                                       k_money_callers[i].addr, BW_SCOPE_INSIDE)) {
+            return k_money_callers[i].source;
+        }
+    }
+    return (u8)BW_MONEY_OTHER;
+}
+
 static void build_money_add(const BwEventCall *call, BwEventPayload *out)
 {
     struct MiscSave *misc = (struct MiscSave *)call->a[0];
 
     memset(&out->money_change, 0, sizeof(out->money_change));
     out->money_change.delta = (s32)call->a[1];
+    out->money_change.source = money_source();
     if (misc != NULL) {
         out->money_change.before = MISC_GetMoney(misc);
     }
@@ -448,6 +517,7 @@ static void build_money_sub(const BwEventCall *call, BwEventPayload *out)
 
     memset(&out->money_change, 0, sizeof(out->money_change));
     out->money_change.delta = -(s32)call->a[1];
+    out->money_change.source = money_source();
     if (misc != NULL) {
         out->money_change.before = MISC_GetMoney(misc);
     }
@@ -768,24 +838,26 @@ static void apply_restore_revive(const BwEventPayload *unused, BwEventCall *call
 }
 
 /*
- * mon.revive for a party heal (a Centre or another script, the HP-restore
- * power).  The game's function heals the whole party at once, so the port
- * asks about each fainted member before it, and after it puts each one a
- * handler kept fainted back to 0 HP, and writes the HP a handler chose.
+ * A party heal (a Centre or another script, the HP-restore power) as a
+ * whole is the `heal` event.  Each member gets its own event too: a
+ * fainted member mon.revive, a member that has lost HP heal.hp.  The
+ * game's function heals the whole party at once, so the port asks before
+ * it and, after it, writes each member's HP back to what the handlers
+ * chose: the HP it had when a handler refused, the HP they set otherwise.
+ * A refusal of `heal` itself stops the whole heal before any member event.
  */
 static struct {
     struct Party *party;
     u8 count;
-    u8 fainted;         /* bit i: member i had fainted */
-    u8 refused;         /* bit i: a handler kept member i fainted */
-    u16 hp[6];          /* the HP each revived member gets */
-} g_party_revive;
+    u8 asked;           /* bit i: an event fired for member i */
+    u16 hp[6];          /* the HP member i ends with */
+} g_party_heal;
 
-static void party_revive_before(struct Party *party, u8 source)
+static void party_heal_before(struct Party *party, u8 revive_source)
 {
     u32 count, i;
 
-    memset(&g_party_revive, 0, sizeof g_party_revive);
+    memset(&g_party_heal, 0, sizeof g_party_heal);
     if (party == NULL || POKEPARTY_GetCount == NULL || POKEPARTY_GetMember == NULL ||
         POKE_TOOL_GetPartyValue == NULL) {
         return;
@@ -794,76 +866,139 @@ static void party_revive_before(struct Party *party, u8 source)
     if (count > 6u) {
         count = 6u;
     }
-    g_party_revive.party = party;
-    g_party_revive.count = (u8)count;
+    g_party_heal.party = party;
+    g_party_heal.count = (u8)count;
     for (i = 0; i < count; i++) {
         struct PokemonParam *mon = POKEPARTY_GetMember(party, i);
         BwEventPayload p;
-        u32 maxHp;
+        u32 hp, maxHp;
 
-        if (mon == NULL || POKE_TOOL_GetPartyValue(mon, BW_FIELD_HP, 0) != 0u ||
-            POKE_TOOL_GetPartyValue(mon, 0x4Cu, 0) != 0u) {
-            continue;   /* it has HP, or it is an egg */
+        if (mon == NULL || POKE_TOOL_GetPartyValue(mon, 0x4Cu, 0) != 0u) {
+            continue;   /* an egg */
         }
+        hp = POKE_TOOL_GetPartyValue(mon, BW_FIELD_HP, 0);
         maxHp = POKE_TOOL_GetPartyValue(mon, BW_FIELD_MAX_HP, 0);
-        memset(&p, 0, sizeof p);
-        party_ref_of(&p.mon_revive.mon, mon);
-        p.mon_revive.max_hp = (u16)maxHp;
-        p.mon_revive.hp = (u16)maxHp;
-        p.mon_revive.source = source;
-        g_party_revive.fainted |= (u8)(1u << i);
-        if (bw_mod_event_fire(BW_EVENT_MON_REVIVE, &p)) {
-            g_party_revive.refused |= (u8)(1u << i);
+        if (hp >= maxHp) {
+            continue;   /* nothing to heal */
         }
-        g_party_revive.hp[i] = p.mon_revive.hp == 0u ? 1u : p.mon_revive.hp;
-        if (g_party_revive.hp[i] > maxHp) {
-            g_party_revive.hp[i] = (u16)maxHp;
+        memset(&p, 0, sizeof p);
+        g_party_heal.asked |= (u8)(1u << i);
+        if (hp == 0u) {
+            party_ref_of(&p.mon_revive.mon, mon);
+            p.mon_revive.max_hp = (u16)maxHp;
+            p.mon_revive.hp = (u16)maxHp;
+            p.mon_revive.source = revive_source;
+            if (bw_mod_event_fire(BW_EVENT_MON_REVIVE, &p)) {
+                g_party_heal.hp[i] = 0u;    /* it stays fainted */
+            } else {
+                u32 v = p.mon_revive.hp == 0u ? 1u : p.mon_revive.hp;
+
+                g_party_heal.hp[i] = (u16)(v > maxHp ? maxHp : v);
+            }
+        } else {
+            party_ref_of(&p.heal_hp.mon, mon);
+            p.heal_hp.hp = (u16)hp;
+            p.heal_hp.max_hp = (u16)maxHp;
+            p.heal_hp.amount = (u16)(maxHp - hp);
+            p.heal_hp.source = (u8)BW_HEAL_HP_PARTY;
+            if (bw_mod_event_fire(BW_EVENT_HEAL_HP, &p)) {
+                g_party_heal.hp[i] = (u16)hp;   /* it keeps the HP it had */
+            } else {
+                u32 v = hp + p.heal_hp.amount;
+
+                g_party_heal.hp[i] = (u16)(v > maxHp ? maxHp : v);
+            }
         }
     }
 }
 
-static void party_revive_after(void)
+static void party_heal_after(void)
 {
     u32 i;
 
-    if (g_party_revive.party == NULL || POKE_TOOL_SetPartyValue == NULL) {
+    if (g_party_heal.party == NULL || POKE_TOOL_SetPartyValue == NULL) {
         return;
     }
-    for (i = 0; i < g_party_revive.count; i++) {
+    for (i = 0; i < g_party_heal.count; i++) {
         struct PokemonParam *mon;
 
-        if ((g_party_revive.fainted & (1u << i)) == 0u) {
+        if ((g_party_heal.asked & (1u << i)) == 0u) {
             continue;
         }
-        mon = POKEPARTY_GetMember(g_party_revive.party, i);
-        if (mon == NULL) {
-            continue;
+        mon = POKEPARTY_GetMember(g_party_heal.party, i);
+        if (mon != NULL) {
+            POKE_TOOL_SetPartyValue(mon, BW_FIELD_HP, g_party_heal.hp[i]);
         }
-        POKE_TOOL_SetPartyValue(mon, BW_FIELD_HP,
-                                (g_party_revive.refused & (1u << i)) != 0u
-                                    ? 0u : g_party_revive.hp[i]);
     }
-    g_party_revive.party = NULL;
+    g_party_heal.party = NULL;
 }
 
 static void apply_revive_script_before(const BwEventPayload *unused, BwEventCall *call)
 {
     (void)unused;
-    party_revive_before((struct Party *)script_party(call->a[1]),
+    party_heal_before((struct Party *)script_party(call->a[1]),
                         (u8)BW_REVIVE_SCRIPT);
 }
 
 static void apply_revive_power_before(const BwEventPayload *unused, BwEventCall *call)
 {
     (void)unused;
-    party_revive_before((struct Party *)call->a[0], (u8)BW_REVIVE_POWER);
+    party_heal_before((struct Party *)call->a[0], (u8)BW_REVIVE_POWER);
 }
 
 static void apply_revive_after(const BwEventPayload *unused, BwEventCall *call)
 {
     (void)unused;
     (void)call;
-    party_revive_after();
+    party_heal_after();
+}
+
+/*
+ * mon.levelup from an item: the party screen's PLIST_DEMO_UseItemOnMon
+ * (mon, item, ...) sets a Rare Candy's experience and works the level out
+ * again in place.  The port reads the level before the call and after it,
+ * and fires the event when it went up.  The event cannot be refused: a mod
+ * that wants no Rare Candy refuses item.use, which keeps the candy.
+ */
+static struct {
+    const struct PokemonParam *mon;
+    u8 level;
+} g_item_level;
+
+#define BW_FIELD_LEVEL 0x9Eu
+
+static void apply_item_level_before(const BwEventPayload *unused, BwEventCall *call)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+
+    (void)unused;
+    g_item_level.mon = mon;
+    g_item_level.level = (mon != NULL && POKE_TOOL_GetPartyValue != NULL)
+                             ? (u8)POKE_TOOL_GetPartyValue(mon, BW_FIELD_LEVEL, 0) : 0u;
+}
+
+static void apply_item_level_after(const BwEventPayload *unused, BwEventCall *call)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+    BwEventPayload p;
+    u8 level;
+
+    (void)unused;
+    if (mon == NULL || g_item_level.mon != mon || POKE_TOOL_GetPartyValue == NULL) {
+        return;
+    }
+    g_item_level.mon = NULL;
+    level = (u8)POKE_TOOL_GetPartyValue(mon, BW_FIELD_LEVEL, 0);
+    if (level <= g_item_level.level) {
+        return;
+    }
+    memset(&p, 0, sizeof p);
+    party_ref_of(&p.mon_levelup.mon, mon);
+    p.mon_levelup.from = g_item_level.level;
+    p.mon_levelup.to = level;
+    p.mon_levelup.source = (u8)BW_LEVELUP_ITEM;
+    p.mon_levelup.item = (u16)call->a[1];
+    (void)bw_mod_event_fire(BW_EVENT_MON_LEVELUP, &p);
 }
 
 /* ------------------------------------------------------------------ */
@@ -877,14 +1012,20 @@ static void apply_revive_after(const BwEventPayload *unused, BwEventCall *call)
  */
 static const BwEventBinding g_items_rows[] = {
     { BW_MOD_REGION_ARM9, 0x02007E50u, BW_EVENT_ITEM_ADD, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_item_add, apply_item_add, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_item_add, apply_item_add, NULL, NULL },
 
     { BW_MOD_REGION_OVL(91), 0x021BDD78u, BW_EVENT_ITEM_USE, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_item_use, NULL, refuse_item_use },
+      BW_SCOPE_ANY, 0u, 0u, build_item_use, NULL, refuse_item_use, NULL },
 
     { BW_MOD_REGION_OVL(91), 0x021BDD78u, BW_EVENT_MON_REVIVE, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_mon_revive_field, apply_mon_revive_field,
       refuse_mon_revive_field, when_field_revive_check },
+
+    { BW_MOD_REGION_OVL(91), 0x021BE2B4u, BW_EVENT_PORT, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_item_level_before, NULL, NULL },
+
+    { BW_MOD_REGION_OVL(91), 0x021BE2B4u, BW_EVENT_PORT, BW_EVENT_AFTER,
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_item_level_after, NULL, NULL },
 
     { BW_MOD_REGION_OVL(91), 0x021BE914u, BW_EVENT_HEAL_HP, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_heal_hp_field, apply_heal_hp_field,
@@ -895,33 +1036,33 @@ static const BwEventBinding g_items_rows[] = {
       when_restore_fainted },
 
     { BW_MOD_REGION_OVL(21), 0x021B3370u, BW_EVENT_SHOP_BUY, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_shop_buy, apply_shop_buy, refuse_shop_buy },
+      BW_SCOPE_ANY, 0u, 0u, build_shop_buy, apply_shop_buy, refuse_shop_buy, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0200C278u, BW_EVENT_MONEY_CHANGE, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_money_add, apply_money_add, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_money_add, apply_money_add, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0200C29Cu, BW_EVENT_MONEY_CHANGE, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_money_sub, apply_money_sub, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_money_sub, apply_money_sub, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215B5A8u, BW_EVENT_HEAL, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_heal_script, apply_heal_script,
-      refuse_heal_script },
+      refuse_heal_script, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215B5A8u, BW_EVENT_PORT, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_script_before, NULL },
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_script_before, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215B5A8u, BW_EVENT_PORT, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_after, NULL },
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_after, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0201104Cu, BW_EVENT_HEAL, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_heal_power, apply_heal_power,
-      refuse_heal_power },
+      refuse_heal_power, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0201104Cu, BW_EVENT_PORT, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_power_before, NULL },
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_power_before, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0201104Cu, BW_EVENT_PORT, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_after, NULL }
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_after, NULL, NULL }
 };
 
 /* The rows of this area, for the dispatch core. */

@@ -220,6 +220,7 @@ static u32 payload_size(u32 kind)
     case BW_EVENT_BATTLE_END:    return (u32)sizeof(BwBattleEnd);
     case BW_EVENT_WHITEOUT:       return (u32)sizeof(BwWhiteout);
     case BW_EVENT_BATTLE_TRAINER_MON: return (u32)sizeof(BwBattleTrainerMon);
+    case BW_EVENT_BATTLE_EXP:     return (u32)sizeof(BwBattleExp);
 
     case BW_EVENT_ITEM_ADD:     return (u32)sizeof(BwItemAdd);
     case BW_EVENT_ITEM_USE:     return (u32)sizeof(BwItemUse);

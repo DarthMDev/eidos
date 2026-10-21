@@ -75,6 +75,7 @@ enum {
     EIDOS_EVENT_BATTLE_END = 80,
     EIDOS_EVENT_WHITEOUT = 81,
     EIDOS_EVENT_BATTLE_TRAINER_MON = 82,
+    EIDOS_EVENT_BATTLE_EXP = 83,
     EIDOS_EVENT_ITEM_ADD = 90,
     EIDOS_EVENT_ITEM_USE = 91,
     EIDOS_EVENT_SHOP_BUY = 92,
@@ -124,6 +125,20 @@ enum {
     EIDOS_HEAL_POWER = 2,
     EIDOS_EXP_BATTLE = 0,
     EIDOS_EXP_DAYCARE = 1,
+    EIDOS_LEVELUP_BATTLE = 0,
+    EIDOS_LEVELUP_ITEM = 1,
+    EIDOS_ITEM_FROM_OTHER = 0,
+    EIDOS_ITEM_FROM_SCRIPT = 1,
+    EIDOS_ITEM_FROM_GIFT = 2,
+    EIDOS_ITEM_FROM_PURCHASE = 3,
+    EIDOS_ITEM_FROM_BATTLE = 4,
+    EIDOS_ITEM_FROM_RETURN = 5,
+    EIDOS_ITEM_FROM_REWARD = 6,
+    EIDOS_MONEY_OTHER = 0,
+    EIDOS_MONEY_SCRIPT = 1,
+    EIDOS_MONEY_PURCHASE = 2,
+    EIDOS_MONEY_SALE = 3,
+    EIDOS_MONEY_BATTLE = 4,
     EIDOS_REVIVE_FIELD_ITEM = 0,
     EIDOS_REVIVE_BATTLE_ITEM = 1,
     EIDOS_REVIVE_MOVE = 2,
@@ -132,6 +147,7 @@ enum {
     EIDOS_REVIVE_SCRIPT = 5,
     EIDOS_HEAL_HP_FIELD = 0,
     EIDOS_HEAL_HP_BATTLE = 1,
+    EIDOS_HEAL_HP_PARTY = 2,
     EIDOS_SCRIPT_VM_FIELD = 0,
     EIDOS_SCRIPT_VM_BATTLE = 1,
     EIDOS_SCRIPT_CONTINUE = 0,
@@ -364,7 +380,9 @@ typedef struct EidosMonLevelup {
     EidosMonRef mon;
     uint8_t from;  /* the level before */
     uint8_t to;  /* the level reached */
-} EidosMonLevelup;  /* 20 bytes */
+    uint8_t source;  /* BW_LEVELUP_* */
+    uint16_t item;  /* BW_LEVELUP_ITEM: the item (a Rare Candy) */
+} EidosMonLevelup;  /* 24 bytes */
 
 typedef struct EidosMoveLearn {
     EidosEvent h;
@@ -497,6 +515,7 @@ typedef struct EidosCatchAttempt {
     uint8_t shiny;
     uint16_t ball;
     uint8_t rate;  /* *mod: the catch rate the roll uses */
+    uint8_t static_;  /* 1 for a story or static encounter (encounter.static */
 } EidosCatchAttempt;  /* 24 bytes */
 
 typedef struct EidosCatchResult {
@@ -537,11 +556,20 @@ typedef struct EidosBattleTrainerMon {
     uint8_t form;  /* *mod: the form, written when species is written */
 } EidosBattleTrainerMon;  /* 28 bytes */
 
+typedef struct EidosBattleExp {
+    EidosEvent h;
+    uint8_t members;  /* bit i: party position i gains experience */
+    uint8_t wild;  /* 1 in a wild battle */
+    uint16_t scale;  /* *mod: a percentage of every share, 100 to leave them */
+    uint32_t total;  /* the experience of every share together */
+} EidosBattleExp;  /* 16 bytes */
+
 typedef struct EidosItemAdd {
     EidosEvent h;
     uint16_t item;
     uint16_t count;  /* *mod: how many */
     uint8_t pocket;  /* the bag pocket */
+    uint8_t source;  /* BW_ITEM_FROM_* */
 } EidosItemAdd;  /* 16 bytes */
 
 typedef struct EidosItemUse {
@@ -560,7 +588,8 @@ typedef struct EidosMoneyChange {
     EidosEvent h;
     int32_t delta;  /* *mod: the change, positive or negative */
     uint32_t before;  /* the money before */
-} EidosMoneyChange;  /* 16 bytes */
+    uint8_t source;  /* BW_MONEY_* */
+} EidosMoneyChange;  /* 20 bytes */
 
 typedef struct EidosHeal {
     EidosEvent h;
@@ -658,6 +687,7 @@ EIDOS_IMPORT("mon_to_box_n") int32_t eidos_mon_to_box_n(uint32_t mon_handle, uin
 EIDOS_IMPORT("mon_from_box") int32_t eidos_mon_from_box(uint32_t box, uint32_t slot);
 EIDOS_IMPORT("mon_recalc") int32_t eidos_mon_recalc(uint32_t mon_handle, uint32_t mon_place, uint32_t mon_side, uint32_t mon_box, uint32_t mon_slot);
 EIDOS_IMPORT("species_base") int32_t eidos_species_base(uint32_t species);
+EIDOS_IMPORT("battle_trainer") int32_t eidos_battle_trainer(uint32_t n);
 
 /* The services (BwModServices). */
 EIDOS_IMPORT("message") void eidos_message(const char *text);

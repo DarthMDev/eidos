@@ -644,6 +644,12 @@
       "events": []
     },
     {
+      "address": "0x0216B004",
+      "name": "SCRCMD_SYMBOL_ViewEventMain",
+      "region": "ov010",
+      "events": []
+    },
+    {
       "address": "0x0216B538",
       "name": "SCRCMD_RESEARCH_CmdRaiseResearchRank",
       "region": "ov010",
@@ -728,6 +734,12 @@
     {
       "address": "0x0217FE6C",
       "name": "EVENT_COMM_COMMON_TalkEventMain",
+      "region": "ov018",
+      "events": []
+    },
+    {
+      "address": "0x02180538",
+      "name": "EVENT_COMM_COMMON_MissionResultEventMain",
       "region": "ov018",
       "events": []
     },
@@ -1066,6 +1078,12 @@
       "events": []
     },
     {
+      "address": "0x021B35A4",
+      "name": "SCRCMD_PROC_FLD_StepShop",
+      "region": "ov021",
+      "events": []
+    },
+    {
       "address": "0x021B4894",
       "name": "SCRCMD_PROC_FLD_ShowMessage",
       "region": "ov021",
@@ -1126,6 +1144,18 @@
       "events": [
         "mon.receive"
       ]
+    },
+    {
+      "address": "0x021B6FF0",
+      "name": "SCRCMD_POKEMON_FLD_ReceiveGiftItem",
+      "region": "ov021",
+      "events": []
+    },
+    {
+      "address": "0x021B72CC",
+      "name": "SCRCMD_POKEMON_FLD_AddTableValueToPoints",
+      "region": "ov021",
+      "events": []
     },
     {
       "address": "0x021B7364",
@@ -1222,6 +1252,12 @@
       ]
     },
     {
+      "address": "0x021B7B80",
+      "name": "ITEMMENU_TaskSellConfirmInput",
+      "region": "ov070",
+      "events": []
+    },
+    {
       "address": "0x021BAFC4",
       "name": "ITEMMENU_PrintMoney",
       "region": "ov070",
@@ -1252,6 +1288,12 @@
       ]
     },
     {
+      "address": "0x021BA688",
+      "name": "POKELIST_ReturnBagItem",
+      "region": "ov091",
+      "events": []
+    },
+    {
       "address": "0x021BC2C8",
       "name": "PLIST_MENU_ShowItemUsedThenClose",
       "region": "ov091",
@@ -1276,6 +1318,14 @@
       "events": [
         "item.use",
         "mon.revive"
+      ]
+    },
+    {
+      "address": "0x021BE2B4",
+      "name": "PLIST_DEMO_UseItemOnMon",
+      "region": "ov091",
+      "events": [
+        "mon.levelup"
       ]
     },
     {
@@ -1426,6 +1476,7 @@
       "name": "BTL_SERVER_FLOW_CalcPartyExpShares",
       "region": "ov093",
       "events": [
+        "battle.exp",
         "mon.exp"
       ]
     },
@@ -1671,6 +1722,18 @@
     {
       "address": "0x021DD810",
       "name": "BOX2_MAIN_MoveMonIntoBox",
+      "region": "ov170",
+      "events": []
+    },
+    {
+      "address": "0x021E9010",
+      "name": "BOX2_SEQ_StateUseItem",
+      "region": "ov170",
+      "events": []
+    },
+    {
+      "address": "0x021E91A0",
+      "name": "BOX2_SEQ_StateUseItemMenu",
       "region": "ov170",
       "events": []
     },

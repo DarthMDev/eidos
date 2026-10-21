@@ -1519,6 +1519,60 @@ static void build_mon_exp_battle(const BwEventCall *call,
 }
 
 /*
+ * battle.exp: the whole of the battle's experience, before the members'
+ * own mon.exp.  The share table is the call's fourth argument.
+ */
+static void build_battle_exp(const BwEventCall *call, BwEventPayload *out)
+{
+    const BwPortExpShareRecord *table = (const BwPortExpShareRecord *)call->a[3];
+    const BwModState *state = bw_mod_state_table();
+    u32 i;
+
+    memset(&out->battle_exp, 0, sizeof(out->battle_exp));
+    out->battle_exp.scale = 100u;
+    out->battle_exp.wild = (u8)((state != NULL && state->battle_wild != NULL &&
+                                 state->battle_wild() == 1) ? 1u : 0u);
+    if (table == NULL) {
+        return;
+    }
+    for (i = 0; i < 6u; i++) {
+        if (table[i].exp != 0u) {
+            out->battle_exp.members |= (u8)(1u << i);
+            out->battle_exp.total += table[i].exp;
+        }
+    }
+}
+
+static void apply_battle_exp(const BwEventPayload *in, BwEventCall *call)
+{
+    BwPortExpShareRecord *table = (BwPortExpShareRecord *)call->a[3];
+    u32 i;
+
+    if (table == NULL || in->battle_exp.scale == 100u) {
+        return;
+    }
+    for (i = 0; i < 6u; i++) {
+        u64 v = (u64)table[i].exp * in->battle_exp.scale / 100u;
+
+        table[i].exp = (u32)(v > 0xFFFFFFFFull ? 0xFFFFFFFFull : v);
+    }
+}
+
+/* battle.exp refused: every share is 0, so nobody gains and no member's
+ * mon.exp fires. */
+static void refuse_battle_exp(BwEventCall *call)
+{
+    BwPortExpShareRecord *table = (BwPortExpShareRecord *)call->a[3];
+    u32 i;
+
+    if (table != NULL) {
+        for (i = 0; i < 6u; i++) {
+            table[i].exp = 0u;
+        }
+    }
+}
+
+/*
  * mon.exp: the experience a handler changed is the experience the battle
  * server hands out, so the applier writes the share the payload names.
  */
@@ -2208,97 +2262,100 @@ static void refuse_trade_ingame(BwEventCall *call)
  */
 static const BwEventBinding g_mon_rows[] = {
     { BW_MOD_REGION_ARM9, 0x02017430u, BW_EVENT_MON_CREATE, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_create, apply_mon_create, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_create, apply_mon_create, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x020186C8u, BW_EVENT_MON_CREATE, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_mon_create_personal, apply_mon_create_personal,
-      NULL },
+      NULL, NULL },
 
     { BW_MOD_REGION_OVL(92), 0x021B9614u, BW_EVENT_MON_RECEIVE, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_catch, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_catch, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215C510u, BW_EVENT_MON_RECEIVE, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_party, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_party, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215C4C8u, BW_EVENT_MON_RECEIVE, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_box, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_box, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215C2D0u, BW_EVENT_MON_RECEIVE, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_egg, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_egg, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021B6F18u, BW_EVENT_MON_RECEIVE, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_gift, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_gift, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021C32F4u, BW_EVENT_MON_RECEIVE, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_daycare_egg, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_daycare_egg, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021CC500u, BW_EVENT_MON_RECEIVE, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_trade, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_receive_trade, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021CD2A4u, BW_EVENT_MON_NICKNAME, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_nickname, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_nickname, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(207), 0x0220B55Cu, BW_EVENT_MON_NICKNAME, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_nickname_catch, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_nickname_catch, NULL, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0201B2B0u, BW_EVENT_MON_EVOLVE, BW_EVENT_AFTER,
       BW_SCOPE_ANY, 0u, 0u, build_mon_evolve, apply_mon_evolve,
-      refuse_mon_evolve },
+      refuse_mon_evolve, NULL },
+
+    { BW_MOD_REGION_OVL(93), 0x021CB2D4u, BW_EVENT_BATTLE_EXP, BW_EVENT_AFTER,
+      BW_SCOPE_ANY, 0u, 0u, build_battle_exp, apply_battle_exp, refuse_battle_exp, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021CB2D4u, BW_EVENT_MON_EXP, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_exp_battle, apply_mon_exp_battle, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_exp_battle, apply_mon_exp_battle, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021C3530u, BW_EVENT_MON_EXP, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_exp_daycare, apply_mon_exp_daycare, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_exp_daycare, apply_mon_exp_daycare, NULL, NULL },
 
     { BW_MOD_REGION_OVL(93), 0x021D69B8u, BW_EVENT_MON_LEVELUP, BW_EVENT_AFTER,
       BW_SCOPE_INSIDE, BW_MOD_REGION_OVL(93), 0x021C5350u,
-      build_mon_levelup, NULL, NULL },
+      build_mon_levelup, NULL, NULL, NULL },
 
     { BW_MOD_REGION_ARM9, 0x02018328u, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_move_learn_level, NULL,
-      refuse_move_learn_level },
+      refuse_move_learn_level, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021C360Cu, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_move_learn_daycare, NULL,
-      refuse_move_learn_daycare },
+      refuse_move_learn_daycare, NULL },
 
     { BW_MOD_REGION_OVL(91), 0x021BA5B4u, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_move_learn_party, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_move_learn_party, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(91), 0x021BA5E0u, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_move_learn_party_slot, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_move_learn_party_slot, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215BD2Cu, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_move_learn_script, NULL,
-      refuse_move_learn_script },
+      refuse_move_learn_script, NULL },
 
     { BW_MOD_REGION_OVL(173), 0x021B6B0Cu, BW_EVENT_MOVE_LEARN, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_move_learn_relearner, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_move_learn_relearner, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(170), 0x021DD314u, BW_EVENT_MON_RELEASE, BW_EVENT_BEFORE,
       BW_SCOPE_OUTSIDE, BW_MOD_REGION_OVL(170), 0x021DD530u,
-      build_mon_release, NULL, refuse_mon_release },
+      build_mon_release, NULL, refuse_mon_release, NULL },
 
     { BW_MOD_REGION_OVL(170), 0x021DD530u, BW_EVENT_BOX_DEPOSIT, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_box_deposit, NULL, refuse_box_move },
+      BW_SCOPE_ANY, 0u, 0u, build_box_deposit, NULL, refuse_box_move, NULL },
 
     { BW_MOD_REGION_OVL(170), 0x021DD530u, BW_EVENT_BOX_WITHDRAW,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_box_withdraw, NULL,
-      refuse_box_move },
+      refuse_box_move, NULL },
 
     { BW_MOD_REGION_ARM9, 0x0201AB8Cu, BW_EVENT_PARTY_SWAP, BW_EVENT_BEFORE,
       BW_SCOPE_OUTSIDE, BW_MOD_REGION_OVL(170), 0x021DD530u,
-      build_party_swap, NULL, refuse_party_swap },
+      build_party_swap, NULL, refuse_party_swap, NULL },
 
     { BW_MOD_REGION_OVL(91), 0x021BA624u, BW_EVENT_MON_HELDITEM, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_mon_helditem, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_mon_helditem, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021B63D4u, BW_EVENT_EGG_HATCH, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_egg_hatch, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_egg_hatch, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021B654Cu, BW_EVENT_TRADE_INGAME, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_trade_ingame, NULL, refuse_trade_ingame }
+      BW_SCOPE_ANY, 0u, 0u, build_trade_ingame, NULL, refuse_trade_ingame, NULL }
 };
 
 /* The rows of this area, for the dispatch core. */

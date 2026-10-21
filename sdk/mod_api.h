@@ -60,7 +60,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0xE027155Au
+#define BW_MOD_API_HASH 0xAC40739Cu
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
@@ -184,6 +184,7 @@ enum {
     BW_EVENT_BATTLE_END    = 80,
     BW_EVENT_WHITEOUT      = 81,
     BW_EVENT_BATTLE_TRAINER_MON = 82,   /* version 4 */
+    BW_EVENT_BATTLE_EXP    = 83,        /* version 4 */
 
     /* items, money and healing */
     BW_EVENT_ITEM_ADD     = 90,
@@ -279,6 +280,32 @@ enum {
     BW_EXP_DAYCARE = 1
 };
 
+/* What raised the level (mon.levelup). */
+enum {
+    BW_LEVELUP_BATTLE = 0,  /* experience from a battle */
+    BW_LEVELUP_ITEM   = 1   /* an item used on the party screen */
+};
+
+/* Where an item comes from (item.add). */
+enum {
+    BW_ITEM_FROM_OTHER    = 0,  /* a caller the port does not name */
+    BW_ITEM_FROM_SCRIPT   = 1,  /* a script: an item on the ground, a gift from a person */
+    BW_ITEM_FROM_GIFT     = 2,  /* a gift the game hands out outside a script (the postman, a gift item) */
+    BW_ITEM_FROM_PURCHASE = 3,  /* a shop, or a stall in a link room */
+    BW_ITEM_FROM_BATTLE   = 4,  /* a battle puts it in the bag */
+    BW_ITEM_FROM_RETURN   = 5,  /* a held item or mail goes back to the bag */
+    BW_ITEM_FROM_REWARD   = 6   /* a link or minigame reward */
+};
+
+/* Why the money changes (money.change). */
+enum {
+    BW_MONEY_OTHER    = 0,  /* a caller the port does not name */
+    BW_MONEY_SCRIPT   = 1,  /* a script gives or takes it */
+    BW_MONEY_PURCHASE = 2,  /* a shop, or a stall in a link room */
+    BW_MONEY_SALE     = 3,  /* the bag sells an item */
+    BW_MONEY_BATTLE   = 4   /* after a battle: a prize when it goes up, a loss when it goes down */
+};
+
 /* What brought a fainted Pokemon back (mon.revive). */
 enum {
     BW_REVIVE_FIELD_ITEM  = 0,  /* Revive, Max Revive, Revival Herb, Sacred Ash */
@@ -292,8 +319,10 @@ enum {
 /* Where an HP restore happens (heal.hp). */
 enum {
     BW_HEAL_HP_FIELD  = 0,  /* an item used from the bag or the party screen */
-    BW_HEAL_HP_BATTLE = 1   /* any HP restore in a battle: a bag item, a held
+    BW_HEAL_HP_BATTLE = 1,  /* any HP restore in a battle: a bag item, a held
                              * item, a move or an ability */
+    BW_HEAL_HP_PARTY  = 2   /* a party heal: a Centre or another script, the
+                             * HP-restore power (one event per member) */
 };
 
 /* ------------------------------------------------------------------ */
@@ -484,6 +513,9 @@ typedef struct BwMonLevelup {
     BwMonRef mon;
     u8  from;       /* the level before */
     u8  to;         /* the level reached */
+    /* Version 4. */
+    u8  source;     /* BW_LEVELUP_* */
+    u16 item;       /* BW_LEVELUP_ITEM: the item (a Rare Candy) */
 } BwMonLevelup;
 
 typedef struct BwMoveLearn {
@@ -618,6 +650,9 @@ typedef struct BwCatchAttempt {
     u8  shiny;
     u16 ball;
     u8  rate;       /* *mod: the catch rate the roll uses */
+    /* Version 4. */
+    u8  static_;    /* 1 for a story or static encounter (encounter.static
+                     * started the battle), 0 for a wild roll */
 } BwCatchAttempt;
 
 typedef struct BwCatchResult {
@@ -637,6 +672,20 @@ typedef struct BwBattleEnd {
     u16 turns;
 } BwBattleEnd;
 
+/*
+ * battle.exp (version 4): an opposing Pokemon fainted and the battle hands
+ * out experience to the party, as a whole.  It fires before mon.exp fires
+ * for each member that gains.  A refusal gives nobody any experience (and
+ * mon.exp does not fire); scale changes every member's share.
+ */
+typedef struct BwBattleExp {
+    BwEvent h;
+    u8  members;    /* bit i: party position i gains experience */
+    u8  wild;       /* 1 in a wild battle */
+    u16 scale;      /* *mod: a percentage of every share, 100 to leave them */
+    u32 total;      /* the experience of every share together */
+} BwBattleExp;
+
 typedef struct BwWhiteout {
     BwEvent h;
     u8  in_battle;  /* 1 the battle half, 0 the field half */
@@ -646,7 +695,8 @@ typedef struct BwWhiteout {
 /*
  * battle.trainer_mon (version 4): one Pokemon of the opposing trainer's
  * party, after the game built the party and before the battle starts.  It
- * fires once per member, in party order.  A changed field is written to
+ * fires once per member, in party order.  A refusal takes the member out of
+ * the party (the last one always stays).  A changed field is written to
  * the Pokemon with the game's own setters: a new species or level works out
  * the stats again, a new move gets its full PP.  0 in a *mod field leaves
  * the game's value.
@@ -673,6 +723,8 @@ typedef struct BwItemAdd {
     u16 item;
     u16 count;      /* *mod: how many */
     u8  pocket;     /* the bag pocket */
+    /* Version 4. */
+    u8  source;     /* BW_ITEM_FROM_* */
 } BwItemAdd;
 
 typedef struct BwItemUse {
@@ -691,6 +743,8 @@ typedef struct BwMoneyChange {
     BwEvent h;
     s32 delta;      /* *mod: the change, positive or negative */
     u32 before;     /* the money before */
+    /* Version 4. */
+    u8  source;     /* BW_MONEY_* */
 } BwMoneyChange;
 
 typedef struct BwHeal {

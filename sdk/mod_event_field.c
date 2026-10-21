@@ -1091,6 +1091,7 @@ static void build_encounter_wild(const BwEventCall *call, BwEventPayload *out)
     const BwPortEncountMon *mons = (const BwPortEncountMon *)call->a[3];
 
     memset(&out->encounter_wild, 0, sizeof(out->encounter_wild));
+    bw_mod_state_set_battle_static(0);
     out->encounter_wild.zone = (u16)call->a[2];
     if (param != NULL) {
         out->encounter_wild.method = encounter_method(param->encountType);
@@ -1214,6 +1215,7 @@ static void build_encounter_roamer(const BwEventCall *call, BwEventPayload *out)
     const void *roamer = (const void *)(uintptr_t)call->ret;
 
     memset(&out->encounter_wild, 0, sizeof(out->encounter_wild));
+    bw_mod_state_set_battle_static(0);
     out->encounter_wild.zone = (u16)call->a[2];
     if (param != NULL) {
         out->encounter_wild.method = encounter_method(param->encountType);
@@ -1277,6 +1279,7 @@ static void build_encounter_static(const BwEventCall *call, BwEventPayload *out)
     struct PokemonParam *lead;
 
     memset(&out->encounter_static, 0, sizeof(out->encounter_static));
+    bw_mod_state_set_battle_static(1);
     if (gameSystem != NULL && GAMESYSTEM_GetGameData != NULL &&
         GAME_DATA_GetMyPlayerWork != NULL &&
         GAME_DATA_GetPlayerZoneId != NULL) {
@@ -1371,54 +1374,54 @@ static void build_encounter_trainer(const BwEventCall *call,
  */
 static const BwEventBinding g_field_rows[] = {
     { BW_MOD_REGION_OVL(10), 0x021643E8u, BW_EVENT_ROUTE_CHANGE, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_route_change, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_route_change, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(20), 0x021841C0u, BW_EVENT_MAP_WARP, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_map_warp, apply_map_warp, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_map_warp, apply_map_warp, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x0218A9B0u, BW_EVENT_PLAYER_STEP, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_player_step, NULL, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_player_step, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021AE0CCu, BW_EVENT_TRAINER_SPOTTED,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_trainer_spotted, NULL,
-      refuse_trainer_spotted },
+      refuse_trainer_spotted, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x0218B4B0u, BW_EVENT_NPC_TALK, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_npc_talk, NULL, refuse_npc_talk },
+      BW_SCOPE_ANY, 0u, 0u, build_npc_talk, NULL, refuse_npc_talk, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x0218B53Cu, BW_EVENT_NPC_TALK, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_npc_talk, NULL, refuse_npc_talk },
+      BW_SCOPE_ANY, 0u, 0u, build_npc_talk, NULL, refuse_npc_talk, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215FC40u, BW_EVENT_MENU_OPEN, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_menu_open, NULL, refuse_menu_open },
+      BW_SCOPE_ANY, 0u, 0u, build_menu_open, NULL, refuse_menu_open, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0215FCE0u, BW_EVENT_MENU_OPEN, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_menu_open, NULL, refuse_menu_open },
+      BW_SCOPE_ANY, 0u, 0u, build_menu_open, NULL, refuse_menu_open, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021A836Cu, BW_EVENT_MENU_BUILD, BW_EVENT_AFTER,
-      BW_SCOPE_ANY, 0u, 0u, build_menu_build, apply_menu_build, NULL },
+      BW_SCOPE_ANY, 0u, 0u, build_menu_build, apply_menu_build, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x021644C4u, BW_EVENT_FIELD_MOVE, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_field_move, NULL, refuse_field_move },
+      BW_SCOPE_ANY, 0u, 0u, build_field_move, NULL, refuse_field_move, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021B4D60u, BW_EVENT_PC_OPEN, BW_EVENT_BEFORE,
-      BW_SCOPE_ANY, 0u, 0u, build_pc_open, NULL, refuse_pc_open },
+      BW_SCOPE_ANY, 0u, 0u, build_pc_open, NULL, refuse_pc_open, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021A954Cu, BW_EVENT_ENCOUNTER_WILD,
       BW_EVENT_AFTER, BW_SCOPE_ANY, 0u, 0u, build_encounter_wild,
-      apply_encounter_wild, refuse_encounter_wild },
+      apply_encounter_wild, refuse_encounter_wild, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021A957Cu, BW_EVENT_ENCOUNTER_WILD,
       BW_EVENT_AFTER, BW_SCOPE_ANY, 0u, 0u, build_encounter_roamer,
-      apply_encounter_roamer, refuse_encounter_roamer },
+      apply_encounter_roamer, refuse_encounter_roamer, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x0216E7C8u, BW_EVENT_ENCOUNTER_STATIC,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_encounter_static,
-      apply_encounter_static, NULL },
+      apply_encounter_static, NULL, NULL },
 
     { BW_MOD_REGION_OVL(21), 0x021AA5CCu, BW_EVENT_ENCOUNTER_TRAINER,
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_encounter_trainer, NULL,
-      NULL }
+      NULL, NULL }
 };
 
 /* The rows of this area, for the dispatch core. */

@@ -112,6 +112,7 @@ typedef union BwEventPayload {
     BwBattleEnd    battle_end;
     BwWhiteout     whiteout;
     BwBattleTrainerMon battle_trainer_mon;
+    BwBattleExp   battle_exp;
 
     BwItemAdd     item_add;
     BwItemUse     item_use;
