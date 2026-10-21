@@ -237,7 +237,12 @@ static int build_tree(void)
     }
     if (write_file(path,
                    "option nuzlocke.dupes bool \"Dupes clause\" on\n"
-                   "option nuzlocke.cap choice \"Level caps\" off|gym|ace\n")
+                   "option nuzlocke.cap choice \"Level caps\" off|gym|ace\n"
+                   "option nuzlocke.lives int \"Lives\" 0 10 3 # a comment\n"
+                   "option nuzlocke.picks bool \"No #1 picks\" off\n"
+                   "option nuzlocke.typo bool \"Typo\" ture\n"
+                   "option nuzlocke.dupes bool \"Twice\" off\n"
+                   "option bad=key bool \"Bad key\" on\n")
         != 0) {
         return -1;
     }
@@ -619,8 +624,16 @@ int main(void)
     printf("the setting\n");
     index = (u32)index_of_ns(T_NS);
     BW_REQUIRE("the mod is in the list", index < bw_mod_menu_count());
-    BW_CHECK_EQ("the mod declares two options",
-                (long)bw_mod_menu_option_count(index), 2);
+    BW_CHECK_EQ("the mod declares four good options",
+                (long)bw_mod_menu_option_count(index), 4);
+    BW_CHECK_EQ("the third is an int",
+                (long)bw_mod_menu_option_kind(index, 2), BW_MOD_SETTING_INT);
+    BW_CHECK_EQ("its default", (long)bw_mod_menu_option_default(index, 2), 3);
+    BW_CHECK_EQ("its bounds", (long)bw_mod_menu_option_max(index, 2), 10);
+    BW_CHECK_EQ("a value past the bounds is refused",
+                (long)(bw_mod_menu_option_set(index, 2, 11) != 0), 1);
+    BW_CHECK_EQ("a '#' inside a label is not a comment",
+                strcmp(bw_mod_menu_option_label(index, 3), "No #1 picks"), 0);
     BW_CHECK_EQ("the first is a bool",
                 (long)bw_mod_menu_option_kind(index, 0), BW_MOD_SETTING_BOOL);
     BW_CHECK_EQ("its key is the one the mod asks for",

@@ -160,11 +160,13 @@ extern u32  bw_mod_savedata_save_check(void);
 #define BW_MOD_MENU_SET_MAX 256
 #define BW_MOD_MENU_KEY_MAX 64
 #define BW_MOD_MENU_LABEL_MAX 64
-#define BW_MOD_MENU_CHOICE_MAX 8
 #define BW_MOD_MENU_CHOICE_LEN 32
 
-/* How many options one mod may declare. */
-#define BW_MOD_MENU_OPTIONS_MAX 16
+/* A mod declares as many options, and an option as many choices, as it
+ * wants: the lists grow.  The bounds only stop a broken file from taking
+ * the whole memory. */
+#define BW_MOD_MENU_OPTIONS_MAX 4096
+#define BW_MOD_MENU_CHOICE_MAX  1024
 
 /* The port's own record of the player's list. */
 #define BW_MOD_MENU_RECORD "mods.ini"
@@ -197,7 +199,8 @@ typedef struct BwModMenuOption {
     int  max;                      /* _INT: the highest value */
     int  value;                    /* the player's choice             */
     int  choice_count;
-    char choices[BW_MOD_MENU_CHOICE_MAX][BW_MOD_MENU_CHOICE_LEN];
+    int  choice_cap;
+    char (*choices)[BW_MOD_MENU_CHOICE_LEN];   /* grows; freed with the model */
 } BwModMenuOption;
 
 /* One mod the menu shows. */
@@ -214,6 +217,7 @@ typedef struct BwModMenuMod {
     int  present;                       /* the mod's folder is there     */
     int  has_code;                      /* the mod ships code            */
     u32  option_count;
+    u32  option_cap;
     BwModMenuOption *options;
 } BwModMenuMod;
 
@@ -652,18 +656,82 @@ static char *next_token(char **p)
     return out;
 }
 
-/* Is the text the name of a bool's value?  The value is 1 for "on",
- * "true" and "1", and 0 for everything else. */
+/* A bool's value: 1 for "on", "true" and "1", 0 for "off", "false" and
+ * "0", and -1 for anything else (a typo is reported, not read as off). */
 static int bool_value(const char *text)
 {
     if (text == NULL) {
-        return 0;
+        return -1;
     }
     if (strcmp(text, "on") == 0 || strcmp(text, "true") == 0 ||
         strcmp(text, "1") == 0) {
         return 1;
     }
+    if (strcmp(text, "off") == 0 || strcmp(text, "false") == 0 ||
+        strcmp(text, "0") == 0) {
+        return 0;
+    }
+    return -1;
+}
+
+/* Add one name to a choice option.  0, or -1 (no memory, or too many). */
+static int option_add_choice(BwModMenuOption *o, const char *name, size_t n)
+{
+    if (o->choice_count >= o->choice_cap) {
+        int cap = o->choice_cap == 0 ? 8 : o->choice_cap * 2;
+        char (*grown)[BW_MOD_MENU_CHOICE_LEN];
+
+        if (cap > BW_MOD_MENU_CHOICE_MAX) {
+            return -1;
+        }
+        grown = (char (*)[BW_MOD_MENU_CHOICE_LEN])realloc(
+            o->choices, (size_t)cap * sizeof(*grown));
+        if (grown == NULL) {
+            return -1;
+        }
+        o->choices = grown;
+        o->choice_cap = cap;
+    }
+    if (n >= BW_MOD_MENU_CHOICE_LEN) {
+        n = BW_MOD_MENU_CHOICE_LEN - 1;
+    }
+    memcpy(o->choices[o->choice_count], name, n);
+    o->choices[o->choice_count][n] = '\0';
+    o->choice_count++;
     return 0;
+}
+
+/* A key is a word without spaces, '=' or '#': it is written as
+ * `key = value` in the player's choices file. */
+static int key_valid(const char *key)
+{
+    const char *s;
+
+    if (key == NULL || *key == '\0' || strlen(key) >= BW_MOD_MENU_KEY_MAX) {
+        return 0;
+    }
+    for (s = key; *s != '\0'; s++) {
+        if (*s == '=' || *s == '#' || *s == '"' || is_space(*s)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Cut a line's comment: the first '#' outside a quoted label. */
+static void cut_comment(char *line)
+{
+    int quoted = 0;
+    char *s;
+
+    for (s = line; *s != '\0'; s++) {
+        if (*s == '"') {
+            quoted = !quoted;
+        } else if (*s == '#' && !quoted) {
+            *s = '\0';
+            return;
+        }
+    }
 }
 
 /*
@@ -724,13 +792,46 @@ static int parse_option(BwModMenuMod *m, char *line)
         memcpy(value, s, (size_t)(e - s));
         value[e - s] = '\0';
     }
-    if (m->option_count >= BW_MOD_MENU_OPTIONS_MAX) {
-        report(m->name, "too many options; the rest are ignored");
+    if (!key_valid(key)) {
+        report(m->name, "the option key '%s' holds a space, '=', '#' or '\"', "
+               "or is too long; it is ignored", key);
         free(key);
         free(kind);
         free(label);
         free(value);
         return -1;
+    }
+    {
+        u32 i;
+
+        for (i = 0; i < m->option_count; i++) {
+            if (strcmp(m->options[i].key, key) == 0) {
+                report(m->name, "the option '%s' is declared twice; the "
+                       "second is ignored", key);
+                free(key);
+                free(kind);
+                free(label);
+                free(value);
+                return -1;
+            }
+        }
+    }
+    if (m->option_count >= m->option_cap) {
+        u32 cap = m->option_cap == 0 ? 16u : m->option_cap * 2u;
+        BwModMenuOption *grown;
+
+        grown = cap > BW_MOD_MENU_OPTIONS_MAX ? NULL
+                : (BwModMenuOption *)realloc(m->options, (size_t)cap * sizeof(*grown));
+        if (grown == NULL) {
+            report(m->name, "too many options; the rest are ignored");
+            free(key);
+            free(kind);
+            free(label);
+            free(value);
+            return -1;
+        }
+        m->options = grown;
+        m->option_cap = cap;
     }
     o = &m->options[m->option_count];
     memset(o, 0, sizeof *o);
@@ -739,6 +840,15 @@ static int parse_option(BwModMenuMod *m, char *line)
     if (strcmp(kind, "bool") == 0) {
         o->kind = BW_MOD_SETTING_BOOL;
         o->def = bool_value(value);
+        if (o->def < 0) {
+            report(m->name, "the bool option '%s' has the value '%s'; it takes "
+                   "on or off; it is ignored", o->key, value);
+            free(key);
+            free(kind);
+            free(label);
+            free(value);
+            return -1;
+        }
         o->value = o->def;
     } else if (strcmp(kind, "choice") == 0) {
         const char *s = value;
@@ -752,13 +862,10 @@ static int parse_option(BwModMenuMod *m, char *line)
 
             trim(&name, &name_end);
             n = (size_t)(name_end - name);
-            if (n > 0 && o->choice_count < BW_MOD_MENU_CHOICE_MAX) {
-                if (n >= BW_MOD_MENU_CHOICE_LEN) {
-                    n = BW_MOD_MENU_CHOICE_LEN - 1;
-                }
-                memcpy(o->choices[o->choice_count], name, n);
-                o->choices[o->choice_count][n] = '\0';
-                o->choice_count++;
+            if (n > 0 && option_add_choice(o, name, n) != 0) {
+                report(m->name, "the option '%s' has too many choices; the "
+                       "rest are ignored", o->key);
+                break;
             }
             if (sep == NULL) {
                 break;
@@ -768,6 +875,8 @@ static int parse_option(BwModMenuMod *m, char *line)
         if (o->choice_count == 0) {
             report(m->name, "the option '%s' names no choice; it is ignored",
                    o->key);
+            free(o->choices);
+            o->choices = NULL;
             free(key);
             free(kind);
             free(label);
@@ -865,17 +974,10 @@ static void read_declaration(BwModMenuMod *m)
     if (text == NULL) {
         return;                 /* no declaration: the mod has no settings */
     }
-    m->options = (BwModMenuOption *)calloc(BW_MOD_MENU_OPTIONS_MAX,
-                                           sizeof(BwModMenuOption));
-    if (m->options == NULL) {
-        free(text);
-        return;
-    }
     p = text;
     while (*p != '\0') {
         char *e = strchr(p, '\n');
-        char line[512];
-        char *hash;
+        char line[4096];
         size_t n;
 
         if (e == NULL) {
@@ -888,10 +990,7 @@ static void read_declaration(BwModMenuMod *m)
         memcpy(line, p, n);
         line[n] = '\0';
         p = (*e == '\n') ? e + 1 : e;
-        hash = strchr(line, '#');
-        if (hash != NULL) {
-            *hash = '\0';
-        }
+        cut_comment(line);
         parse_option(m, line);
     }
     free(text);
@@ -1050,9 +1149,15 @@ static void model_free(void)
     u32 i;
 
     for (i = 0; i < g_count; i++) {
+        u32 o;
+
+        for (o = 0; o < g_mods[i].option_count; o++) {
+            free(g_mods[i].options[o].choices);
+        }
         free(g_mods[i].options);
         g_mods[i].options = NULL;
         g_mods[i].option_count = 0;
+        g_mods[i].option_cap = 0;
     }
     g_count = 0;
     g_built = 0;

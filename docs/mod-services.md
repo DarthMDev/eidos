@@ -533,6 +533,18 @@ The kinds:
   steps it by one and stops at the bounds. `setting_get` answers the
   number.
 
+The file's rules:
+
+- A key is one word with no space, `=`, `#` or `"`, under 64 characters.
+  Dots are allowed, and a rule reads the key as written:
+  `setting.nuzlocke.dupes`.
+- `#` starts a comment, except inside a quoted label.
+- A bool's value is `on`, `off`, `true`, `false`, `1` or `0`; anything else
+  is reported and the option is ignored.
+- A key declared twice is reported, and the second line is ignored.
+- A mod may declare any number of options, and a choice may have any
+  number of names (each name up to 31 characters).
+
 The port lists them on its settings screen under the mod's name, stores the
 player's choices beside the mod's saved data, and the mod reads them:
 

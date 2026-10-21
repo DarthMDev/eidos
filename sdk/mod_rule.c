@@ -1770,12 +1770,35 @@ static int parse_name(BwRuleParse *p)
         if (node < 0) {
             return -1;
         }
-        p->rule->nodes[node].text = rule_string(p->rule, p->tok.text);
+        {
+            /* A key may hold dots (`setting.nuzlocke.dupes`): the words
+             * after the first are joined back with them. */
+            char key[512];
+
+            snprintf(key, sizeof key, "%s", p->tok.text);
+            if (p_advance(p) != 0) {
+                return -1;
+            }
+            while (p->tok.kind == BW_RULE_TK_DOT) {
+                size_t n = strlen(key);
+
+                if (p_advance(p) != 0) {
+                    return -1;
+                }
+                if (p->tok.kind != BW_RULE_TK_IDENT) {
+                    parse_error(p, p->err_line, "a word was expected after "
+                                "'.' in the setting's key");
+                    return -1;
+                }
+                snprintf(key + n, sizeof key - n, ".%s", p->tok.text);
+                if (p_advance(p) != 0) {
+                    return -1;
+                }
+            }
+            p->rule->nodes[node].text = rule_string(p->rule, key);
+        }
         if (p->rule->nodes[node].text == NULL) {
             parse_error(p, p->err_line, "no room for the setting's key");
-            return -1;
-        }
-        if (p_advance(p) != 0) {
             return -1;
         }
         return node;
