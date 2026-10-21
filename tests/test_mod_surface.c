@@ -58,8 +58,8 @@
  * The hash of the frozen surface on each layout the port is built at.
  *
  *   pointers  hash
- *   4         0x062F41DBu  the number in sdk/mod_api.h
- *   8         0x90F7F52Eu
+ *   4         0xFE6D7989u  the number in sdk/mod_api.h
+ *   8         0x9A23EB9Fu
  *
  * The 32-bit one is the number the header carries.  The other is the same
  * surface on the other layout: the three tables hold host pointers, so
@@ -68,11 +68,11 @@
  */
 static unsigned int expected_hash(void)
 {
-    return (sizeof(void *) == 4) ? 0x062F41DBu : 0x90F7F52Eu;
+    return (sizeof(void *) == 4) ? 0xFE6D7989u : 0x9A23EB9Fu;
 }
 
 /* The number in sdk/mod_api.h: the frozen one, the 32-bit hash. */
-#define BW_SURFACE_HASH_FROZEN 0x062F41DBu
+#define BW_SURFACE_HASH_FROZEN 0xFE6D7989u
 
 /* The running hash. */
 static unsigned int h;
@@ -335,6 +335,7 @@ int main(void)
     V(save_send); V(on_save_received);
     V(setting_get);
     V(state_load); V(state_store); V(state_clear); V(state_info); V(state_dir);
+    V(state_in_step);
 #undef V
 
     /* The state file header. */

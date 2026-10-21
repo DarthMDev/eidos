@@ -39,7 +39,8 @@ typedef BwScriptHandler BwModScriptHandler;
 #define BW_MOD_SCRIPT_CONTINUE BW_SCRIPT_CONTINUE
 #define BW_MOD_SCRIPT_REPLACE  BW_SCRIPT_REPLACE
 
-/* How many operands a command may carry in the view. */
+/* How many operand bytes a command may carry in the view: the widest
+ * command of the two tables, in bytes, which is the ABI's number. */
 #define BW_MOD_SCRIPT_ARGS_MAX BW_SCRIPT_ARGS_MAX
 
 /* How many commands each VM's table holds. */
@@ -54,12 +55,14 @@ typedef int (*BwModScriptGameHandler)(void *ctx, BwModScriptCommand *cmd);
 
 /*
  * Bind a handler to a command.  `vm` is BW_MOD_SCRIPT_*, `opcode` the
- * command's opcode.  Every handler bound to a command runs, in load order
- * (docs/mod-events.md, section 3).  Returns 0, or -1 when the VM is not one
- * of the port's two, when the game's table has no command at that opcode, or
- * when the handler table is full.
+ * command's opcode, `ns` the mod's state namespace, so its state calls
+ * reach its own file while its handler runs.  Every handler bound to a
+ * command runs, in load order (docs/mod-events.md, section 3).  Returns 0, or
+ * -1 when the VM is not one of the port's two, when the game's table has no
+ * command at that opcode, or when the handler table is full.
  */
-int bw_mod_script_register(u32 vm, u16 opcode, BwModScriptHandler handler);
+int bw_mod_script_register(u32 vm, u16 opcode, BwModScriptHandler handler,
+                           const char *ns);
 
 /*
  * The port's own hook into the registration: the state of the mod that is

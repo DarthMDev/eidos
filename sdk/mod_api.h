@@ -31,8 +31,14 @@ extern "C" {
  *
  * Version 2 added the script command hooks: the host table's script call
  * and the command's view.
+ *
+ * Version 3 gave the command's view the whole operand area: the operands
+ * are bytes and the view holds every byte of every command of both script
+ * VMs, so a handler can reach an operand past the eighth word.  It added
+ * the services table's state_in_step, which answers for the calling mod
+ * whether its own saved data was written with the save in force.
  */
-#define BW_MOD_API_VERSION 2
+#define BW_MOD_API_VERSION 3
 
 /*
  * The surface hash: a digest of every struct's size and field offsets,
@@ -46,7 +52,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0x062F41DBu
+#define BW_MOD_API_HASH 0xFE6D7989u
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
@@ -290,7 +296,9 @@ typedef struct BwSaveLoad {
     BwEvent h;
     u32 play_seconds;
     u16 zone;
-    u8  state_in_step;  /* the mod's saved data was written with this save */
+    u8  state_in_step;  /* the port's own saved data; the port does not
+                         * fill it, and a mod's own file is per mod, so the
+                         * mod asks the services table's state_in_step */
 } BwSaveLoad;
 
 typedef struct BwGameCleared {
@@ -668,33 +676,136 @@ enum {
     BW_SCRIPT_REPLACE  = 1    /* the game's own handler does not run */
 };
 
-/* How many operands a command may carry in the view. */
-#define BW_SCRIPT_ARGS_MAX 8
+/* How many operand bytes a command may carry in the view.
+ *
+ * The port's own width table (sdk/mod_script.c) gives the width of every
+ * command of both script VMs, in bytes, and the widest of them is this
+ * many: the battle effect VM's opcode 8 carries 60 bytes of operands and
+ * the field VM's widest (its opcode 323) carries 22.  The view is sized
+ * from that table, so no command's operand falls outside it.
+ */
+#define BW_SCRIPT_ARGS_MAX 60
 
 /*
  * One command, as the port's hook sees it.
  *
  *   opcode    the command's opcode;
- *   nargs     how many operands the command carries;
- *   args      the operands, as words.  A handler writes them to change the
- *             command the game runs, and the game's own handler reads what
- *             the handlers left;
+ *   nargs     how many operand bytes the command carries;
+ *   args      the operands, as the bytes they are in the game's script.
+ *             A handler writes them to change the command the game runs,
+ *             and the game's own handler reads what the handlers left;
  *   pc        the program counter before the command;
  *   next_pc   the program counter after it; the hook writes it.
  *
- * The program counter is a number, not a pointer: it is the hook's own count
- * of where the command sits in the script, so the view carries no host
- * pointer and reads the same at every pointer width.
+ * The operands are bytes: the game's script holds them as bytes and the
+ * game's own handler reads them off the VM's cursor a u16 or a u32 at a
+ * time (nine of the field VM's widths are odd, so some commands read a
+ * byte or two straight off the cursor).  The view holds them as they
+ * are, so a handler reads and writes the bytes and the port writes them
+ * back into the script exactly, with nothing rounded to a word.
+ *
+ * The view holds every byte of every command: the width table above gives
+ * the width of every command of both VMs, and the widest of them is
+ * BW_SCRIPT_ARGS_MAX bytes, so a handler reaches the last operand of the
+ * widest command as well as the first of the narrowest.
+ *
+ * The program counter is a number, not a pointer: it is the hook's own
+ * count of where the command sits in the script, so the view carries no
+ * host pointer and reads the same at every pointer width.
  *
  * The view is valid only for the call.
  */
 typedef struct BwScriptCommand {
     u16 opcode;
     u16 nargs;
-    u32 args[BW_SCRIPT_ARGS_MAX];
+    u8  args[BW_SCRIPT_ARGS_MAX];
     u32 pc;
     u32 next_pc;
 } BwScriptCommand;
+
+/*
+ * The operands, read and written a word at a time.
+ *
+ * The index is a byte index into the operand area: the operand at 0 is the
+ * first byte the command carries, and the words are little-endian, as the
+ * bytes in the game's script are.  A word that reaches past the command's
+ * own operands is cut short: the bytes past them read as zero and are
+ * not written, so a handler cannot reach into the next command.
+ *
+ * These are conveniences: a handler may read and write the bytes of
+ * cmd->args itself.  They are not part of the frozen surface (the hash
+ * covers the structs, the enums and the tables), and they change nothing
+ * a mod compiled against another version relies on.
+ */
+static inline u32 bw_script_arg_u16(const BwScriptCommand *cmd, u32 index)
+{
+    u32 limit = cmd->nargs;
+    u32 v = 0;
+    u32 i;
+
+    if (limit > (u32)BW_SCRIPT_ARGS_MAX) {
+        limit = (u32)BW_SCRIPT_ARGS_MAX;
+    }
+    for (i = 0; i < 2u; i++) {
+        if (index + i >= limit) {
+            break;
+        }
+        v |= (u32)cmd->args[index + i] << (8u * i);
+    }
+    return v;
+}
+
+static inline u32 bw_script_arg_u32(const BwScriptCommand *cmd, u32 index)
+{
+    u32 limit = cmd->nargs;
+    u32 v = 0;
+    u32 i;
+
+    if (limit > (u32)BW_SCRIPT_ARGS_MAX) {
+        limit = (u32)BW_SCRIPT_ARGS_MAX;
+    }
+    for (i = 0; i < 4u; i++) {
+        if (index + i >= limit) {
+            break;
+        }
+        v |= (u32)cmd->args[index + i] << (8u * i);
+    }
+    return v;
+}
+
+static inline void bw_script_set_arg_u16(BwScriptCommand *cmd, u32 index,
+                                          u32 value)
+{
+    u32 limit = cmd->nargs;
+    u32 i;
+
+    if (limit > (u32)BW_SCRIPT_ARGS_MAX) {
+        limit = (u32)BW_SCRIPT_ARGS_MAX;
+    }
+    for (i = 0; i < 2u; i++) {
+        if (index + i >= limit) {
+            break;
+        }
+        cmd->args[index + i] = (u8)((value >> (8u * i)) & 0xFFu);
+    }
+}
+
+static inline void bw_script_set_arg_u32(BwScriptCommand *cmd, u32 index,
+                                          u32 value)
+{
+    u32 limit = cmd->nargs;
+    u32 i;
+
+    if (limit > (u32)BW_SCRIPT_ARGS_MAX) {
+        limit = (u32)BW_SCRIPT_ARGS_MAX;
+    }
+    for (i = 0; i < 4u; i++) {
+        if (index + i >= limit) {
+            break;
+        }
+        cmd->args[index + i] = (u8)((value >> (8u * i)) & 0xFFu);
+    }
+}
 
 /*
  * A mod's handler for one command of one VM.  `mod_state` is the mod's own

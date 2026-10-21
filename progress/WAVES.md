@@ -24,3 +24,4 @@ Waves 3 and 4 have no row. The log has no record for either.
 | 16 | 2026-10-20 | 31.22% | 429 | 1 | 1 | the text path, the script command hooks and the rule interpreter; one file of ov013 does not compile: the new aletheia headers give one function two spellings with different prototypes, and the port merges the spellings |
 | 17 | 2026-10-20 | 31.22% | 429 | 0 | 1 | the naming fix, the script VMs' stand-in, the message window hooks, and the timer, random and export services; the link misses two functions the new aletheia headers renamed |
 | 18 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the port against the new tree: the spelling header follows the tree's content, the renaming survives the new header style, and the boot's closure carries the state API's accessors |
+| 19 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the script command's operands and the per-mod answer in the mod's surface, and the peer sessions and the external control |

@@ -13,7 +13,7 @@
   "implicit_decls": 0,
   "link_failed_targets": 0,
   "matched_total": 1374,
-  "note": "the port against the new tree: the spelling header follows the tree's content, the renaming survives the new header style, and the boot's closure carries the state API's accessors",
+  "note": "the script command's operands and the per-mod answer in the mod's surface, and the peer sessions and the external control",
   "shim_replaced": 239,
   "stubbed_asm": 17,
   "stubbed_open": 4,
@@ -25,5 +25,5 @@
   "tree": "src/game",
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 18
+  "wave": 19
 }

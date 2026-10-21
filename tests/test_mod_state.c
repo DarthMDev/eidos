@@ -19,6 +19,9 @@
  *     BwModServices): how many members they have, that the members are
  *     laid out as plain pointers one after another, and where the last
  *     one sits;
+ *   - the services table's state_in_step: the call that answers for the
+ *     calling mod whether its own saved data was written with the game
+ *     save in force, and the port's own piece behind it;
  *   - the return conventions the header promises: a call that answers
  *     with a value answers with a negative number when there is no such
  *     thing, so the types have to be able to hold one;
@@ -56,6 +59,14 @@
  * quiet moment.  They are the port's own calls, not part of the mod ABI:
  * a mod reaches the state through the BwModState table.
  */
+
+/*
+ * The port's own piece behind the services table's state_in_step: the
+ * saved-data layer's answer for the namespace in force
+ * (sdk/mod_savedata.c).  It is the port's own call, not part of the mod
+ * ABI; the loader binds it into the services table.
+ */
+extern int bw_mod_savedata_in_step(void);
 
 /*
  * How many of the table's calls are not filled.  The layer fills every
@@ -249,12 +260,33 @@ int main(void)
     BW_CHECK_EQ("the mod's own data follows the settings",
                 (long)offsetof(BwModServices, state_load)
                 - (long)offsetof(BwModServices, message), 28 * (long)sizeof(void *));
-    BW_CHECK_EQ("the last call follows the data's four",
+    BW_CHECK_EQ("the data's last call follows the data's four",
                 (long)offsetof(BwModServices, state_dir)
                 - (long)offsetof(BwModServices, message), 32 * (long)sizeof(void *));
-    BW_CHECK_EQ("and nothing follows it",
-                (long)sizeof(BwModServices) - (long)offsetof(BwModServices, state_dir),
+    BW_CHECK_EQ("the in-step call follows the data's last one",
+                (long)offsetof(BwModServices, state_in_step)
+                - (long)offsetof(BwModServices, state_dir),
                 (long)sizeof(void *));
+    BW_CHECK_EQ("and nothing follows it",
+                (long)sizeof(BwModServices) - (long)offsetof(BwModServices, state_in_step),
+                (long)sizeof(void *));
+
+    printf("the in-step call\n");
+    /* The services table's state_in_step answers for the mod that calls
+     * it: the port's own layer knows the namespace in force (the loader
+     * sets it around every call it makes into a mod) and the checksum of
+     * the game save in force, and it compares the mod's own file with it.
+     * The save.load payload's byte cannot answer it, because the payload
+     * is built once for every handler of the event and the answer is per
+     * mod.
+     *
+     * With no mod calling and no save in force the question cannot be
+     * answered, and the layer says so with a negative number. */
+    BW_CHECK_EQ("the call is a function pointer",
+                (long)sizeof(((BwModServices *)0)->state_in_step),
+                (long)sizeof(void *));
+    BW_CHECK_EQ("the port's own layer answers",
+                (long)(bw_mod_savedata_in_step() < 0), 1);
 
     printf("the handler types\n");
     BW_CHECK_EQ("the session handler is a function pointer",

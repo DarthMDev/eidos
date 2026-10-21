@@ -111,6 +111,7 @@
 #include "mod_loader.h"
 #include "mod_manifest.h"
 #include "mod_message.h"
+#include "mod_net.h"
 #include "mod_rule.h"
 #include "mod_script.h"
 #include "mod_slot.h"
@@ -168,6 +169,7 @@ extern int         bw_mod_savedata_store(const void *buf, u32 size);
 extern int         bw_mod_savedata_clear(void);
 extern int         bw_mod_savedata_info(BwModStateHeader *out);
 extern int         bw_mod_savedata_dir(char *out, u32 out_size);
+extern int         bw_mod_savedata_in_step(void);
 
 /*
  * One override row: sdk/mod_manifest.h carries it, and the manifest layer
@@ -557,7 +559,7 @@ static int loader_bind_script(int slot, u32 vm, u16 opcode, BwScriptHandler fn)
         return -1;
     }
     bw_mod_script_set_registering_state(m->state);
-    rc = bw_mod_script_register(vm, opcode, fn);
+    rc = bw_mod_script_register(vm, opcode, fn, m->ns);
     bw_mod_script_set_registering_state(NULL);
     if (rc != 0) {
         fprintf(stderr,
@@ -868,6 +870,10 @@ static int loader_load(u32 index)
     m->services.state_clear = bw_mod_savedata_clear;
     m->services.state_info = bw_mod_savedata_info;
     m->services.state_dir = bw_mod_savedata_dir;
+    /* Is the mod's own file in step with the save in force?  The answer is
+     * per mod, so it cannot be in the save.load payload (the payload is
+     * built once for all the handlers of the event): the mod asks. */
+    m->services.state_in_step = bw_mod_savedata_in_step;
     /* The messages: the first of the port's services, and the one every
      * refusal needs (docs/mod-services.md, "Messages"). */
     m->services.message = bw_mod_message_show;
@@ -882,6 +888,16 @@ static int loader_load(u32 index)
     m->services.rand_next   = bw_mod_rand_next;
     m->services.mon_export  = bw_mod_mon_export;
     m->services.mon_import  = bw_mod_mon_import;
+    /* The peer sessions and the external control (docs/mod-services.md).
+     * The transport and the relay's address are the port's own: the loader
+     * does not set them. */
+    m->services.session_host  = bw_mod_net_session_host;
+    m->services.session_join  = bw_mod_net_session_join;
+    m->services.session_leave = bw_mod_net_session_leave;
+    m->services.session_send  = bw_mod_net_session_send;
+    m->services.on_session    = bw_mod_net_on_session;
+    m->services.on_command    = bw_mod_net_on_command;
+    m->services.publish       = bw_mod_net_publish;
     /* The rules' cells: the mod's own file under its namespace. */
     bw_mod_rule_set_cells_io(loader_cells_load, loader_cells_store);
 

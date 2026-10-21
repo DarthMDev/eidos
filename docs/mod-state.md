@@ -176,7 +176,15 @@ int  (*state_store)(const void *buf, u32 size);   /* 0, or -1 */
 int  (*state_clear)(void);                         /* 0, or -1 */
 int  (*state_info)(BwModStateHeader *out);         /* the header fields */
 int  (*state_dir)(char *out, u32 out_size);        /* the mod's folder */
+int  (*state_in_step)(void);                       /* 1 in step, 0 out of step, -1 unknown */
 ```
+
+`state_in_step` answers for the mod that calls it: whether the mod's own
+file was written with the game save in force.  The question is per mod, so
+it cannot be the `save.load` payload's byte: that payload is built once for
+all the handlers of the event, and one mod's file may be in step while
+another's is not.  The port keeps the answer in the file's header
+(`save_check`) and compares it with the save in force.
 
 The port asks for the payload at `save.begin` through the mod's `save.begin`
 handler, which calls `state_store`; the port holds the bytes and writes them at
@@ -419,11 +427,6 @@ Steps 2, 3, 4 and 5 touch disjoint files. Step 5 touches only the generator.
    action and the orphan report (`docs/mod-services.md`).
 2. **The disable order.** Flush the state, revert the mod's slots, then unload
    the library (constraint 2), built with the loader.
-3. **The per-mod answer to "is my state in step".** The `save.load` payload
-   carries one byte for every mod, and the payload is built once for all the
-   handlers of the event, so the answer cannot be per mod in the payload. The
-   port answers it through a service call, which needs the dispatch to know
-   which mod's handler it is running.
 
 The port's own choices, which the documents do not fix:
 

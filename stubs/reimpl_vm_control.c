@@ -46,12 +46,11 @@
  *   - the operands, as words: the command's operand bytes, little-endian,
  *     four to a word.  The game's own handler reads its operands off the
  *     same cursor, a u16 or a u32 at a time in its own order, so the
- *     view's word is the byte image of the operand area and writes back
- *     exactly.  A handler that changes one word therefore changes the
- *     bytes of that word, and the handler keeps the rest of the word as
- *     it found it.  The view holds eight words (32 bytes); the widest
- *     command of the two tables carries more (60 bytes, the battle effect
- *     VM's), and the rest of its operands stay the game's own;
+ *     view's bytes are the operand area itself and write back exactly.  The
+ *     view holds the operands as bytes, sixty of them, which is the widest
+ *     command of the two tables (the battle effect VM's opcode 8, at 60
+ *     bytes; the field VM's widest is 22), so every operand of every
+ *     command is in the view and none of it stays the game's own;
  *   - the program counter: the port's own count of where the command sits
  *     in the script, a number and never a host pointer, so it reads the
  *     same at every pointer width.
@@ -221,7 +220,7 @@ typedef struct BwPortVmCall {
     u32             op;
     u32             width;
     u8             *ops;      /* the operand bytes, at the cursor */
-    u32             nargs;     /* how many words the view holds */
+    u32             nargs;     /* how many operand bytes the command carries */
     int             answered;  /* the game's own handler's answer */
 } BwPortVmCall;
 
@@ -236,20 +235,10 @@ static int bw_vm_game_handler(void *ctx, BwModScriptCommand *cmd)
 {
     BwPortVmCall *call = (BwPortVmCall *)ctx;
     u32 i;
-    u32 b;
 
     for (i = 0; i < call->nargs; i++) {
-        for (b = 0; b < 4u; b++) {
-            u32 off = i * 4u + b;
-            u8 v;
-
-            if (off >= call->width) {
-                break;      /* the byte is the next command's, not ours */
-            }
-            v = (u8)((cmd->args[i] >> (8u * b)) & 0xFFu);
-            if (call->ops[off] != v) {
-                call->ops[off] = v;
-            }
+        if (call->ops[i] != cmd->args[i]) {
+            call->ops[i] = cmd->args[i];
         }
     }
     call->answered = call->vm->params.cmds[call->op](call->vm,
@@ -295,12 +284,12 @@ static int bw_vm_dispatch(BwPortScriptVm *vm, u32 op)
     memset(&view, 0, sizeof(view));
     view.opcode = (u16)op;
     view.pc = (u32)(start - bw_vm_count_origin(vm, start));
-    nargs = (width + 3u) / 4u;
+    nargs = width;
     if (nargs > (u32)BW_MOD_SCRIPT_ARGS_MAX) {
         nargs = (u32)BW_MOD_SCRIPT_ARGS_MAX;
     }
-    for (i = 0; i < nargs * 4u && i < width; i++) {
-        view.args[i / 4u] |= (u32)vm->pc[i] << (8u * (i % 4u));
+    for (i = 0; i < nargs; i++) {
+        view.args[i] = vm->pc[i];
     }
     view.nargs = (u16)nargs;
 

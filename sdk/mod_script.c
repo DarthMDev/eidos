@@ -47,8 +47,8 @@
  * game's dispatch function's place:
  *
  *   - it builds the command: the opcode the VM fetched, the operands it
- *     reads off the VM's cursor, and the program counter before the
- *     command;
+ *     reads off the VM's cursor (the whole operand area, as bytes), and
+ *     the program counter before the command;
  *   - it calls bw_mod_script_dispatch() with the game's own handler, which
  *     the stand-in wraps: the wrapper writes the operands the mod's
  *     handlers changed back into the script, and calls the game's handler
@@ -60,6 +60,15 @@
  * The program counter in the view is a number, not a pointer: it is the
  * stand-in's own count of where the command sits in the script, so the view
  * carries no host pointer and reads the same at every pointer width.
+ *
+ * The operands in the view are bytes, and the view holds all of them: the
+ * width table below gives the width of every command of both VMs, and the
+ * widest of them (the battle effect VM's opcode 8, at 60 bytes) is the
+ * view's capacity (BW_SCRIPT_ARGS_MAX, sdk/mod_api.h).  The stand-in
+ * therefore copies the command's width in bytes into the view and writes
+ * the bytes back, and no operand of any command is out of the view's
+ * reach.  The widths are checked against the capacity when the layer
+ * starts, so a table that grows past it is reported and not ignored.
  *
  * This file is the port's own; a mod never sees it.  What a mod sees is
  * sdk/mod_api.h (the commands and their payloads) and sdk/mod_state.h (the
@@ -148,6 +157,9 @@ static const u8 g_battle_width[BW_MOD_SCRIPT_BATTLE_COMMANDS] = {
       8,  12,   0,  28,   4,  24,  12,   0,   4,   0,   4,   4,   4,   0,
 };
 
+/* Whether the widths have been checked against the view's capacity. */
+static int g_widths_reported;
+
 /* ------------------------------------------------------------------ */
 /* The registry                                                       */
 /* ------------------------------------------------------------------ */
@@ -168,6 +180,7 @@ static const u8 g_battle_width[BW_MOD_SCRIPT_BATTLE_COMMANDS] = {
 typedef struct BwModScriptHandlerRec {
     BwModScriptHandler fn;
     void              *state;   /* the mod's own state, the value it returned */
+    const char        *ns;      /* the mod's state namespace, for its state calls */
     u16                next;    /* the next handler of the command, index + 1 */
 } BwModScriptHandlerRec;
 
@@ -190,6 +203,14 @@ static u16 g_hash_next[BW_MOD_SCRIPT_COMMANDS_MAX];       /* the next in the buc
 
 /* The state of the mod that is registering a handler right now. */
 static void *g_registering_state;
+
+/*
+ * The saved-data layer's namespace, the identity a mod's own file is under
+ * (docs/mod-state.md).  It is the port's own layer, and it may be absent
+ * (the layer that only runs the commands), so the call is weak.
+ */
+extern void bw_mod_savedata_set_namespace(const char *ns) __attribute__((weak));
+extern const char *bw_mod_savedata_namespace(void) __attribute__((weak));
 
 /* The hash over a (VM, opcode) pair. */
 static u32 command_hash(u32 vm, u16 opcode)
@@ -234,11 +255,43 @@ static u32 vm_opcode_count(u32 vm)
     }
 }
 
+/*
+ * Whether every command's operands fit the view.
+ *
+ * The view's capacity is the ABI's number (BW_SCRIPT_ARGS_MAX,
+ * sdk/mod_api.h) and it is the width of the widest command of the two
+ * tables: the battle effect VM's opcode 8 carries 60 bytes of operands
+ * and the field VM's widest (its opcode 323) carries 22.  A width above
+ * the capacity would be a command whose operands the view cannot carry,
+ * so the tables are checked against it when the layer starts: the widest
+ * of them has to fit, or the view is too small for the game.
+ */
+static int widths_fit(void)
+{
+    u32 vm;
+
+    for (vm = 0; vm < (u32)BW_MOD_SCRIPT_VM_COUNT; vm++) {
+        u32 count = vm_opcode_count(vm);
+        u32 op;
+
+        for (op = 0; op < count; op++) {
+            u32 width = bw_mod_script_operand_width(vm, op);
+
+            if (width != BW_MOD_SCRIPT_WIDTH_NONE &&
+                width > (u32)BW_MOD_SCRIPT_ARGS_MAX) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* The registration                                                   */
 /* ------------------------------------------------------------------ */
 
-int bw_mod_script_register(u32 vm, u16 opcode, BwModScriptHandler handler)
+int bw_mod_script_register(u32 vm, u16 opcode, BwModScriptHandler handler,
+                           const char *ns)
 {
     const u8 *widths = width_table(vm);
     u32 count = vm_opcode_count(vm);
@@ -285,6 +338,7 @@ int bw_mod_script_register(u32 vm, u16 opcode, BwModScriptHandler handler)
     rec = &g_handlers[g_handler_count];
     rec->fn = handler;
     rec->state = g_registering_state;
+    rec->ns = ns;
     rec->next = 0;
     g_handler_count++;
     if (c->tail != 0) {
@@ -325,9 +379,21 @@ int bw_mod_script_run(u32 vm, u16 opcode, BwModScriptCommand *cmd)
         return 0;
     }
     for (i = c->head; i != 0; i = g_handlers[i - 1].next) {
+        const char *saved = NULL;
+
+        if (bw_mod_savedata_set_namespace != NULL && g_handlers[i - 1].ns != NULL) {
+            /* The mod's own state calls are about its own file, so its
+             * namespace is in force while its handler runs (the event path
+             * does the same: docs/mod-state.md, section 2). */
+            saved = bw_mod_savedata_namespace();
+            bw_mod_savedata_set_namespace(g_handlers[i - 1].ns);
+        }
         if (g_handlers[i - 1].fn(g_handlers[i - 1].state, cmd) ==
             BW_MOD_SCRIPT_REPLACE) {
             replaced = 1;
+        }
+        if (saved != NULL) {
+            bw_mod_savedata_set_namespace(saved);
         }
     }
     return replaced;
@@ -433,4 +499,13 @@ void bw_mod_script_reset(void)
     g_handler_count = 0;
     g_command_count = 0;
     g_registering_state = NULL;
+
+    if (!g_widths_reported) {
+        g_widths_reported = 1;
+        if (!widths_fit()) {
+            fprintf(stderr, "eidos: a script command's operands do not fit "
+                    "the view (%u bytes); the operands past that are the "
+                    "game's own\n", (unsigned int)BW_MOD_SCRIPT_ARGS_MAX);
+        }
+    }
 }

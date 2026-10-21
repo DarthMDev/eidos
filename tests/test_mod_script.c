@@ -13,6 +13,11 @@
  *     handler bound to that opcode runs, in the mods' load order;
  *   - a handler that observes a command sees the command the game is
  *     running: its opcode and its operands;
+ *   - the operands are bytes, and the view holds every byte of every
+ *     command of the two VMs: the widest of them (the battle effect VM's
+ *     opcode 8, at 60 bytes) fits the view, so a handler reaches the last
+ *     operand of the widest command as well as the first of the
+ *     narrowest;
  *   - a handler that changes the operands changes what the game's own
  *     handler sees: the handlers chain, as the event handlers do;
  *   - a handler that replaces the command keeps the game's own handler from
@@ -43,16 +48,22 @@
 /* The battle effect VM's command the test binds a handler to. */
 #define T_BATTLE_OPCODE 6u
 
+/* The widest command of each table: the battle effect VM's opcode 8
+ * carries 60 bytes of operands and the field VM's opcode 323 carries 22.
+ * The view holds every byte of both (BW_MOD_SCRIPT_ARGS_MAX). */
+#define T_WIDEST_BATTLE_OPCODE 8u
+#define T_WIDEST_FIELD_OPCODE  323u
+
 /* A command the game's table does not have: nine of the field VM's 609
  * are not commands at all (the port's file marks them, and a handler for
  * one would never run). */
 #define T_NO_SUCH_OPCODE 137u
 
 /* The operands the test's command carries, and what a handler changes
- * them to. */
-#define T_ARG0        0x1111u
-#define T_ARG1        0x2222u
-#define T_CHANGED     0x3333u
+ * them to.  The operands are bytes, as they are in the game's script. */
+#define T_ARG0        0x11u
+#define T_ARG1        0x22u
+#define T_CHANGED     0x33u
 
 /* The program counter the test's command starts at. */
 #define T_PC          0x0200u
@@ -70,6 +81,10 @@ static u16 g_saw_opcode[8];
 
 /* The first operand each handler saw. */
 static u32 g_saw_arg[8];
+
+/* The last operand each handler saw: the byte at the end of the operand
+ * area, which is the one a wide command's handler reaches. */
+static u32 g_saw_last[8];
 
 /* The mod's own state each handler was given. */
 static void *g_saw_state[8];
@@ -89,6 +104,8 @@ static void note(int id, void *state, BwModScriptCommand *cmd)
         g_ran[g_ran_count] = id;
         g_saw_opcode[g_ran_count] = cmd->opcode;
         g_saw_arg[g_ran_count] = cmd->nargs > 0u ? cmd->args[0] : 0u;
+        g_saw_last[g_ran_count] = cmd->nargs > 0u
+                                ? cmd->args[cmd->nargs - 1u] : 0u;
         g_saw_state[g_ran_count] = state;
         g_ran_count++;
     }
@@ -99,6 +116,7 @@ static void forget(void)
     memset(g_ran, 0, sizeof(g_ran));
     memset(g_saw_opcode, 0, sizeof(g_saw_opcode));
     memset(g_saw_arg, 0, sizeof(g_saw_arg));
+    memset(g_saw_last, 0, sizeof(g_saw_last));
     memset(g_saw_state, 0, sizeof(g_saw_state));
     g_ran_count = 0;
     g_game_calls = 0;
@@ -146,6 +164,17 @@ static int handler_replace(void *mod_state, BwModScriptCommand *cmd)
     return BW_MOD_SCRIPT_REPLACE;
 }
 
+/* The fourth handler: it changes the last operand of the command, which
+ * is the byte a wide command's operands end with. */
+static int handler_change_last(void *mod_state, BwModScriptCommand *cmd)
+{
+    note(4, mod_state, cmd);
+    if (cmd->nargs > 0u) {
+        cmd->args[cmd->nargs - 1u] = T_CHANGED;
+    }
+    return BW_MOD_SCRIPT_CONTINUE;
+}
+
 /* ------------------------------------------------------------------ */
 /* The command                                                         */
 /* ------------------------------------------------------------------ */
@@ -166,6 +195,27 @@ static BwModScriptCommand make_command(u16 opcode)
     return cmd;
 }
 
+/*
+ * A command whose operand area is `nbytes` long: the wide commands of the
+ * two tables carry their operands in the view, byte for byte, so the last
+ * of them is in the view as well.
+ */
+static BwModScriptCommand make_wide_command(u16 opcode, u32 nbytes)
+{
+    BwModScriptCommand cmd;
+    u32 i;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.opcode = opcode;
+    cmd.nargs = (u16)nbytes;
+    for (i = 0; i < nbytes && i < (u32)BW_MOD_SCRIPT_ARGS_MAX; i++) {
+        cmd.args[i] = (u8)(i + 1u);
+    }
+    cmd.pc = T_PC;
+    cmd.next_pc = 0;
+    return cmd;
+}
+
 /* ------------------------------------------------------------------ */
 /* The test                                                            */
 /* ------------------------------------------------------------------ */
@@ -174,6 +224,8 @@ int main(void)
 {
     BwModScriptCommand cmd;
     u32 width;
+    u32 bwidth;
+    u32 fwidth;
 
     printf("the two VMs\n");
     bw_mod_script_reset();
@@ -197,11 +249,11 @@ int main(void)
     bw_mod_script_set_registering_state(&g_first_state);
     BW_REQUIRE("the first handler is bound",
                bw_mod_script_register(BW_MOD_SCRIPT_FIELD, T_OPCODE,
-                                      handler_observe) == 0);
+                                      handler_observe, NULL) == 0);
     bw_mod_script_set_registering_state(&g_second_state);
     BW_REQUIRE("the second handler is bound",
                bw_mod_script_register(BW_MOD_SCRIPT_FIELD, T_OPCODE,
-                                      handler_change) == 0);
+                                      handler_change, NULL) == 0);
     bw_mod_script_set_registering_state(NULL);
     BW_CHECK_EQ("two handlers are bound to the command",
                 (long)bw_mod_script_handler_count(BW_MOD_SCRIPT_FIELD,
@@ -214,7 +266,7 @@ int main(void)
                                                   T_OPCODE), 0);
     BW_CHECK_EQ("a command the game's table does not have is refused",
                 bw_mod_script_register(BW_MOD_SCRIPT_FIELD, T_NO_SUCH_OPCODE,
-                                       handler_observe), -1);
+                                      handler_observe, NULL), -1);
 
     printf("a handler that observes a command\n");
     cmd = make_command(T_OPCODE);
@@ -249,7 +301,7 @@ int main(void)
 
     BW_REQUIRE("the handler is bound",
                bw_mod_script_register(BW_MOD_SCRIPT_FIELD, T_OPCODE,
-                                      handler_replace) == 0);
+                                      handler_replace, NULL) == 0);
     cmd = make_command(T_OPCODE);
     BW_CHECK_EQ("the command was replaced", bw_mod_script_dispatch(
                      BW_MOD_SCRIPT_FIELD, &cmd, game_handler, NULL), 1);
@@ -274,7 +326,7 @@ int main(void)
 
         BW_REQUIRE("the replacing handler is bound",
                    bw_mod_script_register(BW_MOD_SCRIPT_FIELD, T_OPCODE,
-                                          handler_replace) == 0);
+                                      handler_replace, NULL) == 0);
         cmd = make_command(T_OPCODE);
         bw_mod_script_dispatch(BW_MOD_SCRIPT_FIELD, &cmd, game_handler, NULL);
         BW_CHECK_EQ("the game's own handler did not run", g_game_calls, 1);
@@ -304,7 +356,7 @@ int main(void)
 
     BW_REQUIRE("the handler is bound to the battle VM",
                bw_mod_script_register(BW_MOD_SCRIPT_BATTLE, T_BATTLE_OPCODE,
-                                      handler_observe) == 0);
+                                      handler_observe, NULL) == 0);
     cmd = make_command(T_BATTLE_OPCODE);
     BW_CHECK_EQ("the battle command goes through", bw_mod_script_dispatch(
                      BW_MOD_SCRIPT_BATTLE, &cmd, game_handler, NULL), 0);
@@ -315,6 +367,45 @@ int main(void)
                      BW_MOD_SCRIPT_FIELD, &cmd, game_handler, NULL), 0);
     BW_CHECK_EQ("the field VM has no handler for it", g_ran_count, 1);
     BW_CHECK_EQ("and the game's own handler ran", g_game_calls, 2);
+
+    printf("a command whose operands fill the view\n");
+    /* The view holds every byte of every command of the two VMs: the
+     * widest of them (the battle effect VM's opcode 8, at 60 bytes) fits,
+     * so a handler reaches the last operand of the widest command as well
+     * as the first of the narrowest. */
+    bw_mod_script_reset();
+    forget();
+
+    bwidth = bw_mod_script_operand_width(BW_MOD_SCRIPT_BATTLE,
+                                         T_WIDEST_BATTLE_OPCODE);
+    BW_REQUIRE("the battle effect VM's widest command carries 60 bytes",
+               bwidth == 60u);
+    BW_REQUIRE("it fits the view", bwidth <= (u32)BW_MOD_SCRIPT_ARGS_MAX);
+    fwidth = bw_mod_script_operand_width(BW_MOD_SCRIPT_FIELD,
+                                         T_WIDEST_FIELD_OPCODE);
+    BW_REQUIRE("the field VM's widest command carries 22 bytes",
+               fwidth == 22u);
+    BW_REQUIRE("it fits the view too", fwidth <= (u32)BW_MOD_SCRIPT_ARGS_MAX);
+    BW_REQUIRE("the view holds 60 operand bytes",
+               (u32)BW_MOD_SCRIPT_ARGS_MAX == 60u);
+
+    BW_REQUIRE("the handler is bound",
+               bw_mod_script_register(BW_MOD_SCRIPT_BATTLE, T_WIDEST_BATTLE_OPCODE,
+                                      handler_change_last, NULL) == 0);
+    cmd = make_wide_command(T_WIDEST_BATTLE_OPCODE, bwidth);
+    BW_CHECK_EQ("the command carries the whole operand area",
+                (long)cmd.nargs, 60);
+    BW_CHECK_EQ("the last operand is the last byte of the view",
+                (long)cmd.args[59], 60);
+    BW_CHECK_EQ("the command goes through", bw_mod_script_dispatch(
+                 BW_MOD_SCRIPT_BATTLE, &cmd, game_handler, NULL), 0);
+    BW_CHECK_EQ("the handler ran", g_ran_count, 1);
+    BW_CHECK_EQ("the handler saw the last operand", (long)g_saw_last[0], 60);
+    BW_CHECK_EQ("and it changed it", (long)cmd.args[59], (long)T_CHANGED);
+    BW_CHECK_EQ("the game's own handler ran", g_game_calls, 1);
+    BW_CHECK_EQ("it saw the first operand", (long)g_game_arg, 1);
+    BW_CHECK_EQ("the program counter advanced over the wide command",
+                (long)cmd.next_pc, (long)(cmd.pc + 2u + bwidth));
 
     printf("the reset\n");
     bw_mod_script_reset();

@@ -236,6 +236,19 @@ typedef struct BwModServices {
     int  (*state_clear)(void);
     int  (*state_info)(BwModStateHeader *out);
     int  (*state_dir)(char *out, u32 out_size);
+
+    /* Whether the mod's own saved data was written with the game save in
+     * force (docs/mod-state.md, section 2, "Loaded").  The save.load
+     * payload's byte cannot answer it: the payload is built once for every
+     * handler of the event and the answer is per mod, so one mod's file
+     * may be in step while another's is not.  This call answers for the
+     * mod that calls it.
+     *
+     * 1 when the mod's own file was written with the save in force, 0 when
+     * it was not (the game save was written without the mod), and -1 when
+     * the question cannot be answered (no state file, or no save in
+     * force). */
+    int  (*state_in_step)(void);
 } BwModServices;
 
 /* ------------------------------------------------------------------ */

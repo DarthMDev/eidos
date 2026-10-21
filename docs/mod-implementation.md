@@ -241,13 +241,23 @@ calls), `tests/test_mod_manifest.c`, `tests/test_mod_savedata.c`,
 `tests/test_mod_text.c`, `tests/test_mod_script.c` and
 `tests/test_mod_rule.c`.
 
-What is still to build: the port's own hook into the game's text path (the
-field's talk window and the battle's message box), the stand-in for the
-script VMs' dispatch (both VMs run the same ARM9 function, so one stand-in
-covers them), the services but for the messages and the mod's own saved data
-(the panel, the timer, the export and import, the peer sessions, the external
-control), the script command hooks' operands in the view (the widest command
-carries more than the view holds), and the rule interpreter's peer send.
+What is still to build: the panel, the settings, the save handoff and the
+input injection (they need the platform layer's drawing and input), the
+rule interpreter's peer send (the service is built, the rule layer does not
+call it yet), and the port's own frame hook, which is where the network
+service's handlers run.
+
+The script command's view carries the operands as bytes, sixty of them, which
+is the widest command of the two tables (the battle effect VM's opcode 8, at
+60 bytes; the field VM's widest is 22), so a handler reads and writes every
+operand, including the odd-width ones a word view cannot round-trip.  The
+mod's own saved data answers whether it is in step with the save in force
+through a service call, because that answer is per mod and the `save.load`
+payload is built once for all the handlers of the event.
+
+The services that are the port's own are built: the messages, the timer and
+the splits, the mod's own random source, a Pokemon's export and import, and
+the peer sessions and the external control.
 
 What the areas owe the boot: the battle half of the state API and
 `FIELD_PLAYER_GetPos` are not in the boot's closure, and the port has to bind
