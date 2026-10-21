@@ -67,10 +67,25 @@ python tools/ndsrom.py extract "<your-rom>.nds" -o extract
 
 # in this repository:
 python tools/fetch_sdl.py                 # Windows; on Linux/macOS install the package instead
+python tools/fetch_wamr.py                # optional: the runtime wasm code mods run in
 cmake -S . -B build -DALETHEIA_ROOT=../aletheia
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+### The wasm runtime
+
+Code mods built for WebAssembly (docs/mod-code-wasm.md) run in WAMR 2.2.0,
+the interpreter only. `python tools/fetch_wamr.py` downloads the release,
+checks its SHA-256, unpacks it into the per-user cache (the same places as
+SDL's, under `eidos/wamr`; `EIDOS_WAMR_CACHE` or `--cache` names another)
+and makes the two small changes MinGW needs. CMake finds it there
+(`-DEIDOS_WAMR_ROOT=` names another source folder) and builds it as one
+static library, `eidos_wamr`, with the host's own struct layout. The
+configure line says `eidos: wasm code mods on` or `off`. Without it, or with
+`-DEIDOS_WASM=OFF`, the port builds and runs, and a wasm mod is refused with
+a message. No assembler is needed: native calls go through WAMR's portable
+C path.
 
 ### SDL2 on every platform
 

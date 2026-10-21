@@ -277,7 +277,8 @@ else()
         file(GLOB _eidos_native_align
              ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/*.c
              ${CMAKE_CURRENT_SOURCE_DIR}/install/*.c
-             ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_*.c)
+             ${CMAKE_CURRENT_SOURCE_DIR}/sdk/plat_*.c
+             ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_wasm.c)
         # The tests that include install/install.h or install/setup.h share
         # its u64 members (BwSha1.length) with the installer, so they take
         # its alignment.  The other tests share structs with the engine and
@@ -473,6 +474,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_manifest.c   # the run-time manifest: the record, the parse, the apply
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_savedata.c   # a mod's own saved data: the file, the envelope, the versions
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_loader.c     # the loader: the library, the host table, the handlers
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_wasm.c       # code mods built for wasm (WAMR, docs/mod-code-wasm.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_title.c     # title menu hook state (docs/hooks.md)
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_text.c           # the port's text path: the sink that shows a queued message
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_script.c         # the script command hooks: the field VM and the battle effect VM
@@ -776,6 +778,33 @@ add_custom_command(
 # In the library the sound transport installs the engine/audio driver at
 # ARM7 power-on (sdk/arm7/snd.c); test_pxi compiles the transport alone.
 target_compile_definitions(eidos PRIVATE BW_ARM7_SND_DRIVER=1)
+
+# The wasm runtime code mods run in (docs/mod-code-wasm.md): WAMR, fetched
+# and checked by tools/fetch_wamr.py into the user's local data folder.
+# Without it the port builds and runs; a wasm mod is refused with a message.
+if(DEFINED ENV{EIDOS_WAMR_CACHE})
+    file(TO_CMAKE_PATH "$ENV{EIDOS_WAMR_CACHE}" _eidos_wamr_home)
+elseif(WIN32)
+    file(TO_CMAKE_PATH "$ENV{LOCALAPPDATA}/eidos/wamr" _eidos_wamr_home)
+elseif(APPLE)
+    set(_eidos_wamr_home "$ENV{HOME}/Library/Caches/eidos/wamr")
+elseif(DEFINED ENV{XDG_CACHE_HOME})
+    set(_eidos_wamr_home "$ENV{XDG_CACHE_HOME}/eidos/wamr")
+else()
+    set(_eidos_wamr_home "$ENV{HOME}/.cache/eidos/wamr")
+endif()
+set(EIDOS_WAMR_ROOT "${_eidos_wamr_home}/wasm-micro-runtime-WAMR-2.2.0" CACHE PATH
+    "WAMR 2.2.0 source folder (tools/fetch_wamr.py)")
+option(EIDOS_WASM "Build the wasm code-mod runtime when WAMR is present" ON)
+if(EIDOS_WASM AND EXISTS "${EIDOS_WAMR_ROOT}/build-scripts/runtime_lib.cmake")
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cmake/wamr ${CMAKE_BINARY_DIR}/wamr)
+    target_link_libraries(eidos PUBLIC eidos_wamr)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_wasm.c
+        PROPERTIES COMPILE_DEFINITIONS EIDOS_HAVE_WAMR=1)
+    message(STATUS "eidos: wasm code mods on (${EIDOS_WAMR_ROOT})")
+else()
+    message(STATUS "eidos: wasm code mods off (run tools/fetch_wamr.py)")
+endif()
 
 if(EIDOS_HEAP_MATCHED)
     target_compile_definitions(eidos PUBLIC EIDOS_HEAP_MATCHED=1)
@@ -1613,6 +1642,16 @@ target_include_directories(test_mod_endtoend PRIVATE
 target_link_libraries(test_mod_endtoend PRIVATE eidos)
 add_dependencies(test_mod_endtoend test_mod_e2e_lib)
 add_test(NAME test_mod_endtoend COMMAND test_mod_endtoend $<TARGET_FILE:test_mod_e2e_lib>)
+
+# test_mod_wasm loads a hand-assembled wasm module through the same loader
+# (sdk/mod_wasm.c): the handlers it binds refuse or let an event go on, a
+# trap lets it go on, and a broken module is refused.  Without the runtime it
+# checks that the module is refused.
+add_executable(test_mod_wasm ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_wasm.c)
+target_include_directories(test_mod_wasm PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_mod_wasm PRIVATE eidos)
+add_test(NAME test_mod_wasm COMMAND test_mod_wasm)
 
 # The registry's overlap check panics, and a panic aborts the process, so it
 # is exercised in a run of its own that passes only if the panic happened.

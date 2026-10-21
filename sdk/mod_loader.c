@@ -138,6 +138,7 @@
 #include "mod_state.h"
 #include "mod_text.h"
 #include "mod_timer.h"
+#include "mod_wasm.h"
 #include "overlay_image.h"
 #include "vfs.h"
 
@@ -304,6 +305,7 @@ typedef struct BwModLoaderMod {
     char          path[BW_MOD_LOADER_PATH_MAX];
     void         *manifest;    /* the manifest record (the loader keeps it) */
     void         *library;     /* the handle: HMODULE or a dlopen handle */
+    void         *wasm;        /* or the wasm module's handle (sdk/mod_wasm.h) */
     BwModStartFn  start;
     BwModStopFn   stop;
     void         *state;       /* the state the start returned */
@@ -1000,9 +1002,21 @@ static int loader_load(u32 index)
         snprintf(m->path, sizeof(m->path), "%s", code);
     }
 
-    /* 2. open the library. */
-    library = library_open(m->path);
-    if (library == NULL) {
+    /* 2. open the library, or the wasm module: the file's first bytes tell
+     *    them apart (docs/mod-code-wasm.md). */
+    if (bw_mod_wasm_is_module(m->path)) {
+        char why[256];
+
+        m->wasm = bw_mod_wasm_open(m->path, m->name, why, sizeof(why));
+        if (m->wasm == NULL) {
+            fprintf(stderr, "eidos: mod %s: %s\n", m->name, why);
+            return 0;
+        }
+        library = NULL;
+    } else {
+        library = library_open(m->path);
+    }
+    if (m->wasm == NULL && library == NULL) {
         fprintf(stderr, "eidos: mod %s: the library %s could not be opened\n",
                 m->name, m->path);
         return 0;
@@ -1010,9 +1024,11 @@ static int loader_load(u32 index)
 
     /* 3. the entry points. */
     m->library = library;
-    m->start = (BwModStartFn)library_symbol(library, "eidos_mod_start");
-    m->stop = (BwModStopFn)library_symbol(library, "eidos_mod_stop");
-    if (m->start == NULL || m->stop == NULL) {
+    if (m->wasm == NULL) {
+        m->start = (BwModStartFn)library_symbol(library, "eidos_mod_start");
+        m->stop = (BwModStopFn)library_symbol(library, "eidos_mod_stop");
+    }
+    if (m->wasm == NULL && (m->start == NULL || m->stop == NULL)) {
         fprintf(stderr,
                 "eidos: mod %s: the library exports no %s, so the mod is not "
                 "loaded\n", m->name,
@@ -1100,7 +1116,8 @@ static int loader_load(u32 index)
         u32 saved_api;
 
         loader_enter_mod(m, &saved_ns, &saved_api);
-        rc = m->start(&m->host, &m->state);
+        rc = m->wasm != NULL ? bw_mod_wasm_start(m->wasm, &m->host, &m->state)
+                             : m->start(&m->host, &m->state);
         loader_leave_mod(saved_ns, saved_api);
     }
     if (rc != 0) {
@@ -1108,7 +1125,13 @@ static int loader_load(u32 index)
                 "eidos: mod %s: the start entry point returned %d, so the mod "
                 "is not loaded\n", m->name, rc);
         m->loaded = 0;
-        library_close(library);
+        if (m->wasm != NULL) {
+            bw_mod_frame_remove_for(m->ns);
+            bw_mod_wasm_close(m->wasm);
+            m->wasm = NULL;
+        } else {
+            library_close(library);
+        }
         m->library = NULL;
         m->start = NULL;
         m->stop = NULL;
@@ -1190,7 +1213,9 @@ static void loader_stop(BwModLoaderMod *m)
      *    is where a mod flushes its data. */
     if (m->started) {
         loader_enter_mod(m, &saved_ns, &saved_api);
-        if (m->stop != NULL) {
+        if (m->wasm != NULL) {
+            bw_mod_wasm_stop(m->wasm);
+        } else if (m->stop != NULL) {
             m->stop(m->state);
         }
         loader_leave_mod(saved_ns, saved_api);
@@ -1203,6 +1228,10 @@ static void loader_stop(BwModLoaderMod *m)
     if (m->library != NULL) {
         library_close(m->library);
         m->library = NULL;
+    }
+    if (m->wasm != NULL) {
+        bw_mod_wasm_close(m->wasm);
+        m->wasm = NULL;
     }
     m->start = NULL;
     m->stop = NULL;

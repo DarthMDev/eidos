@@ -38,4 +38,6 @@ cannot be verified stays here rather than shipping half-working.
 | Moves past 560 | Battle animations: the battle server's effect ids still need names (aletheia). |
 | Field object codes | `FLDMMDL_OBJCODE_TABLE_COUNT` is named; the code-to-table remap is the port's. |
 | Species to 2047 | Waits on aletheia's names for the species sites. |
-| The wasm runtime | The contract is `sdk/api/v4`; the WAMR bridge is not built. |
+| Wasm overrides | `override` and `original` answer -1 in a wasm mod. A hook of `hooks.json` needs a native function per prototype that calls the module's table entry; the pool is generated from `hooks.json`. |
+| Wasm session, command and save handlers | `on_session`, `on_command` and `on_save_received` answer nothing in a wasm mod and say so once. Each needs its payload copied into the module the way an event's is. |
+| Wasm limits | The memory cap (`memory = <MiB>`) and a step budget per call are not enforced yet; a module that loops forever stops the game. |
