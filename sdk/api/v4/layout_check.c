@@ -315,6 +315,7 @@ LAYOUT(BwRouteChange, h, 0);
 LAYOUT(BwRouteChange, zone, 8);
 LAYOUT(BwRouteChange, prev_zone, 10);
 LAYOUT(BwRouteChange, season, 12);
+LAYOUT(BwRouteChange, how, 13);
 SIZE(BwSaveBegin, 16);
 LAYOUT(BwSaveBegin, h, 0);
 LAYOUT(BwSaveBegin, play_seconds, 8);

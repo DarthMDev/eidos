@@ -58,8 +58,8 @@
  * The hash of the frozen surface on each layout the port is built at.
  *
  *   pointers  hash
- *   4         0x6CD31469u  the number in sdk/mod_api.h
- *   8         0xC8C98F9Eu
+ *   4         0x5C25A051u  the number in sdk/mod_api.h
+ *   8         0xF02A401Eu
  *
  * The 32-bit one is the number the header carries.  The other is the same
  * surface on the other layout: the three tables hold host pointers, so
@@ -68,11 +68,11 @@
  */
 static unsigned int expected_hash(void)
 {
-    return (sizeof(void *) == 4) ? 0x6CD31469u : 0xC8C98F9Eu;
+    return (sizeof(void *) == 4) ? 0x5C25A051u : 0xF02A401Eu;
 }
 
 /* The number in sdk/mod_api.h: the frozen one, the 32-bit hash. */
-#define BW_SURFACE_HASH_FROZEN 0x6CD31469u
+#define BW_SURFACE_HASH_FROZEN 0x5C25A051u
 
 /* The running hash. */
 static unsigned int h;
@@ -192,6 +192,7 @@ int main(void)
     EN(BW_MONEY_OTHER); EN(BW_MONEY_SCRIPT); EN(BW_MONEY_PURCHASE);
     EN(BW_MONEY_SALE); EN(BW_MONEY_BATTLE);
     EN(BW_LEVELUP_BATTLE); EN(BW_LEVELUP_ITEM);
+    EN(BW_ZONE_WARP); EN(BW_ZONE_WALK);
     EN(BW_CURE_FIELD_ITEM); EN(BW_CURE_BATTLE); EN(BW_CURE_PARTY);
     EN(BW_PP_FIELD_ITEM); EN(BW_PP_BATTLE); EN(BW_FORM_FIELD); EN(BW_FORM_BATTLE);
     EN(BW_ITEM_FROM_OTHER); EN(BW_ITEM_FROM_SCRIPT); EN(BW_ITEM_FROM_GIFT);
@@ -227,7 +228,8 @@ int main(void)
     PL(BwSaveDone, F(BwSaveDone, play_seconds), F(BwSaveDone, zone), F(BwSaveDone, ok));
     PL(BwSaveLoad, F(BwSaveLoad, play_seconds), F(BwSaveLoad, zone), F(BwSaveLoad, state_in_step));
     PL(BwGameCleared, F(BwGameCleared, play_seconds), F(BwGameCleared, team_count), F(BwGameCleared, team));
-    PL(BwRouteChange, F(BwRouteChange, zone), F(BwRouteChange, prev_zone), F(BwRouteChange, season));
+    PL(BwRouteChange, F(BwRouteChange, zone), F(BwRouteChange, prev_zone), F(BwRouteChange, season),
+       F(BwRouteChange, how));
     PL(BwMapWarp, F(BwMapWarp, zone), F(BwMapWarp, dest_zone), F(BwMapWarp, dest_x), F(BwMapWarp, dest_z));
     PL(BwPlayerStep, F(BwPlayerStep, zone), F(BwPlayerStep, x), F(BwPlayerStep, y),
        F(BwPlayerStep, z), F(BwPlayerStep, dir), F(BwPlayerStep, mode));

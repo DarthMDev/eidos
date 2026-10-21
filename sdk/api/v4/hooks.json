@@ -1368,6 +1368,18 @@
       "aliases": []
     },
     {
+      "address": "0x021893C0",
+      "name": "FIELDMAP_ChangeZone",
+      "region": "ov021",
+      "events": [
+        "route.change"
+      ],
+      "prototype": "void FIELDMAP_ChangeZone(void *)",
+      "signature": "void (void *)",
+      "aletheia_name": "FIELDMAP_ChangeZone",
+      "aliases": []
+    },
+    {
       "address": "0x021894E0",
       "name": "FIELDMAP_AddZoneNpcs",
       "region": "ov021",

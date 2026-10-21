@@ -2,695 +2,878 @@
   "api": 4,
   "constants": [
     {
-      "name": "BW_MON_PARTY",
+      "name": "EIDOS_MON_PARTY",
+      "c_name": "BW_MON_PARTY",
       "value": 0
     },
     {
-      "name": "BW_MON_BOX",
+      "name": "EIDOS_MON_BOX",
+      "c_name": "BW_MON_BOX",
       "value": 1
     },
     {
-      "name": "BW_MON_BATTLE",
+      "name": "EIDOS_MON_BATTLE",
+      "c_name": "BW_MON_BATTLE",
       "value": 2
     },
     {
-      "name": "BW_MON_WILD",
+      "name": "EIDOS_MON_WILD",
+      "c_name": "BW_MON_WILD",
       "value": 3
     },
     {
-      "name": "BW_EVENT_CONTINUE",
+      "name": "EIDOS_EVENT_CONTINUE",
+      "c_name": "BW_EVENT_CONTINUE",
       "value": 0
     },
     {
-      "name": "BW_EVENT_REFUSE",
+      "name": "EIDOS_EVENT_REFUSE",
+      "c_name": "BW_EVENT_REFUSE",
       "value": 1
     },
     {
-      "name": "BW_EVENT_GAME_NEW",
+      "name": "EIDOS_EVENT_GAME_NEW",
+      "c_name": "BW_EVENT_GAME_NEW",
       "value": 1
     },
     {
-      "name": "BW_EVENT_SAVE_BEGIN",
+      "name": "EIDOS_EVENT_SAVE_BEGIN",
+      "c_name": "BW_EVENT_SAVE_BEGIN",
       "value": 2
     },
     {
-      "name": "BW_EVENT_SAVE_DONE",
+      "name": "EIDOS_EVENT_SAVE_DONE",
+      "c_name": "BW_EVENT_SAVE_DONE",
       "value": 3
     },
     {
-      "name": "BW_EVENT_SAVE_LOAD",
+      "name": "EIDOS_EVENT_SAVE_LOAD",
+      "c_name": "BW_EVENT_SAVE_LOAD",
       "value": 4
     },
     {
-      "name": "BW_EVENT_GAME_CLEARED",
+      "name": "EIDOS_EVENT_GAME_CLEARED",
+      "c_name": "BW_EVENT_GAME_CLEARED",
       "value": 5
     },
     {
-      "name": "BW_EVENT_ROUTE_CHANGE",
+      "name": "EIDOS_EVENT_ROUTE_CHANGE",
+      "c_name": "BW_EVENT_ROUTE_CHANGE",
       "value": 10
     },
     {
-      "name": "BW_EVENT_MAP_WARP",
+      "name": "EIDOS_EVENT_MAP_WARP",
+      "c_name": "BW_EVENT_MAP_WARP",
       "value": 11
     },
     {
-      "name": "BW_EVENT_PLAYER_STEP",
+      "name": "EIDOS_EVENT_PLAYER_STEP",
+      "c_name": "BW_EVENT_PLAYER_STEP",
       "value": 12
     },
     {
-      "name": "BW_EVENT_TRAINER_SPOTTED",
+      "name": "EIDOS_EVENT_TRAINER_SPOTTED",
+      "c_name": "BW_EVENT_TRAINER_SPOTTED",
       "value": 13
     },
     {
-      "name": "BW_EVENT_NPC_TALK",
+      "name": "EIDOS_EVENT_NPC_TALK",
+      "c_name": "BW_EVENT_NPC_TALK",
       "value": 14
     },
     {
-      "name": "BW_EVENT_MENU_OPEN",
+      "name": "EIDOS_EVENT_MENU_OPEN",
+      "c_name": "BW_EVENT_MENU_OPEN",
       "value": 15
     },
     {
-      "name": "BW_EVENT_MENU_BUILD",
+      "name": "EIDOS_EVENT_MENU_BUILD",
+      "c_name": "BW_EVENT_MENU_BUILD",
       "value": 16
     },
     {
-      "name": "BW_EVENT_FIELD_MOVE",
+      "name": "EIDOS_EVENT_FIELD_MOVE",
+      "c_name": "BW_EVENT_FIELD_MOVE",
       "value": 17
     },
     {
-      "name": "BW_EVENT_PC_OPEN",
+      "name": "EIDOS_EVENT_PC_OPEN",
+      "c_name": "BW_EVENT_PC_OPEN",
       "value": 18
     },
     {
-      "name": "BW_EVENT_ENCOUNTER_WILD",
+      "name": "EIDOS_EVENT_ENCOUNTER_WILD",
+      "c_name": "BW_EVENT_ENCOUNTER_WILD",
       "value": 30
     },
     {
-      "name": "BW_EVENT_ENCOUNTER_STATIC",
+      "name": "EIDOS_EVENT_ENCOUNTER_STATIC",
+      "c_name": "BW_EVENT_ENCOUNTER_STATIC",
       "value": 31
     },
     {
-      "name": "BW_EVENT_ENCOUNTER_TRAINER",
+      "name": "EIDOS_EVENT_ENCOUNTER_TRAINER",
+      "c_name": "BW_EVENT_ENCOUNTER_TRAINER",
       "value": 32
     },
     {
-      "name": "BW_EVENT_MON_CREATE",
+      "name": "EIDOS_EVENT_MON_CREATE",
+      "c_name": "BW_EVENT_MON_CREATE",
       "value": 40
     },
     {
-      "name": "BW_EVENT_MON_RECEIVE",
+      "name": "EIDOS_EVENT_MON_RECEIVE",
+      "c_name": "BW_EVENT_MON_RECEIVE",
       "value": 41
     },
     {
-      "name": "BW_EVENT_MON_NICKNAME",
+      "name": "EIDOS_EVENT_MON_NICKNAME",
+      "c_name": "BW_EVENT_MON_NICKNAME",
       "value": 42
     },
     {
-      "name": "BW_EVENT_MON_EVOLVE",
+      "name": "EIDOS_EVENT_MON_EVOLVE",
+      "c_name": "BW_EVENT_MON_EVOLVE",
       "value": 43
     },
     {
-      "name": "BW_EVENT_MON_EXP",
+      "name": "EIDOS_EVENT_MON_EXP",
+      "c_name": "BW_EVENT_MON_EXP",
       "value": 44
     },
     {
-      "name": "BW_EVENT_MON_LEVELUP",
+      "name": "EIDOS_EVENT_MON_LEVELUP",
+      "c_name": "BW_EVENT_MON_LEVELUP",
       "value": 45
     },
     {
-      "name": "BW_EVENT_MOVE_LEARN",
+      "name": "EIDOS_EVENT_MOVE_LEARN",
+      "c_name": "BW_EVENT_MOVE_LEARN",
       "value": 46
     },
     {
-      "name": "BW_EVENT_MON_RELEASE",
+      "name": "EIDOS_EVENT_MON_RELEASE",
+      "c_name": "BW_EVENT_MON_RELEASE",
       "value": 47
     },
     {
-      "name": "BW_EVENT_BOX_DEPOSIT",
+      "name": "EIDOS_EVENT_BOX_DEPOSIT",
+      "c_name": "BW_EVENT_BOX_DEPOSIT",
       "value": 48
     },
     {
-      "name": "BW_EVENT_BOX_WITHDRAW",
+      "name": "EIDOS_EVENT_BOX_WITHDRAW",
+      "c_name": "BW_EVENT_BOX_WITHDRAW",
       "value": 49
     },
     {
-      "name": "BW_EVENT_PARTY_SWAP",
+      "name": "EIDOS_EVENT_PARTY_SWAP",
+      "c_name": "BW_EVENT_PARTY_SWAP",
       "value": 50
     },
     {
-      "name": "BW_EVENT_MON_HELDITEM",
+      "name": "EIDOS_EVENT_MON_HELDITEM",
+      "c_name": "BW_EVENT_MON_HELDITEM",
       "value": 51
     },
     {
-      "name": "BW_EVENT_EGG_HATCH",
+      "name": "EIDOS_EVENT_EGG_HATCH",
+      "c_name": "BW_EVENT_EGG_HATCH",
       "value": 52
     },
     {
-      "name": "BW_EVENT_TRADE_INGAME",
+      "name": "EIDOS_EVENT_TRADE_INGAME",
+      "c_name": "BW_EVENT_TRADE_INGAME",
       "value": 53
     },
     {
-      "name": "BW_EVENT_MON_CURE",
+      "name": "EIDOS_EVENT_MON_CURE",
+      "c_name": "BW_EVENT_MON_CURE",
       "value": 54
     },
     {
-      "name": "BW_EVENT_MON_PP",
+      "name": "EIDOS_EVENT_MON_PP",
+      "c_name": "BW_EVENT_MON_PP",
       "value": 55
     },
     {
-      "name": "BW_EVENT_MON_FORM",
+      "name": "EIDOS_EVENT_MON_FORM",
+      "c_name": "BW_EVENT_MON_FORM",
       "value": 56
     },
     {
-      "name": "BW_EVENT_BATTLE_START",
+      "name": "EIDOS_EVENT_BATTLE_START",
+      "c_name": "BW_EVENT_BATTLE_START",
       "value": 70
     },
     {
-      "name": "BW_EVENT_BATTLE_ACTION",
+      "name": "EIDOS_EVENT_BATTLE_ACTION",
+      "c_name": "BW_EVENT_BATTLE_ACTION",
       "value": 71
     },
     {
-      "name": "BW_EVENT_BATTLE_ITEM",
+      "name": "EIDOS_EVENT_BATTLE_ITEM",
+      "c_name": "BW_EVENT_BATTLE_ITEM",
       "value": 72
     },
     {
-      "name": "BW_EVENT_BATTLE_SWITCH",
+      "name": "EIDOS_EVENT_BATTLE_SWITCH",
+      "c_name": "BW_EVENT_BATTLE_SWITCH",
       "value": 73
     },
     {
-      "name": "BW_EVENT_BATTLE_ESCAPE",
+      "name": "EIDOS_EVENT_BATTLE_ESCAPE",
+      "c_name": "BW_EVENT_BATTLE_ESCAPE",
       "value": 74
     },
     {
-      "name": "BW_EVENT_BATTLE_MOVE",
+      "name": "EIDOS_EVENT_BATTLE_MOVE",
+      "c_name": "BW_EVENT_BATTLE_MOVE",
       "value": 75
     },
     {
-      "name": "BW_EVENT_BATTLE_DAMAGE",
+      "name": "EIDOS_EVENT_BATTLE_DAMAGE",
+      "c_name": "BW_EVENT_BATTLE_DAMAGE",
       "value": 76
     },
     {
-      "name": "BW_EVENT_BATTLE_FAINT",
+      "name": "EIDOS_EVENT_BATTLE_FAINT",
+      "c_name": "BW_EVENT_BATTLE_FAINT",
       "value": 77
     },
     {
-      "name": "BW_EVENT_CATCH_ATTEMPT",
+      "name": "EIDOS_EVENT_CATCH_ATTEMPT",
+      "c_name": "BW_EVENT_CATCH_ATTEMPT",
       "value": 78
     },
     {
-      "name": "BW_EVENT_CATCH_RESULT",
+      "name": "EIDOS_EVENT_CATCH_RESULT",
+      "c_name": "BW_EVENT_CATCH_RESULT",
       "value": 79
     },
     {
-      "name": "BW_EVENT_BATTLE_END",
+      "name": "EIDOS_EVENT_BATTLE_END",
+      "c_name": "BW_EVENT_BATTLE_END",
       "value": 80
     },
     {
-      "name": "BW_EVENT_WHITEOUT",
+      "name": "EIDOS_EVENT_WHITEOUT",
+      "c_name": "BW_EVENT_WHITEOUT",
       "value": 81
     },
     {
-      "name": "BW_EVENT_BATTLE_TRAINER_MON",
+      "name": "EIDOS_EVENT_BATTLE_TRAINER_MON",
+      "c_name": "BW_EVENT_BATTLE_TRAINER_MON",
       "value": 82
     },
     {
-      "name": "BW_EVENT_BATTLE_EXP",
+      "name": "EIDOS_EVENT_BATTLE_EXP",
+      "c_name": "BW_EVENT_BATTLE_EXP",
       "value": 83
     },
     {
-      "name": "BW_EVENT_ITEM_ADD",
+      "name": "EIDOS_EVENT_ITEM_ADD",
+      "c_name": "BW_EVENT_ITEM_ADD",
       "value": 90
     },
     {
-      "name": "BW_EVENT_ITEM_USE",
+      "name": "EIDOS_EVENT_ITEM_USE",
+      "c_name": "BW_EVENT_ITEM_USE",
       "value": 91
     },
     {
-      "name": "BW_EVENT_SHOP_BUY",
+      "name": "EIDOS_EVENT_SHOP_BUY",
+      "c_name": "BW_EVENT_SHOP_BUY",
       "value": 92
     },
     {
-      "name": "BW_EVENT_MONEY_CHANGE",
+      "name": "EIDOS_EVENT_MONEY_CHANGE",
+      "c_name": "BW_EVENT_MONEY_CHANGE",
       "value": 93
     },
     {
-      "name": "BW_EVENT_HEAL",
+      "name": "EIDOS_EVENT_HEAL",
+      "c_name": "BW_EVENT_HEAL",
       "value": 94
     },
     {
-      "name": "BW_EVENT_HEAL_HP",
+      "name": "EIDOS_EVENT_HEAL_HP",
+      "c_name": "BW_EVENT_HEAL_HP",
       "value": 95
     },
     {
-      "name": "BW_EVENT_MON_REVIVE",
+      "name": "EIDOS_EVENT_MON_REVIVE",
+      "c_name": "BW_EVENT_MON_REVIVE",
       "value": 96
     },
     {
-      "name": "BW_EVENT_BADGE_GET",
+      "name": "EIDOS_EVENT_BADGE_GET",
+      "c_name": "BW_EVENT_BADGE_GET",
       "value": 110
     },
     {
-      "name": "BW_EVENT_FLAG_SET",
+      "name": "EIDOS_EVENT_FLAG_SET",
+      "c_name": "BW_EVENT_FLAG_SET",
       "value": 111
     },
     {
-      "name": "BW_EVENT_DEX_REGISTER",
+      "name": "EIDOS_EVENT_DEX_REGISTER",
+      "c_name": "BW_EVENT_DEX_REGISTER",
       "value": 112
     },
     {
-      "name": "BW_ENCOUNTER_GRASS",
+      "name": "EIDOS_ENCOUNTER_GRASS",
+      "c_name": "BW_ENCOUNTER_GRASS",
       "value": 0
     },
     {
-      "name": "BW_ENCOUNTER_DARK_GRASS",
+      "name": "EIDOS_ENCOUNTER_DARK_GRASS",
+      "c_name": "BW_ENCOUNTER_DARK_GRASS",
       "value": 1
     },
     {
-      "name": "BW_ENCOUNTER_SURF",
+      "name": "EIDOS_ENCOUNTER_SURF",
+      "c_name": "BW_ENCOUNTER_SURF",
       "value": 2
     },
     {
-      "name": "BW_ENCOUNTER_FISHING",
+      "name": "EIDOS_ENCOUNTER_FISHING",
+      "c_name": "BW_ENCOUNTER_FISHING",
       "value": 3
     },
     {
-      "name": "BW_ENCOUNTER_SHAKING",
+      "name": "EIDOS_ENCOUNTER_SHAKING",
+      "c_name": "BW_ENCOUNTER_SHAKING",
       "value": 4
     },
     {
-      "name": "BW_ENCOUNTER_RIPPLING",
+      "name": "EIDOS_ENCOUNTER_RIPPLING",
+      "c_name": "BW_ENCOUNTER_RIPPLING",
       "value": 5
     },
     {
-      "name": "BW_ENCOUNTER_DUST",
+      "name": "EIDOS_ENCOUNTER_DUST",
+      "c_name": "BW_ENCOUNTER_DUST",
       "value": 6
     },
     {
-      "name": "BW_RECEIVE_CATCH",
+      "name": "EIDOS_RECEIVE_CATCH",
+      "c_name": "BW_RECEIVE_CATCH",
       "value": 0
     },
     {
-      "name": "BW_RECEIVE_GIFT",
+      "name": "EIDOS_RECEIVE_GIFT",
+      "c_name": "BW_RECEIVE_GIFT",
       "value": 1
     },
     {
-      "name": "BW_RECEIVE_STATIC",
+      "name": "EIDOS_RECEIVE_STATIC",
+      "c_name": "BW_RECEIVE_STATIC",
       "value": 2
     },
     {
-      "name": "BW_RECEIVE_EGG",
+      "name": "EIDOS_RECEIVE_EGG",
+      "c_name": "BW_RECEIVE_EGG",
       "value": 3
     },
     {
-      "name": "BW_RECEIVE_TRADE",
+      "name": "EIDOS_RECEIVE_TRADE",
+      "c_name": "BW_RECEIVE_TRADE",
       "value": 4
     },
     {
-      "name": "BW_FORMAT_SINGLE",
+      "name": "EIDOS_FORMAT_SINGLE",
+      "c_name": "BW_FORMAT_SINGLE",
       "value": 0
     },
     {
-      "name": "BW_FORMAT_DOUBLE",
+      "name": "EIDOS_FORMAT_DOUBLE",
+      "c_name": "BW_FORMAT_DOUBLE",
       "value": 1
     },
     {
-      "name": "BW_FORMAT_TRIPLE",
+      "name": "EIDOS_FORMAT_TRIPLE",
+      "c_name": "BW_FORMAT_TRIPLE",
       "value": 2
     },
     {
-      "name": "BW_FORMAT_ROTATION",
+      "name": "EIDOS_FORMAT_ROTATION",
+      "c_name": "BW_FORMAT_ROTATION",
       "value": 3
     },
     {
-      "name": "BW_FORMAT_MULTI",
+      "name": "EIDOS_FORMAT_MULTI",
+      "c_name": "BW_FORMAT_MULTI",
       "value": 4
     },
     {
-      "name": "BW_ACTION_FIGHT",
+      "name": "EIDOS_ACTION_FIGHT",
+      "c_name": "BW_ACTION_FIGHT",
       "value": 0
     },
     {
-      "name": "BW_ACTION_SWITCH",
+      "name": "EIDOS_ACTION_SWITCH",
+      "c_name": "BW_ACTION_SWITCH",
       "value": 1
     },
     {
-      "name": "BW_ACTION_RUN",
+      "name": "EIDOS_ACTION_RUN",
+      "c_name": "BW_ACTION_RUN",
       "value": 2
     },
     {
-      "name": "BW_OUTCOME_WIN",
+      "name": "EIDOS_OUTCOME_WIN",
+      "c_name": "BW_OUTCOME_WIN",
       "value": 0
     },
     {
-      "name": "BW_OUTCOME_LOSS",
+      "name": "EIDOS_OUTCOME_LOSS",
+      "c_name": "BW_OUTCOME_LOSS",
       "value": 1
     },
     {
-      "name": "BW_OUTCOME_FLED",
+      "name": "EIDOS_OUTCOME_FLED",
+      "c_name": "BW_OUTCOME_FLED",
       "value": 2
     },
     {
-      "name": "BW_OUTCOME_CAUGHT",
+      "name": "EIDOS_OUTCOME_CAUGHT",
+      "c_name": "BW_OUTCOME_CAUGHT",
       "value": 3
     },
     {
-      "name": "BW_OUTCOME_DRAW",
+      "name": "EIDOS_OUTCOME_DRAW",
+      "c_name": "BW_OUTCOME_DRAW",
       "value": 4
     },
     {
-      "name": "BW_MOVE_SOURCE_LEVEL",
+      "name": "EIDOS_MOVE_SOURCE_LEVEL",
+      "c_name": "BW_MOVE_SOURCE_LEVEL",
       "value": 0
     },
     {
-      "name": "BW_MOVE_SOURCE_TM",
+      "name": "EIDOS_MOVE_SOURCE_TM",
+      "c_name": "BW_MOVE_SOURCE_TM",
       "value": 1
     },
     {
-      "name": "BW_MOVE_SOURCE_TUTOR",
+      "name": "EIDOS_MOVE_SOURCE_TUTOR",
+      "c_name": "BW_MOVE_SOURCE_TUTOR",
       "value": 2
     },
     {
-      "name": "BW_MOVE_SOURCE_RELEARNER",
+      "name": "EIDOS_MOVE_SOURCE_RELEARNER",
+      "c_name": "BW_MOVE_SOURCE_RELEARNER",
       "value": 3
     },
     {
-      "name": "BW_EVOLVE_LEVEL",
+      "name": "EIDOS_EVOLVE_LEVEL",
+      "c_name": "BW_EVOLVE_LEVEL",
       "value": 0
     },
     {
-      "name": "BW_EVOLVE_ITEM",
+      "name": "EIDOS_EVOLVE_ITEM",
+      "c_name": "BW_EVOLVE_ITEM",
       "value": 1
     },
     {
-      "name": "BW_EVOLVE_TRADE",
+      "name": "EIDOS_EVOLVE_TRADE",
+      "c_name": "BW_EVOLVE_TRADE",
       "value": 2
     },
     {
-      "name": "BW_EVOLVE_FRIENDSHIP",
+      "name": "EIDOS_EVOLVE_FRIENDSHIP",
+      "c_name": "BW_EVOLVE_FRIENDSHIP",
       "value": 3
     },
     {
-      "name": "BW_EVOLVE_OTHER",
+      "name": "EIDOS_EVOLVE_OTHER",
+      "c_name": "BW_EVOLVE_OTHER",
       "value": 4
     },
     {
-      "name": "BW_HEAL_CENTRE",
+      "name": "EIDOS_HEAL_CENTRE",
+      "c_name": "BW_HEAL_CENTRE",
       "value": 0
     },
     {
-      "name": "BW_HEAL_SCRIPT",
+      "name": "EIDOS_HEAL_SCRIPT",
+      "c_name": "BW_HEAL_SCRIPT",
       "value": 1
     },
     {
-      "name": "BW_HEAL_POWER",
+      "name": "EIDOS_HEAL_POWER",
+      "c_name": "BW_HEAL_POWER",
       "value": 2
     },
     {
-      "name": "BW_EXP_BATTLE",
+      "name": "EIDOS_EXP_BATTLE",
+      "c_name": "BW_EXP_BATTLE",
       "value": 0
     },
     {
-      "name": "BW_EXP_DAYCARE",
+      "name": "EIDOS_EXP_DAYCARE",
+      "c_name": "BW_EXP_DAYCARE",
       "value": 1
     },
     {
-      "name": "BW_CURE_FIELD_ITEM",
+      "name": "EIDOS_CURE_FIELD_ITEM",
+      "c_name": "BW_CURE_FIELD_ITEM",
       "value": 0
     },
     {
-      "name": "BW_CURE_BATTLE",
+      "name": "EIDOS_CURE_BATTLE",
+      "c_name": "BW_CURE_BATTLE",
       "value": 1
     },
     {
-      "name": "BW_CURE_PARTY",
+      "name": "EIDOS_CURE_PARTY",
+      "c_name": "BW_CURE_PARTY",
       "value": 2
     },
     {
-      "name": "BW_PP_FIELD_ITEM",
+      "name": "EIDOS_PP_FIELD_ITEM",
+      "c_name": "BW_PP_FIELD_ITEM",
       "value": 0
     },
     {
-      "name": "BW_PP_BATTLE",
+      "name": "EIDOS_PP_BATTLE",
+      "c_name": "BW_PP_BATTLE",
       "value": 1
     },
     {
-      "name": "BW_FORM_FIELD",
+      "name": "EIDOS_FORM_FIELD",
+      "c_name": "BW_FORM_FIELD",
       "value": 0
     },
     {
-      "name": "BW_FORM_BATTLE",
+      "name": "EIDOS_FORM_BATTLE",
+      "c_name": "BW_FORM_BATTLE",
       "value": 1
     },
     {
-      "name": "BW_LEVELUP_BATTLE",
+      "name": "EIDOS_ZONE_WARP",
+      "c_name": "BW_ZONE_WARP",
       "value": 0
     },
     {
-      "name": "BW_LEVELUP_ITEM",
+      "name": "EIDOS_ZONE_WALK",
+      "c_name": "BW_ZONE_WALK",
       "value": 1
     },
     {
-      "name": "BW_ITEM_FROM_OTHER",
+      "name": "EIDOS_LEVELUP_BATTLE",
+      "c_name": "BW_LEVELUP_BATTLE",
       "value": 0
     },
     {
-      "name": "BW_ITEM_FROM_SCRIPT",
+      "name": "EIDOS_LEVELUP_ITEM",
+      "c_name": "BW_LEVELUP_ITEM",
       "value": 1
     },
     {
-      "name": "BW_ITEM_FROM_GIFT",
+      "name": "EIDOS_ITEM_FROM_OTHER",
+      "c_name": "BW_ITEM_FROM_OTHER",
+      "value": 0
+    },
+    {
+      "name": "EIDOS_ITEM_FROM_SCRIPT",
+      "c_name": "BW_ITEM_FROM_SCRIPT",
+      "value": 1
+    },
+    {
+      "name": "EIDOS_ITEM_FROM_GIFT",
+      "c_name": "BW_ITEM_FROM_GIFT",
       "value": 2
     },
     {
-      "name": "BW_ITEM_FROM_PURCHASE",
+      "name": "EIDOS_ITEM_FROM_PURCHASE",
+      "c_name": "BW_ITEM_FROM_PURCHASE",
       "value": 3
     },
     {
-      "name": "BW_ITEM_FROM_BATTLE",
+      "name": "EIDOS_ITEM_FROM_BATTLE",
+      "c_name": "BW_ITEM_FROM_BATTLE",
       "value": 4
     },
     {
-      "name": "BW_ITEM_FROM_RETURN",
+      "name": "EIDOS_ITEM_FROM_RETURN",
+      "c_name": "BW_ITEM_FROM_RETURN",
       "value": 5
     },
     {
-      "name": "BW_ITEM_FROM_REWARD",
+      "name": "EIDOS_ITEM_FROM_REWARD",
+      "c_name": "BW_ITEM_FROM_REWARD",
       "value": 6
     },
     {
-      "name": "BW_MONEY_OTHER",
+      "name": "EIDOS_MONEY_OTHER",
+      "c_name": "BW_MONEY_OTHER",
       "value": 0
     },
     {
-      "name": "BW_MONEY_SCRIPT",
+      "name": "EIDOS_MONEY_SCRIPT",
+      "c_name": "BW_MONEY_SCRIPT",
       "value": 1
     },
     {
-      "name": "BW_MONEY_PURCHASE",
+      "name": "EIDOS_MONEY_PURCHASE",
+      "c_name": "BW_MONEY_PURCHASE",
       "value": 2
     },
     {
-      "name": "BW_MONEY_SALE",
+      "name": "EIDOS_MONEY_SALE",
+      "c_name": "BW_MONEY_SALE",
       "value": 3
     },
     {
-      "name": "BW_MONEY_BATTLE",
+      "name": "EIDOS_MONEY_BATTLE",
+      "c_name": "BW_MONEY_BATTLE",
       "value": 4
     },
     {
-      "name": "BW_REVIVE_FIELD_ITEM",
+      "name": "EIDOS_REVIVE_FIELD_ITEM",
+      "c_name": "BW_REVIVE_FIELD_ITEM",
       "value": 0
     },
     {
-      "name": "BW_REVIVE_BATTLE_ITEM",
+      "name": "EIDOS_REVIVE_BATTLE_ITEM",
+      "c_name": "BW_REVIVE_BATTLE_ITEM",
       "value": 1
     },
     {
-      "name": "BW_REVIVE_MOVE",
+      "name": "EIDOS_REVIVE_MOVE",
+      "c_name": "BW_REVIVE_MOVE",
       "value": 2
     },
     {
-      "name": "BW_REVIVE_CENTRE",
+      "name": "EIDOS_REVIVE_CENTRE",
+      "c_name": "BW_REVIVE_CENTRE",
       "value": 3
     },
     {
-      "name": "BW_REVIVE_POWER",
+      "name": "EIDOS_REVIVE_POWER",
+      "c_name": "BW_REVIVE_POWER",
       "value": 4
     },
     {
-      "name": "BW_REVIVE_SCRIPT",
+      "name": "EIDOS_REVIVE_SCRIPT",
+      "c_name": "BW_REVIVE_SCRIPT",
       "value": 5
     },
     {
-      "name": "BW_HEAL_HP_FIELD",
+      "name": "EIDOS_HEAL_HP_FIELD",
+      "c_name": "BW_HEAL_HP_FIELD",
       "value": 0
     },
     {
-      "name": "BW_HEAL_HP_BATTLE",
+      "name": "EIDOS_HEAL_HP_BATTLE",
+      "c_name": "BW_HEAL_HP_BATTLE",
       "value": 1
     },
     {
-      "name": "BW_HEAL_HP_PARTY",
+      "name": "EIDOS_HEAL_HP_PARTY",
+      "c_name": "BW_HEAL_HP_PARTY",
       "value": 2
     },
     {
-      "name": "BW_SCRIPT_VM_FIELD",
+      "name": "EIDOS_SCRIPT_VM_FIELD",
+      "c_name": "BW_SCRIPT_VM_FIELD",
       "value": 0
     },
     {
-      "name": "BW_SCRIPT_VM_BATTLE",
+      "name": "EIDOS_SCRIPT_VM_BATTLE",
+      "c_name": "BW_SCRIPT_VM_BATTLE",
       "value": 1
     },
     {
-      "name": "BW_SCRIPT_CONTINUE",
+      "name": "EIDOS_SCRIPT_CONTINUE",
+      "c_name": "BW_SCRIPT_CONTINUE",
       "value": 0
     },
     {
-      "name": "BW_SCRIPT_REPLACE",
+      "name": "EIDOS_SCRIPT_REPLACE",
+      "c_name": "BW_SCRIPT_REPLACE",
       "value": 1
     },
     {
-      "name": "BW_MON_FIELD_SPECIES",
+      "name": "EIDOS_MON_FIELD_SPECIES",
+      "c_name": "BW_MON_FIELD_SPECIES",
       "value": 5
     },
     {
-      "name": "BW_MON_FIELD_ITEM",
+      "name": "EIDOS_MON_FIELD_ITEM",
+      "c_name": "BW_MON_FIELD_ITEM",
       "value": 6
     },
     {
-      "name": "BW_MON_FIELD_EXP",
+      "name": "EIDOS_MON_FIELD_EXP",
+      "c_name": "BW_MON_FIELD_EXP",
       "value": 8
     },
     {
-      "name": "BW_MON_FIELD_LEVEL",
+      "name": "EIDOS_MON_FIELD_LEVEL",
+      "c_name": "BW_MON_FIELD_LEVEL",
       "value": 158
     },
     {
-      "name": "BW_MON_FIELD_HP",
+      "name": "EIDOS_MON_FIELD_HP",
+      "c_name": "BW_MON_FIELD_HP",
       "value": 160
     },
     {
-      "name": "BW_MON_FIELD_MAX_HP",
+      "name": "EIDOS_MON_FIELD_MAX_HP",
+      "c_name": "BW_MON_FIELD_MAX_HP",
       "value": 161
     },
     {
-      "name": "BW_MON_FIELD_ATK",
+      "name": "EIDOS_MON_FIELD_ATK",
+      "c_name": "BW_MON_FIELD_ATK",
       "value": 162
     },
     {
-      "name": "BW_MON_FIELD_DEF",
+      "name": "EIDOS_MON_FIELD_DEF",
+      "c_name": "BW_MON_FIELD_DEF",
       "value": 163
     },
     {
-      "name": "BW_MON_FIELD_SPEED",
+      "name": "EIDOS_MON_FIELD_SPEED",
+      "c_name": "BW_MON_FIELD_SPEED",
       "value": 164
     },
     {
-      "name": "BW_MON_FIELD_SPATK",
+      "name": "EIDOS_MON_FIELD_SPATK",
+      "c_name": "BW_MON_FIELD_SPATK",
       "value": 165
     },
     {
-      "name": "BW_MON_FIELD_SPDEF",
+      "name": "EIDOS_MON_FIELD_SPDEF",
+      "c_name": "BW_MON_FIELD_SPDEF",
       "value": 166
     },
     {
-      "name": "BW_MON_FIELD_TYPE1",
+      "name": "EIDOS_MON_FIELD_TYPE1",
+      "c_name": "BW_MON_FIELD_TYPE1",
       "value": 174
     },
     {
-      "name": "BW_MON_FIELD_TYPE2",
+      "name": "EIDOS_MON_FIELD_TYPE2",
+      "c_name": "BW_MON_FIELD_TYPE2",
       "value": 175
     },
     {
-      "name": "BW_MON_FIELD_PERSONALITY",
+      "name": "EIDOS_MON_FIELD_PERSONALITY",
+      "c_name": "BW_MON_FIELD_PERSONALITY",
       "value": 0
     },
     {
-      "name": "BW_MON_FIELD_OT_ID",
+      "name": "EIDOS_MON_FIELD_OT_ID",
+      "c_name": "BW_MON_FIELD_OT_ID",
       "value": 7
     },
     {
-      "name": "BW_MON_FIELD_FRIENDSHIP",
+      "name": "EIDOS_MON_FIELD_FRIENDSHIP",
+      "c_name": "BW_MON_FIELD_FRIENDSHIP",
       "value": 9
     },
     {
-      "name": "BW_MON_FIELD_ABILITY",
+      "name": "EIDOS_MON_FIELD_ABILITY",
+      "c_name": "BW_MON_FIELD_ABILITY",
       "value": 10
     },
     {
-      "name": "BW_MON_FIELD_MOVE1",
+      "name": "EIDOS_MON_FIELD_MOVE1",
+      "c_name": "BW_MON_FIELD_MOVE1",
       "value": 54
     },
     {
-      "name": "BW_MON_FIELD_MOVE2",
+      "name": "EIDOS_MON_FIELD_MOVE2",
+      "c_name": "BW_MON_FIELD_MOVE2",
       "value": 55
     },
     {
-      "name": "BW_MON_FIELD_MOVE3",
+      "name": "EIDOS_MON_FIELD_MOVE3",
+      "c_name": "BW_MON_FIELD_MOVE3",
       "value": 56
     },
     {
-      "name": "BW_MON_FIELD_MOVE4",
+      "name": "EIDOS_MON_FIELD_MOVE4",
+      "c_name": "BW_MON_FIELD_MOVE4",
       "value": 57
     },
     {
-      "name": "BW_MON_FIELD_IS_EGG",
+      "name": "EIDOS_MON_FIELD_IS_EGG",
+      "c_name": "BW_MON_FIELD_IS_EGG",
       "value": 76
     },
     {
-      "name": "BW_MON_FIELD_GENDER",
+      "name": "EIDOS_MON_FIELD_GENDER",
+      "c_name": "BW_MON_FIELD_GENDER",
       "value": 110
     },
     {
-      "name": "BW_MON_FIELD_FORM",
+      "name": "EIDOS_MON_FIELD_FORM",
+      "c_name": "BW_MON_FIELD_FORM",
       "value": 111
     },
     {
-      "name": "BW_MON_FIELD_NATURE",
+      "name": "EIDOS_MON_FIELD_NATURE",
+      "c_name": "BW_MON_FIELD_NATURE",
       "value": 112
     },
     {
-      "name": "BW_MON_FIELD_HAS_NICKNAME",
+      "name": "EIDOS_MON_FIELD_HAS_NICKNAME",
+      "c_name": "BW_MON_FIELD_HAS_NICKNAME",
       "value": 117
     },
     {
-      "name": "BW_MON_FIELD_FATEFUL",
+      "name": "EIDOS_MON_FIELD_FATEFUL",
+      "c_name": "BW_MON_FIELD_FATEFUL",
       "value": 109
     },
     {
-      "name": "BW_MON_FIELD_ORIGIN_GAME",
+      "name": "EIDOS_MON_FIELD_ORIGIN_GAME",
+      "c_name": "BW_MON_FIELD_ORIGIN_GAME",
       "value": 119
     },
     {
-      "name": "BW_MON_FIELD_MET_LOCATION",
+      "name": "EIDOS_MON_FIELD_MET_LOCATION",
+      "c_name": "BW_MON_FIELD_MET_LOCATION",
       "value": 150
     },
     {
-      "name": "BW_MON_FIELD_BALL",
+      "name": "EIDOS_MON_FIELD_BALL",
+      "c_name": "BW_MON_FIELD_BALL",
       "value": 152
     },
     {
-      "name": "BW_MON_FIELD_MET_LEVEL",
+      "name": "EIDOS_MON_FIELD_MET_LEVEL",
+      "c_name": "BW_MON_FIELD_MET_LEVEL",
       "value": 153
     },
     {
-      "name": "BW_SESSION_MESSAGE",
+      "name": "EIDOS_SESSION_MESSAGE",
+      "c_name": "BW_SESSION_MESSAGE",
       "value": 0
     },
     {
-      "name": "BW_SESSION_JOIN",
+      "name": "EIDOS_SESSION_JOIN",
+      "c_name": "BW_SESSION_JOIN",
       "value": 1
     },
     {
-      "name": "BW_SESSION_LEAVE",
+      "name": "EIDOS_SESSION_LEAVE",
+      "c_name": "BW_SESSION_LEAVE",
       "value": 2
     },
     {
-      "name": "BW_RESTART_NEW_GAME",
+      "name": "EIDOS_RESTART_NEW_GAME",
+      "c_name": "BW_RESTART_NEW_GAME",
       "value": 1
     },
     {
-      "name": "BW_RESTART_DELETE_SAVE",
+      "name": "EIDOS_RESTART_DELETE_SAVE",
+      "c_name": "BW_RESTART_DELETE_SAVE",
       "value": 2
     }
   ]

@@ -93,6 +93,12 @@ STRUCT_CATEGORY = {}
 STRUCT_SINCE = {}
 
 
+def first_sentence(text):
+    """(the first sentence, the rest)."""
+    parts = re.split(r'(?<=\.)\s+', text.strip(), maxsplit=1)
+    return parts[0], (parts[1] if len(parts) > 1 else '')
+
+
 def to_wasm_names(text):
     """The names of eidos_wasm.h in a line of prose: EIDOS_ constants,
     Eidos types, <stdint.h> integers."""
@@ -512,6 +518,7 @@ def generate():
             g['c_type'] = f['type']
             g['type'] = PRIM[f['type']][2] if f['type'] in PRIM else 'Eidos' + f['type'][2:]
             doc = pdocs.get(f['rule_name']) or pdocs.get(f['name']) or f['doc']
+            doc = re.sub(r'^version \d: ', '', doc or '')
             g['doc'] = to_wasm_names(doc)
             out_fields.append(g)
         events.append({'id': enum_map[e['kind']], 'name': e['name'],
@@ -519,7 +526,8 @@ def generate():
                        'since': STRUCT_SINCE.get(sname, 3),
                        'refusable': e['refusable'], 'struct': 'Eidos' + sname[2:],
                        'c_struct': sname, 'size': size,
-                       'doc': to_wasm_names(STRUCT_DOCS.get(sname, '')),
+                       'doc': to_wasm_names(first_sentence(STRUCT_DOCS.get(sname, ''))[0]),
+                       'details': to_wasm_names(first_sentence(STRUCT_DOCS.get(sname, ''))[1]),
                        'where': to_wasm_names(info.get('where')),
                        'refuse': to_wasm_names(info.get('refuse')),
                        'modify': to_wasm_names(info.get('modify')),
@@ -527,7 +535,9 @@ def generate():
     events.sort(key=lambda e: e['id'])
     rule_docs = read_rule_field_docs()
     for f in rules['state_fields']:
-        f['doc'] = to_wasm_names(rule_docs.get(f['name'], ''))
+        doc = rule_docs.get(f['name'], '')
+        f['since'] = 4 if doc.endswith('(version 4)') else 3
+        f['doc'] = to_wasm_names(re.sub(r'\s*\(version 4\)$', '', doc))
     rules_out = dict(rules)
     rules_out['events'] = [e['name'] for e in events]
 
@@ -586,7 +596,8 @@ def generate():
         d + '/events.json': js({'api': api, 'events': events}),
         d + '/state.json': js({'api': api, 'table': 'BwModState', 'calls': state}),
         d + '/services.json': js({'api': api, 'table': 'BwModServices', 'calls': services}),
-        d + '/enums.json': js({'api': api, 'constants': [{'name': n, 'value': v} for n, v in enums]}),
+        d + '/enums.json': js({'api': api, 'constants': [
+            {'name': 'EIDOS_' + n[3:], 'c_name': n, 'value': v} for n, v in enums]}),
         d + '/hooks.json': js({'api': api, 'hooks': hooks}),
         d + '/core.json': js({'api': api, 'import_module': 'eidos', 'imports': CORE,
                               'exports': [

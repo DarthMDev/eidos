@@ -55,7 +55,7 @@ does not happen.
 
 | Event | Game function | Region | Refuse | Modify |
 |---|---|---|---|---|
-| `route.change` | `FIELD_MAP_CHANGE_SetupZone` 0x021643E8 | ov010 | - | - |
+| `route.change` | `FIELD_MAP_CHANGE_SetupZone` 0x021643E8 (ov010, every map change: `how` warp); the return of `FIELDMAP_ChangeZone` 0x021893C0 (ov021, a walk over a zone border: `how` walk) | - | - | - |
 | `map.warp` | `EVENT_MAPCHANGE_ChangeFieldEvent` 0x021841C0 | ov020 | - | destination |
 | `player.step` | `FIELD_EVENT_CHECK_CheckStepEvents` 0x0218A9B0 | ov021 | - | - |
 | `trainer.spotted` | `EVENT_TRAINER_EYE_Check` 0x021AE0CC | ov021 | the trainer does not see the player (the function returns no event) | - |

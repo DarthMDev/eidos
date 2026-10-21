@@ -274,8 +274,8 @@ width and the hash follows it: the number beside the version number is the
 
 | Pointers | Hash |
 |---|---|
-| 32-bit | 0x6CD31469 (the number in `sdk/mod_api.h`) |
-| 64-bit | 0xC8C98F9E |
+| 32-bit | 0x5C25A051 (the number in `sdk/mod_api.h`) |
+| 64-bit | 0xF02A401E |
 
 The payload structs, the ids and the enums hold no pointer and hash the
 same everywhere.

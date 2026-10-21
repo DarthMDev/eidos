@@ -171,38 +171,66 @@ names:
 |---|---|---|
 | `money` | the player's money | read, write |
 | `badges` | the number of badges | read |
-| `badge[n]` | whether badge `n` is held | read |
+| `badge[n]` | whether badge `n` (0 to 7) is held | read |
 | `zone` | the current zone | read |
-| `party_count` | Pokemon in the party | read |
+| `party_count` | how many Pokemon the party holds | read |
 | `species[m]` | a Pokemon's species | read |
 | `level[m]` | a Pokemon's level | read |
-| `hp[m]`, `max_hp[m]` | a Pokemon's HP and maximum HP | read; `hp` write |
-| `type1[m]`, `type2[m]` | a Pokemon's types | read |
+| `hp[m]` | a Pokemon's current HP | read, write |
+| `max_hp[m]` | a Pokemon's maximum HP | read |
+| `type1[m]` | a Pokemon's first type | read |
+| `type2[m]` | a Pokemon's second type (the first again for a single type) | read |
 | `shiny[m]` | whether a Pokemon is shiny | read |
-| `held_item[m]` | a Pokemon's held item | read |
-| `personality[m]`, `ot_id[m]`, `exp[m]`, `friendship[m]`, `ability[m]` | a Pokemon's own fields (version 4) | read |
-| `move1[m]` .. `move4[m]` | a Pokemon's moves (version 4) | read |
-| `is_egg[m]`, `gender[m]`, `form[m]`, `nature[m]`, `has_nickname[m]` | (version 4) | read |
-| `met_location[m]`, `met_level[m]`, `origin_game[m]`, `fateful[m]`, `ball[m]` | where and how a Pokemon was met (version 4) | read |
-| `place[m]`, `side[m]` | where a reference points: `BW_MON_*`, and in a battle the side (0 the player's) (version 4) | read |
-| `species_type1[s]`, `species_type2[s]` | a species' types | read |
+| `held_item[m]` | a Pokemon's held item, 0 for none | read |
+| `personality[m]` | a Pokemon's personality value (the number its nature, gender and shininess come from) (version 4) | read |
+| `ot_id[m]` | the id of a Pokemon's original trainer (version 4) | read |
+| `exp[m]` | a Pokemon's experience points (version 4) | read |
+| `friendship[m]` | a Pokemon's friendship, 0 to 255 (version 4) | read |
+| `ability[m]` | a Pokemon's ability (version 4) | read |
+| `move1[m]` | a Pokemon's first move, 0 for none (version 4) | read |
+| `move2[m]` | a Pokemon's second move, 0 for none (version 4) | read |
+| `move3[m]` | a Pokemon's third move, 0 for none (version 4) | read |
+| `move4[m]` | a Pokemon's fourth move, 0 for none (version 4) | read |
+| `is_egg[m]` | whether a Pokemon is an egg (version 4) | read |
+| `gender[m]` | a Pokemon's gender: 0 male, 1 female, 2 none (version 4) | read |
+| `form[m]` | a Pokemon's form, 0 for the first (version 4) | read |
+| `nature[m]` | a Pokemon's nature, 0 to 24 (version 4) | read |
+| `has_nickname[m]` | whether a Pokemon has a nickname (version 4) | read |
+| `met_location[m]` | where a Pokemon was met (the place name) (version 4) | read |
+| `met_level[m]` | the level a Pokemon was met at (version 4) | read |
+| `origin_game[m]` | the game a Pokemon comes from (version 4) | read |
+| `fateful[m]` | whether a Pokemon came from a fateful encounter (an event gift) (version 4) | read |
+| `ball[m]` | the ball a Pokemon was caught in (version 4) | read |
+| `place[m]` | where a reference points: `BW_MON_PARTY`, `BW_MON_BOX`, `BW_MON_BATTLE` or `BW_MON_WILD` (version 4) | read |
+| `side[m]` | in a battle, the side of a Pokemon: 0 the player's, 1 the opponent's (version 4) | read |
+| `species_type1[s]` | a species' first type | read |
+| `species_type2[s]` | a species' second type | read |
 | `species_bst[s]` | a species' base stat total | read |
-| `species_base[s]` | the first stage of species `s`'s evolution line; two species are in one line when their bases are equal (version 4) | read |
-| `species_stage[s]`, `catch_rate[s]`, `gender_ratio[s]`, `growth[s]`, `egg_group1[s]`, `egg_group2[s]` | a species' data (version 4) | read |
-| `caught[s]` | whether a species is registered caught | read |
-| `owned[s]` | whether the party or a box holds a Pokemon of species `s` that is not an egg (version 4) | read |
-| `party_max_level`, `party_alive` | the highest level in the party; how many party Pokemon have HP, eggs left out (version 4) | read |
+| `species_base[s]` | the first stage of a species' evolution line; two species are in one line when their bases are equal (version 4) | read |
+| `species_stage[s]` | a species' stage in its evolution line, as the species data stores it (version 4) | read |
+| `catch_rate[s]` | a species' catch rate, 0 to 255 (version 4) | read |
+| `gender_ratio[s]` | a species' gender ratio: 0 always male, 254 always female, 255 no gender, the share of females out of 254 otherwise (version 4) | read |
+| `growth[s]` | a species' experience growth group (version 4) | read |
+| `egg_group1[s]` | a species' first egg group (version 4) | read |
+| `egg_group2[s]` | a species' second egg group (version 4) | read |
+| `caught[s]` | whether a species is registered caught in the Pokedex | read |
+| `owned[s]` | whether the party or a box holds a Pokemon of the species that is not an egg (version 4) | read |
+| `party_max_level` | the highest level in the party, eggs left out (version 4) | read |
+| `party_alive` | how many party Pokemon have HP left, eggs left out (version 4) | read |
 | `party_has_type[t]` | whether a party Pokemon (not an egg) has type `t` (version 4) | read |
 | `item_count[i]` | how many of item `i` the bag holds | read |
 | `item_pocket[i]` | the bag pocket of item `i` (version 4) | read |
-| `move_type[v]`, `move_power[v]`, `move_class[v]` | a move's type, power and damage class, as the move data stores them (version 4) | read |
+| `move_type[v]` | a move's type (version 4) | read |
+| `move_power[v]` | a move's power, 0 for a move that does no direct damage (version 4) | read |
+| `move_class[v]` | a move's damage class (physical, special or status), as the move data stores it (version 4) | read |
 | `area` | the current area: the place name the game shows on entry; every floor of a cave and every building of a town share it (version 4) | read |
 | `area_of[z]` | the area of zone `z` (version 4) | read |
-| `wild_battle` | the battle in progress is a wild one (version 4) | read |
-| `battle_trainer`, `battle_trainer2` | the opposing trainers of the battle in progress, 0 for none (version 4) | read |
+| `wild_battle` | whether the battle in progress is a wild one (version 4) | read |
+| `battle_trainer` | the first opposing trainer of the battle in progress, 0 for none (version 4) | read |
+| `battle_trainer2` | the second opposing trainer (a multi battle), 0 for none (version 4) | read |
 | `play_seconds` | the play time in seconds (version 4) | read |
-| `battle_style` | shift or set | read |
-| `in_battle` | a battle is in progress | read |
+| `battle_style` | the battle style option: shift or set | read |
+| `in_battle` | whether a battle is in progress | read |
 
 `m` is a Pokemon reference, usually `event.mon`, or a party position (0 to
 5); `s` a species; `i` an item; `v` a move; `t` a type; `z` a zone. A name not

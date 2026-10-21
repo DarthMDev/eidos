@@ -60,7 +60,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0x6CD31469u
+#define BW_MOD_API_HASH 0x5C25A051u
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
@@ -299,6 +299,13 @@ enum {
     BW_FORM_BATTLE = 1          /* in a battle: an ability, a move, a held item */
 };
 
+/* How the player got into a zone (route.change). */
+enum {
+    BW_ZONE_WARP = 0,   /* a map change: a door, stairs, a warp tile, Fly, Dig,
+                         * an Escape Rope, a whiteout, a script */
+    BW_ZONE_WALK = 1    /* walking over a zone border on the same map */
+};
+
 /* What raised the level (mon.levelup). */
 enum {
     BW_LEVELUP_BATTLE = 0,  /* experience from a battle */
@@ -409,14 +416,17 @@ typedef struct BwGameCleared {
 /* world */
 
 /*
- * route.change: the player walks into another zone without a warp (a route
- * border, a town edge).
+ * route.change: the player is in a new zone, by any way in: a map change
+ * (a door, stairs, a warp tile, Fly, Dig, an Escape Rope, a whiteout, a
+ * script) or a walk over a zone border on the same map.
  */
 typedef struct BwRouteChange {
     BwEvent h;
     u16 zone;       /* the new zone */
     u16 prev_zone;  /* the zone left */
     u8  season;
+    /* Version 4. */
+    u8  how;        /* BW_ZONE_* */
 } BwRouteChange;
 
 /*
@@ -491,8 +501,9 @@ typedef struct BwFieldMove {
 } BwFieldMove;
 
 /*
- * pc.open: the player opens the Pokemon storage system; refused, it does
- * not open.
+ * pc.open: a script opens the Pokemon storage system: a PC (in a Pokemon
+ * Centre or anywhere else) or the Battle Box.  It is the only way into the
+ * box screen.  Refused, it does not open.
  */
 typedef struct BwPcOpen {
     BwEvent h;
@@ -583,11 +594,12 @@ typedef struct BwMonNickname {
 } BwMonNickname;
 
 /*
- * mon.cure (version 4): a status is about to be cured.  status is the
- * game's own number: 1 paralysis, 2 sleep, 3 freeze, 4 burn, 5 poison; in
- * a battle, 6 and up are the battle's own conditions (confusion and the
- * others).  A refusal keeps the status (on the party screen the item is
- * not used; in a battle the game's text may still say it was cured).
+ * mon.cure (version 4): a Pokemon's status is about to be cured, by an
+ * item, a move, an ability, a berry or a party heal. status is the game's
+ * own number: 1 paralysis, 2 sleep, 3 freeze, 4 burn, 5 poison; in a
+ * battle, 6 and up are the battle's own conditions (confusion and the
+ * others).  A refusal keeps the status (on the party screen the item is not
+ * used; in a battle the game's text may still say it was cured).
  */
 typedef struct BwMonCure {
     BwEvent h;
@@ -598,8 +610,9 @@ typedef struct BwMonCure {
 } BwMonCure;
 
 /*
- * mon.pp (version 4): a move is about to get PP back.  amount is the PP it
- * gets, before the cap at its max.  A refusal gives none.
+ * mon.pp (version 4): a move is about to get PP back, from an Ether or an
+ * Elixir or in a battle. amount is the PP it gets, before the cap at its
+ * max.  A refusal gives none.
  */
 typedef struct BwMonPp {
     BwEvent h;
@@ -611,8 +624,8 @@ typedef struct BwMonPp {
 } BwMonPp;
 
 /*
- * mon.form (version 4): a Pokemon is about to change form.  A refusal keeps
- * the form it has; `to` can be changed.
+ * mon.form (version 4): a Pokemon is about to change form, outside a battle
+ * or in one. A refusal keeps the form it has; `to` can be changed.
  */
 typedef struct BwMonForm {
     BwEvent h;
@@ -888,8 +901,8 @@ typedef struct BwBattleEnd {
 } BwBattleEnd;
 
 /*
- * battle.exp (version 4): an opposing Pokemon fainted and the battle hands
- * out experience to the party, as a whole.  It fires before mon.exp fires
+ * battle.exp (version 4): the battle is about to hand out experience to the
+ * party after an opposing Pokemon fainted. It fires before mon.exp fires
  * for each member that gains.  A refusal gives nobody any experience (and
  * mon.exp does not fire); scale changes every member's share.
  */
@@ -912,13 +925,12 @@ typedef struct BwWhiteout {
 } BwWhiteout;
 
 /*
- * battle.trainer_mon (version 4): one Pokemon of the opposing trainer's
- * party, after the game built the party and before the battle starts.  It
- * fires once per member, in party order.  A refusal takes the member out of
- * the party (the last one always stays).  A changed field is written to
- * the Pokemon with the game's own setters: a new species or level works out
- * the stats again, a new move gets its full PP.  0 in a *mod field leaves
- * the game's value.
+ * battle.trainer_mon (version 4): a trainer battle is about to start: once
+ * for each Pokemon of the opposing trainer's party. It fires once per
+ * member, in party order.  A refusal takes the member out of the party (the
+ * last one always stays).  A changed field is written to the Pokemon with
+ * the game's own setters: a new species or level works out the stats again,
+ * a new move gets its full PP.  0 in a *mod field leaves the game's value.
  */
 typedef struct BwBattleTrainerMon {
     BwEvent h;
@@ -992,9 +1004,10 @@ typedef struct BwHeal {
 } BwHeal;
 
 /*
- * mon.revive (version 4): a fainted Pokemon is about to come back.  A
- * refusal keeps it fainted; for an item, the item is not used up.  The hp
- * is what it comes back with, at least 1, at most max_hp.
+ * mon.revive (version 4): a fainted Pokemon is about to come back, from a
+ * revive item, Sacred Ash or a party heal. A refusal keeps it fainted; for
+ * an item, the item is not used up.  The hp is what it comes back with, at
+ * least 1, at most max_hp.
  */
 typedef struct BwMonRevive {
     BwEvent h;
@@ -1007,10 +1020,11 @@ typedef struct BwMonRevive {
 } BwMonRevive;
 
 /*
- * heal.hp (version 4): a Pokemon that has HP gets more.  The amount is the
+ * heal.hp (version 4): a Pokemon that has HP is about to get more, from an
+ * item, a move, an ability, a held item or a party heal. The amount is the
  * HP the game is about to add, before the cap at max_hp; a handler changes
- * it, or refuses the event and the Pokemon gets nothing.  A fainted
- * Pokemon coming back is mon.revive, not this event.  On the field the item is
+ * it, or refuses the event and the Pokemon gets nothing.  A fainted Pokemon
+ * coming back is mon.revive, not this event.  On the field the item is
  * still used up: a mod that wants the item kept refuses item.use instead.
  */
 typedef struct BwHealHp {

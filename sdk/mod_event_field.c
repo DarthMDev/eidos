@@ -718,6 +718,27 @@ static struct PokemonParam *opponent_lead(const BwPortBattleSetup *setup)
 /* ------------------------------------------------------------------ */
 
 /*
+ * route.change on foot: FIELDMAP_ChangeZone (fieldMap) runs when the
+ * player walks over a zone border on the same map; the event fires on its
+ * return, when the player's zone is the new one.  The map stays, so the
+ * field context keeps its position and the avatars stay.
+ */
+static void build_route_change_walk(const BwEventCall *call, BwEventPayload *out)
+{
+    const BwModState *st = bw_mod_state_table();
+    u16 zone = (st != NULL && st->zone != NULL) ? st->zone() : 0u;
+
+    (void)call;
+    memset(&out->route_change, 0, sizeof(out->route_change));
+    out->route_change.zone = zone;
+    out->route_change.prev_zone = bw_mod_field_context.zone;
+    out->route_change.season = bw_mod_field_context.season;
+    out->route_change.how = (u8)BW_ZONE_WALK;
+    bw_mod_field_context.prev_zone = bw_mod_field_context.zone;
+    bw_mod_field_context.zone = zone;
+}
+
+/*
  * route.change: the player enters a new zone.  The new zone is the
  * argument, the zone left is the one the field context holds, and the
  * season is the game's own.
@@ -740,6 +761,7 @@ static void build_route_change(const BwEventCall *call, BwEventPayload *out)
     out->route_change.zone = zone;
     out->route_change.prev_zone = prev_zone;
     out->route_change.season = season;
+    out->route_change.how = (u8)BW_ZONE_WARP;
 
     memset(&bw_mod_field_context, 0, sizeof(bw_mod_field_context));
     bw_mod_field_context.zone = zone;
@@ -1375,6 +1397,9 @@ static void build_encounter_trainer(const BwEventCall *call,
 static const BwEventBinding g_field_rows[] = {
     { BW_MOD_REGION_OVL(10), 0x021643E8u, BW_EVENT_ROUTE_CHANGE, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_route_change, NULL, NULL, NULL },
+
+    { BW_MOD_REGION_OVL(21), 0x021893C0u, BW_EVENT_ROUTE_CHANGE, BW_EVENT_AFTER,
+      BW_SCOPE_ANY, 0u, 0u, build_route_change_walk, NULL, NULL, NULL },
 
     { BW_MOD_REGION_OVL(20), 0x021841C0u, BW_EVENT_MAP_WARP, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_map_warp, apply_map_warp, NULL, NULL },

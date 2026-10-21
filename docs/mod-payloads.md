@@ -170,6 +170,7 @@ to the Hall of Fame: the party's own members, up to six.
 | `zone` | u16 | the new zone |
 | `prev_zone` | u16 | the zone left |
 | `season` | u8 | the current season |
+| `how` | u8 | `BW_ZONE_WARP` (a map change: a door, stairs, a warp tile, Fly, Dig, an Escape Rope, a whiteout, a script) or `BW_ZONE_WALK` (a walk over a zone border on the same map) |
 
 **`map.warp`**
 

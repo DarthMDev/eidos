@@ -20,6 +20,7 @@
       "readable": true,
       "writable": true,
       "writable_declared": true,
+      "since": 3,
       "doc": "the player's money"
     },
     {
@@ -28,6 +29,7 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
+      "since": 3,
       "doc": "the number of badges"
     },
     {
@@ -36,7 +38,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "whether badge `n` is held"
+      "since": 3,
+      "doc": "whether badge `n` (0 to 7) is held"
     },
     {
       "name": "zone",
@@ -44,6 +47,7 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
+      "since": 3,
       "doc": "the current zone"
     },
     {
@@ -52,7 +56,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "Pokemon in the party"
+      "since": 3,
+      "doc": "how many Pokemon the party holds"
     },
     {
       "name": "species",
@@ -60,6 +65,7 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
+      "since": 3,
       "doc": "a Pokemon's species"
     },
     {
@@ -68,6 +74,7 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
+      "since": 3,
       "doc": "a Pokemon's level"
     },
     {
@@ -76,7 +83,8 @@
       "readable": true,
       "writable": true,
       "writable_declared": true,
-      "doc": "a Pokemon's HP and maximum HP"
+      "since": 3,
+      "doc": "a Pokemon's current HP"
     },
     {
       "name": "max_hp",
@@ -84,7 +92,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's HP and maximum HP"
+      "since": 3,
+      "doc": "a Pokemon's maximum HP"
     },
     {
       "name": "type1",
@@ -92,7 +101,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's types"
+      "since": 3,
+      "doc": "a Pokemon's first type"
     },
     {
       "name": "type2",
@@ -100,7 +110,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's types"
+      "since": 3,
+      "doc": "a Pokemon's second type (the first again for a single type)"
     },
     {
       "name": "shiny",
@@ -108,6 +119,7 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
+      "since": 3,
       "doc": "whether a Pokemon is shiny"
     },
     {
@@ -116,7 +128,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's held item"
+      "since": 3,
+      "doc": "a Pokemon's held item, 0 for none"
     },
     {
       "name": "species_type1",
@@ -124,7 +137,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a species' types"
+      "since": 3,
+      "doc": "a species' first type"
     },
     {
       "name": "species_type2",
@@ -132,7 +146,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a species' types"
+      "since": 3,
+      "doc": "a species' second type"
     },
     {
       "name": "species_bst",
@@ -140,6 +155,7 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
+      "since": 3,
       "doc": "a species' base stat total"
     },
     {
@@ -148,7 +164,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "whether a species is registered caught"
+      "since": 3,
+      "doc": "whether a species is registered caught in the Pokedex"
     },
     {
       "name": "item_count",
@@ -156,6 +173,7 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
+      "since": 3,
       "doc": "how many of item `i` the bag holds"
     },
     {
@@ -164,7 +182,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's own fields (version 4)"
+      "since": 4,
+      "doc": "a Pokemon's personality value (the number its nature, gender and shininess come from)"
     },
     {
       "name": "ot_id",
@@ -172,7 +191,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's own fields (version 4)"
+      "since": 4,
+      "doc": "the id of a Pokemon's original trainer"
     },
     {
       "name": "exp",
@@ -180,7 +200,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's own fields (version 4)"
+      "since": 4,
+      "doc": "a Pokemon's experience points"
     },
     {
       "name": "friendship",
@@ -188,7 +209,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's own fields (version 4)"
+      "since": 4,
+      "doc": "a Pokemon's friendship, 0 to 255"
     },
     {
       "name": "ability",
@@ -196,7 +218,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's own fields (version 4)"
+      "since": 4,
+      "doc": "a Pokemon's ability"
     },
     {
       "name": "move1",
@@ -204,7 +227,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's moves (version 4)"
+      "since": 4,
+      "doc": "a Pokemon's first move, 0 for none"
     },
     {
       "name": "move2",
@@ -212,7 +236,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's moves (version 4)"
+      "since": 4,
+      "doc": "a Pokemon's second move, 0 for none"
     },
     {
       "name": "move3",
@@ -220,7 +245,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's moves (version 4)"
+      "since": 4,
+      "doc": "a Pokemon's third move, 0 for none"
     },
     {
       "name": "move4",
@@ -228,7 +254,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a Pokemon's moves (version 4)"
+      "since": 4,
+      "doc": "a Pokemon's fourth move, 0 for none"
     },
     {
       "name": "is_egg",
@@ -236,7 +263,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "(version 4)"
+      "since": 4,
+      "doc": "whether a Pokemon is an egg"
     },
     {
       "name": "gender",
@@ -244,7 +272,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "(version 4)"
+      "since": 4,
+      "doc": "a Pokemon's gender: 0 male, 1 female, 2 none"
     },
     {
       "name": "form",
@@ -252,7 +281,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "(version 4)"
+      "since": 4,
+      "doc": "a Pokemon's form, 0 for the first"
     },
     {
       "name": "nature",
@@ -260,7 +290,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "(version 4)"
+      "since": 4,
+      "doc": "a Pokemon's nature, 0 to 24"
     },
     {
       "name": "has_nickname",
@@ -268,7 +299,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "(version 4)"
+      "since": 4,
+      "doc": "whether a Pokemon has a nickname"
     },
     {
       "name": "fateful",
@@ -276,7 +308,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "where and how a Pokemon was met (version 4)"
+      "since": 4,
+      "doc": "whether a Pokemon came from a fateful encounter (an event gift)"
     },
     {
       "name": "origin_game",
@@ -284,7 +317,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "where and how a Pokemon was met (version 4)"
+      "since": 4,
+      "doc": "the game a Pokemon comes from"
     },
     {
       "name": "met_location",
@@ -292,7 +326,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "where and how a Pokemon was met (version 4)"
+      "since": 4,
+      "doc": "where a Pokemon was met (the place name)"
     },
     {
       "name": "ball",
@@ -300,7 +335,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "where and how a Pokemon was met (version 4)"
+      "since": 4,
+      "doc": "the ball a Pokemon was caught in"
     },
     {
       "name": "met_level",
@@ -308,7 +344,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "where and how a Pokemon was met (version 4)"
+      "since": 4,
+      "doc": "the level a Pokemon was met at"
     },
     {
       "name": "place",
@@ -316,7 +353,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "where a reference points: `EIDOS_MON_*`, and in a battle the side (0 the player's) (version 4)"
+      "since": 4,
+      "doc": "where a reference points: `EIDOS_MON_PARTY`, `EIDOS_MON_BOX`, `EIDOS_MON_BATTLE` or `EIDOS_MON_WILD`"
     },
     {
       "name": "side",
@@ -324,7 +362,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "where a reference points: `EIDOS_MON_*`, and in a battle the side (0 the player's) (version 4)"
+      "since": 4,
+      "doc": "in a battle, the side of a Pokemon: 0 the player's, 1 the opponent's"
     },
     {
       "name": "species_stage",
@@ -332,7 +371,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a species' data (version 4)"
+      "since": 4,
+      "doc": "a species' stage in its evolution line, as the species data stores it"
     },
     {
       "name": "gender_ratio",
@@ -340,7 +380,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a species' data (version 4)"
+      "since": 4,
+      "doc": "a species' gender ratio: 0 always male, 254 always female, 255 no gender, the share of females out of 254 otherwise"
     },
     {
       "name": "egg_group1",
@@ -348,7 +389,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a species' data (version 4)"
+      "since": 4,
+      "doc": "a species' first egg group"
     },
     {
       "name": "egg_group2",
@@ -356,7 +398,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a species' data (version 4)"
+      "since": 4,
+      "doc": "a species' second egg group"
     },
     {
       "name": "growth",
@@ -364,7 +407,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a species' data (version 4)"
+      "since": 4,
+      "doc": "a species' experience growth group"
     },
     {
       "name": "catch_rate",
@@ -372,7 +416,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a species' data (version 4)"
+      "since": 4,
+      "doc": "a species' catch rate, 0 to 255"
     },
     {
       "name": "species_base",
@@ -380,7 +425,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the first stage of species `s`'s evolution line; two species are in one line when their bases are equal (version 4)"
+      "since": 4,
+      "doc": "the first stage of a species' evolution line; two species are in one line when their bases are equal"
     },
     {
       "name": "area",
@@ -388,7 +434,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the current area: the place name the game shows on entry; every floor of a cave and every building of a town share it (version 4)"
+      "since": 4,
+      "doc": "the current area: the place name the game shows on entry; every floor of a cave and every building of a town share it"
     },
     {
       "name": "area_of",
@@ -396,7 +443,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the area of zone `z` (version 4)"
+      "since": 4,
+      "doc": "the area of zone `z`"
     },
     {
       "name": "wild_battle",
@@ -404,7 +452,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the battle in progress is a wild one (version 4)"
+      "since": 4,
+      "doc": "whether the battle in progress is a wild one"
     },
     {
       "name": "battle_trainer",
@@ -412,7 +461,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the opposing trainers of the battle in progress, 0 for none (version 4)"
+      "since": 4,
+      "doc": "the first opposing trainer of the battle in progress, 0 for none"
     },
     {
       "name": "battle_trainer2",
@@ -420,7 +470,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the opposing trainers of the battle in progress, 0 for none (version 4)"
+      "since": 4,
+      "doc": "the second opposing trainer (a multi battle), 0 for none"
     },
     {
       "name": "play_seconds",
@@ -428,7 +479,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the play time in seconds (version 4)"
+      "since": 4,
+      "doc": "the play time in seconds"
     },
     {
       "name": "owned",
@@ -436,7 +488,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "whether the party or a box holds a Pokemon of species `s` that is not an egg (version 4)"
+      "since": 4,
+      "doc": "whether the party or a box holds a Pokemon of the species that is not an egg"
     },
     {
       "name": "party_max_level",
@@ -444,7 +497,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the highest level in the party; how many party Pokemon have HP, eggs left out (version 4)"
+      "since": 4,
+      "doc": "the highest level in the party, eggs left out"
     },
     {
       "name": "party_alive",
@@ -452,7 +506,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the highest level in the party; how many party Pokemon have HP, eggs left out (version 4)"
+      "since": 4,
+      "doc": "how many party Pokemon have HP left, eggs left out"
     },
     {
       "name": "party_has_type",
@@ -460,7 +515,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "whether a party Pokemon (not an egg) has type `t` (version 4)"
+      "since": 4,
+      "doc": "whether a party Pokemon (not an egg) has type `t`"
     },
     {
       "name": "item_pocket",
@@ -468,7 +524,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "the bag pocket of item `i` (version 4)"
+      "since": 4,
+      "doc": "the bag pocket of item `i`"
     },
     {
       "name": "move_type",
@@ -476,7 +533,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a move's type, power and damage class, as the move data stores them (version 4)"
+      "since": 4,
+      "doc": "a move's type"
     },
     {
       "name": "move_power",
@@ -484,7 +542,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a move's type, power and damage class, as the move data stores them (version 4)"
+      "since": 4,
+      "doc": "a move's power, 0 for a move that does no direct damage"
     },
     {
       "name": "move_class",
@@ -492,7 +551,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a move's type, power and damage class, as the move data stores them (version 4)"
+      "since": 4,
+      "doc": "a move's damage class (physical, special or status), as the move data stores it"
     },
     {
       "name": "battle_style",
@@ -500,7 +560,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": true,
-      "doc": "shift or set"
+      "since": 3,
+      "doc": "the battle style option: shift or set"
     },
     {
       "name": "in_battle",
@@ -508,7 +569,8 @@
       "readable": true,
       "writable": false,
       "writable_declared": false,
-      "doc": "a battle is in progress"
+      "since": 3,
+      "doc": "whether a battle is in progress"
     }
   ],
   "names": [

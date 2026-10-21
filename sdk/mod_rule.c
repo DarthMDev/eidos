@@ -353,7 +353,8 @@ static const BwRuleField g_f_game_cleared[] = {
 static const BwRuleField g_f_route_change[] = {
     BW_RULE_FIELD(BwRouteChange, zone, BW_RULE_FK_INT, 0),
     BW_RULE_FIELD(BwRouteChange, prev_zone, BW_RULE_FK_INT, 0),
-    BW_RULE_FIELD(BwRouteChange, season, BW_RULE_FK_INT, 0)
+    BW_RULE_FIELD(BwRouteChange, season, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwRouteChange, how, BW_RULE_FK_INT, 0)
 };
 
 static const BwRuleField g_f_map_warp[] = {
@@ -765,7 +766,7 @@ static const BwRuleEvent g_events[] = {
       .fields = g_f_game_cleared, .field_count = 3 },
 
     { .kind = BW_EVENT_ROUTE_CHANGE, .name = "route.change", .refusable = 0,
-      .fields = g_f_route_change, .field_count = 3 },
+      .fields = g_f_route_change, .field_count = 4 },
     { .kind = BW_EVENT_MAP_WARP, .name = "map.warp", .refusable = 0,
       .fields = g_f_map_warp, .field_count = 4 },
     { .kind = BW_EVENT_PLAYER_STEP, .name = "player.step", .refusable = 0,
