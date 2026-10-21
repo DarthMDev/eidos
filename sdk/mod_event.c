@@ -219,6 +219,7 @@ static u32 payload_size(u32 kind)
     case BW_EVENT_CATCH_RESULT:  return (u32)sizeof(BwCatchResult);
     case BW_EVENT_BATTLE_END:    return (u32)sizeof(BwBattleEnd);
     case BW_EVENT_WHITEOUT:       return (u32)sizeof(BwWhiteout);
+    case BW_EVENT_BATTLE_TRAINER_MON: return (u32)sizeof(BwBattleTrainerMon);
 
     case BW_EVENT_ITEM_ADD:     return (u32)sizeof(BwItemAdd);
     case BW_EVENT_ITEM_USE:     return (u32)sizeof(BwItemUse);
@@ -516,6 +517,17 @@ void bw_mod_event_leave(unsigned int region, unsigned int addr,
     /* A refusal at the end of the function has run its refusal function,
      * which has set the result the caller sees. */
     (void)dispatch(region, addr, call, payload, BW_EVENT_AFTER);
+}
+
+int bw_mod_event_fire(u32 kind, BwEventPayload *payload)
+{
+    if (payload == NULL || kind == 0 || kind >= BW_MOD_EVENT_KINDS_MAX ||
+        payload_size(kind) == 0) {
+        return 0;
+    }
+    payload->h.size = payload_size(kind);
+    payload->h.kind = kind;
+    return run_handlers(kind, payload);
 }
 
 u32 bw_mod_event_ignored_refusals(void)

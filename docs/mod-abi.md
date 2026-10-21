@@ -232,9 +232,13 @@ The version moves when the surface moves.
   services table's `state_in_step`, which answers for the calling mod
   whether its own saved data was written with the save in force.
 - **Version 4** appends and moves nothing, so version 3 mods still load. The
-  state table gains `mon_release`, `item_count` and `item_add`; the events
-  gain `heal.hp`. Version 4 is still open: more appended calls land before
-  it is frozen and `sdk/api/v4` is published.
+  state table gains `mon_release`, `item_count`, `item_add`, `area_of`,
+  `battle_wild`, `play_seconds`, `item_value`, `move_value`,
+  `mon_to_box_n`, `mon_from_box` and `mon_recalc`; the services table gains
+  `table_get`; the events gain `heal.hp` and `battle.trainer_mon`;
+  `encounter.wild` and `mon.exp` gain fields at their ends. Version 4 is
+  still open: more appended calls land before it is frozen and
+  `sdk/api/v4` is published.
 
 The number cannot be forgotten. A test recomputes the hash of the surface out
 of the headers themselves and compares it with the number the header carries,
@@ -267,8 +271,8 @@ width and the hash follows it: the number beside the version number is the
 
 | Pointers | Hash |
 |---|---|
-| 32-bit | 0x9868E9E2 (the number in `sdk/mod_api.h`) |
-| 64-bit | 0x570EB88E |
+| 32-bit | 0x29D5958D (the number in `sdk/mod_api.h`) |
+| 64-bit | 0xE079699E |
 
 The payload structs, the ids and the enums hold no pointer and hash the
 same everywhere.

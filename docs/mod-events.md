@@ -73,7 +73,7 @@ the move from the choices before the player picks it.
 
 | Event | Game function | Region | Refuse | Modify |
 |---|---|---|---|---|
-| `encounter.wild` | the return of `FIELD_ENCOUNT_CreateZoneWildMons` 0x021A954C; roamers the return of `FIELD_ENCOUNT_PickRoamer` 0x021A957C | ov021 | no battle; the player keeps walking; the payload names the area, the method (grass, surf, fishing, shaking grass) and the slot | species, level, shiny |
+| `encounter.wild` | the return of `FIELD_ENCOUNT_CreateZoneWildMons` 0x021A954C; roamers the return of `FIELD_ENCOUNT_PickRoamer` 0x021A957C | ov021 | no battle; the player keeps walking; the payload names the area, the method (grass, surf, fishing, shaking grass) and the slot | species, level, shiny; the second Pokemon of a double; a reroll |
 | `encounter.static` | `EVENT_BATTLE_CreateScriptedBattle` 0x0216E7C8 | ov010 | - | species, level |
 | `encounter.trainer` | `FIELD_ENCOUNT_SetupTrainerBattle` 0x021AA5CC | ov021 | - | - |
 
@@ -150,6 +150,7 @@ Notes from the callers:
 | `catch.attempt` | `BTL_SERVER_FLOW_TryThrowBall` 0x021CBA40 | ov093 | the ball is blocked as in a trainer battle: the block message shows, the ball stays in the bag, the turn is spent; the payload names the ball and the target's species and level | catch rate (`BTL_SERVER_FLOW_GetBallCatchRate` 0x021CBD48) |
 | `catch.result` | the return of `BTL_SERVER_FLOW_CalcCaptureShakes` 0x021CBB34 | ov093 | - | - |
 | `battle.end` | `EVENT_BATTLE_NotifyBattleEnd` 0x0216EE7C | ov010 | - | - |
+| `battle.trainer_mon` | the rows that build a trainer battle's setup (`battle.start`), once per opposing member | - | - | species, level, item, moves, ability, form |
 | `whiteout` | `BTL_CLIENT_StepShowBlackoutMessages` 0x021D1960 (ov093); `SCRIPT_SYS_RunRecoverScript` 0x02158A20 (ov010) | - | - | - |
 
 Notes from the callers:

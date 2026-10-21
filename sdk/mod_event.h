@@ -111,6 +111,7 @@ typedef union BwEventPayload {
     BwCatchResult  catch_result;
     BwBattleEnd    battle_end;
     BwWhiteout     whiteout;
+    BwBattleTrainerMon battle_trainer_mon;
 
     BwItemAdd     item_add;
     BwItemUse     item_use;
@@ -185,6 +186,14 @@ typedef struct BwEventBinding {
  * not call the game function and returns `call.ret` (the refusal function
  * has set it).  Returns 0 when the event goes on.
  */
+/*
+ * Run the handlers of `kind` over a payload the caller built, outside a
+ * binding: for an event that one game call fires several times (mon.exp
+ * names one Pokemon, and one share table holds the whole party's).  The
+ * caller applies what the handlers changed.  1 when a handler refused.
+ */
+int bw_mod_event_fire(u32 kind, BwEventPayload *payload);
+
 int bw_mod_event_enter(unsigned int region, unsigned int addr,
                        BwEventCall *call, BwEventPayload *payload);
 

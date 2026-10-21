@@ -520,7 +520,18 @@ A mod declares options in a small file named by the manifest's `settings` key:
 option nuzlocke.dupes   bool    "Dupes clause"         on
 option nuzlocke.cap     choice  "Level caps"           off|gym|ace
 option nuzlocke.panel   bool    "Show run status"      on
+option nuzlocke.lives   int     "Lives"                0 10 3
 ```
+
+The kinds:
+
+- `bool`: on or off; the default is `on` or `off`. `setting_get` answers 1
+  or 0.
+- `choice`: one of the names separated by `|`; the default is the first.
+  `setting_get` answers the index of the chosen name.
+- `int`: a whole number; the value is `<min> <max> <default>`. The screen
+  steps it by one and stops at the bounds. `setting_get` answers the
+  number.
 
 The port lists them on its settings screen under the mod's name, stores the
 player's choices beside the mod's saved data, and the mod reads them:

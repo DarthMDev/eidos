@@ -67,6 +67,13 @@
 #include "mod_state.h"
 #include "bw_limits.h"
 
+#include <string.h>
+
+/* The heap the bag, item and withdraw calls take: the game's main heap,
+ * the one GAMESYSTEM_ProcInit creates as heap 3 (src/game/arm9/
+ * gamesystem.c; see state_mon_take_item). */
+#define BW_STATE_BAG_HEAP 3u
+
 /* ------------------------------------------------------------------ */
 /* The port's own seam                                                 */
 /* ------------------------------------------------------------------ */
@@ -293,6 +300,24 @@ extern u8 PLAYTIME_GetSeconds(const struct PlayTime *playtime)
 extern u32 FILE_UTIL_GetItemParam(u32 item, u32 sel, u32 heap)
     __attribute__((weak));
 extern u32 WAZA_TOOL_GetParam(u32 move, u32 param) __attribute__((weak));
+
+/* The box and the withdraw: src/game/arm9/box_savedata.c, pokeparty.c and
+ * poke_tool.c. */
+extern int BOX_SAVEDATA_AddPokemonToBox(struct GameData *gameData, u32 box,
+                                        const struct BoxPokemon *mon)
+    __attribute__((weak));
+extern void BOX_SAVEDATA_ClearPokemon(struct GameData *gameData, u32 box,
+                                      u32 slot) __attribute__((weak));
+extern int BOX_SAVEDATA_GetPokemonValue(struct GameData *gameData, u32 box,
+                                        u32 slot, int field, int arg)
+    __attribute__((weak));
+extern u32 POKEPARTY_Add(struct Party *party, const struct PokemonParam *member)
+    __attribute__((weak));
+extern struct PokemonParam *POKE_TOOL_CreateFromBoxParam(struct PokemonParam *src,
+                                                         u16 heapId)
+    __attribute__((weak));
+extern void POKE_TOOL_RecalcParam(struct PokemonParam *pp) __attribute__((weak));
+extern void GFL_HEAP_Free(void *memory) __attribute__((weak));
 
 /* The battle in progress is wild (1), a trainer's (0), or none (-1). */
 static s32 g_battle_wild = -1;
@@ -1047,10 +1072,14 @@ static u8 state_battle_style(void)
 #define BW_MOVE_TO_BOX    0u
 #define BW_MOVE_TAKE_ITEM 1u
 #define BW_MOVE_RELEASE   2u      /* found by personality, not by slot */
+#define BW_MOVE_TO_BOX_N  3u      /* to the box the move names */
+#define BW_MOVE_FROM_BOX  4u      /* from (box, box_slot) to the party */
 
 typedef struct BwModMove {
     u8  kind;
     u8  slot;         /* the party slot */
+    u8  box;          /* BW_MOVE_TO_BOX_N, BW_MOVE_FROM_BOX: the box */
+    u8  box_slot;     /* BW_MOVE_FROM_BOX: the slot in it */
     u32 personality;  /* the Pokemon's personality when it was queued */
 } BwModMove;
 
@@ -1151,6 +1180,92 @@ static int move_to_box(u32 slot)
     return 0;
 }
 
+/* How many party Pokemon are not eggs, leaving out `skip` (-1 for none). */
+static u32 party_non_eggs(s32 skip)
+{
+    struct Party *party = live_party();
+    u32 count, i, n = 0;
+
+    if (party == NULL || POKEPARTY_GetCount == NULL || POKE_TOOL_GetPartyValue == NULL) {
+        return 0;
+    }
+    count = POKEPARTY_GetCount(party);
+    for (i = 0; i < count; i++) {
+        struct PokemonParam *member = live_member(i);
+
+        if ((s32)i == skip || member == NULL) {
+            continue;
+        }
+        if (POKE_TOOL_GetPartyValue(member, BW_PARAM_IS_EGG, 0) == 0u) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Move a party Pokemon to the first free slot of one box. */
+static int move_to_box_n(u32 slot, u32 box)
+{
+    struct Party *party = live_party();
+    struct PokemonParam *member;
+    struct BoxPokemon *box_mon;
+
+    if (party == NULL || BOX_SAVEDATA_AddPokemonToBox == NULL ||
+        POKEPARTY_RemoveMember == NULL || POKE_TOOL_CastToBoxParam == NULL ||
+        g_game_data == NULL || party_non_eggs((s32)slot) == 0u) {
+        return -1;
+    }
+    member = live_member(slot);
+    if (member == NULL) {
+        return -1;
+    }
+    box_mon = POKE_TOOL_CastToBoxParam(member);
+    if (box_mon == NULL ||
+        BOX_SAVEDATA_AddPokemonToBox(live_game_data(), box, box_mon) == 0) {
+        return -1;      /* the box is full */
+    }
+    POKEPARTY_RemoveMember(party, (s32)slot);
+    return 0;
+}
+
+/* Move the Pokemon at (box, slot) to the end of the party. */
+static int move_from_box(u32 box, u32 slot, u32 personality)
+{
+    struct Party *party = live_party();
+    struct BoxPokemon *box_mon = live_box_pokemon(box, slot);
+    struct PokemonParam *copy;
+
+    if (party == NULL || box_mon == NULL || POKEPARTY_GetCount == NULL ||
+        POKEPARTY_Add == NULL || POKE_TOOL_CreateFromBoxParam == NULL ||
+        BOX_SAVEDATA_ClearPokemon == NULL || GFL_HEAP_Free == NULL ||
+        BOX_SAVEDATA_GetPokemonValue == NULL) {
+        return -1;
+    }
+    if (POKEPARTY_GetCount(party) >= 6u) {
+        return -1;      /* the party is full */
+    }
+    if ((u32)BOX_SAVEDATA_GetPokemonValue(live_game_data(), box, slot, 0x00, 0) !=
+        personality) {
+        return -1;      /* the slot holds another Pokemon now */
+    }
+    /* The game's own withdraw: a party record built from the box record
+     * (it works out the level and the stats), added to the party, and the
+     * box slot cleared.  The record the game built is the caller's to
+     * free; the party keeps its own copy. */
+    copy = POKE_TOOL_CreateFromBoxParam((struct PokemonParam *)box_mon,
+                                        (u16)BW_STATE_BAG_HEAP);
+    if (copy == NULL) {
+        return -1;
+    }
+    if (POKEPARTY_Add(party, copy) == 0u) {
+        GFL_HEAP_Free(copy);
+        return -1;
+    }
+    GFL_HEAP_Free(copy);
+    BOX_SAVEDATA_ClearPokemon(live_game_data(), box, slot);
+    return 0;
+}
+
 /* Move a party Pokemon's held item back to the bag. */
 static int move_take_item(u32 slot)
 {
@@ -1210,6 +1325,11 @@ void bw_mod_state_apply_pending(void)
             (void)release_by_personality(g_moves[i].personality);
             continue;
         }
+        if (g_moves[i].kind == BW_MOVE_FROM_BOX) {
+            (void)move_from_box(g_moves[i].box, g_moves[i].box_slot,
+                                g_moves[i].personality);
+            continue;
+        }
         member = live_member(g_moves[i].slot);
         if (member == NULL || POKE_TOOL_GetPartyValue == NULL) {
             continue;   /* the slot is gone: the move has nothing to do */
@@ -1220,6 +1340,8 @@ void bw_mod_state_apply_pending(void)
         }
         if (g_moves[i].kind == BW_MOVE_TO_BOX) {
             done = move_to_box(g_moves[i].slot);
+        } else if (g_moves[i].kind == BW_MOVE_TO_BOX_N) {
+            done = move_to_box_n(g_moves[i].slot, g_moves[i].box);
         } else {
             done = move_take_item(g_moves[i].slot);
         }
@@ -1284,13 +1406,56 @@ static int state_mon_release(BwMonRef mon)
 /* The table                                                           */
 /* ------------------------------------------------------------------ */
 
+static int state_mon_to_box_n(BwMonRef mon, u32 box)
+{
+    if (mon.place != (u8)BW_MON_PARTY || box >= 24u) {
+        return -1;
+    }
+    if (queue_move(BW_MOVE_TO_BOX_N, mon.slot) != 0) {
+        return -1;
+    }
+    g_moves[g_move_count - 1u].box = (u8)box;
+    return 0;
+}
+
+static int state_mon_from_box(u32 box, u32 slot)
+{
+    BwModMove *move;
+
+    if (box >= 24u || slot >= 30u || g_move_count >= BW_MOD_MOVE_QUEUE_MAX ||
+        live_box_pokemon(box, slot) == NULL || BOX_SAVEDATA_GetPokemonValue == NULL) {
+        return -1;
+    }
+    move = &g_moves[g_move_count];
+    memset(move, 0, sizeof(*move));
+    move->kind = (u8)BW_MOVE_FROM_BOX;
+    move->box = (u8)box;
+    move->box_slot = (u8)slot;
+    move->personality = (u32)BOX_SAVEDATA_GetPokemonValue(live_game_data(), box,
+                                                          slot, 0x00, 0);
+    g_move_count++;
+    return 0;
+}
+
+static int state_mon_recalc(BwMonRef mon)
+{
+    struct PokemonParam *member;
+
+    if (mon.place != (u8)BW_MON_PARTY || POKE_TOOL_RecalcParam == NULL) {
+        return -1;
+    }
+    member = live_member(mon.slot);
+    if (member == NULL) {
+        return -1;
+    }
+    POKE_TOOL_RecalcParam(member);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* The bag                                                             */
 /* ------------------------------------------------------------------ */
 
-/* The heap the bag calls take: the game's main heap (see
- * state_mon_take_item). */
-#define BW_STATE_BAG_HEAP 3u
 
 static s32 state_item_count(u16 item)
 {
@@ -1428,7 +1593,11 @@ const BwModState bw_mod_state = {
     state_battle_wild,
     state_play_seconds,
     state_item_value,
-    state_move_value
+    state_move_value,
+
+    state_mon_to_box_n,
+    state_mon_from_box,
+    state_mon_recalc
 };
 
 int bw_mod_state_party_slot(const void *mon)

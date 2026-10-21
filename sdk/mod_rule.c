@@ -267,7 +267,9 @@ enum {
     BW_RULE_ACT_MESSAGE,    /* message <expr> */
     BW_RULE_ACT_SEND,       /* send <expr> */
     BW_RULE_ACT_RELEASE,    /* release <mon or party position> */
-    BW_RULE_ACT_GIVE        /* give <item> <count> */
+    BW_RULE_ACT_GIVE,       /* give <item> <count> */
+    BW_RULE_ACT_BOX,        /* box <mon or party position> <box> */
+    BW_RULE_ACT_WITHDRAW    /* withdraw <box> <slot> */
 };
 
 /* The kinds of a target. */
@@ -416,7 +418,10 @@ static const BwRuleField g_f_encounter_wild[] = {
      * it. */
     { .name = "double", .offset = (u16)offsetof(BwEncounterWild, double_),
       .size = (u8)sizeof(((BwEncounterWild *)0)->double_),
-      .kind = BW_RULE_FK_INT, .flags = 0 }
+      .kind = BW_RULE_FK_INT, .flags = 0 },
+    BW_RULE_FIELD(BwEncounterWild, reroll, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwEncounterWild, species2, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwEncounterWild, level2, BW_RULE_FK_INT, BW_RULE_FF_MOD)
 };
 
 static const BwRuleField g_f_encounter_static[] = {
@@ -468,7 +473,9 @@ static const BwRuleField g_f_mon_exp[] = {
     BW_RULE_FIELD(BwMonExp, mon, BW_RULE_FK_MON, 0),
     BW_RULE_FIELD(BwMonExp, amount, BW_RULE_FK_INT, BW_RULE_FF_MOD),
     BW_RULE_FIELD(BwMonExp, exp, BW_RULE_FK_INT, 0),
-    BW_RULE_FIELD(BwMonExp, level, BW_RULE_FK_INT, 0)
+    BW_RULE_FIELD(BwMonExp, level, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonExp, source, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonExp, wild, BW_RULE_FK_INT, 0)
 };
 
 static const BwRuleField g_f_mon_levelup[] = {
@@ -616,6 +623,20 @@ static const BwRuleField g_f_whiteout[] = {
     BW_RULE_FIELD(BwWhiteout, money_lost, BW_RULE_FK_INT, 0)
 };
 
+static const BwRuleField g_f_battle_trainer_mon[] = {
+    BW_RULE_FIELD(BwBattleTrainerMon, trainer_id, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwBattleTrainerMon, index, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwBattleTrainerMon, level, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwBattleTrainerMon, species, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwBattleTrainerMon, item, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwBattleTrainerMon, move1, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwBattleTrainerMon, move2, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwBattleTrainerMon, move3, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwBattleTrainerMon, move4, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwBattleTrainerMon, ability, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwBattleTrainerMon, form, BW_RULE_FK_INT, BW_RULE_FF_MOD)
+};
+
 /* items, money and healing */
 
 static const BwRuleField g_f_item_add[] = {
@@ -714,7 +735,7 @@ static const BwRuleEvent g_events[] = {
       .fields = g_f_pc_open, .field_count = 0 },
 
     { .kind = BW_EVENT_ENCOUNTER_WILD, .name = "encounter.wild",
-      .refusable = 1, .fields = g_f_encounter_wild, .field_count = 8 },
+      .refusable = 1, .fields = g_f_encounter_wild, .field_count = 11 },
     { .kind = BW_EVENT_ENCOUNTER_STATIC, .name = "encounter.static",
       .refusable = 0, .fields = g_f_encounter_static, .field_count = 4 },
     { .kind = BW_EVENT_ENCOUNTER_TRAINER, .name = "encounter.trainer",
@@ -729,7 +750,7 @@ static const BwRuleEvent g_events[] = {
     { .kind = BW_EVENT_MON_EVOLVE, .name = "mon.evolve", .refusable = 1,
       .fields = g_f_mon_evolve, .field_count = 4 },
     { .kind = BW_EVENT_MON_EXP, .name = "mon.exp", .refusable = 0,
-      .fields = g_f_mon_exp, .field_count = 4 },
+      .fields = g_f_mon_exp, .field_count = 6 },
     { .kind = BW_EVENT_MON_LEVELUP, .name = "mon.levelup", .refusable = 0,
       .fields = g_f_mon_levelup, .field_count = 3 },
     { .kind = BW_EVENT_MOVE_LEARN, .name = "move.learn", .refusable = 1,
@@ -773,6 +794,8 @@ static const BwRuleEvent g_events[] = {
       .fields = g_f_battle_end, .field_count = 4 },
     { .kind = BW_EVENT_WHITEOUT, .name = "whiteout", .refusable = 0,
       .fields = g_f_whiteout, .field_count = 2 },
+    { .kind = BW_EVENT_BATTLE_TRAINER_MON, .name = "battle.trainer_mon",
+      .refusable = 0, .fields = g_f_battle_trainer_mon, .field_count = 11 },
 
     { .kind = BW_EVENT_ITEM_ADD, .name = "item.add", .refusable = 0,
       .fields = g_f_item_add, .field_count = 3 },
@@ -903,6 +926,16 @@ static const BwRuleStateField g_state_fields[] = {
       .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_NATURE },
     { .name = "has_nickname", .kind = BW_RULE_SK_MON, .writable = 0,
       .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_HAS_NICKNAME },
+    { .name = "fateful", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_FATEFUL },
+    { .name = "origin_game", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_ORIGIN_GAME },
+    { .name = "met_location", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_MET_LOCATION },
+    { .name = "ball", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_BALL },
+    { .name = "met_level", .kind = BW_RULE_SK_MON, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = BW_MON_FIELD_MET_LEVEL },
     /* Where a reference points: its place (BW_MON_*) and, in a battle,
      * its side (0 the player's). */
     { .name = "place", .kind = BW_RULE_SK_MON, .writable = 0,
@@ -2481,8 +2514,12 @@ static int parse_action(BwRuleParse *p, const char *keyword)
         return 0;
     }
 
-    if (strcmp(keyword, "give") == 0) {
+    /* The two-value actions: give <item> <count>, box <mon> <box>,
+     * withdraw <box> <slot>. */
+    if (strcmp(keyword, "give") == 0 || strcmp(keyword, "box") == 0 ||
+        strcmp(keyword, "withdraw") == 0) {
         int count;
+        int first_mon = strcmp(keyword, "box") == 0;
 
         expr = parse_expr(p);
         if (expr < 0) {
@@ -2496,13 +2533,18 @@ static int parse_action(BwRuleParse *p, const char *keyword)
             parse_error(p, p->err_line, "the action has more than it needs");
             return -1;
         }
-        if (!type_is_number(r->nodes[expr].type) ||
+        if ((first_mon ? (r->nodes[expr].type != BW_RULE_T_MON &&
+                          r->nodes[expr].type != BW_RULE_T_INT)
+                       : !type_is_number(r->nodes[expr].type)) ||
             !type_is_number(r->nodes[count].type)) {
-            parse_error(p, p->err_line, "the item and the count must be "
-                        "numbers");
+            parse_error(p, p->err_line, first_mon
+                        ? "'box' takes a Pokemon or a party position, then a "
+                          "box number"
+                        : "the action's two values must be numbers");
             return -1;
         }
-        a->op = BW_RULE_ACT_GIVE;
+        a->op = strcmp(keyword, "give") == 0 ? BW_RULE_ACT_GIVE :
+                (first_mon ? BW_RULE_ACT_BOX : BW_RULE_ACT_WITHDRAW);
         a->expr = (u16)expr;
         a->sub = (u16)count;    /* the count rides in the subscript slot */
         r->action_count++;
@@ -4428,6 +4470,30 @@ static int do_action(BwRuleVm *vm, const BwRuleAction *a)
                 return -1;
             }
             return st->item_add((u16)item, (u16)count) == 0 ? 0 : -1;
+        }
+
+    case BW_RULE_ACT_BOX:
+    case BW_RULE_ACT_WITHDRAW:
+        {
+            const BwModState *st = bw_mod_state_table();
+            s32 second = value_number(&sub);    /* evaluated above */
+
+            if (st == NULL || eval_node(vm, a->expr, &value) != 0 || second < 0) {
+                return -1;
+            }
+            if (a->op == BW_RULE_ACT_BOX) {
+                BwMonRef mon;
+
+                if (st->mon_to_box_n == NULL || state_mon(&value, &mon) != 0) {
+                    return -1;
+                }
+                return st->mon_to_box_n(mon, (u32)second) == 0 ? 0 : -1;
+            }
+            if (st->mon_from_box == NULL || value_number(&value) < 0) {
+                return -1;
+            }
+            return st->mon_from_box((u32)value_number(&value), (u32)second) == 0
+                       ? 0 : -1;
         }
 
     default:

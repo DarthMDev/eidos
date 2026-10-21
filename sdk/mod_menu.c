@@ -191,8 +191,10 @@ extern u32  bw_mod_savedata_save_check(void);
 typedef struct BwModMenuOption {
     char key[BW_MOD_MENU_KEY_MAX];
     char label[BW_MOD_MENU_LABEL_MAX];
-    int  kind;                     /* BW_MOD_SETTING_BOOL or _CHOICE */
-    int  def;                      /* the default: 0/1, or a choice index */
+    int  kind;                     /* BW_MOD_SETTING_BOOL, _CHOICE, _INT */
+    int  def;                      /* the default: 0/1, a choice index, a number */
+    int  min;                      /* _INT: the lowest value  */
+    int  max;                      /* _INT: the highest value */
     int  value;                    /* the player's choice             */
     int  choice_count;
     char choices[BW_MOD_MENU_CHOICE_MAX][BW_MOD_MENU_CHOICE_LEN];
@@ -774,6 +776,32 @@ static int parse_option(BwModMenuMod *m, char *line)
         }
         o->def = 0;
         o->value = o->def;
+    } else if (strcmp(kind, "int") == 0) {
+        /* `<min> <max> <default>`, three whole numbers. */
+        long lo, hi, def;
+        char *end;
+
+        lo = strtol(value, &end, 10);
+        hi = strtol(end, &end, 10);
+        def = strtol(end, &end, 10);
+        while (*end != '\0' && is_space(*end)) {
+            end++;
+        }
+        if (*end != '\0' || lo > hi || def < lo || def > hi ||
+            lo < -1000000000L || hi > 1000000000L) {
+            report(m->name, "the int option '%s' needs '<min> <max> <default>' "
+                   "with min <= default <= max; it is ignored", key);
+            free(key);
+            free(kind);
+            free(label);
+            free(value);
+            return -1;
+        }
+        o->kind = BW_MOD_SETTING_INT;
+        o->min = (int)lo;
+        o->max = (int)hi;
+        o->def = (int)def;
+        o->value = o->def;
     } else {
         report(m->name, "the option '%s' has the unknown kind '%s'; it is "
                "ignored", key, kind);
@@ -945,6 +973,10 @@ static void read_choices(BwModMenuMod *m)
                     value = strtol(vs, NULL, 10);
                     if (o->kind == BW_MOD_SETTING_BOOL) {
                         if (value != 0 && value != 1) {
+                            break;
+                        }
+                    } else if (o->kind == BW_MOD_SETTING_INT) {
+                        if (value < o->min || value > o->max) {
                             break;
                         }
                     } else {
@@ -1749,6 +1781,10 @@ int bw_mod_menu_option_set(u32 index, u32 option, int value)
         if (value != 0 && value != 1) {
             return -1;
         }
+    } else if (o->kind == BW_MOD_SETTING_INT) {
+        if (value < o->min || value > o->max) {
+            return -1;
+        }
     } else {
         if (value < 0 || value >= o->choice_count) {
             return -1;
@@ -1758,6 +1794,24 @@ int bw_mod_menu_option_set(u32 index, u32 option, int value)
     /* The choice is kept beside the mod's saved data. */
     (void)write_choices(m);
     return 0;
+}
+
+int bw_mod_menu_option_min(u32 index, u32 option)
+{
+    model_ready();
+    if (index >= g_count || option >= g_mods[index].option_count) {
+        return 0;
+    }
+    return g_mods[index].options[option].min;
+}
+
+int bw_mod_menu_option_max(u32 index, u32 option)
+{
+    model_ready();
+    if (index >= g_count || option >= g_mods[index].option_count) {
+        return 0;
+    }
+    return g_mods[index].options[option].max;
 }
 
 int bw_mod_menu_option_choice_count(u32 index, u32 option)
@@ -1797,6 +1851,8 @@ const char *bw_mod_menu_option_text(u32 index, u32 option, char *buf,
     o = &g_mods[index].options[option];
     if (o->kind == BW_MOD_SETTING_BOOL) {
         snprintf(buf, size, "%s", o->value ? "on" : "off");
+    } else if (o->kind == BW_MOD_SETTING_INT) {
+        snprintf(buf, size, "%d", o->value);
     } else if (o->choice_count > 0) {
         int choice = o->value;
 

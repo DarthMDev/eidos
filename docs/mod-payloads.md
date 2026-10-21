@@ -254,6 +254,9 @@ have no fields.
 | `level` | u8, *mod* | the level |
 | `shiny` | u8, *mod* | 1 forces shiny, 0 leaves the roll |
 | `double` | u8 | a double wild battle |
+| `reroll` | u8, *mod* | version 4: 1 rolls the encounter again with the game's own roll and fires the event again, at most 16 times; the last answer stands |
+| `level2` | u8, *mod* | version 4: the second Pokemon of a double (dark grass), 0 when there is none |
+| `species2` | u16, *mod* | version 4: the same |
 
 **`encounter.static`**
 
@@ -335,6 +338,12 @@ from the game's own rule.
 | `amount` | u32, *mod* | the experience to add |
 | `exp` | u32 | its experience before |
 | `level` | u8 | its level before |
+| `source` | u8 | version 4: `BW_EXP_BATTLE` or `BW_EXP_DAYCARE` |
+| `wild` | u8 | version 4: for a battle, 1 when the battle is a wild one |
+
+In a battle the event fires once for every party member that gains
+experience (version 4; before, only the first). An amount of 0 stops the
+gain.
 
 **`mon.levelup`**
 
@@ -574,6 +583,25 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 |---|---|---|
 | `in_battle` | u8 | 1 the battle half, 0 the field half |
 | `money_lost` | u32 | the money the game takes |
+
+**`battle.trainer_mon`** (version 4)
+
+One Pokemon of the opposing trainer's party, after the game built the party
+and before the battle starts; once per member, in party order. A changed
+field is written with the game's own setters: a new species, form or level
+works out the experience and the stats again, a new move gets its full PP.
+0 in `level`, `species` or `ability` leaves the game's value.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `trainer_id` | u16 | the trainer |
+| `index` | u8 | the position in the party, 0 first |
+| `level` | u8, *mod* | the level |
+| `species` | u16, *mod* | the species |
+| `item` | u16, *mod* | the held item |
+| `move1` .. `move4` | u16, *mod* | the moves |
+| `ability` | u16, *mod* | the ability |
+| `form` | u8, *mod* | the form |
 
 **What the battle builder fills.** The battle area's rows are in
 `sdk/mod_event_battle.c`. `battle.start` fires at the row that creates the

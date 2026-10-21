@@ -1457,6 +1457,31 @@ static void refuse_mon_evolve(BwEventCall *call)
  * the payload carries are the party record's own, read through the port's
  * state calls: they are the values the battle started from.
  */
+/* One gaining member's payload: its battle position and share, and the
+ * experience and level of its party record. */
+static void fill_mon_exp_member(BwEventPayload *out, u32 slot, u32 amount)
+{
+    const BwModState *state = bw_mod_state_table();
+    BwMonRef ref;
+    u32 value;
+
+    memset(&out->mon_exp, 0, sizeof(out->mon_exp));
+    mon_ref(&out->mon_exp.mon, (u8)BW_MON_BATTLE, 0u, 0u, (u8)slot, NULL);
+    out->mon_exp.amount = amount;
+    out->mon_exp.source = (u8)BW_EXP_BATTLE;
+    out->mon_exp.wild = (u8)((state != NULL && state->battle_wild != NULL &&
+                              state->battle_wild() == 1) ? 1u : 0u);
+    if (state != NULL && state->party_ref != NULL && state->party_get != NULL &&
+        state->party_ref(slot, &ref) == 0) {
+        if (state->party_get(ref, BW_MON_FIELD_EXP, &value) == 0) {
+            out->mon_exp.exp = value;
+        }
+        if (state->party_get(ref, BW_MON_FIELD_LEVEL, &value) == 0) {
+            out->mon_exp.level = (u8)value;
+        }
+    }
+}
+
 static void build_mon_exp_battle(const BwEventCall *call,
                                  BwEventPayload *out)
 {
@@ -1464,9 +1489,6 @@ static void build_mon_exp_battle(const BwEventCall *call,
         (const BwPortBtlServerFlow *)call->a[0];
     const BwPortExpShareRecord *table =
         (const BwPortExpShareRecord *)call->a[3];
-    const BwModState *state = bw_mod_state_table();
-    BwMonRef ref;
-    u32 value;
     u32 i;
 
     memset(&out->mon_exp, 0, sizeof(out->mon_exp));
@@ -1493,18 +1515,7 @@ static void build_mon_exp_battle(const BwEventCall *call,
     if (i >= 6u) {
         return;     /* nobody gains experience */
     }
-    mon_ref(&out->mon_exp.mon, (u8)BW_MON_BATTLE, 0u, 0u, (u8)i, NULL);
-    out->mon_exp.amount = table[i].exp;
-    if (state != NULL && state->party_ref != NULL && state->party_get != NULL) {
-        if (state->party_ref(i, &ref) == 0) {
-            if (state->party_get(ref, BW_MON_FIELD_EXP, &value) == 0) {
-                out->mon_exp.exp = value;
-            }
-            if (state->party_get(ref, BW_MON_FIELD_LEVEL, &value) == 0) {
-                out->mon_exp.level = (u8)value;
-            }
-        }
-    }
+    fill_mon_exp_member(out, i, table[i].exp);
 }
 
 /*
@@ -1515,11 +1526,30 @@ static void apply_mon_exp_battle(const BwEventPayload *in, BwEventCall *call)
 {
     BwPortExpShareRecord *table = (BwPortExpShareRecord *)call->a[3];
 
-    if (table == NULL || in->mon_exp.amount == 0u) {
+    /* The build names the first member with a share; with no share in the
+     * table there is nobody to change.  An amount of 0 is a change like any
+     * other: it is how a cap stops a member's gain. */
+    if (table == NULL || in->mon_exp.mon.slot >= 6u ||
+        table[in->mon_exp.mon.slot].exp == 0u) {
         return;
     }
-    if (in->mon_exp.mon.slot < 6u) {
-        table[in->mon_exp.mon.slot].exp = in->mon_exp.amount;
+    table[in->mon_exp.mon.slot].exp = in->mon_exp.amount;
+
+    /* The event names one Pokemon, and the table holds every member's
+     * share: each later member that gains experience gets its own firing,
+     * so a cap or a change reaches the whole party. */
+    {
+        BwEventPayload member;
+        u32 j;
+
+        for (j = (u32)in->mon_exp.mon.slot + 1u; j < 6u; j++) {
+            if (table[j].exp == 0u) {
+                continue;
+            }
+            fill_mon_exp_member(&member, j, table[j].exp);
+            (void)bw_mod_event_fire(BW_EVENT_MON_EXP, &member);
+            table[j].exp = member.mon_exp.amount;
+        }
     }
 }
 
@@ -1542,6 +1572,7 @@ static void build_mon_exp_daycare(const BwEventCall *call,
     }
     mon_ref(&out->mon_exp.mon, (u8)BW_MON_PARTY, 0u, 0u, 0u, mon);
     out->mon_exp.amount = (u32)call->a[1];
+    out->mon_exp.source = (u8)BW_EXP_DAYCARE;
     out->mon_exp.exp = POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_EXP, 0u);
     out->mon_exp.level = (u8)POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_LEVEL, 0u);
 }

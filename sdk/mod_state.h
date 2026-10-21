@@ -63,7 +63,12 @@ enum {
     BW_MON_FIELD_GENDER       = 0x6E,
     BW_MON_FIELD_FORM         = 0x6F,
     BW_MON_FIELD_NATURE       = 0x70,
-    BW_MON_FIELD_HAS_NICKNAME = 0x75
+    BW_MON_FIELD_HAS_NICKNAME = 0x75,
+    BW_MON_FIELD_FATEFUL      = 0x6D,
+    BW_MON_FIELD_ORIGIN_GAME  = 0x77,
+    BW_MON_FIELD_MET_LOCATION = 0x96,
+    BW_MON_FIELD_BALL         = 0x98,
+    BW_MON_FIELD_MET_LEVEL    = 0x99
 };
 
 /*
@@ -159,6 +164,22 @@ typedef struct BwModState {
      * 0, or non-zero past the item or move limit. */
     int (*item_value)(u16 item, u32 field, u32 *out);
     int (*move_value)(u16 move, u32 field, u32 *out);
+
+    /* Moves between the party and a named box, queued like mon_to_box
+     * (applied at the next field step, found by personality then).
+     * mon_to_box_n puts a party Pokemon in box `box` (0 is the first) and
+     * fails when that box is full; mon_from_box puts the Pokemon at
+     * (box, slot) in the party and fails when the party is full or the
+     * slot is empty.  Neither leaves the party without a Pokemon that is
+     * not an egg. */
+    int (*mon_to_box_n)(BwMonRef mon, u32 box);
+    int (*mon_from_box)(u32 box, u32 slot);
+
+    /* Work out a party Pokemon's level and stats again from its species,
+     * experience, IVs and EVs, the way the game does after a level up.
+     * Call it after party_set changes any of those.  Not for a box or a
+     * battle reference. */
+    int (*mon_recalc)(BwMonRef mon);
 } BwModState;
 
 /* ------------------------------------------------------------------ */

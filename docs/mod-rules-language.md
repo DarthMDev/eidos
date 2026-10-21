@@ -56,6 +56,8 @@ rule <name> on <event>
 | `send <expr>` | send a value to the peers of the current session (`docs/mod-services.md`) |
 | `release <expr>` | release a Pokemon of the player's party for good: a mon (a party or a player-side battle reference) or a party position. Applied at the next field step; refused if it would leave no Pokemon that is not an egg (version 4) |
 | `give <item> <count>` | put `count` of `item` in the bag, all or nothing (version 4) |
+| `box <mon> <n>` | move a party Pokemon (or party position) to box `n` (0 first); applied at the next field step (version 4) |
+| `withdraw <box> <slot>` | move the Pokemon at (`box`, `slot`) to the party; applied at the next field step (version 4) |
 
 ### Targets
 
@@ -181,6 +183,7 @@ names:
 | `personality[m]`, `ot_id[m]`, `exp[m]`, `friendship[m]`, `ability[m]` | a Pokemon's own fields (version 4) | read |
 | `move1[m]` .. `move4[m]` | a Pokemon's moves (version 4) | read |
 | `is_egg[m]`, `gender[m]`, `form[m]`, `nature[m]`, `has_nickname[m]` | (version 4) | read |
+| `met_location[m]`, `met_level[m]`, `origin_game[m]`, `fateful[m]`, `ball[m]` | where and how a Pokemon was met (version 4) | read |
 | `place[m]`, `side[m]` | where a reference points: `BW_MON_*`, and in a battle the side (0 the player's) (version 4) | read |
 | `species_type1[s]`, `species_type2[s]` | a species' types | read |
 | `species_bst[s]` | a species' base stat total | read |

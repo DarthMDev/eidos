@@ -284,6 +284,7 @@ const char *bw_mod_menu_orphan_at(u32 index);
 /* The kinds an option can have (docs/mod-services.md, "Mod settings"). */
 #define BW_MOD_SETTING_BOOL   0   /* on or off            */
 #define BW_MOD_SETTING_CHOICE 1   /* one of a list of names */
+#define BW_MOD_SETTING_INT    2   /* a number between a low and a high bound */
 
 /* How many options the mod at `index` declares. */
 u32 bw_mod_menu_option_count(u32 index);
@@ -294,7 +295,7 @@ const char *bw_mod_menu_option_key(u32 index, u32 option);
 /* The option's label: the text the screen shows. */
 const char *bw_mod_menu_option_label(u32 index, u32 option);
 
-/* The option's kind: BW_MOD_SETTING_BOOL or BW_MOD_SETTING_CHOICE. */
+/* The option's kind: BW_MOD_SETTING_BOOL, _CHOICE or _INT. */
 int bw_mod_menu_option_kind(u32 index, u32 option);
 
 /* The option's value: 0 or 1 for a bool, the index of the chosen name for
@@ -310,6 +311,10 @@ int bw_mod_menu_option_default(u32 index, u32 option);
  * such option or the value is not one it can take.  The choice is stored
  * beside the mod's saved data at once. */
 int bw_mod_menu_option_set(u32 index, u32 option, int value);
+
+/* An int option's bounds; 0 and 0 for the other kinds. */
+int bw_mod_menu_option_min(u32 index, u32 option);
+int bw_mod_menu_option_max(u32 index, u32 option);
 
 /* How many names a choice option has. */
 int bw_mod_menu_option_choice_count(u32 index, u32 option);

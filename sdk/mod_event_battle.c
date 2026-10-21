@@ -159,6 +159,10 @@ extern u32 POKE_TOOL_GetPartyValue(struct PokemonParam *mon, u32 paramId,
     BW_PORT_WEAK;                                        /* 0x02017E1C */
 extern void POKE_TOOL_SetLevelAndRecalc(struct PokemonParam *mon, u32 level)
     BW_PORT_WEAK;                                        /* 0x02019CA0 */
+extern void POKE_TOOL_SetPartyValue(struct PokemonParam *mon, u32 paramId,
+                                    u32 value) BW_PORT_WEAK;
+extern void POKE_TOOL_SetMoveSlot(struct PokemonParam *mon, u16 move, u32 slot)
+    BW_PORT_WEAK;
 
 /* The battle view's messages. */
 extern void BTLV_SCU_InitMessage(struct BtlvMessage *msg, int kind, int id)
@@ -1113,6 +1117,107 @@ static void build_battle_setup_wild(const BwEventCall *call,
  * second party in the setup, and the setup of a battle that was not a multi
  * one holds neither.
  */
+/*
+ * battle.trainer_mon: one firing per member of the opposing trainer's
+ * party, once the setup holds the party.  The game's own ids for the
+ * fields (src/game/arm9/poke_tool_param.h).
+ */
+#define BW_PORT_FIELD_SPECIES_ID 0x05u
+#define BW_PORT_FIELD_ITEM_ID    0x06u
+#define BW_PORT_FIELD_ABILITY_ID 0x0Au
+#define BW_PORT_FIELD_MOVE1_ID   0x36u
+#define BW_PORT_FIELD_FORM_ID    0x6Fu
+
+static void fire_trainer_mons(const BwPortSetup *setup)
+{
+    struct Party *party;
+    u16 ids[2];
+    u32 count, i, k;
+
+    if (setup == NULL || setup->competitor == 0u ||
+        bw_mod_event_handler_count(BW_EVENT_BATTLE_TRAINER_MON) == 0u) {
+        return;     /* a wild battle, or nobody listens */
+    }
+    party = (struct Party *)setup->party[1];
+    if (party == NULL || POKEPARTY_GetCount == NULL ||
+        POKEPARTY_GetMember == NULL || POKE_TOOL_GetPartyValue == NULL ||
+        POKE_TOOL_SetPartyValue == NULL || POKE_TOOL_SetLevelAndRecalc == NULL ||
+        POKE_TOOL_SetMoveSlot == NULL) {
+        return;
+    }
+    fill_setup_trainer_ids(ids, setup);
+    count = POKEPARTY_GetCount(party);
+    if (count > 6u) {
+        count = 6u;
+    }
+    for (i = 0u; i < count; i++) {
+        struct PokemonParam *mon = POKEPARTY_GetMember(party, i);
+        BwEventPayload p;
+        BwBattleTrainerMon *t = &p.battle_trainer_mon;
+        u16 moves[4];
+        int restat = 0;
+
+        if (mon == NULL) {
+            continue;
+        }
+        memset(&p, 0, sizeof p);
+        t->trainer_id = ids[0];
+        t->index = (u8)i;
+        t->level = (u8)POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_LEVEL, 0u);
+        t->species = (u16)POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_SPECIES_ID, 0u);
+        t->item = (u16)POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_ITEM_ID, 0u);
+        for (k = 0u; k < 4u; k++) {
+            moves[k] = (u16)POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_MOVE1_ID + k, 0u);
+        }
+        t->move1 = moves[0];
+        t->move2 = moves[1];
+        t->move3 = moves[2];
+        t->move4 = moves[3];
+        t->ability = (u16)POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_ABILITY_ID, 0u);
+        t->form = (u8)POKE_TOOL_GetPartyValue(mon, BW_PORT_FIELD_FORM_ID, 0u);
+        {
+            BwBattleTrainerMon before = *t;
+
+            (void)bw_mod_event_fire(BW_EVENT_BATTLE_TRAINER_MON, &p);
+            if (t->species != 0u && t->species != before.species) {
+                POKE_TOOL_SetPartyValue(mon, BW_PORT_FIELD_SPECIES_ID, t->species);
+                POKE_TOOL_SetPartyValue(mon, BW_PORT_FIELD_FORM_ID, t->form);
+                restat = 1;
+            } else if (t->form != before.form) {
+                POKE_TOOL_SetPartyValue(mon, BW_PORT_FIELD_FORM_ID, t->form);
+                restat = 1;
+            }
+            if (t->ability != 0u && t->ability != before.ability) {
+                POKE_TOOL_SetPartyValue(mon, BW_PORT_FIELD_ABILITY_ID, t->ability);
+            }
+            if (t->item != before.item) {
+                POKE_TOOL_SetPartyValue(mon, BW_PORT_FIELD_ITEM_ID, t->item);
+            }
+            if (t->move1 != before.move1) {
+                POKE_TOOL_SetMoveSlot(mon, t->move1, 0u);
+            }
+            if (t->move2 != before.move2) {
+                POKE_TOOL_SetMoveSlot(mon, t->move2, 1u);
+            }
+            if (t->move3 != before.move3) {
+                POKE_TOOL_SetMoveSlot(mon, t->move3, 2u);
+            }
+            if (t->move4 != before.move4) {
+                POKE_TOOL_SetMoveSlot(mon, t->move4, 3u);
+            }
+            if (t->level != 0u && t->level != before.level) {
+                restat = 1;
+            }
+            if (restat) {
+                /* The game's own setter works out the experience for the
+                 * level under the species' growth and the stats from it. */
+                POKE_TOOL_SetLevelAndRecalc(mon, t->level != 0u ? t->level
+                                                                : before.level);
+            }
+        }
+    }
+}
+
 static void apply_battle_setup(const BwEventPayload *in, BwPortSetup *setup)
 {
     if (setup == NULL) {
@@ -1139,6 +1244,7 @@ static void apply_battle_setup(const BwEventPayload *in, BwPortSetup *setup)
         break;   /* the multi battle is not applied */
     }
     apply_level_adjust(setup, in->battle_start.level_adjust);
+    fire_trainer_mons(setup);
 }
 
 /*

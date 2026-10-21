@@ -1104,6 +1104,10 @@ static void build_encounter_wild(const BwEventCall *call, BwEventPayload *out)
             out->encounter_wild.species = mons[0].species;
             out->encounter_wild.level = mons[0].level;
             out->encounter_wild.shiny = (mons[0].shinyMode == 1u) ? 1u : 0u;
+            if (call->ret > 1) {
+                out->encounter_wild.species2 = mons[1].species;
+                out->encounter_wild.level2 = mons[1].level;
+            }
         }
         out->encounter_wild.slot = encounter_slot(data, param, mons);
     }
@@ -1115,13 +1119,10 @@ static void build_encounter_wild(const BwEventCall *call, BwEventPayload *out)
  * a level of 0 are not written: the game never rolls them, and the port
  * does not put a Pokemon without a species into the battle.
  */
-static void apply_encounter_wild(const BwEventPayload *in, BwEventCall *call)
+static void write_encounter_wild(const BwEventPayload *in,
+                                 const BwEventCall *call,
+                                 BwPortEncountMon *mons)
 {
-    BwPortEncountMon *mons = (BwPortEncountMon *)call->a[3];
-
-    if (mons == NULL) {
-        return;
-    }
     if (in->encounter_wild.species != 0u) {
         mons[0].species = in->encounter_wild.species;
     }
@@ -1131,6 +1132,59 @@ static void apply_encounter_wild(const BwEventPayload *in, BwEventCall *call)
     if (in->encounter_wild.shiny != 0u) {
         mons[0].shinyMode = 1u;   /* 1 is always shiny, 2 is never */
     }
+    if (call->ret > 1) {
+        if (in->encounter_wild.species2 != 0u) {
+            mons[1].species = in->encounter_wild.species2;
+        }
+        if (in->encounter_wild.level2 != 0u) {
+            mons[1].level = in->encounter_wild.level2;
+        }
+    }
+}
+
+/*
+ * The most rolls one encounter takes: a handler that asks for a reroll
+ * every time (a dupes clause on a route of one species) still ends.
+ */
+#define BW_ENCOUNTER_REROLL_MAX 16u
+
+/*
+ * A reroll runs the game's own roll again (FIELD_ENCOUNT_CreateZoneWildMons
+ * loads the zone's slots and rolls the Pokemon; it keeps no state between
+ * calls) and fires the event again with what it rolled.  After the last
+ * roll the handlers' answer stands, reroll or not.  A refusal at a reroll
+ * is the event's refused outcome, no encounter.
+ */
+extern int FIELD_ENCOUNT_CreateZoneWildMons(void *encountData, void *param,
+                                            u16 zoneId, void *mons)
+    __attribute__((weak));
+
+static void apply_encounter_wild(const BwEventPayload *in, BwEventCall *call)
+{
+    BwPortEncountMon *mons = (BwPortEncountMon *)call->a[3];
+    BwEventPayload again;
+    u32 tries = 0;
+
+    if (mons == NULL) {
+        return;
+    }
+    while (in->encounter_wild.reroll != 0u && tries < BW_ENCOUNTER_REROLL_MAX &&
+           FIELD_ENCOUNT_CreateZoneWildMons != NULL) {
+        tries++;
+        call->ret = FIELD_ENCOUNT_CreateZoneWildMons((void *)call->a[0],
+                                                     (void *)call->a[1],
+                                                     (u16)call->a[2], mons);
+        if (call->ret <= 0) {
+            return;     /* the roll found nothing: no encounter */
+        }
+        build_encounter_wild(call, &again);
+        if (bw_mod_event_fire(BW_EVENT_ENCOUNTER_WILD, &again)) {
+            call->ret = 0;
+            return;
+        }
+        in = &again;
+    }
+    write_encounter_wild(in, call, mons);
 }
 
 /*

@@ -721,6 +721,17 @@ static int change_mod_option(int mod, int option, int d)
 
     if (kind == BW_MOD_SETTING_BOOL) {
         value = value != 0 ? 0 : 1;
+    } else if (kind == BW_MOD_SETTING_INT) {
+        /* A number steps by one and stops at its bounds. */
+        int lo = bw_mod_menu_option_min((u32)mod, (u32)option);
+        int hi = bw_mod_menu_option_max((u32)mod, (u32)option);
+
+        value += d;
+        if (value < lo) {
+            value = lo;
+        } else if (value > hi) {
+            value = hi;
+        }
     } else {
         if (count <= 0) {
             return 0;

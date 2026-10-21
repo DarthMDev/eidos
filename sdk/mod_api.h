@@ -60,7 +60,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0x9868E9E2u
+#define BW_MOD_API_HASH 0x29D5958Du
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
@@ -183,6 +183,7 @@ enum {
     BW_EVENT_CATCH_RESULT  = 79,
     BW_EVENT_BATTLE_END    = 80,
     BW_EVENT_WHITEOUT      = 81,
+    BW_EVENT_BATTLE_TRAINER_MON = 82,   /* version 4 */
 
     /* items, money and healing */
     BW_EVENT_ITEM_ADD     = 90,
@@ -269,6 +270,12 @@ enum {
     BW_HEAL_CENTRE = 0,
     BW_HEAL_SCRIPT = 1,
     BW_HEAL_POWER  = 2
+};
+
+/* Where experience comes from (mon.exp). */
+enum {
+    BW_EXP_BATTLE  = 0,
+    BW_EXP_DAYCARE = 1
 };
 
 /* Where an HP restore happens (heal.hp). */
@@ -393,6 +400,10 @@ typedef struct BwEncounterWild {
     u8  level;      /* *mod */
     u8  shiny;      /* *mod: 1 forces shiny, 0 leaves the roll */
     u8  double_;    /* a double wild battle */
+    /* Version 4. */
+    u8  reroll;     /* *mod: 1 rolls the encounter again and fires again */
+    u8  level2;     /* *mod: the second Pokemon of a double (dark grass) */
+    u16 species2;   /* *mod: the same; 0 when there is no second */
 } BwEncounterWild;
 
 typedef struct BwEncounterStatic {
@@ -452,6 +463,9 @@ typedef struct BwMonExp {
     u32 amount;     /* *mod: the experience to add */
     u32 exp;        /* its experience before */
     u8  level;      /* its level before */
+    /* Version 4. */
+    u8  source;     /* BW_EXP_* */
+    u8  wild;       /* a battle source: 1 the battle is a wild one */
 } BwMonExp;
 
 typedef struct BwMonLevelup {
@@ -617,6 +631,29 @@ typedef struct BwWhiteout {
     u8  in_battle;  /* 1 the battle half, 0 the field half */
     u32 money_lost;
 } BwWhiteout;
+
+/*
+ * battle.trainer_mon (version 4): one Pokemon of the opposing trainer's
+ * party, after the game built the party and before the battle starts.  It
+ * fires once per member, in party order.  A changed field is written to
+ * the Pokemon with the game's own setters: a new species or level works out
+ * the stats again, a new move gets its full PP.  0 in a *mod field leaves
+ * the game's value.
+ */
+typedef struct BwBattleTrainerMon {
+    BwEvent h;
+    u16 trainer_id; /* the trainer the party belongs to */
+    u8  index;      /* the position in the party, 0 first */
+    u8  level;      /* *mod */
+    u16 species;    /* *mod */
+    u16 item;       /* *mod: the held item */
+    u16 move1;      /* *mod */
+    u16 move2;      /* *mod */
+    u16 move3;      /* *mod */
+    u16 move4;      /* *mod */
+    u16 ability;    /* *mod */
+    u8  form;       /* *mod: the form, written when species is written */
+} BwBattleTrainerMon;
 
 /* items, money and healing */
 

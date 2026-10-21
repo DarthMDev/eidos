@@ -110,6 +110,9 @@ static int unfilled_calls(const BwModState *t)
     if (t->play_seconds == NULL) { n++; }
     if (t->item_value == NULL) { n++; }
     if (t->move_value == NULL) { n++; }
+    if (t->mon_to_box_n == NULL) { n++; }
+    if (t->mon_from_box == NULL) { n++; }
+    if (t->mon_recalc == NULL) { n++; }
     return n;
 }
 
@@ -256,8 +259,11 @@ int main(void)
     BW_CHECK_EQ("the area, the battle kind, the play time and the data follow",
                 (long)offsetof(BwModState, move_value)
                 - (long)offsetof(BwModState, party_count), 32 * (long)sizeof(void *));
+    BW_CHECK_EQ("the box moves and the recalculation follow",
+                (long)offsetof(BwModState, mon_recalc)
+                - (long)offsetof(BwModState, party_count), 35 * (long)sizeof(void *));
     BW_CHECK_EQ("and nothing follows them",
-                (long)sizeof(BwModState) - (long)offsetof(BwModState, move_value),
+                (long)sizeof(BwModState) - (long)offsetof(BwModState, mon_recalc),
                 (long)sizeof(void *));
 
     printf("the services table\n");
