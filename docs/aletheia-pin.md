@@ -8,19 +8,15 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `999783ad9ded29326c183c89f2af52102bf6dcbe`
-- Date: 2026-10-20 19:49:48 +0100
-- Subject: Wave 20 phase 2: overlay types and per-file headers; host build
-  compiles; original bugs archived
+- Revision: `fa93861b626afc820675bd62efb3942d359299a1`
+- Date: 2026-10-21 05:04:48 +0100
+- Subject: Wave 20 phase 3d: no hidden declarations; field, ARM9 and menu
+  retypes; hand_waza is one file
 
-At this pin every overlay but ov214 compiles: ov214 has a data object
-named `site`, and eidos's data-name macro rewrites the parameter of that
-name in arm9/gfl_heap_wrap.h.  aletheia gives such generic globals module
-names next; until then configure with an EIDOS_OVERLAYS list that leaves
-214 out.  The functions
-that fall off their end return the DS value under `#ifndef __MWERKS__`
-(aletheia docs/ORIGINAL_BUGS.tsv), so tools/gamereturns.txt is empty, and
-every variadic function takes the host <stdarg.h> through
+At this pin every overlay compiles (EIDOS_OVERLAYS=ALL).  Each place the
+DS and the host differ is a whole-statement `#ifdef __MWERKS__` guard with
+a row in aletheia's docs/ORIGINAL_BUGS.tsv, so tools/gamereturns.txt is
+empty and every variadic function takes the host <stdarg.h> through
 src/game/sdk_stdarg.h.
 
 The port compiles this revision's `src/game` (EIDOS_SOURCE_TREE=game, the
