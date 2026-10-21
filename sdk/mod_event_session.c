@@ -316,8 +316,9 @@ static void apply_save_done(const BwEventPayload *in, BwEventCall *call)
  * `state_in_step` reads 0: whether the mod's own saved data was written
  * with this save is the mod state layer's question (docs/mod-state.md,
  * section 2: the port compares the state file's save_check with the save
- * being loaded), and the state layer publishes no such call yet
- * (sdk/mod_state.c).
+ * being loaded), and the save.load payload carries one byte for every mod
+ * that cannot answer it (the answer is per mod, and the payload is built
+ * once for all the handlers of the event).
  */
 static void build_save_load(const BwEventCall *call, BwEventPayload *out)
 {

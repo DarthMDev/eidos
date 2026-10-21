@@ -15,12 +15,14 @@ and the payload layouts are frozen with the interface version
 (`docs/mod-abi.md`).
 
 The "Game function" column is the port's binding: the slot the event fires
-from (`mod/declared_set.txt`, fourth column). The port may move a binding when
-aletheia restructures the code, and a mod does not notice. "Refuse" is the
-outcome the port produces when a handler refuses; "-" means the event cannot be
-refused. "Modify" names the payload fields a handler may change before the
-game uses them; "-" means none. A *locate* note names a path of the event
-whose binding is still to be read.
+from. `mod/declared_set.txt`'s fourth column marks the rows whose slot calls
+the event layer, and the port's own binding table (`sdk/mod_event_*.c`) says
+which event each of those slots fires and when. The port may move a binding
+when aletheia restructures the code, and a mod does not notice. "Refuse" is
+the outcome the port produces when a handler refuses; "-" means the event
+cannot be refused. "Modify" names the payload fields a handler may change
+before the game uses them; "-" means none. A *locate* note names a path of
+the event whose binding is still to be read.
 
 Every refused outcome below was read from the game function's callers: what
 they do with its result, and what state they expect it to leave. Where a
@@ -59,7 +61,7 @@ does not happen.
 | `trainer.spotted` | `EVENT_TRAINER_EYE_Check` 0x021AE0CC | ov021 | the trainer does not see the player (the function returns no event) | - |
 | `npc.talk` | `FIELD_EVENT_CHECK_SearchGridFrontMmdl` 0x0218B4B0; on rails `FIELD_EVENT_CHECK_SearchRailFrontMmdl` 0x0218B53C | ov021 | no person is found ahead; the A press goes on to the sign and tile checks | - |
 | `menu.open` | `EVENT_FIELD_MENU_Create` 0x0215FC40 (the X-button menu event) and `EVENT_FIELD_MENU_CreateForZone` 0x0215FCE0 | ov010 | the menu does not open (no event is returned) | - |
-| `menu.build` | the return of `FIELD_MENU_Create` 0x021A836C | ov021 | - | entries (add, hide) |
+| `menu.build` | the return of `FIELD_MENU_Create` 0x021A836C | ov021 | - | entries (a cleared entry is hidden; one added is not built) |
 | `field.move` | `FIELD_SKILL_CHECK_CallHandler` 0x021644C4 | ov010 | the field move shows as unusable | - |
 | `pc.open` | `SCRCMD_PROC_FLD_CallOv170Event` 0x021B4D60, the script command that opens the box screen (the PC, and the battle box with its kind 4) | ov021 | the PC does not open; the script reads a plain exit | - |
 
@@ -88,12 +90,12 @@ area's normal encounter follows and fires its own `encounter.wild`.
 |---|---|---|---|---|
 | `mon.create` | `POKE_TOOL_CreateEx` 0x02017430; personality `POKE_TOOL_CreatePersonalRnd` 0x020186C8 | arm9 | - | species, level, shiny, nature |
 | `mon.receive` | catch `EVENT_BATTLE_RETURN_Main` 0x021B9614 (ov092, the store step); gifts `SCRCMD_PROC_AddMonToParty` 0x0215C510, `SCRCMD_PROC_AddMonToBox` 0x0215C4C8, `SCRCMD_PROC_AddEggToParty` 0x0215C2D0 (ov010); `SCRCMD_POKEMON_FLD_ReceiveGiftMon` 0x021B6F18, daycare egg `SODATEYA_ReceiveEgg` 0x021C32F4 (ov021); in-game trade `FLD_TRADE_CreateEvent` 0x021CC500 (ov021) | - | - | - |
-| `mon.nickname` | `EVENT_NAMEIN_Create` 0x021CD2A4 (ov021); after a catch `ZUKAN_NICKNAME_Create` 0x0220B55C (ov207) | - | - | force the prompt |
+| `mon.nickname` | `EVENT_NAMEIN_Create` 0x021CD2A4 (ov021); after a catch `ZUKAN_NICKNAME_Create` 0x0220B55C (ov207) | - | - | force the prompt (marked, but the row carries no applier, so a write to it has no effect) |
 | `mon.evolve` | the return of `SHINKA_CHECK_CheckEvolution` 0x0201B2B0 | arm9 | no evolution starts; an evolution stone has no effect | target species |
-| `mon.exp` | the return of `BTL_SERVER_FLOW_CalcPartyExpShares` 0x021CB2D4 (ov093); daycare `SODATEYA_GrantExp` 0x021C3530 (ov021) | - | - | the amount for each Pokemon |
+| `mon.exp` | the return of `BTL_SERVER_FLOW_CalcPartyExpShares` 0x021CB2D4 (ov093); daycare `SODATEYA_GrantExp` 0x021C3530 (ov021) | - | - | the amount |
 | `mon.levelup` | the return of `BTL_POKEPARAM_AddExp` 0x021D69B8, inside `BTL_SERVER_FLOW_ApplyPartyExp` 0x021C5350 (the level crossing) | ov093 | - | - |
-| `move.learn` | level-up moves `POKE_TOOL_GetLevelUpMove` 0x02018328 (arm9; battle, party screen, evolution); daycare `SODATEYA_LearnMove` 0x021C360C (ov021). The party screen, the nurse's relearner and the script that writes a move are bound in the event layer, but no slot carries the event for them, so the event does not fire there (the note below) | - | the level-up, the day care and the script: the move is not learned. The party screen's rows and the relearner's cannot be refused; the payload names the move and the source | - |
-| `mon.release` | `BOX2_MAIN_ClearSlot` 0x021DD314, whose only caller is the release step `BOX2_SEQ_StateMoveItemF` 0x021E81D0 | ov170 | the Pokemon stays; the box redraws it | - |
+| `move.learn` | level-up `POKE_TOOL_GetLevelUpMove` 0x02018328 (arm9); daycare `SODATEYA_LearnMove` 0x021C360C (ov021); the party screen's `POKELIST_TryLearnMove` 0x021BA5B4 and `POKELIST_ReplaceMoveSlot` 0x021BA5E0 (ov091); the nurse's relearner `POKE_SUMMARY_MAIN_ApplyMove` 0x021B6B0C (ov173); the script command that writes a move `SCRCMD_PROC_SetMonMove` 0x0215BD2C (ov010) | arm9, ov010, ov021, ov091, ov173 | the level-up, the day care and the script: the move is not learned. The party screen's rows and the relearner's cannot be refused; the payload names the move and the source | - |
+| `mon.release` | `BOX2_MAIN_ClearSlot` 0x021DD314, whose only caller is the release step `BOX2_SEQ_StateMoveItemF` 0x021E81D0, not inside `BOX2_MAIN_UpdateBoxSlots` | ov170 | the Pokemon stays; the box redraws it | - |
 | `box.deposit` | `BOX2_MAIN_UpdateBoxSlots` 0x021DD530, a party Pokemon placed in a box | ov170 | the move is not applied; the box screen's own next step redraws the icons | - |
 | `box.withdraw` | `BOX2_MAIN_UpdateBoxSlots` 0x021DD530, a box Pokemon placed in the party | ov170 | as `box.deposit` | - |
 | `party.swap` | `POKEPARTY_SwapMembers` 0x0201AB8C, not inside `BOX2_MAIN_UpdateBoxSlots` | arm9 | the order does not change; the party screen redraws from the party | - |
@@ -137,16 +139,16 @@ Notes from the callers:
 
 | Event | Game function | Region | Refuse | Modify |
 |---|---|---|---|---|
-| `battle.start` | `BTL_SETUP_Create` 0x02013090; formats `BTL_SETUP_SetupTrainer*` 0x02013610 to 0x02013734 | arm9 | - | format, parties, levels; the payload names the trainer ids and whether the battle is wild |
+| `battle.start` | `BTL_SETUP_Create` 0x02013090 (arm9); the return of the setups: the wild `BTL_SETUP_SetupWild` 0x0201347C (arm9), the trainer `FIELD_ENCOUNT_SetupTrainerBattle` 0x021AA5CC (ov021), the scripted `EVENT_BATTLE_CreateScriptedBattle` 0x0216E7C8 (ov010) | arm9, ov010, ov021 | - | format, levels; the payload names the trainer ids and whether the battle is wild |
 | `battle.action` | fight `BTL_CLIENT_IsMoveSelectionBlocked` 0x021CF5B0; run `BTL_CLIENT_GetEscapeBlockerForSide` 0x021CF918 (inside `BTL_CLIENT_StepSelectRun`); switch the return of `BTL_PICK_GetLast` 0x0689CB1C (ov095, inside `BTL_CLIENT_StepSelectSwitchTarget`) | ov093 | the choice is not accepted and the action menu stays; the payload names the action and, for fight, the move | - |
 | `battle.item` | the return of `BTLV_CORE_GetSelectedItem` 0x021EA01C, inside `BTL_CLIENT_StepSelectItem` | ov093 | back to the action menu; the item stays in the bag and the turn is not spent | - |
 | `battle.switch` | `BTL_SERVER_FLOW_ProcMemberIn` 0x021BD9D4 | ov093 | - | - |
 | `battle.escape` | `BTL_SERVER_FLOW_TryEscape` 0x021BD60C | ov093 | the escape fails as a failed run: "Can't escape!" and the turn is spent | - |
 | `battle.move` | `BTL_SERVER_FLOW_RunMoveUsedEvent` 0x021C1A10 | ov093 | - | - |
-| `battle.damage` | `BTL_SERVER_FLOW_CalcMoveDamage` 0x021C1E74 | ov093 | - | the amount; the payload names attacker, target, move and the target's HP before |
+| `battle.damage` | the return of `BTL_SERVER_FLOW_CalcMoveDamage` 0x021C1E74 | ov093 | - | the amount; the payload names attacker, target, move and the target's HP before |
 | `battle.faint` | `BTL_SERVER_FLOW_ProcFaintedPoke` 0x021C4F64 | ov093 | - | - |
 | `catch.attempt` | `BTL_SERVER_FLOW_TryThrowBall` 0x021CBA40 | ov093 | the ball is blocked as in a trainer battle: the block message shows, the ball stays in the bag, the turn is spent; the payload names the ball and the target's species and level | catch rate (`BTL_SERVER_FLOW_GetBallCatchRate` 0x021CBD48) |
-| `catch.result` | the return of `BTL_SERVER_FLOW_TryThrowBall` | ov093 | - | - |
+| `catch.result` | the return of `BTL_SERVER_FLOW_CalcCaptureShakes` 0x021CBB34 | ov093 | - | - |
 | `battle.end` | `EVENT_BATTLE_NotifyBattleEnd` 0x0216EE7C | ov010 | - | - |
 | `whiteout` | `BTL_CLIENT_StepShowBlackoutMessages` 0x021D1960 (ov093); `SCRIPT_SYS_RunRecoverScript` 0x02158A20 (ov010) | - | - | - |
 
@@ -245,6 +247,10 @@ per area (`sdk/mod_event_session.c`, `sdk/mod_event_field.c`,
   comes from the save and not from a table of the zone, and the roamer's
   shiny and double flags read 0 as well: its personality is the save's own and
   the game sets its battle up alone.
+- The wild battle's setup row (`BTL_SETUP_SetupWild` 0x0201347C) has a slot
+  that calls the event layer, and the port binds `battle.start` to it: the
+  setup is where the battle's own values are known, so `encounter.wild` fires
+  from the two rows above and the setup row fires the battle's own event.
 - `encounter.static`'s legendary kind has no feeder at this call: the game
   chooses the species in the script that starts the battle, and the setup
   carries no flag for it. The kind the payload does carry says whether the
@@ -269,10 +275,16 @@ per area (`sdk/mod_event_session.c`, `sdk/mod_event_field.c`,
   request. For an in-game trade the species reads 0: the trade record is the
   overlay's own data and the call does not name it, so a mod reads the
   Pokemon it is given through the state calls.
-- `mon.nickname`'s Pokemon reads 0: the prompt's own work holds it, and that
-  work is the overlay's own block. The force flag reads 0 as well: the game
-  decides to ask before it gets to the prompt, and the catch screen's
-  decision is not a declared row, so the port has no hook there.
+- `mon.nickname`'s Pokemon reads 0 on the prompt's own row: the prompt's
+  work holds it, and that work is the overlay's own block, and the game's
+  own code shows that the prompt never names a Pokemon at all (its three
+  modes edit the player's greeting, the player's thanks message and the
+  beacon message). The row that does name a Pokemon is the catch
+  registration screen's own, and it carries the caught Pokemon; the party
+  position reads 0 there, because the Pokemon is not in the party yet (the
+  battle return stores it after the prompt). The force flag reads 0 as
+  well: the game decides to ask before it gets to the prompt, and the catch
+  screen's decision is not a declared row, so the port has no hook there.
 - `mon.exp` names one Pokemon: the first member of the party that gains
   experience, because the payload has room for one. The experience and the
   level it carries are the party record's own, read through the state calls,
@@ -283,9 +295,13 @@ per area (`sdk/mod_event_session.c`, `sdk/mod_event_field.c`,
   overlay's own data and the call does not name it. The trade id and the
   party position are the command's own operands, and the port reads them out
   of the script's variables without moving the script VM's program counter.
-- `move.learn`'s replaced move reads 0: the game asks for that later, in the
-  screen that owns the choice. The move slot is the first of the Pokemon's
-  four that is empty, or 0xFF when it holds four moves already.
+- `move.learn`'s move slot is the first of the Pokemon's four that is
+  empty, or 0xFF when it holds four moves already, on the three rows that
+  name no slot: the level-up check, the day care and the party screen's
+  first row. The other three name the slot they write into, and their
+  replaced move is the move that was in that slot before the write. The
+  three that name no slot read 0 for the replaced move, because the game
+  asks for that later, in the screen that owns the choice.
 - `move.learn` fires from all six rows the area binds: the level-up check
   (arm9), the day care (ov021), the party screen's two (`POKELIST_TryLearnMove`
   0x021BA5B4 and `POKELIST_ReplaceMoveSlot` 0x021BA5E0, ov091) and the
@@ -298,8 +314,10 @@ per area (`sdk/mod_event_session.c`, `sdk/mod_event_field.c`,
   the script command's row reads the command's own operands, and its source
   reads 0 - the command names no teacher, and the tutor's own move table
   lives in ov021's script command, which the ARM9 builder cannot reach.
-- `mon.helditem`'s party position reads 0: the party is not carried by the
-  call.
+- `mon.helditem`'s party position is the one the party screen's own block
+  names: the screen's argument block holds the party it shows, and the
+  Pokemon the call carries is a member of it, so the port reads the position
+  out of that party the way the screen does.
 
 **The battle area.**
 
@@ -319,13 +337,17 @@ per area (`sdk/mod_event_session.c`, `sdk/mod_event_field.c`,
   target's HP before the hit is filled, because the hit has not landed yet
   (in a multi-hit move the earlier hits have).
 - `catch.attempt`'s rate is the game's own rate as a percentage of its
-  factor (100 for a Poke Ball, 150 for a Great Ball), and the port answers
-  the roll with the factor the handlers asked for. A mod that wants the
-  absolute factor overrides the function that computes it, which is a
-  declared row.
-- `catch.result`'s caught flag and shakes read 0: the game keeps both in the
-  locals of the roll and writes them into the battle's command stream, which
-  the port does not read.
+  factor (the factor is a 12.12 fixed-point number and one is 0x1000), and
+  the port answers the roll with the game's own factor scaled by the
+  percentage a handler wrote. A mod that wants the absolute factor
+  overrides the function that computes it, which is a declared row.
+- `catch.result` fires at the return of the game's own roll
+  (`BTL_SERVER_FLOW_CalcCaptureShakes`), not at the throw: the roll is where
+  the game knows whether the Pokemon was caught and how many shakes it took.
+  The caught flag is the roll's own result and the shakes are the ones the
+  roll wrote into the word it was given; the target and the ball are the
+  roll's own arguments, so the port does not run the throw's search again to
+  name them.
 - `whiteout`'s money lost reads 0. The game computes the penalty inside the
   step, at the state that shows the amount, and the accessor that computes it
   latches its result, so the port does not call it: the game would find
@@ -395,9 +417,11 @@ swapped: aletheia gives 0x021B9090 `BTL_MAIN_RemoveItemFromBag` and 0x021B90BC
 
 Several `port_renames.tsv` rows name a function the port binds or cites but
 aletheia has not renamed: `POKE_TOOL_GetLevelUpMove` 0x02018328,
-`POKELIST_FindMoveSlot` 0x021BA5B4, `BOX2_MAIN_MoveMonIntoBox` 0x021DD810,
-`BOX2_MAIN_MoveMonToParty` 0x021DD330 and `BOX2_SEQ_StateMoveItemF` 0x021E81D0
-still carry those names in the manifest, so the port leaves them.
+`BOX2_MAIN_MoveMonIntoBox` 0x021DD810, `BOX2_MAIN_MoveMonToParty` 0x021DD330
+and `BOX2_SEQ_StateMoveItemF` 0x021E81D0 still carry those names in the
+manifest, so the port leaves them. The party screen's move row at
+0x021BA5B4 is the one the port has moved on from: the declared set calls it
+`POKELIST_TryLearnMove`.
 
 ### The rows the newer corpus renamed under the port
 
@@ -486,7 +510,7 @@ accessor behind each:
 | A party Pokemon's fields | `POKE_TOOL_GetPartyValue` 0x02017E1C, `POKE_TOOL_SetPartyValue` 0x02017E40; species 0x05, held item 0x06, exp 0x08, level 0x9E, HP 0xA0, max HP 0xA1, stats 0xA2 to 0xA6, types 0xAE and 0xAF |
 | An in-battle Pokemon | `BTL_POKEPARAM_GetValue`; HP to zero `BTL_POKEPARAM_ZeroHp` 0x021D5FB8. The battle works on a copy, so a write to the party record waits for the battle to end |
 | Party | `GAME_DATA_GetMyParty` 0x02012934, `POKEPARTY_GetMember` 0x0201AB28, `POKEPARTY_GetCount` 0x0201AA18, `POKEPARTY_RemoveMember` 0x0201A9C8 |
-| Boxes | `BOX_SAVEDATA_GetPokemon` 0x02007A18, `BOX_SAVEDATA_AddPokemonToBox` 0x0200752C, `BOX_SAVEDATA_ClearPokemon` 0x02007664, `BOX_SAVEDATA_SetBoxName` 0x02007898 |
+| Boxes | `BOX_SAVEDATA_GetPokemon` 0x02007A18, `BOX_SAVEDATA_GetUsableBoxCount` for the box count, `POKE_TOOL_GetBoxValue` and `POKE_TOOL_SetBoxValue` for a box record's fields |
 | Species data | `POKE_PERSONAL_GetParam` 0x0201AE1C (types, stats, catch rate), `POKE_TOOL_GetPersonalGender` 0x02019C7C |
 | Shiny | `POKE_TOOL_IsShiny` 0x02017EAC |
 | Dex | `ZUKAN_SAVE_IsCaught` 0x0200CED4 |
@@ -524,7 +548,7 @@ the game's own, so a raw hook can break when aletheia restructures the code. A
 mod that uses raw hooks states the port version it was built against, and the
 port refuses to load it on another version.
 
-The declared set has 251 rows: 73 carry a stable event, the rest
+The declared set has 252 rows: 74 carry a stable event, the rest
 are raw hooks a mod or a stable event may need later. By region:
 
 | Region | Rows |
@@ -538,7 +562,7 @@ are raw hooks a mod or a stable event may need later. By region:
 | ov070 | 1 |
 | ov091 | 7 |
 | ov092 | 1 |
-| ov093 | 41 |
+| ov093 | 42 |
 | ov094 | 6 |
 | ov095 | 1 |
 | ov120 | 1 |

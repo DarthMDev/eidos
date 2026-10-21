@@ -45,10 +45,25 @@ extern void        eidos_settings_net_revert(void);
  */
 
 /*
+ * The second code of a session: the one the player types to join a
+ * session, kept apart from the code in force, so that hosting a session
+ * does not overwrite what the player has typed.  It is a setting of the
+ * port's own as well ([session], join_code).
+ */
+
+/*
  * The port's own run-status panel and the input injection's limit: the
  * settings' model holds them (engine/platform/settings.c), and the screen
  * shows them and the player changes them there.
  */
+
+/*
+ * The run restart (sdk/mod_restart.c has no header of its own, so the
+ * prototype is here, the way the boot's is): the port's own restart.  The
+ * request is recorded and the boot's frame loop carries it out, because
+ * the reset clears the memory the game is running in.
+ */
+extern void bw_mod_restart(u32 flags);
 
 /* ================================================================== */
 /* UI TEXT: every string the settings screen shows.  ASCII only.       */
@@ -131,16 +146,28 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 
 /* The Session section: the port's own peer session (sdk/mod_net.h, "The
  * port's own session"). */
-#define HELP_SESSION_CODE1  "The code of the session."
-#define HELP_SESSION_CODE2  "Type the code to join one."
+#define HELP_SESSION_CODE1  "The code of the session in force."
+#define HELP_SESSION_CODE2  "The other players read it."
+#define HELP_SESSION_JCODE1 "The code to join a session with."
+#define HELP_SESSION_JCODE2 "Type it on the keyboard."
 #define HELP_SESSION_HOST1  "Ask the relay for a session."
 #define HELP_SESSION_HOST2  "The code comes back here."
 #define HELP_SESSION_JOIN1  "Join with the code above."
 #define HELP_SESSION_JOIN2  "The relay is asked at once."
 #define HELP_SESSION_LEAVE1 "Leave the session."
 #define HELP_SESSION_LEAVE2 "The other players are told."
-#define HELP_SESSION_REVERT1 "The code goes back as it was."
+#define HELP_SESSION_SELF1  "This player's own number."
+#define HELP_SESSION_SELF2  "The peers are numbered too."
+#define HELP_SESSION_PEER1  "A player in the session."
+#define HELP_SESSION_PEER2  "The number is the relay's."
+#define HELP_SESSION_REVERT1 "The codes go back as they were."
 #define HELP_SESSION_REVERT2 "The change applies when you leave."
+
+/* The run restart (the Mods section) and the menu's own question. */
+#define HELP_MOD_RESTART1 "The run ends and starts again."
+#define HELP_MOD_RESTART2 "You are asked before it happens."
+#define HELP_Q_CHOOSE1 "Left and right choose the answer."
+#define HELP_Q_CHOOSE2 "A takes it, B says no."
 
 /* The run-status panel (the Mods section) and the input injection's limit
  * (the Network section). */
@@ -202,11 +229,21 @@ static const ValueName k_choice_names[] = {
 #define STR_NONE        "(none)"
 
 /* The Session section's own labels. */
-#define STR_SESSION_CODE  "Session code"
-#define STR_SESSION_HOST  "Host session"
-#define STR_SESSION_JOIN  "Join session"
-#define STR_SESSION_LEAVE "Leave session"
-#define STR_SESSION_REVERT "Revert changes"
+#define STR_SESSION_CODE     "Session code"
+#define STR_SESSION_JOINCODE "Join code"
+#define STR_SESSION_HOST     "Host session"
+#define STR_SESSION_JOIN     "Join session"
+#define STR_SESSION_LEAVE    "Leave session"
+#define STR_SESSION_SELF     "You"
+#define STR_SESSION_PEER     "Peer"
+#define STR_SESSION_REVERT   "Revert changes"
+
+/* The run restart (the Mods section) and the menu's own question. */
+#define STR_MOD_RESTART "Restart the run"
+#define STR_Q_TITLE     "Confirm"
+#define STR_Q_YES       "Yes"
+#define STR_Q_NO        "No"
+#define STR_Q_CANCEL    "Cancel"
 
 /* What the session's rows say about the work: the relay takes up to
  * three seconds to answer, so the row says so while it waits. */
@@ -261,6 +298,7 @@ enum {
     ROW_MOD_OPTION,       /* a mod's own setting: arg the mod, arg2 it  */
     ROW_MOD_CLEAR,        /* "Clear saved data": arg is the mod          */
     ROW_MOD_REVERT,       /* the switches back to the port's list        */
+    ROW_MOD_RESTART,      /* the run restart (the port's own)            */
     ROW_ORPHAN,           /* a saved-data folder no installed mod claims */
     ROW_NET_RELAY,        /* the relay's address (text)                  */
     ROW_NET_RELAY_PORT,   /* the relay's port (a number)                 */
@@ -268,12 +306,15 @@ enum {
     ROW_NET_NAME,         /* the player's name (text)                    */
     ROW_INJECT_MAX,       /* the longest press the injection allows     */
     ROW_NET_DEFAULTS,     /* the network settings back to their default  */
-    ROW_SESSION_CODE,     /* the session's code (text)                   */
+    ROW_SESSION_CODE,     /* the code in force (read only)               */
+    ROW_SESSION_JOINCODE, /* the code the player types to join with      */
     ROW_SESSION_HOST,     /* start a session                             */
     ROW_SESSION_JOIN,     /* join a session                              */
     ROW_SESSION_LEAVE,    /* leave the session                           */
-    ROW_SESSION_REVERT,   /* the code back to the committed state        */
-    ROW_SESSION_DEFAULTS  /* the code back to nothing                     */
+    ROW_SESSION_SELF,     /* this player's own number in the session     */
+    ROW_SESSION_PEER,     /* a peer of the session: arg is its number    */
+    ROW_SESSION_REVERT,   /* the codes back to the committed state       */
+    ROW_SESSION_DEFAULTS  /* the codes back to nothing                    */
 };
 
 typedef struct Row { int type; int arg; int arg2; } Row;
@@ -346,6 +387,11 @@ static void build_mods_rows(void)
         add_row(ROW_ORPHAN, (int)i, 0);
     }
     add_row(ROW_MOD_REVERT, 0, 0);
+    /* The run restart: the mod layer's own restart (sdk/mod_restart.c) is
+     * the port's own restart, and the menu offers it beside the mod
+     * layer's other rows.  A restart ends the run, so the player is asked
+     * first (the menu's own question). */
+    add_row(ROW_MOD_RESTART, 0, 0);
 }
 
 /* The Network section: the port's own settings for the network service, and
@@ -363,16 +409,37 @@ static void build_net_rows(void)
 
 /*
  * The Session section: the port's own peer session (sdk/mod_net.h, "The
- * port's own session").  The code is a setting of the port's own, so it
- * is in the model with the rest of the settings and the file keeps it;
- * the three rows in the middle are the player's own actions.
+ * port's own session").  The two codes are settings of the port's own, so
+ * they are in the model with the rest of the settings and the file keeps
+ * them; the rows in the middle are the player's own actions, and the rows
+ * after them are the players of the session.
  */
 static void build_session_rows(void)
 {
+    u32 peers;
+    u32 i;
+
     add_row(ROW_SESSION_CODE, 0, 0);
+    add_row(ROW_SESSION_JOINCODE, 0, 0);
     add_row(ROW_SESSION_HOST, 0, 0);
     add_row(ROW_SESSION_JOIN, 0, 0);
     add_row(ROW_SESSION_LEAVE, 0, 0);
+    /* This player, and the others: the port's own handler collected them
+     * (engine/platform/settings.c). */
+    if (bw_port_session_self_peer() != 0) {
+        add_row(ROW_SESSION_SELF, 0, 0);
+    }
+    peers = bw_port_session_peer_count();
+    for (i = 0; i < peers; i++) {
+        u32 number = 0;
+
+        if (bw_port_session_peer_at(i, &number, NULL, 0) != 0) {
+            break;
+        }
+        /* The number keeps the cursor on the same player when the list is
+         * built again; the index says which row of the list this is. */
+        add_row(ROW_SESSION_PEER, (int)number, (int)i);
+    }
     add_row(ROW_SESSION_REVERT, 0, 0);
     add_row(ROW_SESSION_DEFAULTS, 0, 0);
 }
@@ -419,6 +486,112 @@ static void build_rows(void)
         break;
     }
     add_row(ROW_DEFAULTS, 0, 0);
+}
+
+/*
+ * The rows are built again, and the cursor follows the row it was on: the
+ * kind of the row and its argument are kept, and the cursor goes back to
+ * the row that has them.  A row that is gone (a peer that left) leaves the
+ * cursor where it is, as near as it can.
+ */
+static void clamp_scroll(void);
+
+static void build_rows_keep_cursor(void)
+{
+    int type = -1;
+    int arg = 0;
+    int i;
+
+    if (g.nrows > 0 && g.cursor >= 0 && g.cursor < g.nrows) {
+        type = g.rows[g.cursor].type;
+        arg = g.rows[g.cursor].arg;
+    }
+    build_rows();
+    if (type < 0) {
+        return;
+    }
+    for (i = 0; i < g.nrows; i++) {
+        if (g.rows[i].type == type && g.rows[i].arg == arg) {
+            g.cursor = i;
+            return;
+        }
+    }
+    if (g.cursor >= g.nrows) {
+        g.cursor = g.nrows > 0 ? g.nrows - 1 : 0;
+    }
+    clamp_scroll();
+}
+
+/* ------------------------------------------------------------------ */
+/* The menu's own question                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The port has no way to ask the player a question from the menu: the
+ * game's own yes/no window needs the field's talk window, and the settings
+ * screen is a menu at the title.  So the menu asks its own question: a row
+ * that asks, and the answer it waits for.
+ *
+ * While the question is up the screen shows it alone (the header, the
+ * question and the grey bar).  Left and right choose the answer, A takes
+ * the answer that is chosen and B says no.  The answer starts at "no": the
+ * player has to choose the other one.
+ */
+#define QUESTION_NONE    0
+#define QUESTION_RESTART 1
+
+/* What a question says: the row's label and the help's first line. */
+typedef struct QuestionText {
+    const char *label;
+    const char *help;
+} QuestionText;
+
+static const QuestionText k_questions[] = {
+    { "", "" },                              /* QUESTION_NONE    */
+    { "Restart the run?",                    /* QUESTION_RESTART */
+      "The run ends and starts again." },
+};
+
+static struct {
+    int asking;     /* what is asked (QUESTION_*)                  */
+    int answer;     /* 1: yes, 0: no: the answer the player chose */
+} g_q;
+
+static int question_up(void)
+{
+    return g_q.asking != QUESTION_NONE;
+}
+
+/* The question goes up. */
+static int question_ask(int what)
+{
+    if (what <= QUESTION_NONE || what > (int)(sizeof k_questions /
+                                              sizeof k_questions[0]) - 1) {
+        return 0;
+    }
+    g_q.asking = what;
+    g_q.answer = 0;
+    return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+}
+
+/*
+ * The question is answered.  The action it was about runs when the answer
+ * is yes; the restart leaves the screen, because the run it ends is the
+ * screen's own game.
+ */
+static int question_close(int yes)
+{
+    int what = g_q.asking;
+
+    g_q.asking = QUESTION_NONE;
+    if (yes && what == QUESTION_RESTART) {
+        /* The port's own restart: the request is recorded, and the boot's
+         * frame loop carries it out, because the reset clears the memory
+         * the game is running in. */
+        bw_mod_restart(0);
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT | EIDOS_SUI_EXIT;
+    }
+    return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
 }
 
 /* The cursor runs over the rows and then one more place: the grey bar
@@ -469,6 +642,10 @@ void eidos_sui_leave(void)
          * stands. */
         eidos_settings_net_text_cancel();
         g.editing = 0;
+    }
+    if (g_q.asking != QUESTION_NONE) {
+        /* A question that was up is given up: the answer is no. */
+        g_q.asking = QUESTION_NONE;
     }
     if (g.mods_open) {
         /* The mods the player changed: the switches apply now, when the
@@ -582,6 +759,7 @@ static struct {
     int have;        /* there is an answer                      */
     int rc;          /* the answer of the last work             */
     int host;        /* the last work was a host                */
+    u32 stamp;       /* the peer list's stamp: it changes when the list does */
 } g_sess;
 
 /*
@@ -590,6 +768,10 @@ static struct {
  * the screen asks each frame; the answer is taken once, and the code the
  * relay handed out goes into the model, where the row shows it and the
  * player reads it to the other players.
+ *
+ * The peers of the session come with the answer: the port's own handler
+ * collected them (engine/platform/settings.c), and the stamp says when
+ * the list changed, so the rows are built again when it does.
  *
  * Returns non-zero when the screen has to draw again.
  */
@@ -609,7 +791,17 @@ static int poll_session(void)
         g_sess.rc = st.rc;
         g_sess.host = st.host;
         if (st.rc == BW_MOD_NET_OK && st.code[0] != '\0') {
+            /* The code in force: the one the relay handed out, or the one
+             * the player joined with.  The code the player types is a
+             * setting of its own and is not touched here. */
             eidos_settings_session_set_code(st.code);
+        }
+        redraw = 1;
+    }
+    if (st.stamp != g_sess.stamp) {
+        g_sess.stamp = st.stamp;
+        if (g.level == 1 && g.tab == TAB_SESSION) {
+            build_rows_keep_cursor();
         }
         redraw = 1;
     }
@@ -661,7 +853,7 @@ static int session_action(int type)
         }
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
     case ROW_SESSION_JOIN: {
-        const char *code = eidos_settings_session_code();
+        const char *code = eidos_settings_session_join_code();
 
         if (code == NULL || code[0] == '\0') {
             /* no code to join with: the player types one first */
@@ -752,6 +944,8 @@ static void begin_text_edit(int type)
         eidos_settings_net_relay_text_begin();
     } else if (type == ROW_NET_NAME) {
         eidos_settings_net_name_text_begin();
+    } else if (type == ROW_SESSION_JOINCODE) {
+        eidos_settings_session_join_code_text_begin();
     } else {
         eidos_settings_session_code_text_begin();
     }
@@ -842,6 +1036,37 @@ static unsigned repeat_dirs(unsigned pressed, unsigned held)
     return out;
 }
 
+/* ------------------------------------------------------------------ */
+/* The menu's own question                                             */
+/* ------------------------------------------------------------------ */
+
+/* The question's own input.  (The question's state is above, with the
+ * other state of the screen.) */
+static int question_input(unsigned pressed, unsigned held)
+{
+    unsigned act = repeat_dirs(pressed, held);
+    int res = 0;
+
+    if (act & 0x10u) {                   /* right: yes */
+        if (!g_q.answer) {
+            g_q.answer = 1;
+            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
+        }
+    } else if (act & 0x20u) {            /* left: no */
+        if (g_q.answer) {
+            g_q.answer = 0;
+            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
+        }
+    }
+    if (pressed & 2u) {                  /* B: no */
+        return question_close(0);
+    }
+    if (pressed & 1u) {                  /* A: the answer that is chosen */
+        return question_close(g_q.answer);
+    }
+    return res;
+}
+
 /* The screen's own input: the buttons the player pressed. */
 static int sui_input(unsigned pressed, unsigned held);
 
@@ -865,6 +1090,12 @@ static int sui_input(unsigned pressed, unsigned held)
     unsigned act;
     const Row *r;
     int res;
+
+    if (question_up()) {
+        /* The menu's own question is up: it takes the input until it is
+         * answered. */
+        return question_input(pressed, held);
+    }
 
     if (g.editing) {
         return poll_text();
@@ -1006,7 +1237,7 @@ static int sui_input(unsigned pressed, unsigned held)
         return 0;
     }
     if (r->type == ROW_NET_RELAY || r->type == ROW_NET_NAME ||
-        r->type == ROW_SESSION_CODE) {
+        r->type == ROW_SESSION_JOINCODE) {
         if (pressed & 1u) {
             begin_text_edit(r->type);
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
@@ -1043,6 +1274,10 @@ static int sui_input(unsigned pressed, unsigned held)
             bw_mod_menu_revert();
             eidos_settings_panel_revert();
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        case ROW_MOD_RESTART:
+            /* The run ends: the player is asked first (the menu's own
+             * question). */
+            return question_ask(QUESTION_RESTART);
         case ROW_NET_DEFAULTS:
             /* The network settings back to their defaults, and the
              * injection's limit with them: it is this section's own row. */
@@ -1060,7 +1295,12 @@ static int sui_input(unsigned pressed, unsigned held)
 
 int eidos_sui_row_count(void)
 {
-    int n = g.nrows - g.scroll;
+    int n;
+
+    if (question_up()) {
+        return 3;               /* the header, the question, the grey bar */
+    }
+    n = g.nrows - g.scroll;
     if (n > EIDOS_SUI_VISIBLE) {
         n = EIDOS_SUI_VISIBLE;
     }
@@ -1069,6 +1309,9 @@ int eidos_sui_row_count(void)
 
 int eidos_sui_cursor_row(void)
 {
+    if (question_up()) {
+        return 1;               /* the question's own row */
+    }
     if (on_back()) {
         return eidos_sui_row_count() - 1;
     }
@@ -1111,6 +1354,17 @@ int eidos_sui_touch(int row, int zone)
     const Row *r;
     int was, res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
 
+    if (question_up()) {
+        /* The menu's own question is up: the touch answers it (the grey
+         * bar says no). */
+        if (row == 1) {
+            return question_close(g_q.answer);
+        }
+        if (row == 2) {
+            return question_close(0);
+        }
+        return 0;
+    }
     if (g.wait_release) {
         return 0;
     }
@@ -1202,9 +1456,15 @@ int eidos_sui_touch(int row, int zone)
             res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
         break;
+    case ROW_MOD_RESTART:
+        if (was) {
+            /* The run ends: the player is asked first. */
+            res = question_ask(QUESTION_RESTART);
+        }
+        break;
     case ROW_NET_RELAY:
     case ROW_NET_NAME:
-    case ROW_SESSION_CODE:
+    case ROW_SESSION_JOINCODE:
         if (was) {
             begin_text_edit(r->type);
             res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
@@ -1365,6 +1625,19 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
 
     if (nl > 0) { label[0] = '\0'; }
     if (nv > 0) { value[0] = '\0'; }
+    if (question_up()) {
+        /* The menu's own question: the header, the question and the grey
+         * bar. */
+        if (row == 0) {
+            put(label, nl, STR_Q_TITLE);
+        } else if (row == 1) {
+            put(label, nl, k_questions[g_q.asking].label);
+            put(value, nv, g_q.answer ? STR_Q_YES : STR_Q_NO);
+        } else if (row == 2) {
+            put(label, nl, STR_Q_CANCEL);
+        }
+        return;
+    }
     if (row == 0) {
         put(label, nl, g.level == 0 ? STR_TITLE : k_tab_names[g.tab]);
         return;
@@ -1420,6 +1693,9 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
     case ROW_MOD_REVERT:
         put(label, nl, STR_MOD_REVERT);
         break;
+    case ROW_MOD_RESTART:
+        put(label, nl, STR_MOD_RESTART);
+        break;
     case ROW_ORPHAN: {
         const char *name = bw_mod_menu_orphan_at((u32)r->arg);
         put(label, nl, name != NULL ? name : "");
@@ -1455,10 +1731,17 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         }
         break;
     case ROW_SESSION_CODE:
-        /* The session's code: the one the relay handed out, or the one the
-         * player types to join a session. */
+        /* The code in force: the one the relay handed out when the player
+         * hosted a session, or the one the player joined a session with.
+         * The code the player types is a row of its own. */
         put(label, nl, STR_SESSION_CODE);
         put(value, nv, net_text(eidos_settings_session_code()));
+        break;
+    case ROW_SESSION_JOINCODE:
+        /* The code being typed: the one the player types to join a
+         * session.  Hosting a session does not overwrite it. */
+        put(label, nl, STR_SESSION_JOINCODE);
+        put(value, nv, net_text(eidos_settings_session_join_code()));
         break;
     case ROW_SESSION_HOST:
         put(label, nl, STR_SESSION_HOST);
@@ -1472,6 +1755,28 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         put(label, nl, STR_SESSION_LEAVE);
         put(value, nv, bw_port_session_active() ? STR_SESSION_IN : "");
         break;
+    case ROW_SESSION_SELF:
+        /* This player's own number in the session. */
+        put(label, nl, STR_SESSION_SELF);
+        snprintf(buf, sizeof buf, "#%u",
+                 (unsigned int)bw_port_session_self_peer());
+        put(value, nv, buf);
+        break;
+    case ROW_SESSION_PEER: {
+        /* A peer of the session: the name the relay gave it and the number
+         * it has. */
+        char name[BW_MOD_NET_NAME_MAX + 1];
+
+        name[0] = '\0';
+        if (bw_port_session_peer_at((u32)r->arg2, NULL, name,
+                                    (u32)sizeof(name)) != 0) {
+            name[0] = '\0';
+        }
+        put(label, nl, name[0] != '\0' ? name : STR_SESSION_PEER);
+        snprintf(buf, sizeof buf, "#%u", (unsigned int)(u32)r->arg);
+        put(value, nv, buf);
+        break;
+    }
     case ROW_SESSION_REVERT:
         put(label, nl, STR_SESSION_REVERT);
         break;
@@ -1490,6 +1795,11 @@ int eidos_sui_row_choices(int row, int *active, char names[3][20])
     const EidosOption *o;
     int i, count;
 
+    if (question_up()) {
+        /* The menu's own question carries its answer as the row's value:
+         * the drawing paths differ in what they show of a row. */
+        return 0;
+    }
     if (row < 1 || row == eidos_sui_row_count() - 1
         || g.scroll + row - 1 >= g.nrows) {
         return 0;
@@ -1559,7 +1869,13 @@ void eidos_sui_help_line(int i, char *out, int n)
     if (n > 0) {
         out[0] = '\0';
     }
-    if (g.capturing) {
+    if (question_up()) {
+        /* The menu's own question: what it asks, and how it is answered. */
+        l[0] = k_questions[g_q.asking].help;
+        l[1] = HELP_Q_CHOOSE2;
+        l[2] = HELP_Q_CHOOSE1;
+        l[3] = "";
+    } else if (g.capturing) {
         l[0] = HELP_CAPTURE1;
         l[1] = HELP_CAPTURE2;
     } else if (g.editing) {
@@ -1639,6 +1955,10 @@ void eidos_sui_help_line(int i, char *out, int n)
             l[0] = HELP_SESSION_CODE1;
             l[1] = HELP_SESSION_CODE2;
             break;
+        case ROW_SESSION_JOINCODE:
+            l[0] = HELP_SESSION_JCODE1;
+            l[1] = HELP_SESSION_JCODE2;
+            break;
         case ROW_SESSION_HOST:
             l[0] = HELP_SESSION_HOST1;
             l[1] = HELP_SESSION_HOST2;
@@ -1651,6 +1971,14 @@ void eidos_sui_help_line(int i, char *out, int n)
             l[0] = HELP_SESSION_LEAVE1;
             l[1] = HELP_SESSION_LEAVE2;
             break;
+        case ROW_SESSION_SELF:
+            l[0] = HELP_SESSION_SELF1;
+            l[1] = HELP_SESSION_SELF2;
+            break;
+        case ROW_SESSION_PEER:
+            l[0] = HELP_SESSION_PEER1;
+            l[1] = HELP_SESSION_PEER2;
+            break;
         case ROW_SESSION_REVERT:
             l[0] = HELP_SESSION_REVERT1;
             l[1] = HELP_SESSION_REVERT2;
@@ -1658,6 +1986,10 @@ void eidos_sui_help_line(int i, char *out, int n)
         case ROW_SESSION_DEFAULTS:
             l[0] = HELP_DEFAULTS1;
             l[1] = HELP_DEFAULTS2;
+            break;
+        case ROW_MOD_RESTART:
+            l[0] = HELP_MOD_RESTART1;
+            l[1] = HELP_MOD_RESTART2;
             break;
         default:
             l[0] = HELP_DEFAULTS1;

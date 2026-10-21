@@ -34,3 +34,4 @@ Waves 3 and 4 have no row. The log has no record for either.
 | 26 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the mod layer's own tests: the menu, the panel and the input, and an overlay's stored pointers reach the registry |
 | 27 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the mod layer's remaining tests: the network, the handoff, the restart and the avatars, and the documents read against the code |
 | 28 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the move-learning event fires everywhere, the marked fields have appliers, the player has a session menu, and a script handler gets its mod's state |
+| 29 | 2026-10-21 | 31.22% | 429 | 0 | 0 | every game type name is published, the session menu has its peers and its question, and the payload fields that could be filled are |

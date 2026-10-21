@@ -578,8 +578,8 @@ typedef struct BwPortPokelistWork {
     int   messageWaitKey;               /* 0x144 */
     void *messageDoneCallback;          /* 0x148 */
     void *menuChoiceCallback;           /* 0x14C */
-    u32   messageWindow;                /* 0x150 */
-    u32   contextMenu;                  /* 0x154 */
+    void *messageWindow;                /* 0x150 */
+    void *contextMenu;                  /* 0x154 */
     void *paletteFile;                  /* 0x158 */
     void *paletteData;                  /* 0x15C */
     void *plates[6];                    /* 0x160 */
@@ -1332,7 +1332,15 @@ static void build_mon_receive_trade(const BwEventCall *call,
  * mon.nickname: the name prompt opens (EVENT_NAMEIN_Create).  The call
  * carries the game system, the field map, the parent event and the mode,
  * but not the Pokemon: the prompt's own work holds it, and the work is
- * the overlay's own block.  The payload's mon reads 0.
+ * the overlay's own block.
+ *
+ * The game's own code shows that this function never names a Pokemon at
+ * all: its three modes edit the player's greeting, the player's thanks
+ * message and the beacon message (the mode picks the string the work
+ * starts with), and the Pokemon's own nickname is entered by the name-in
+ * screen of ov194, which the battle return opens.  So the payload's mon
+ * reads 0 here, and the row that does name a Pokemon (the catch
+ * registration screen's own, below) carries it.
  *
  * The prompt is opened by this call, so there is nothing for a handler to
  * force here: the game decides to ask before it gets here (the catch
@@ -1355,10 +1363,19 @@ static void build_mon_nickname(const BwEventCall *call, BwEventPayload *out)
 
 /*
  * mon.nickname: the nickname screen after a catch (ZUKAN_NICKNAME_Create).
- * The call carries the heap and the screen's own words, not the Pokemon:
- * the caught Pokemon is in the catch screen's work.  The payload's mon
- * reads 0, and the force flag reads 0: the screen is being opened here,
- * so there is nothing left for a handler to force.
+ * The call carries the screen's own words, and its second argument is the
+ * Pokemon the screen names: the game reads the Pokemon's species name and
+ * its nickname out of that record (the word set's own
+ * WORDSET_SetSlotMonSpeciesName and WORDSET_SetSlotMonNickname take the
+ * record), and the catch registration screen passes the caught Pokemon
+ * there.
+ *
+ * The party position reads 0: the Pokemon is not in the player's party
+ * yet (the battle return stores it after the prompt), so there is no
+ * position to name.
+ *
+ * The force flag reads 0: the screen is being opened here, so there is
+ * nothing left for a handler to force.
  *
  * The game's own code shows no call that forces it either: the screen is
  * always created, and whether the player is asked is the answer the catch
@@ -1368,8 +1385,13 @@ static void build_mon_nickname(const BwEventCall *call, BwEventPayload *out)
 static void build_mon_nickname_catch(const BwEventCall *call,
                                      BwEventPayload *out)
 {
-    (void)call;
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[1];
+
     memset(&out->mon_nickname, 0, sizeof(out->mon_nickname));
+    if (mon == NULL) {
+        return;
+    }
+    mon_ref(&out->mon_nickname.mon, (u8)BW_MON_PARTY, 0u, 0u, 0u, mon);
 }
 
 /*
@@ -1995,18 +2017,23 @@ static void refuse_party_swap(BwEventCall *call)
  * The item is the call's third argument and the Pokemon is its second;
  * the item the Pokemon held before is the Pokemon's own field.
  *
- * The party is not carried by the call, so the payload's party position
- * reads 0.
+ * The party position is the one the party screen's own block names: the
+ * screen's argument block holds the party it shows, and the Pokemon the
+ * call carries is a member of it (the screen reads it with
+ * POKELIST_GetMember(arg->party, slot)), so the port reads the position
+ * out of that party the way the screen does.
  */
 static void build_mon_helditem(const BwEventCall *call, BwEventPayload *out)
 {
+    const BwPortPokelistArg *arg = party_screen_arg((const void *)call->a[0]);
     struct PokemonParam *mon = (struct PokemonParam *)call->a[1];
 
     memset(&out->mon_helditem, 0, sizeof(out->mon_helditem));
     if (mon == NULL) {
         return;
     }
-    mon_ref(&out->mon_helditem.mon, (u8)BW_MON_PARTY, 0u, 0u, 0u, mon);
+    mon_ref(&out->mon_helditem.mon, (u8)BW_MON_PARTY, 0u, 0u,
+            (arg != NULL) ? (u8)party_slot_of(arg->party, mon) : 0u, mon);
     out->mon_helditem.item = (u16)call->a[2];
     out->mon_helditem.previous = (u16)POKE_TOOL_GetPartyValue(mon,
                                                               BW_PORT_FIELD_ITEM, 0u);

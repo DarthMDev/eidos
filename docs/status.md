@@ -69,8 +69,10 @@ that changes it. Where an item is only partly done, it says which part.
 - **The mod layer**: the whole of it is built. `sdk/mod_api.h` and
   `sdk/mod_state.h` are the frozen surface a mod compiles against: the
   events and their payloads, the state and service tables, the host table and
-  the entry points. `sdk/mod_event.c` is the dispatch (the binding table, the
-  fan-out, the refusals and the scope stack) and the five area files hold the
+  the entry points. The interface version is 3 and the surface hash is
+  0xFE6D7989 at 32 bits and 0x9A23EB9F at 64.
+  `sdk/mod_event.c` is the dispatch (the binding table, the fan-out, the
+  refusals and the scope stack) and the five area files hold the
   rows; `sdk/mod_state.c` the state calls over the game's own accessors;
   `sdk/mod_manifest.c` the manifest record, the parse, the namespace rules,
   the declared-address check and the apply; `sdk/mod_savedata.c` a mod's own
@@ -136,13 +138,15 @@ that changes it. Where an item is only partly done, it says which part.
   port, and one marked payload field has no applier (`mon.nickname`'s
   `force`: the game has no call that forces the nickname prompt, so the
   port has no hook at that decision). The rest of the layer is in place: the
-  Mods
-  section of the settings screen (`engine/platform/settings_ui.c`) draws the
-  model behind it (`sdk/mod_menu.c`), the player can reorder their mods, the
-  run-status panel is shown beside the screens and the player can hide it, the
-  input injection takes a mod's press, the relay's address and the control's
-  port are settings of the port's own, and a save that arrives from a peer is
-  put to the player before it is installed.
+  Mods section of the settings screen (`engine/platform/settings_ui.c`) draws
+  the model behind it (`sdk/mod_menu.c`), the player can reorder their mods
+  and restart the run from it, the Session section of the same screen hosts a
+  session, shows the code the relay hands out, joins one from a typed code,
+  leaves one and lists the players of it, the run-status panel is shown beside
+  the screens and the player can hide it, the input injection takes a mod's
+  press, the relay's address and the control's port are settings of the port's
+  own, and a save that arrives from a peer is put to the player before it is
+  installed.
 
 ## Open, port integration
 

@@ -61,8 +61,9 @@ as one path component: it must be non-empty, must not contain a separator or a
 `.` or `..` component, must not be a reserved device name, and must contain
 only a small character set. `bw_save_path` copies the name verbatim
 (`sdk/save.c`), so an unvalidated name can leave the `mods/` folder.
-A bad namespace is reported and the port falls back to a value derived from the
-directory name, the way a bad `order` is reported and the default stands
+A bad namespace is reported and the port falls back to the default, which is
+derived from the mod's name (the directory's name when the manifest states
+none), the way a bad `order` is reported and the default stands
 (`sdk/vfs.c`).
 
 The port's own rules, which the documents leave open:
@@ -186,9 +187,12 @@ The four constraints are `docs/mod-rules.md`, section 2.
 2. Disabling a code mod reverts its slots before its library unloads. The
    registry holds the mod's handler, and a code pointer in data resolves
    through the same lookup (`sdk/overlay_image.c`, `bw_ovl_code_entry`), so
-   the revert must precede the unload. The loader keeps the order
+   the revert must precede the unload. The script registry and the frame
+   table hold the mod's own function too, so they are emptied of it as well.
+   The loader keeps the order
    (`sdk/mod_loader.c`): the slots the mod installed go back to their
-   originals in the reverse order they were installed, `eidos_mod_stop` runs
+   originals in the reverse order they were installed, the mod's script and
+   frame handlers go out of their registries, `eidos_mod_stop` runs
    (the namespace is in force, so a state call the mod makes there reaches
    the mod's own file and is where a mod flushes its data), and the library
    is unloaded last, because a code pointer into it is still live until then.
@@ -285,8 +289,12 @@ mode (`replace` or `wrap`), the symbol, the optional signature and the optional
 switch name. The region token resolves the way `docs/mod-implementation.md`,
 section 6, fixes: `arm9` to `BW_MOD_REGION_ARM9` and `ovNNN` to
 `BW_MOD_REGION_OVL(NNN)` (`sdk/mod_slot.h`). The signature is compared with
-the function's own prototype and a mismatch refuses the override; the switch
-name is the key the hook answers to, and it defaults to the row's own
+the function's own prototype and a mismatch refuses the override. The build
+publishes the resolution of every type name the game defines, so a stated
+prototype that names a game type is compared whatever function it names; a
+name two files resolve differently is not published, and a prototype that
+names it is reported and not compared, so there is no false refusal. The
+switch name is the key the hook answers to, and it defaults to the row's own
 function name (`docs/mod-overrides.md`).
 
 ### Where it comes from in a packed mod
@@ -310,9 +318,13 @@ The apply does four things per mod:
 1. Check `api` against the port's version, and check the `port` pin when the
    mod has raw hooks and states one. A mismatch refuses the mod.
 2. Derive the namespace from `state`, or from `name` when `state` is absent.
-3. For each `override`: check the pair against the declared table. The ones
-   that are declared stay in the record; the ones that are not are reported and
-   dropped.
+   A stated namespace that is not one path component is reported and the
+   default stands.
+3. For each `override`: check the pair against the declared table, and the
+   stated prototype against the one the build published for the row. The
+   ones that are declared and agree stay in the record; the others are
+   reported and dropped. The switch the row named goes to the registry,
+   which asks it when the chain is walked.
 4. Store each `rule` and the `settings` path for the interpreter and the
    settings surface.
 

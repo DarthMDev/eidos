@@ -16,25 +16,29 @@ Each slot gains two calls around its existing body. The generator emits them
 for every row whose fourth column binds a stable event:
 
 ```c
-int bw_slot_ov093_021CBA40(void *a0, void *a1, u16 a2)
+int bw_slot_ov093_021CBA40(struct BtlServerFlow *a0, void *a1, u16 a2)
 {
-    BwEventCall    call = { { (uintptr_t)a0, (uintptr_t)a1, a2 }, 3, 0 };
+    BwEventCall    call = { { (uintptr_t)a0, (uintptr_t)a1, (uintptr_t)a2 }, 3u, 0 };
     BwEventPayload payload;
+    void *h = bw_mod_slot_lookup(BW_MOD_REGION_OVL(93), 0x021CBA40u);
+    int r;
 
+    /* the scope: this function runs, so a scoped binding can tell. */
+    bw_mod_event_push(BW_MOD_REGION_OVL(93), 0x021CBA40u);
     if (bw_mod_event_enter(BW_MOD_REGION_OVL(93), 0x021CBA40u, &call, &payload)) {
-        return (int)call.ret;          /* refused: the refusal set the result */
+        bw_mod_event_pop();
+        return (int)call.ret;        /* refused: the refusal set the result */
     }
-    {
-        void *h = bw_mod_slot_lookup(BW_MOD_REGION_OVL(93), 0x021CBA40u);
-        if (h != NULL && bw_hook_enabled("BTL_SERVER_FLOW_TryThrowBall")) {
-            call.ret = ((int (*)(void *, void *, u16))h)(
-                (void *)call.a[0], (void *)call.a[1], (u16)call.a[2]);
-        } else {
-            call.ret = BTL_SERVER_FLOW_TryThrowBall(
-                (void *)call.a[0], (void *)call.a[1], (u16)call.a[2]);
-        }
+    if (h != NULL) {
+        r = ((int (*)(struct BtlServerFlow *, void *, u16))h)(
+            (struct BtlServerFlow *)call.a[0], (void *)call.a[1], (u16)call.a[2]);
+    } else {
+        r = BTL_SERVER_FLOW_TryThrowBall(
+            (struct BtlServerFlow *)call.a[0], (void *)call.a[1], (u16)call.a[2]);
     }
+    call.ret = (s64)r;
     bw_mod_event_leave(BW_MOD_REGION_OVL(93), 0x021CBA40u, &call, &payload);
+    bw_mod_event_pop();
     return (int)call.ret;
 }
 ```
@@ -43,7 +47,9 @@ int bw_slot_ov093_021CBA40(void *a0, void *a1, u16 a2)
 ballItemId)` is the function behind `catch.attempt`; the slot keeps the
 definition's prototype. The original is called with `call.a[]`, not with the
 incoming arguments, so a handler's modified fields that map onto arguments
-reach the game.
+reach the game. The switch is not asked here: the registry asks it, per hook,
+when it walks the chain, so a hook whose switch is off is skipped and the
+walk goes on to the next link inward.
 
 `bw_mod_event_enter` looks the pair up in the binding table. For an event that
 fires before the function, it builds the payload, runs every handler, and,
@@ -160,22 +166,28 @@ save is chosen and before the game runs:
 3. Find `eidos_mod_start` and `eidos_mod_stop`.
 4. Call `eidos_mod_start` with the host table (`docs/mod-abi.md`). The mod
    binds its handlers through `host->on`, and the loader holds the bindings
-   until the start entry has returned its state pointer.
+   until the start entry has returned its state pointer. A script handler is
+   bound the same way, through `host->script`, and is handed the mod's state
+   when it is registered.
 5. Register the handlers the mod asked for, and install the manifest's
    `override` lines with `bw_mod_slot_install_mode` in the row's mode, after
    the declared check (`docs/mod-state.md`, section 4).
 
 On exit, or when the player disables the mod, the loader reverts the slots the
 mod installed (each of the mod's own hooks comes out of the pair's chain,
-even one a later mod has shadowed), calls `eidos_mod_stop`, and unloads the
-library, in that order.
+even one a later mod has shadowed), takes the mod's script and frame handlers
+out of their registries (they hold the mod's own function, so a handler left
+behind would be a call into a library that is gone), calls `eidos_mod_stop`,
+and unloads the library, in that order.
 The namespace is in force for the stop entry, so a state call the mod makes
 there reaches its own file and is where a mod flushes its data. The library
 is last because a code pointer into it is still live until then.
 
 The event layer holds the handlers a mod bound and has no call to drop the
 handlers of one mod, so the port resets the event layer and binds the port's
-own rows again before it loads the mods that are still wanted.
+own rows again before it loads the mods that are still wanted. The script
+registry and the frame table do have such a call, and the loader uses it when
+it stops a mod.
 
 ## 4. State and services
 
@@ -261,9 +273,10 @@ All ten steps are built.
   `sdk/mod_event_field.c` and `sdk/mod_event_battle.c`.
 - **The state calls.** `sdk/mod_state.c`, over the game's own accessors.
 - **The manifest and the mod's own saved data.** `sdk/mod_manifest.c` (the
-  record, the parse, the namespace rules, the declared-address check and the
-  apply) and `sdk/mod_savedata.c` (the file, the 24-byte envelope, the
-  CRC-32, the versions and the per-mod "in step" answer).
+  record, the parse, the namespace rules, the declared-address check, the
+  prototype check, the switch and the apply) and `sdk/mod_savedata.c` (the
+  file, the 24-byte envelope, the CRC-32, the versions and the per-mod "in
+  step" answer).
 - **The loader.** `sdk/mod_loader.c`: the library, the host table, the
   version check, the handler bindings, the override installation and the way
   back down.
@@ -276,7 +289,11 @@ All ten steps are built.
   run-status panel), `sdk/mod_input.c` (the input injection) and
   `sdk/mod_menu.c` (the mod menu's model). Every call of the services table
   is bound, and the loader binds them all into each mod's own table
-  (`sdk/mod_loader.c`).
+  (`sdk/mod_loader.c`). The port's own peer session is the Session section
+  of the settings screen (`engine/platform/settings_ui.c`), which drives the
+  service through the port's own calls (`engine/platform/settings.c`); the
+  wait for the relay runs on the port's own worker thread, so it does not
+  stall the game.
 - **The script command hooks.** `sdk/mod_script.c` (the registry, the two
   opcode tables and the hook) and `stubs/reimpl_vm_control.c`, the stand-in
   that takes the game's dispatch function's place.

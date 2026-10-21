@@ -123,7 +123,7 @@ typedef struct BwPortShopWork {
     u32 fontInfo;             /* 0x008 */
     u32 moneyData;            /* 0x00C */
     u32 bagData;              /* 0x010 */
-    u32 recordData;           /* 0x014 */
+    void *recordData;         /* 0x014 */
     u32 battlePointData;      /* 0x018 */
     void *shopTable;          /* 0x01C */
     BwPortShopItem items[40]; /* 0x020 */
@@ -132,7 +132,7 @@ typedef struct BwPortShopWork {
     u8  usesBattlePoints;     /* 0x163 */
     u32 windows[7];           /* 0x164 */
     void *itemSlots;          /* 0x180 */
-    u32 yesNoMenu;            /* 0x184 */
+    void *yesNoMenu;          /* 0x184 */
     void *shopMsgBank;        /* 0x188 */
     void *itemMsgBank;        /* 0x18C */
     void *wordSet;            /* 0x190 */
@@ -148,11 +148,11 @@ typedef struct BwPortShopWork {
     void *tcbList;            /* 0x1B4 */
     void *messagePrinter;     /* 0x1B8 */
     void *cellSystem;         /* 0x1BC */
-    int cursorActor;          /* 0x1C0 */
-    int arrowUpActor;         /* 0x1C4 */
-    int arrowDownActor;       /* 0x1C8 */
-    int quantityArrowActor;   /* 0x1CC */
-    int iconActor;            /* 0x1D0 */
+    void *cursorActor;        /* 0x1C0 */
+    void *arrowUpActor;       /* 0x1C4 */
+    void *arrowDownActor;     /* 0x1C8 */
+    void *quantityArrowActor; /* 0x1CC */
+    void *iconActor;          /* 0x1D0 */
     u32 arrowCharRes;         /* 0x1D4 */
     u32 cursorPlttRes;        /* 0x1D8 */
     u32 cursorCellRes;        /* 0x1DC */

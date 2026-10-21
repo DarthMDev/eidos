@@ -259,9 +259,11 @@ code and needs no such trust.
    registry only for the overlay's own functions.
 2. **The game's own type names** in a prototype: the port normalises the
    plain types and the integer typedefs, and the build publishes the
-   resolution of the names the declared rows use, but a name only some other
-   function uses is not published, so a stated prototype naming it is
-   reported rather than compared (`docs/mod-overrides.md`).
+   resolution of every type name the game's files define, so a stated
+   prototype naming one is compared.  A name two of the game's files resolve
+   differently is withdrawn from the table and reported, and a name the port
+   cannot express at all (a float, a pointer-width integer) is reported and
+   not compared (`docs/mod-overrides.md`).
 
 ## Related documents
 

@@ -1,3 +1,45 @@
 {
-  "claims": {}
+  "claims": {
+    "W29-DOC": {
+      "note": "the documents, read against the code once more",
+      "paths": [
+        "docs/mod-events.md",
+        "docs/mod-implementation.md",
+        "docs/mod-payloads.md",
+        "docs/mod-services.md",
+        "docs/mod-state.md",
+        "docs/modding.md",
+        "docs/status.md"
+      ],
+      "started": "2026-10-21"
+    },
+    "W29-FIELDS": {
+      "note": "the payload fields that read 0: the port's own hooks for them",
+      "paths": [
+        "mod/declared_set.txt",
+        "sdk/mod_event_battle.c",
+        "sdk/mod_event_field.c",
+        "sdk/mod_event_items.c",
+        "sdk/mod_event_mon.c"
+      ],
+      "started": "2026-10-21"
+    },
+    "W29-SESSION": {
+      "note": "the session menu's last pieces: the peer list, the code in force, and the menu's own question",
+      "paths": [
+        "engine/platform/settings.c",
+        "engine/platform/settings_ui.c",
+        "sdk/mod_net.h"
+      ],
+      "started": "2026-10-21"
+    },
+    "W29-TYPES": {
+      "note": "every game type name the generator meets is published, not only the declared rows'",
+      "paths": [
+        "sdk/mod_manifest.c",
+        "tools/ovlink.py"
+      ],
+      "started": "2026-10-21"
+    }
+  }
 }

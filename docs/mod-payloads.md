@@ -38,12 +38,14 @@ from.
 A marked field is one the event's binding row carries an applier for. The
 applier reads the field back out of the payload and writes it into the
 game's own work, so that the change reaches the game. The rows that have one
-today are `save.done`, `map.warp`, `menu.build`, `encounter.wild`,
+are `save.done`, `map.warp`, `menu.build`, `encounter.wild`,
 `encounter.static`, `item.add`, `shop.buy`, `money.change`, `heal`,
-`mon.create`, `mon.evolve` and `mon.exp`. `save.done` is the one with no
-marked field: its applier closes the port's own save window, the step in
-which the mod's own file is written with the game's save
-(`docs/mod-state.md`, section 2).
+`mon.create`, `mon.evolve`, `mon.exp`, `battle.start`, `battle.damage`,
+`catch.attempt` and `catch.result`. Two of those appliers serve no marked
+field of their own: `save.done`'s closes the port's own save window, the step
+in which the mod's own file is written with the game's save
+(`docs/mod-state.md`, section 2), and `catch.result`'s puts the game's own
+catch rate back, so a rate a handler asked for is for that one throw.
 
 One event still carries a marked field whose row has no applier:
 `mon.nickname`'s `force`. Its builder fills the field with 0, and a
@@ -54,10 +56,11 @@ does not see that path). A mod that wants the nickname asked for overrides
 the game's own prompt instead, which is a declared row
 (`docs/mod-overrides.md`).
 
-The other three now have appliers: `battle.start`'s `format` and
-`level_adjust` are written into the setup the game just built, and
-`battle.damage`'s `amount` and `catch.attempt`'s `rate` are applied to the
-game's own values.
+The battle's own marked fields are applied where the game reads them:
+`battle.start`'s `format` goes into the setup's own rule and its
+`level_adjust` through the game's own setter, `battle.damage`'s `amount`
+into the word the game's own caller reads, and `catch.attempt`'s `rate`
+into the roll.
 
 ### The common types
 
@@ -312,8 +315,8 @@ from the game's own rule.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `mon` | `BwMonRef` | the Pokemon |
-| `force` | u8, *mod* | 1 opens the prompt even when the game would skip it (reads 0 today) |
+| `mon` | `BwMonRef` | the Pokemon; empty on the prompt's own row, the caught Pokemon on the catch screen's |
+| `force` | u8, *mod* | 1 opens the prompt even when the game would skip it (reads 0; the row has no applier) |
 
 **`mon.evolve`**
 
@@ -347,8 +350,8 @@ from the game's own rule.
 |---|---|---|
 | `mon` | `BwMonRef` | the Pokemon |
 | `move` | u16 | the move |
-| `source` | u8 | level, TM, tutor, relearner |
-| `slot` | u8 | the move slot it goes into, or 0xFF for a free one |
+| `source` | u8 | level, TM, tutor, relearner; 0 also stands for the rows that name no teacher |
+| `slot` | u8 | the move slot it goes into, or 0xFF when the row names none |
 | `replaced` | u16 | the move it replaces, or 0 |
 
 **`mon.release`**
@@ -409,23 +412,34 @@ free slot inside that box is not named by the call, and a Pokemon given
 while the party was full has no record left to read, so its shiny flag reads
 0 and the species and the level come from the script's own creation request.
 An in-game trade's species reads 0, because the trade record is the
-overlay's own data. `mon.nickname`'s Pokemon reads 0 and its force flag
-reads 0: the prompt's own work holds the Pokemon, and the game decides to
-ask before it gets to the prompt. `mon.evolve` names the Pokemon and the
+overlay's own data. `mon.nickname`'s Pokemon reads 0 on the prompt's own
+row, where the prompt's work holds it and the game's own code shows the
+prompt never names a Pokemon at all, and it names the caught Pokemon on the
+catch screen's row; the party position reads 0 there, because the Pokemon
+is not in the party yet. Its force flag reads 0: the game decides to ask
+before it gets to the prompt. `mon.evolve` names the Pokemon and the
 species it comes from, and the species it evolves into is the check's own
 result. `mon.exp` names the first member of the party that gains
 experience, with the experience and the level read out of the party record
 through the state calls; the day care's payload has no party position,
 because the call carries the Pokemon and not the party. `move.learn`
-carries the move and its source, and the move slot is the first of the
-Pokemon's four that is empty, or 0xFF when it holds four moves already; the
-replaced move reads 0, because the game asks for that later, in the screen
-that owns the choice. The event fires from all six of the area's rows: the
-level-up check, the day care, the party screen's two, the nurse's relearner
-and the script command that writes a move
-(`docs/mod-events.md`, section 1).
-`mon.helditem` carries the item given and the item it held, but the party
-position reads 0: the party is not carried by the call.
+carries the move and its source, and the event fires from all six of the
+area's rows: the level-up check, the day care, the party screen's two, the
+nurse's relearner and the script command that writes a move
+(`docs/mod-events.md`, section 1). The three rows that name no slot give the
+first of the Pokemon's four that is empty, or 0xFF when it holds four moves
+already, and their replaced move reads 0, because the game asks for that
+later, in the screen that owns the choice. The other three name the slot
+they write into and give the move that was in it before the write: the party
+screen's second row, the script command and the nurse's relearner. The
+source is the teacher the row knows: a machine in the party screen's teach
+mode is a TM, the relearner's row is the relearner, and the script command
+names no teacher at all, so its source reads 0.
+
+`mon.helditem` carries the item given and the item it held, and the party
+position is the one the party screen's own block names: the screen's
+argument block holds the party it shows, and the Pokemon the call carries is
+a member of it.
 
 ### Battle
 
@@ -433,18 +447,26 @@ position reads 0: the party is not carried by the call.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `wild` | u8 | a wild battle |
+| `wild` | u8 | a wild battle; 0 at the row that creates the setup |
 | `format` | u8, *mod* | single, double, triple, rotation, multi; 0xFF where the port does not know the format yet (the row that creates the setup) |
 | `trainer_id` | `u16[2]` | the opposing trainers, or 0 |
 | `level_adjust` | s8, *mod* | added to every opposing Pokemon's level |
 | `opponent_party` | u32 | a handle to the opposing party; a handler edits it through the state calls |
+
+The event fires twice for a battle: at the row that creates the setup, and at
+the row that builds it (the wild setup, the trainer setup or the scripted
+one). The row that creates the setup leaves the wild flag, the trainer ids
+and the handle of the opposing party at 0, because the setup the game will
+build does not exist yet; the row that builds it fills them in.
 
 The format and the levels are applied: the port writes the format into the
 setup's own rule and the levels through the game's own setter, after the
 handlers have run.  A handler that writes nothing leaves the game's own
 values alone; a zero level adjustment means "no adjustment", and a zero
 format is a format a handler may ask for, so the row that creates the setup
-names the unknown one 0xFF instead.
+names the unknown one 0xFF instead.  A multi battle is not applied: it needs
+a second trainer's team and a second party in the setup, and the setup of a
+battle that was not a multi one holds neither.
 
 **`battle.action`**
 
@@ -490,7 +512,7 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 | `attacker` | `BwMonRef` | the attacker |
 | `target` | `BwMonRef` | the target |
 | `move` | u16 | the move |
-| `amount` | u32, *mod* | the damage (reads 0 today) |
+| `amount` | u32, *mod* | the damage |
 | `target_hp` | u16 | the target's HP before the hit |
 | `target_max_hp` | u16 | the target's maximum HP |
 | `critical` | u8 | a critical hit |
@@ -525,7 +547,7 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 | `level` | u8 | its level |
 | `shiny` | u8 | shiny |
 | `ball` | u16 | the ball item |
-| `rate` | u8, *mod* | the catch rate the roll uses (reads 0 today) |
+| `rate` | u8, *mod* | the catch rate the roll uses, as a percentage of the game's own factor |
 
 **`catch.result`**
 
@@ -554,28 +576,34 @@ handler gives the same answer for the same move. The bag is `battle.item`.
 | `money_lost` | u32 | the money the game takes |
 
 **What the battle builder fills.** The battle area's rows are in
-`sdk/mod_event_battle.c`. `battle.start` carries nothing: the setup the game
+`sdk/mod_event_battle.c`. `battle.start` fires at the row that creates the
+setup and at the three rows that build it. At the first the setup the game
 will build does not exist yet, so the wild flag, the format, the trainer ids
 and the handle of the opposing party read 0, and the port reads them from
-the battle's main module at the first battle event instead. `battle.action`
-carries the action, the side and, for a fight, the move the game checks; the
-Pokemon reads 0 for a switch, because the choice list holds the party
-positions and nothing else, and the party position the player picked is the
-function's own result, 6 being the game's "backed out". `battle.switch`'s
+the battle's main module at the first battle event instead; at the others
+the setup is there, and the payload names the battle's own values.
+`battle.action` carries the action, the side and, for a fight, the move the
+game checks; the Pokemon reads 0 for a switch, because the choice list holds
+the party positions and nothing else, and the party position the player picked
+is the function's own result, 6 being the game's "backed out". `battle.switch`'s
 forced flag is set when the Pokemon that leaves has fainted; a move that
 forces the switch runs the same function and cannot be told from the call.
 `battle.move`'s target reads 0, because the move record holds no target: the
-server picks the target set itself. `battle.damage` carries the attacker,
-the target, the move, the critical flag and the type matchup, and the
-target's HP before the hit, because the hit has not landed yet; the amount
-reads 0, because the game computes it inside the function. `catch.attempt`
-carries the ball, the target and its species, level and shiny flag; the
-catch rate reads 0, because the game computes the rate itself when it rolls
-the catch. `catch.result`'s caught flag and shakes read 0: the game keeps
-both in the locals of the roll. `battle.faint`'s cause comes from the battle
-context, so a faint from the weather, a hazard or a status has no cause.
-`whiteout`'s money lost reads 0: the game computes the penalty inside the
-step, at the state that shows the amount.
+server picks the target set itself. `battle.damage` fires on the return of
+the game's own function, so the amount it carries is the damage the game
+computed; it also carries the attacker, the target, the move, the critical
+flag and the type matchup, and the target's HP before the hit, because the
+hit has not landed yet. `catch.attempt` carries the ball, the target and its
+species, level and shiny flag, and the catch rate the roll will use: the
+port asks the game's own function for the rate, the same question the roll
+asks, and carries it as a percentage of the game's own factor. `catch.result`
+fires at the return of the game's own roll, so it carries the caught flag
+(the roll's own result) and the shakes (the ones the roll wrote into the
+word it was given); its target and its ball are the roll's own arguments.
+`battle.faint`'s cause comes from the battle context, so a faint from
+the weather, a hazard or a status has no cause. `whiteout`'s money lost reads
+0: the game computes the penalty inside the step, at the state that shows
+the amount.
 
 ### Items, money and healing
 

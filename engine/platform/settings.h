@@ -192,6 +192,12 @@ void        eidos_settings_panel_revert(void);
 const char *eidos_settings_session_code(void);
 void        eidos_settings_session_set_code(const char *code);
 void        eidos_settings_session_code_text_begin(void);
+/* The code the player is typing, which is not the code in force: hosting a
+ * session must not overwrite what the player typed to join one.  The file
+ * keeps it ([session], join_code). */
+const char *eidos_settings_session_join_code(void);
+void        eidos_settings_session_set_join_code(const char *code);
+void        eidos_settings_session_join_code_text_begin(void);
 void        eidos_settings_session_defaults(void);
 void        eidos_settings_session_revert(void);
 int         eidos_settings_session_dirty(void);

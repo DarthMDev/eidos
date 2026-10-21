@@ -346,7 +346,7 @@ typedef struct BwPortSetup {
     u32                   mapMatrix;    /* 0x064 */
     void                 *zukanWork;    /* 0x068 */
     void                 *trainerRecord;/* 0x06C */
-    int                   pmsWork;      /* 0x070 */
+    void                 *pmsWork;      /* 0x070 */
     u16                   limitTimeGame;    /* 0x074 */
     u16                   limitTimeCommand; /* 0x076 */
     u8                    regulationRules[7]; /* 0x078 */
@@ -1532,6 +1532,12 @@ static void build_battle_faint(const BwEventCall *call, BwEventPayload *out)
 /*
  * catch.attempt: a ball is thrown.  The call carries the server's flow,
  * the Pokemon that throws and the ball.
+ *
+ * The rate a handler asked for at the last throw does not reach this one:
+ * the port forgets it here, before the handlers run, so a rate asked for
+ * and then not used (a ball the game blocks, say) is not applied to a
+ * later throw.  The applier asks for the rate again if a handler wants
+ * one here.
  */
 static void build_catch_attempt(const BwEventCall *call, BwEventPayload *out)
 {
@@ -1542,6 +1548,9 @@ static void build_catch_attempt(const BwEventCall *call, BwEventPayload *out)
 
     memset(&out->catch_attempt, 0, sizeof(out->catch_attempt));
     out->catch_attempt.ball = (u16)call->a[2];
+
+    /* The rate of the last throw does not reach this one. */
+    g_catch_rate_pending = -1;
 
     target = catch_target_of((struct BtlServerFlow *)flow, thrower, NULL);
     fill_battle_ref(&out->catch_attempt.target, target, main,
@@ -1607,20 +1616,26 @@ static void apply_catch_attempt(const BwEventPayload *in, BwEventCall *call)
 
 /*
  * catch.result: the ball was thrown and the roll is done.  The event
- * fires at the return of the throw, so the arguments are the ones of the
- * throw and the result is the function's own.
+ * fires at the return of the game's own roll
+ * (BTL_SERVER_FLOW_CalcCaptureShakes), because that is the place the game
+ * keeps the outcome: the function's own result says whether the Pokemon
+ * was caught, and the shakes it shows are the ones it writes into the
+ * word the call carries.
+ *
+ * The target is the Pokemon the roll was made for and the ball is the
+ * item the roll used: both are the call's own arguments, so the port does
+ * not run the throw's own search a second time to name them.
  */
 static void build_catch_result(const BwEventCall *call, BwEventPayload *out)
 {
     const BwPortFlowHead *flow = (const BwPortFlowHead *)call->a[0];
     struct BtlMain *main = main_of_flow(call);
-    void *thrower = (void *)call->a[1];
-    struct BtlPokeParam *target;
+    struct BtlPokeParam *target = (struct BtlPokeParam *)call->a[2];
+    const u8 *shakes = (const u8 *)call->a[4];
 
     memset(&out->catch_result, 0, sizeof(out->catch_result));
-    out->catch_result.ball = (u16)call->a[2];
+    out->catch_result.ball = (u16)call->a[3];
 
-    target = catch_target_of((struct BtlServerFlow *)flow, thrower, NULL);
     fill_battle_ref(&out->catch_result.target, target, main,
                     flow != NULL ? flow->pokeCon : NULL);
     if (target != NULL && BTL_POKEPARAM_GetSpecies != NULL) {
@@ -1628,13 +1643,19 @@ static void build_catch_result(const BwEventCall *call, BwEventPayload *out)
     }
 
     /*
-     * The fields the port cannot fill: whether the catch succeeded and
-     * how many shakes it took.  The game keeps both in the locals of the
-     * roll and writes them into the battle's command stream, which the
-     * port does not read.
+     * The catch succeeded when the roll's own result says so: the game
+     * answers 1 when the Pokemon was caught and 0 when it broke out of
+     * the ball.
      */
-    out->catch_result.caught = 0u;
-    out->catch_result.shakes = 0u;
+    out->catch_result.caught = (u8)(call->ret != 0 ? 1u : 0u);
+
+    /*
+     * The shakes the game shows are the ones the roll wrote into the word
+     * it was given.
+     */
+    if (shakes != NULL) {
+        out->catch_result.shakes = *shakes;
+    }
 
     feed_turn_weather((struct BtlServerFlow *)flow);
     bind_battle(main);
@@ -1642,8 +1663,8 @@ static void build_catch_result(const BwEventCall *call, BwEventPayload *out)
 }
 
 /*
- * catch.result: the throw is over, so the rate the handlers asked for is
- * for that throw alone: the port's own hook answers with the game's own
+ * catch.result: the roll is over, so the rate the handlers asked for is
+ * for that roll alone: the port's own hook answers with the game's own
  * rate again (the port's own state, like the save window the save.done
  * row closes).
  */
@@ -1878,17 +1899,22 @@ static void refuse_catch_attempt(BwEventCall *call)
  * switch (battle.action), the view's item getter (battle.item), the
  * server's send-out (battle.switch), the server's escape (battle.escape),
  * the server's move used and damage (battle.move, battle.damage), the
- * server's faint (battle.faint), the server's throw (catch.attempt,
- * catch.result), the end of the battle (battle.end) and the two
- * blackouts (whiteout).
+ * server's faint (battle.faint), the server's throw (catch.attempt) and
+ * the server's roll of the catch (catch.result), the end of the battle
+ * (battle.end) and the two blackouts (whiteout).
  *
  * battle.start fires twice for a battle: once at BTL_SETUP_Create, where
  * the setup the game will build does not exist yet and the payload is
  * empty, and once at the rows that build the setup, where the payload
  * names the battle's own values and the port applies the format and the
  * level the handlers asked for.  The wild battle's row (BTL_SETUP_SetupWild)
- * is in the table, but the declared set gives that row no event, so the
- * slot does not call the event layer there and the row waits for it.
+ * is in the table and the declared set gives that row an event, so its slot
+ * calls the event layer and the row fires.
+ *
+ * catch.result fires at the roll (BTL_SERVER_FLOW_CalcCaptureShakes), not
+ * at the throw: the roll is where the game knows whether the Pokemon was
+ * caught and how many shakes it took, and the throw itself does not roll
+ * in a trainer battle.
  */
 static const BwEventBinding g_battle_rows[] = {
     { BW_MOD_REGION_ARM9, 0x02013090u, BW_EVENT_BATTLE_START, BW_EVENT_BEFORE,
@@ -1943,7 +1969,7 @@ static const BwEventBinding g_battle_rows[] = {
       BW_EVENT_BEFORE, BW_SCOPE_ANY, 0u, 0u, build_catch_attempt,
       apply_catch_attempt, refuse_catch_attempt },
 
-    { BW_MOD_REGION_OVL(93), 0x021CBA40u, BW_EVENT_CATCH_RESULT,
+    { BW_MOD_REGION_OVL(93), 0x021CBB34u, BW_EVENT_CATCH_RESULT,
       BW_EVENT_AFTER, BW_SCOPE_ANY, 0u, 0u, build_catch_result,
       apply_catch_result, NULL },
 

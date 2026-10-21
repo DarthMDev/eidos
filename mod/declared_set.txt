@@ -251,7 +251,8 @@
 0x021C84D8	BTL_SERVER_FLOW_GetBattleResult	ov093	
 0x021CB2D4	BTL_SERVER_FLOW_CalcPartyExpShares	ov093	mon.exp
 0x021CB730	BTL_SERVER_FLOW_ProcBagItemUse	ov093	
-0x021CBA40	BTL_SERVER_FLOW_TryThrowBall	ov093	catch.attempt,catch.result
+0x021CBA40	BTL_SERVER_FLOW_TryThrowBall	ov093	catch.attempt
+0x021CBB34	BTL_SERVER_FLOW_CalcCaptureShakes	ov093	catch.result
 0x021CBD48	BTL_SERVER_FLOW_GetBallCatchRate	ov093	
 0x021CBEA8	BTL_SERVER_FLOW_RollCriticalCapture	ov093	
 0x021CBFA0	BTL_SERVER_FLOW_ItemEffectCheckSlotMessage	ov093	

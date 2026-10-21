@@ -7,10 +7,12 @@
  * relay, the two ports and the player's name) and [input] (the longest
  * press the port's input injection allows).
  *
- * It holds the port's own session too: the session's code is a setting of
- * the port's own ([session], code), and the calls the port's own menu
- * makes on the peer session service (sdk/mod_net.h, "The port's own
- * session") are here, beside the network settings they read.
+ * It holds the port's own session too: the two codes of a session (the one
+ * in force and the one the player types to join one) are settings of the
+ * port's own ([session], code and join_code), the peers of the session are
+ * collected here, and the calls the port's own menu makes on the peer
+ * session service (sdk/mod_net.h, "The port's own session") are here,
+ * beside the network settings they read.
  */
 
 #include <ctype.h>
@@ -114,13 +116,22 @@ typedef struct NetModel {
 } NetModel;
 
 /*
- * The session's code: the code the relay handed out for a session the
- * player hosts, and the code the player types to join one.  It is a
- * setting of the port's own, so it is read, changed, reverted and
- * committed with the rest, and the file keeps it ([session], code).
+ * The two codes of a session.
+ *
+ * The code in force is the code of the session the player is in: the relay
+ * handed it out when the player hosted a session, and the player reads it
+ * to the other players.  The code being typed is the one the player types
+ * to join a session: it is what the join asks the relay for, and it is
+ * kept apart from the code in force, so that hosting a session does not
+ * overwrite what the player has typed.
+ *
+ * They are settings of the port's own, so they are read, changed,
+ * reverted and committed with the rest, and the file keeps them
+ * ([session], code and join_code).
  */
 typedef struct SessionModel {
-    char code[EIDOS_SESSION_CODE_MAX];  /* the session's code           */
+    char code[EIDOS_SESSION_CODE_MAX];  /* the code in force            */
+    char join[EIDOS_SESSION_CODE_MAX];   /* the code the player types   */
 } SessionModel;
 
 typedef struct Model {
@@ -153,7 +164,8 @@ static int g_size_pending;   /* a window resize not yet in the file */
 /* The texts the screen edits. */
 #define EIDOS_TEXT_RELAY 0        /* the relay's address                */
 #define EIDOS_TEXT_NAME  1        /* the player's name                  */
-#define EIDOS_TEXT_CODE  2        /* the session's code                 */
+#define EIDOS_TEXT_CODE  2        /* the code in force                  */
+#define EIDOS_TEXT_JOIN  3        /* the code the player types         */
 
 static struct {
     int  which;                   /* EIDOS_TEXT_*, -1: none            */
@@ -161,6 +173,7 @@ static struct {
 } g_text;
 
 static void model_defaults(Model *m);
+static BwMutex *session_lock(void);
 
 static void ensure_init(void)
 {
@@ -169,6 +182,10 @@ static void ensure_init(void)
         model_defaults(&g_cur);
         g_saved = g_cur;
         g_text.which = -1;          /* no text is being edited */
+        /* The port's own session state is kept under a lock, and the lock
+         * is made here: the settings are loaded before any frame runs, so
+         * it is there for the whole run. */
+        session_lock();
     }
 }
 
@@ -234,9 +251,10 @@ static void model_defaults(Model *m)
     m->inject_max = (int)BW_INPUT_INJECT_MAX_FRAMES;
     /* The run-status panel is shown until the player hides it. */
     m->panel_visible = 1;
-    /* The session's code: none yet.  The relay hands one out when the
+    /* The session's codes: none yet.  The relay hands one out when the
      * player hosts a session, and the player types one to join one. */
     m->session.code[0] = '\0';
+    m->session.join[0] = '\0';
 }
 
 static void model_reset_bindings(Model *m)
@@ -466,6 +484,10 @@ static char *net_text_buf(int which, size_t *size)
     if (which == EIDOS_TEXT_CODE) {
         *size = sizeof g_cur.session.code;
         return g_cur.session.code;
+    }
+    if (which == EIDOS_TEXT_JOIN) {
+        *size = sizeof g_cur.session.join;
+        return g_cur.session.join;
     }
     *size = 0;
     return NULL;
@@ -772,12 +794,15 @@ int eidos_settings_net_dirty(void)
 /* ------------------------------------------------------------------ */
 
 /*
- * The session's code is a setting of the port's own: the code the relay
- * handed out for the session the player hosts, and the code the player
- * types to join one.  It is in the model, so the same commit, revert and
- * defaults reach it, and the file keeps it ([session], code).
+ * The two codes of a session are settings of the port's own: the code in
+ * force (the one the relay handed out when the player hosted a session, or
+ * the one the player joined a session with) and the code the player types
+ * to join one.  They are in the model, so the same commit, revert and
+ * defaults reach them, and the file keeps them ([session], code and
+ * join_code).
  */
 
+/* The code in force: the code of the session the player is in. */
 const char *eidos_settings_session_code(void)
 {
     ensure_init();
@@ -791,8 +816,21 @@ void eidos_settings_session_set_code(const char *code)
                   code != NULL ? code : "");
 }
 
-/* The screen begins the edit of the code (the code the player types to
- * join a session). */
+/* The code being typed: the one the player types to join a session. */
+const char *eidos_settings_session_join_code(void)
+{
+    ensure_init();
+    return g_cur.session.join;
+}
+
+void eidos_settings_session_set_join_code(const char *code)
+{
+    ensure_init();
+    net_text_copy(g_cur.session.join, sizeof g_cur.session.join,
+                  code != NULL ? code : "");
+}
+
+/* The screen begins the edit of the code in force. */
 void eidos_settings_session_code_text_begin(void)
 {
     ensure_init();
@@ -800,21 +838,33 @@ void eidos_settings_session_code_text_begin(void)
     memcpy(g_text.saved, g_cur.session.code, sizeof g_cur.session.code);
 }
 
-/* The code back to nothing (the section's "Restore defaults"). */
+/* The screen begins the edit of the code the player types to join a
+ * session. */
+void eidos_settings_session_join_code_text_begin(void)
+{
+    ensure_init();
+    g_text.which = EIDOS_TEXT_JOIN;
+    memcpy(g_text.saved, g_cur.session.join, sizeof g_cur.session.join);
+}
+
+/* The codes back to nothing (the section's "Restore defaults"). */
 void eidos_settings_session_defaults(void)
 {
     ensure_init();
     g_cur.session.code[0] = '\0';
+    g_cur.session.join[0] = '\0';
     g_text.which = -1;
 }
 
-/* The code back to the state the last commit left (the section's
+/* The codes back to the state the last commit left (the section's
  * "Revert changes"). */
 void eidos_settings_session_revert(void)
 {
     ensure_init();
     memcpy(g_cur.session.code, g_saved.session.code,
            sizeof g_cur.session.code);
+    memcpy(g_cur.session.join, g_saved.session.join,
+           sizeof g_cur.session.join);
     g_text.which = -1;
 }
 
@@ -822,7 +872,9 @@ int eidos_settings_session_dirty(void)
 {
     ensure_init();
     return memcmp(g_cur.session.code, g_saved.session.code,
-                  sizeof g_cur.session.code) != 0;
+                  sizeof g_cur.session.code) != 0 ||
+           memcmp(g_cur.session.join, g_saved.session.join,
+                  sizeof g_cur.session.join) != 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -864,6 +916,261 @@ static struct {
     char      code[BW_MOD_NET_CODE_MAX + 1];     /* the code to join with */
     char      result[BW_MOD_NET_CODE_MAX + 1];   /* the code that came back */
 } g_sess;
+
+/*
+ * The lock the port's own session state is kept under.  It is made when the
+ * settings are loaded, which is before any frame runs, so it is there for
+ * the whole run.
+ */
+static BwMutex *session_lock(void)
+{
+    if (g_sess.lock == NULL) {
+        g_sess.lock = bw_mutex_create();
+    }
+    return g_sess.lock;
+}
+
+/* ------------------------------------------------------------------ */
+/* The peers of the session                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The peers of the session, as the port's own handler collects them.
+ *
+ * The service keeps the names of the peers, but its own table cannot be
+ * walked (it publishes a count and a name, not the numbers), so the port's
+ * own handler keeps the numbers it was told about, and the screen's rows
+ * are built from them.
+ *
+ * The handler is called on the game's frame (the service drains its queue
+ * there, sdk/mod_net.c) and the screen reads the list on the thread that
+ * draws it, which is not the same thread, so the list is kept under the
+ * port's own lock.
+ */
+
+/* How many peers one session may hold (the service's own limit is the
+ * same: BW_MOD_NET_PEERS_MAX). */
+#define EIDOS_SESSION_PEERS_MAX 16
+
+static struct {
+    u32  number[EIDOS_SESSION_PEERS_MAX];
+    char name[EIDOS_SESSION_PEERS_MAX][BW_MOD_NET_NAME_MAX + 1];
+    int  count;
+    u32  stamp;         /* changes when the list changes               */
+    int  reconciled;    /* the list was filled in from the service     */
+} g_peers;
+
+/*
+ * The saved-data layer's namespace calls (sdk/mod_savedata.c has no header
+ * of its own, so the prototypes are here, the way sdk/mod_net.c has them).
+ * The service keys its handlers on the namespace of the mod that is
+ * calling, so the binding puts the port's own key in force.
+ */
+extern const char *bw_mod_savedata_namespace(void);
+extern void        bw_mod_savedata_set_namespace(const char *ns);
+
+/* A peer joined, or is here again after a rejoin: the number is the one it
+ * had, so the record is reused. */
+static void peer_add(u32 number, const char *name)
+{
+    BwMutex *lock = session_lock();
+    int i;
+
+    bw_mutex_lock(lock);
+    for (i = 0; i < g_peers.count; i++) {
+        if (g_peers.number[i] == number) {
+            break;
+        }
+    }
+    if (i == g_peers.count) {
+        if (g_peers.count >= EIDOS_SESSION_PEERS_MAX) {
+            bw_mutex_unlock(lock);
+            return;                     /* the list is full */
+        }
+        g_peers.count++;
+    } else if (strcmp(g_peers.name[i], name != NULL ? name : "") == 0) {
+        /* The peer is already there, with the same name: nothing changed. */
+        bw_mutex_unlock(lock);
+        return;
+    }
+    g_peers.number[i] = number;
+    snprintf(g_peers.name[i], sizeof(g_peers.name[i]), "%s",
+             name != NULL ? name : "");
+    g_peers.stamp++;
+    bw_mutex_unlock(lock);
+}
+
+/* A peer left. */
+static void peer_drop(u32 number)
+{
+    BwMutex *lock = session_lock();
+    int i;
+
+    bw_mutex_lock(lock);
+    for (i = 0; i < g_peers.count; i++) {
+        if (g_peers.number[i] == number) {
+            break;
+        }
+    }
+    if (i < g_peers.count) {
+        for (; i + 1 < g_peers.count; i++) {
+            g_peers.number[i] = g_peers.number[i + 1];
+            memcpy(g_peers.name[i], g_peers.name[i + 1],
+                   sizeof(g_peers.name[i]));
+        }
+        g_peers.count--;
+        g_peers.stamp++;
+    }
+    bw_mutex_unlock(lock);
+}
+
+/* The session is over: the peers are gone with it. */
+static void peers_clear(void)
+{
+    BwMutex *lock = session_lock();
+
+    bw_mutex_lock(lock);
+    if (g_peers.count != 0) {
+        g_peers.count = 0;
+        g_peers.stamp++;
+    }
+    g_peers.reconciled = 0;
+    bw_mutex_unlock(lock);
+}
+
+/*
+ * The list is filled in again from the service's own table.
+ *
+ * The port's own handler hears the joins and the drops from the frame it
+ * is bound on, but a reset empties the service's table of handlers
+ * (bw_mod_net_reset) and the handler is bound again only when the menu
+ * asks about the session: a session that a mod started in between has
+ * peers the port never saw.  The service's own table cannot be walked,
+ * but a peer of the session is asked for by its number, and the numbers
+ * a relay hands out are the ones it keeps for the session's lifetime.
+ */
+static void peers_reconcile(void)
+{
+    u32 self = bw_mod_net_self_peer();
+    u32 number;
+
+    for (number = 1; number <= BW_MOD_NET_PEERS_MAX; number++) {
+        char name[BW_MOD_NET_NAME_MAX + 1];
+
+        if (number == self) {
+            continue;                   /* this player is a row of its own */
+        }
+        if (bw_mod_net_peer_name(number, name, (u32)sizeof(name)) != 0) {
+            continue;                   /* no peer of that number */
+        }
+        peer_add(number, name);
+    }
+}
+
+/*
+ * The port's own session handler: the peers of the session.
+ *
+ * The service tells every handler that asked for the session's events
+ * about a join and about a drop (sdk/mod_net.c), and the name of a peer
+ * that joined is in the service's own table by then, so it is asked for
+ * there.  A peer that left is gone from that table, so the name the port
+ * keeps is the one it had.
+ */
+static void session_peer_event(u32 peer, int kind, const void *buf, u32 size)
+{
+    char name[BW_MOD_NET_NAME_MAX + 1];
+
+    (void)buf;
+    (void)size;
+    if (kind == (int)BW_SESSION_JOIN) {
+        if (bw_mod_net_peer_name(peer, name, (u32)sizeof(name)) != 0) {
+            name[0] = '\0';
+        }
+        peer_add(peer, name);
+    } else if (kind == (int)BW_SESSION_LEAVE) {
+        peer_drop(peer);
+    }
+}
+
+/*
+ * The binding: the port's own session handler, under the port's own key
+ * (sdk/mod_net.h, "The port's own session handler").  The service keys its
+ * handlers on the namespace of the mod that is calling, so the port's own
+ * key is in force while the handler is bound, and the one that was in
+ * force is put back afterwards.
+ */
+void bw_port_session_bind(void)
+{
+    const char *saved = bw_mod_savedata_namespace();
+
+    bw_mod_savedata_set_namespace(BW_PORT_SESSION_KEY);
+    bw_mod_net_on_session(session_peer_event);
+    bw_mod_savedata_set_namespace(saved);
+}
+
+/* The peers of the session, for the screen's rows. */
+u32 bw_port_session_peer_count(void)
+{
+    BwMutex *lock = session_lock();
+    u32 n;
+
+    bw_mutex_lock(lock);
+    n = (u32)g_peers.count;
+    bw_mutex_unlock(lock);
+    return n;
+}
+
+int bw_port_session_peer_at(u32 index, u32 *number, char *name, u32 name_size)
+{
+    BwMutex *lock = session_lock();
+    int rc = -1;
+
+    bw_mutex_lock(lock);
+    if (index < (u32)g_peers.count) {
+        if (number != NULL) {
+            *number = g_peers.number[index];
+        }
+        if (name != NULL && name_size > 0) {
+            snprintf(name, (size_t)name_size, "%s", g_peers.name[index]);
+        }
+        rc = 0;
+    }
+    bw_mutex_unlock(lock);
+    return rc;
+}
+
+/* This player's own number in the session, and the name the relay gave it. */
+u32 bw_port_session_self_peer(void)
+{
+    return bw_mod_net_self_peer();
+}
+
+int bw_port_session_self_name(char *out, u32 out_size)
+{
+    u32 self = bw_mod_net_self_peer();
+
+    if (out == NULL || out_size == 0) {
+        return -1;
+    }
+    if (self == 0) {
+        out[0] = '\0';
+        return -1;
+    }
+    return bw_mod_net_peer_name(self, out, out_size);
+}
+
+/* The list's stamp: it changes when the list does, so the screen knows when
+ * to build its rows again. */
+static u32 peers_stamp(void)
+{
+    BwMutex *lock = session_lock();
+    u32 s;
+
+    bw_mutex_lock(lock);
+    s = g_peers.stamp;
+    bw_mutex_unlock(lock);
+    return s;
+}
 
 /* The relay and the name the port's own settings hold. */
 static void session_give_relay(void)
@@ -924,9 +1231,10 @@ int bw_port_session_start(int host, const char *code)
 {
     BwThread *old;
 
-    if (g_sess.lock == NULL) {
-        g_sess.lock = bw_mutex_create();
-    }
+    session_lock();
+    /* The port's own handler is bound before the session starts, so the
+     * peers that join it are collected. */
+    bw_port_session_bind();
     /* The service is given the port's own relay and name first: they are
      * the settings the player may have changed since the boot. */
     session_give_relay();
@@ -971,11 +1279,17 @@ int bw_port_session_start(int host, const char *code)
  * Ask how the session is doing.  The answer of a finished work is given
  * once: the frame thread takes it, puts the code into the model and
  * shows it.
+ *
+ * The poll is also where the port's own handler is bound again: a reset
+ * empties the service's table of handlers (bw_mod_net_reset), and the
+ * screen asks every frame, so the handler is in place for the session
+ * that follows.
  */
 int bw_port_session_poll(BwPortSessionState *out)
 {
     BwThread *t = NULL;
     int done = 0;
+    int busy;
 
     if (g_sess.lock == NULL) {
         if (out != NULL) {
@@ -983,10 +1297,12 @@ int bw_port_session_poll(BwPortSessionState *out)
         }
         return 0;
     }
+    bw_port_session_bind();
     bw_mutex_lock(g_sess.lock);
+    busy = g_sess.busy;
     if (out != NULL) {
         memset(out, 0, sizeof(*out));
-        out->busy = g_sess.busy;
+        out->busy = busy;
         out->rc = g_sess.rc;
         out->host = g_sess.host;
         memcpy(out->code, g_sess.result, sizeof(out->code));
@@ -1007,6 +1323,28 @@ int bw_port_session_poll(BwPortSessionState *out)
          * about to return, so this does not wait. */
         bw_thread_join(t);
     }
+    if (out != NULL) {
+        out->peers = bw_port_session_peer_count();
+        out->stamp = peers_stamp();
+    }
+    if (bw_mod_net_session_active()) {
+        /* A session runs: the list is filled in from the service's own
+         * table once, in case the port's own handler was bound after the
+         * peers had joined. */
+        BwMutex *lock = session_lock();
+        int reconciled;
+
+        bw_mutex_lock(lock);
+        reconciled = g_peers.reconciled;
+        g_peers.reconciled = 1;
+        bw_mutex_unlock(lock);
+        if (!reconciled) {
+            peers_reconcile();
+        }
+    } else if (!busy) {
+        /* No session runs: the peers of the one that ended are gone. */
+        peers_clear();
+    }
     return done;
 }
 
@@ -1014,6 +1352,7 @@ int bw_port_session_poll(BwPortSessionState *out)
 void bw_port_session_leave(void)
 {
     bw_mod_net_session_leave();
+    peers_clear();
 }
 
 /* Whether a session is running. */
@@ -1624,10 +1963,12 @@ static void parse_file(FILE *fp, Model *m)
             continue;
         }
         if (strcmp(section, "session") == 0) {
-            /* The port's own session: the code of the session the player is
-             * in, or the one the player types to join one. */
+            /* The port's own session: the code in force, and the code the
+             * player types to join a session. */
             if (strcmp(key, "code") == 0) {
                 net_text_copy(m->session.code, sizeof m->session.code, val);
+            } else if (strcmp(key, "join_code") == 0) {
+                net_text_copy(m->session.join, sizeof m->session.join, val);
             } else {
                 fprintf(stderr, "eidos: settings.ini:%d: unknown key '%s' in "
                         "[session], ignored\n", lineno, key);
@@ -1764,10 +2105,11 @@ static int write_file(FILE *fp, const Model *m)
     fprintf(fp, "relay_port = %d\n", m->net.relay_port);
     fprintf(fp, "control_port = %d\n", m->net.control_port);
     fprintf(fp, "name = %s\n", m->net.name);
-    /* The port's own session: the code of the session the player is in, or
-     * the one the player types to join one. */
+    /* The port's own session: the code in force, and the code the player
+     * types to join a session. */
     fprintf(fp, "\n[session]\n");
     fprintf(fp, "code = %s\n", m->session.code);
+    fprintf(fp, "join_code = %s\n", m->session.join);
     /* The input injection: the longest press the port allows, in frames.
      * 0 is off. */
     fprintf(fp, "\n[input]\n");
@@ -1785,6 +2127,7 @@ int eidos_settings_load(void)
     FILE *fp;
     int i;
 
+    ensure_init();
     g_inited = 1;
     for (i = 0; i < EIDOS_OPT_COUNT; i++) {
         g_ovr[i] = 0;
@@ -1793,6 +2136,11 @@ int eidos_settings_load(void)
     g_cur = g_saved = m;
     apply_input();
     apply_panel();
+    /* The port's own session handler is bound here, at the port's
+     * start-up: a session that a mod starts is collected even when the
+     * menu is closed.  The menu binds it again whenever it asks about the
+     * session, because a reset empties the service's table of handlers. */
+    bw_port_session_bind();
     if (path[0] == '\0') {
         return 1;
     }

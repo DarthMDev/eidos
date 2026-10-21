@@ -70,13 +70,14 @@ void (*on_session)(BwSessionHandler fn);              /* receive, join, leave */
 connects to the project's relay, which returns a short code. The other
 players join with `session_join` and that code, and the relay links them.
 This follows Archipelago and the Minecraft "easy multiplayer" style: nobody
-opens a port or types an address. The port's own settings hold where the
-relay is and what the player is called, and a Session section of the settings
-screen holds the code: the player hosts a session, the code comes back and
-is shown for the other players to read, and the player types a code to join
-one. The wait does not stall the game: the port's own layer does the
-blocking call on its own worker thread and the screen polls it, so
-`session_host` and `session_join` never run on the frame thread.
+opens a port or types an address.
+
+**The blocking call.** `session_host` and `session_join` talk to the relay
+and wait for it to answer, so they block the thread that calls them, for up
+to three seconds. A mod that calls one of them from a handler holds the
+game's frame for that time. The port's own Session section does not: it
+makes the call on the port's own worker thread and the screen polls it, so
+the game keeps running while the relay answers.
 
 **The relay.** A small server the project runs, which only forwards messages
 between the players of one session. The port can also point the client at
@@ -135,7 +136,10 @@ number). Each mod receives only messages sent by the same mod on the other
 side, keyed by the mod's own name, which is its state namespace. The handler
 runs on the game's frame, never on a network thread: the session's reader
 thread queues what it read and the frame tick drains the queue and calls the
-handlers.
+handlers. A message handler runs with the mod's own namespace in force, so a
+state call it makes reaches its own file. A join and a leave are told to
+every mod that asked for the session's events, and they run with no mod's
+namespace in force.
 
 **Identity and drops.** Each player has a peer number for the session's
 lifetime and a display name. A dropped player is reported to the handler; a
@@ -372,8 +376,9 @@ connected tool: the topic, a space, and the mod's JSON, and a newline. A
 tool reads one line per message.
 
 A command is one line of text the mod interprets; the handler runs on the
-game's frame. `publish` sends a JSON message to every connected tool, for
-overlays that show the run's state.
+game's frame, with the mod's own namespace in force, so a state call it
+makes reaches its own file. `publish` sends a JSON message to every
+connected tool, for overlays that show the run's state.
 
 ## Input injection
 
@@ -503,7 +508,9 @@ every pointer width.
 Every handler bound to a command runs, in load order, and each one sees the
 command as the ones before it left it, so the writes to the operands chain. A
 handler that replaces the command does not stop the later handlers; when any
-of them replaced it, the game's own handler does not run.
+of them replaced it, the game's own handler does not run. A handler is handed
+the mod's own state, the value its start-up entry returned, and it runs with
+the mod's namespace in force, so a state call it makes reaches its own file.
 
 ## Mod settings
 
@@ -535,9 +542,9 @@ player makes there is written beside the mod's saved data.
 ## The mod menu
 
 The port's settings screen has a Mods section: the installed mods in load
-order, each with an on/off switch, its settings, and "Clear saved data". The
-order can be changed. Changes apply when the player leaves the menu, following
-the rules of `docs/mod-rules.md`, section 2.
+order, each with an on/off switch, its settings, "Clear saved data", and a
+"Restart the run" row. The order can be changed. Changes apply when the
+player leaves the menu, following the rules of `docs/mod-rules.md`, section 2.
 
 **The model and the screen.** `sdk/mod_menu.c` is the model
 behind the section: it holds the player's list of mods in
@@ -551,6 +558,47 @@ where each mod is a row with its switch, its settings are rows under it, and
 "Clear saved data" is a row of its own. The player reorders the list with L
 and R on a mod's row, and the order the player chose is the order the mods
 load in (`docs/mods.md`, "Setting the roots").
+
+**The restart row.** The last row of the section is "Restart the run": the
+port's own restart, the one the run restart service records and the boot's
+frame loop carries out. A restart ends the run, so the player is asked
+first, and the menu asks its own question: the screen is drawn at the title,
+where the game's own yes/no window is not available. Left and right choose
+the answer, A takes the answer that is chosen and B says no, and the answer
+starts at "no".
+
+## The port's own session
+
+The settings screen has a Session section beside the Mods one, and it is the
+port's own rather than a mod's. The section holds the two codes of a
+session: the code in force (the one the relay handed out when the player
+hosted a session, or the one the player joined a session with) and the code
+the player types to join one. They are kept apart, so that hosting a
+session does not overwrite what the player has typed, and both are settings
+of the port's own (`[session]`, `code` and `join_code` in the settings
+file), so they are reverted and committed with the rest of the settings and
+the section can put them back or clear them.
+
+The rows in the middle are the player's own actions: host a session, join
+one with the typed code, and leave. The rows after them are the players of
+the session: this player's own number, and one row for every other player,
+with the number the relay gave them. The port's own handler collects them:
+the service tells every handler that asked for the session's events about a
+join and about a drop, and the port's own handler keeps the numbers it was
+told about under a lock, because the frame that drains the queue is not the
+thread that draws the screen.
+
+The section drives the peer session service through the port's own calls
+(`engine/platform/settings.c`), not through the services table a mod gets.
+The port's calls do three things the mod-facing ones do not: they hand the
+service the relay and the player's name that the settings hold, so a change
+the player made in the menu is the one the next session uses; they keep the
+state of the work in flight; and they do not block the frame thread. A host
+or a join waits for the relay, for up to three seconds, and the settings
+screen is drawn on the frame thread, so the call is made on the port's own
+worker. The worker publishes its answer under a lock, the screen takes it
+on the frame it polls, and the code goes into the model, so the model is
+only ever written by the thread that draws it.
 
 ## Related documents
 

@@ -69,11 +69,11 @@ cannot read is reported and not compared, so there is no false refusal. A
 row the build does not carry publishes no prototype, and there is nothing to
 compare.
 
-The game's own type names resolve too: the generator reads the headers the
-defining file includes and publishes what each name is (`WMErrCode` is an
-`int`, `WMCallbackFunc` a `void *`), and the normaliser asks that table for
-a name it cannot read otherwise. So a stated prototype that names a game
-type is compared like any other.
+The game's own type names resolve too: the generator reads the headers each
+file includes and publishes what every type name the game's files define is
+(`WMErrCode` is an `int`, `WMCallbackFunc` a `void *`), and the normaliser
+asks that table for a name it cannot read otherwise. So a stated prototype
+that names a game type is compared like any other.
 
 The normalisation is the same on both sides: `"<return type> (<parameter
 types>)"`, the parameters separated by `", "`, `"void"` when there are none.
@@ -164,15 +164,19 @@ that does not know its own version reports the pin and does not check it.
   game-specific type name is never a false refusal.
 - **An overlay row's prototype** is published only when that overlay is
   compiled in.
+- **Four of the game's type names** are not published: the two float types
+  (the normalisation has no float) and the two pointer-width integers (their
+  value is the compiler's, not the tree's).  A prototype naming one of them
+  is reported and not compared.
 
 ## Still to build
 
-1. **A game type name the declared rows do not use.** The build publishes the
-   resolution of the game's own type names the declared rows' prototypes use
-   (the generator reads the headers the defining file includes), so a
-   prototype that names one of those is compared. A name only some other
-   function uses is not published, and a stated prototype naming it is
-   reported rather than compared.
+1. **A name two of the game's files resolve differently.**  The build
+   publishes the resolution of every type name the game's own files define
+   (the generator reads the headers each file includes), so a prototype that
+   names one is compared whatever function it names.  A name two files
+   answer differently is withdrawn from the table and reported, so a
+   prototype naming it is reported rather than compared.
 
 ## Related documents
 

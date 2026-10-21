@@ -13,7 +13,7 @@
   "implicit_decls": 0,
   "link_failed_targets": 0,
   "matched_total": 1374,
-  "note": "the move-learning event fires everywhere, the marked fields have appliers, the player has a session menu, and a script handler gets its mod's state",
+  "note": "every game type name is published, the session menu has its peers and its question, and the payload fields that could be filled are",
   "shim_replaced": 239,
   "stubbed_asm": 17,
   "stubbed_open": 4,
@@ -25,5 +25,5 @@
   "tree": "src/game",
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 28
+  "wave": 29
 }

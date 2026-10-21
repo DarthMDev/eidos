@@ -304,6 +304,8 @@ void bw_mod_net_reset(void);
  * The two calls that do read it, bw_mod_net_session_send and
  * bw_mod_net_on_session, are keyed on the mod that is calling: the port's
  * own key is the empty namespace, the way sdk/mod_handoff.c uses it.
+ * The port's own listener, the one that collects the peers of the
+ * session, is under a key of its own; the section below says why.
  *
  * The implementation is the port's own code and not the library's, so a
  * file of the library does not call these.
@@ -316,6 +318,8 @@ typedef struct BwPortSessionState {
     int  rc;            /* the answer of the work (0 for success)    */
     int  host;          /* the work was a host                       */
     char code[BW_MOD_NET_CODE_MAX + 1];    /* the session's code       */
+    u32  peers;         /* how many peers the session has            */
+    u32  stamp;         /* changes when the peer list changes        */
 } BwPortSessionState;
 
 /*
@@ -338,6 +342,57 @@ void bw_port_session_leave(void);
 
 /* Whether a session is running. */
 int  bw_port_session_active(void);
+
+/* ------------------------------------------------------------------ */
+/* The port's own session handler                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The port's own key: the namespace the port's own session handler is
+ * bound under.
+ *
+ * The service keys its handlers on the namespace of the mod that is
+ * calling (sdk/mod_net.c), and the port's own namespace is the empty one
+ * -- the way sdk/mod_handoff.c uses it.  The save handoff's own handler
+ * is bound there, though, and the service keeps one handler per key, so
+ * a second handler under the empty namespace would take the handoff's
+ * away and the pieces of a save that arrives from a peer would reach
+ * the wrong place.  The port's own listener therefore sits under a key
+ * of its own.  It hears everything it needs anyway: a join and a drop
+ * are told to every handler that asked for the session's events, not
+ * only to the one whose key the message carries.
+ */
+#define BW_PORT_SESSION_KEY "eidos"
+
+/*
+ * The port's own session handler: the one that collects the peers of the
+ * session.
+ *
+ * The service keeps the names of the peers but cannot walk its own table
+ * (it publishes a count and a name, not the numbers), so the port's own
+ * handler keeps the numbers it was told about, and the screen's rows are
+ * built from them.
+ *
+ * The handler is bound under BW_PORT_SESSION_KEY and is called on the
+ * game's frame, never on a network thread (the service drains its queue
+ * at the frame, sdk/mod_net.c).  The port binds it when its settings are
+ * loaded and again whenever the menu asks about the session, so a
+ * session that a mod starts is collected as well; a reset empties the
+ * service's table of handlers (bw_mod_net_reset), and the next binding
+ * puts the handler back.
+ */
+void bw_port_session_bind(void);
+
+/* The peers of the session: how many there are, and a peer's number and
+ * its name.  0 on success, -1 when there is no such peer. */
+u32  bw_port_session_peer_count(void);
+int  bw_port_session_peer_at(u32 index, u32 *number, char *name,
+                             u32 name_size);
+
+/* This player's own number in the session (0 when there is no session)
+ * and the name the relay gave it. */
+u32  bw_port_session_self_peer(void);
+int  bw_port_session_self_name(char *out, u32 out_size);
 
 #ifdef __cplusplus
 }

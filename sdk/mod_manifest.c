@@ -306,13 +306,24 @@ static int is_event_name(const char *s, size_t n)
  * none has no game type names: a stated prototype that names one is then
  * reported and not compared, the way it was before the table existed.
  *
+ * Every type name the game defines is published, not only the ones the
+ * declared rows' prototypes use, so a stated prototype that names a game
+ * type is compared whatever function it names.  A name the build resolved
+ * two ways (two files do not agree) is not published: the port reads one
+ * answer, so it reads none, and a stated prototype that names it is
+ * reported and not compared.
+ *
  * One row: the game's own type name and the C type it resolves to.  The
  * row is sdk/mod_manifest.h's BwModType, and the generated code repeats the
  * shape (tools/ovlink.py), so the two must agree.
  */
 
-/* How many type names the table holds. */
-#define BW_MOD_TYPES_MAX 64
+/* How many type names the table holds.  It is tools/ovlink.py's
+ * BW_MOD_TYPES_MAX, and the two must agree: the generator publishes at most
+ * this many names and the port keeps at most this many.  A name that does
+ * not fit is not read: a stated prototype that names it is reported and
+ * not compared, so there is no false refusal. */
+#define BW_MOD_TYPES_MAX 4096
 
 static BwModType   g_types[BW_MOD_TYPES_MAX];
 static unsigned int g_type_count;
@@ -335,7 +346,8 @@ void bw_mod_manifest_publish_types(const BwModType *rows, unsigned int count)
         if (g_type_count >= BW_MOD_TYPES_MAX) {
             fprintf(stderr,
                     "eidos: the game's type names hold %u entries, %d fit: the "
-                    "rest are not read\n", count, BW_MOD_TYPES_MAX);
+                    "rest are not read, and a stated prototype that names one "
+                    "is reported and not compared\n", count, BW_MOD_TYPES_MAX);
             return;
         }
         g_types[g_type_count].name = rows[i].name;

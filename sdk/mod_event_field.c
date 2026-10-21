@@ -300,8 +300,8 @@ typedef struct BwPortFieldMenuItem {
     int   inUse;         /* 0x00 */
     void *bmpWin;        /* 0x04 */
     int   buttonId;      /* 0x08 */
-    void *charRes;       /* 0x0C */
-    void *cellRes;       /* 0x10 */
+    u32   charRes;       /* 0x0C: the character resource id, not a pointer */
+    u32   cellRes;       /* 0x10: the cell resource id, not a pointer */
     u8    cursorX;       /* 0x14 */
     u8    cursorY;       /* 0x15 */
     u8    reserved16[2]; /* 0x16 */

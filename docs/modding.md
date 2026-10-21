@@ -35,8 +35,9 @@ loads it in the load order, after the save is chosen and before the game runs
 
 1. **The manifest is read and applied.** The parse fills one record per mod
    (`sdk/mod_manifest.c`); the apply checks the versions, derives the state
-   namespace, checks every `override` against the declared table, and leaves
-   the rule list and the settings path in the record.
+   namespace, checks every `override` against the declared table and against
+   the prototype the build published for the row, and leaves the rule list
+   and the settings path in the record.
 2. **The versions are checked.** The manifest's `api` must be the port's
    interface version. A mod with raw hooks may also state the `port` version
    it was built against, and when it does the pin is checked and a mismatch
@@ -52,17 +53,23 @@ loads it in the load order, after the save is chosen and before the game runs
 5. **The handlers are bound.** A mod binds a handler to an event with
    `host->on`, and a handler to a script command with `host->script`. The
    port holds the bindings until the start entry has returned its state
-   pointer, and registers them then, in the order the mod bound them.
+   pointer, and registers them then, in the order the mod bound them. A
+   script handler is handed the mod's state, the way an event handler is, so
+   a handler that reads the mod's own data finds it. A frame handler is bound
+   through the services table's `on_frame` and runs once a game frame with
+   the mod's own namespace in force.
 6. **The overrides are installed.** Each `override` line that survived the
    declared check has its symbol resolved in the loaded library and is
    installed in the slot registry, in load order, so a later mod wins over an
    earlier one for one pair.
 
 The way back down: the slots the mod installed are reverted to their
-originals, `eidos_mod_stop` runs (the mod's namespace is in force, so a state
-call it makes there reaches its own file, and that is where it flushes its
-data), and the library is unloaded last, because a code pointer into it is
-still live until then.
+originals, the mod's script and frame handlers go out of their registries
+(they hold the mod's own function, so a handler left behind after the unload
+would be a call into a library that is gone), `eidos_mod_stop` runs (the
+mod's namespace is in force, so a state call it makes there reaches its own
+file, and that is where it flushes its data), and the library is unloaded
+last, because a code pointer into it is still live until then.
 
 **The refusals reach the game.** A refusal never just skips the game
 function, because most game functions return a value or do work their caller
@@ -136,6 +143,9 @@ Some things a mod needs are not game functions. The port provides them
   for stream tools, **input injection**, a **frame tick** and **save handoff**.
 - **Mod settings** on the port's settings screen, and a **mod menu** to enable,
   disable and order mods.
+- **The player's own session**, in a Session section of the settings screen:
+  host a session, read the code the relay hands out, type a code to join
+  one, leave, and see the players of the session.
 
 All of them are built, and every call in the services table is bound: the
 run-status panel and the input injection included, and the mod settings with
@@ -143,6 +153,11 @@ them. The mod menu's model is `sdk/mod_menu.c` and the screen that draws it is
 the port's own Mods section on the settings screen
 (`engine/platform/settings_ui.c`): the player enables, disables, reorders and
 clears the mods there, and the changes apply when the player leaves the menu.
+The section's last row restarts the run, after the player says yes.
+The Session section is the port's own, and it drives the peer session service
+through the port's own calls (`engine/platform/settings.c`): the wait for the
+relay does not stall the game, because the call runs on the port's own worker
+thread and the screen polls it.
 
 ## 5. The game modes
 
@@ -162,7 +177,7 @@ that faints is dead for the rest of the run.
 | Know the route, and the first encounter on it | `route.change` (`FIELD_MAP_CHANGE_SetupZone`, 0x021643E8, ov010); `encounter.wild` with species and zone (`FIELD_ENCOUNT_CreateZoneWildMons`, 0x021A954C, ov021); `encounter.static` for statics and scripted battles (`EVENT_BATTLE_CreateScriptedBattle`, 0x0216E7C8, ov010) |
 | Refuse a catch that breaks the rule | `battle.item` refusal for a ball (`BTLV_CORE_GetSelectedItem`, 0x021EA01C, ov093), which keeps the ball and the turn; or `catch.attempt` (`BTL_SERVER_FLOW_TryThrowBall`, 0x021CBA40, ov093), which blocks the ball as in a trainer battle |
 | Know which of the player's Pokemon fainted | `battle.faint` with the Pokemon's identity (`BTL_SERVER_FLOW_ProcFaintedPoke`, 0x021C4F64, ov093) |
-| Keep the dead out of play, for example in a grave box | State API: `mon_to_box` and the box writes (`BOX_SAVEDATA_AddPokemonToBox` 0x0200752C, `BOX_SAVEDATA_SetBoxName` 0x02007898, arm9); `box.withdraw` refusal; `battle.action` refuses a switch to a dead Pokemon |
+| Keep the dead out of play, for example in a grave box | State API: `mon_to_box`, which puts a party Pokemon in the first free box slot (`BOX_SAVEDATA_AddPokemon` 0x020074D8 and `POKEPARTY_RemoveMember`, arm9); `box.withdraw` refusal; `battle.action` refuses a switch to a dead Pokemon |
 | Stop a revive or a heal from bringing one back | `battle.item` and `item.use` refusals; `heal`, whose payload says which Pokemon heal; HP is party field 0xA0 (`POKE_TOOL_SetPartyValue`, 0x02017E40) |
 | Know the run ended | `whiteout` (`BTL_CLIENT_StepShowBlackoutMessages`, 0x021D1960, ov093; `SCRIPT_SYS_RunRecoverScript`, 0x02158A20, ov010) |
 | Nickname every catch | `catch.result`, then the game's own nickname screen (`ZUKAN_NICKNAME_Create`, 0x0220B55C, ov207) |
@@ -236,10 +251,10 @@ trainer parties, base stats and moves are replaced through the data layer.
 
 1. **The relay server**: the protocol is fixed (`docs/mod-services.md`,
    "Peer sessions"), but the server that answers it is not part of the port.
-2. **The move-learning screens:** the TM path, the nurse's relearner path and
-   the script that writes a move are bound in the event layer, but no slot
-   carries the event for them, so `move.learn` fires only from the level-up
-   check and the day care (`docs/mod-events.md`, section 1).
+2. **The nickname's force**: `mon.nickname`'s `force` is marked, but the row
+   that carries it has no applier, so a write to it has no effect: the game
+   has no call that forces the nickname prompt, so the port has no hook at
+   that decision (`docs/mod-payloads.md`, section 0).
 
 ## Related documents
 
