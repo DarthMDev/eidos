@@ -671,6 +671,15 @@ def read_declared_set():
 # `void *`, every integer typedef the matched files use is its C type.  A
 # signature with a struct passed by value, a float or `...` is not
 # normalised; its trampoline panics instead of forwarding.
+#
+# The game's own type names (a typedef in one of the game's headers) are
+# resolved the same way, from the typedefs the file carries: an enum is an
+# int, a struct or union by value is the one word the port carries it in, a
+# pointer and a function pointer are `void *`.  The port's own normaliser
+# cannot read the game's headers (it is a separate program), so the
+# generator publishes the resolution of every name it meets
+# (Link.declared_types) and the port reads the published table
+# (docs/mod-overrides.md, "The prototype is checked").
 
 INT_TYPES = {
     "u8": "unsigned char", "s8": "signed char", "vu8": "unsigned char", "vs8": "signed char",
@@ -684,6 +693,24 @@ BASE_WORDS = {"unsigned", "signed", "char", "short", "int", "long", "void"}
 
 
 _WORD_SCALARS = {"u32", "s32", "int", "unsigned", "BOOL", "fx32", "vu32", "vs32"}
+
+
+class TypeNames(dict):
+    """The game's own type names met while normalising, and the type each
+    resolves to.
+
+    A name two files resolve differently is a conflict: the port reads one
+    answer, so the generator says so (Link.declared_types)."""
+
+    def __init__(self):
+        super().__init__()
+        self.conflicts = {}
+
+    def __setitem__(self, name, type_):
+        old = self.get(name)
+        if old is not None and old != type_:
+            self.conflicts[name] = (old, type_)
+        super().__setitem__(name, type_)
 
 
 def _word_aggregate(body):
@@ -717,8 +744,12 @@ def _word_aggregate(body):
     return has_word
 
 
-def _norm_type(text, typedefs, depth=0):
-    """C type text (no declarator name) -> normalised spelling, or None."""
+def _norm_type(text, typedefs, depth=0, met=None):
+    """C type text (no declarator name) -> normalised spelling, or None.
+
+    `met`, when given, collects the game's own type names the text uses
+    and the type each resolves to: the table the port's normaliser reads
+    (Link.declared_types)."""
     t = re.sub(r"\b(?:const|volatile|register|static|extern|inline|__inline)\b", " ", text)
     if "*" in t or "[" in t or "(" in t:
         return "void *"
@@ -759,12 +790,18 @@ def _norm_type(text, typedefs, depth=0):
         if td and depth < 8:
             m = re.match(r"^\s*typedef\s+(.*?)\b" + re.escape(w) + r"\s*$", " ".join(td.split()))
             if m:
-                r = _norm_type(m.group(1), typedefs, depth + 1)
+                r = _norm_type(m.group(1), typedefs, depth + 1, met)
                 if r is not None:
+                    if met is not None:
+                        met[w] = r
                     return r
             if re.search(r"\(\s*\*\s*" + re.escape(w) + r"\s*\)", td):
+                if met is not None:
+                    met[w] = "void *"
                 return "void *"
             if re.match(r"^\s*typedef\s+(?:struct|union)\b[^{;]*\{", td) and _word_aggregate(td):
+                if met is not None:
+                    met[w] = "unsigned int"
                 return "unsigned int"
         return None
     return None
@@ -783,8 +820,11 @@ def _strip_declarator_name(param):
     return p
 
 
-def signature(head, name, typedefs):
-    """(return type, [param types]) of a definition head, normalised, or None."""
+def signature(head, name, typedefs, met=None):
+    """(return type, [param types]) of a definition head, normalised, or None.
+
+    `met`, when given, collects the game's own type names the head uses and
+    the type each resolves to (Link.declared_types)."""
     i = head.find(name + "(")
     if i < 0:
         m = re.search(r"\b" + re.escape(name) + r"\s*\(", head)
@@ -799,7 +839,7 @@ def signature(head, name, typedefs):
     if not before.strip():
         ret = "int"                    # C89 implicit int
     else:
-        ret = _norm_type(before, typedefs)
+        ret = _norm_type(before, typedefs, met=met)
     if ret is None:
         return None
     out = []
@@ -809,7 +849,7 @@ def signature(head, name, typedefs):
     for p in ps:
         if p.strip() == "...":
             return None
-        t = _norm_type(_strip_declarator_name(p), typedefs)
+        t = _norm_type(_strip_declarator_name(p), typedefs, met=met)
         if t is None or t == "void":
             return None
         out.append(t)
@@ -1270,6 +1310,7 @@ class Link:
         self.tramps = {}           # plain name -> addr
         self.arm9_needs = {}       # name -> (addr or None, defined by link?)
         self.arm9_stub = {}        # name -> addr or None
+        self.types = None          # the game's own type names, when asked
         self._read_overlays()
         self._link_refs()
         for oid in self.ids:
@@ -1970,6 +2011,58 @@ class Link:
                     "events": events,
                 })
 
+    def arm9_row_head(self, addr):
+        """The definition of an arm9 declared row: its name, its head text
+        and the typedefs the file carries, or None when this link does not
+        define it.
+
+        The boot's link file publishes the arm9 rows' prototypes
+        (tools/bootlink.py); the generator reads the same definitions here,
+        for the game's own type names they use."""
+        oname = self.link_at.get(addr & ~1)
+        if oname is None:
+            return None
+        head = self.link_heads.get(oname)
+        if head is None:
+            return None
+        return oname, head[0], head[1]
+
+    def declared_types(self):
+        """The game's own type names the declared rows' prototypes use, and
+        the C type each resolves to.
+
+        The port's normaliser cannot read the game's headers (it is a
+        separate program, and the tree is not there at run time), so the
+        generator publishes the resolution of every name it meets here and
+        the port reads the published table (docs/mod-overrides.md, "The
+        prototype is checked").  A name the generator cannot resolve is not
+        published, and the port reports a stated prototype that names it
+        and does not compare it: there is no false refusal."""
+        if self.types is not None:
+            return self.types
+        met = TypeNames()
+        for addr, dname, region, events in read_declared_set():
+            if region == "arm9":
+                row = self.arm9_row_head(addr)
+                if row is None:
+                    continue
+                oname, head, typedefs = row
+                signature(head, oname, typedefs, met)
+                continue
+            m = re.match(r"^ov0*(\d+)$", region)
+            if m is None:
+                continue
+            st = self.state.get(int(m.group(1)))
+            if st is None:
+                continue
+            self.target_signature(st, addr, dname, met)
+        for name, (one, other) in sorted(met.conflicts.items()):
+            self.notes.append("the game's type name %s resolves to %s and to %s: "
+                              "the port reads one of them, and the two files "
+                              "do not agree" % (name, one, other))
+        self.types = sorted(met.items())
+        return self.types
+
     def arm9_canonical(self, addr):
         """The name the ARM9's own matched files define at `addr` (an
         asm-bodied file's, say), else the SDK's or the runtime's, else
@@ -2136,7 +2229,7 @@ class Link:
 
     # -- trampolines ---------------------------------------------------------
 
-    def target_signature(self, st, addr, dname=None):
+    def target_signature(self, st, addr, dname=None, met=None):
         n = st.at.get(addr)
         if n is None and dname in st.defs:
             # The declared row's own name, defined here but with no address
@@ -2149,7 +2242,7 @@ class Link:
         head = sc.heads.get(n)
         if head is None:
             return n, None
-        return n, signature(head, n, sc.typedefs)
+        return n, signature(head, n, sc.typedefs, met)
 
 
 # ---------------------------------------------------------------------------
@@ -2840,6 +2933,34 @@ def write_dispatch(link, path, set_name):
                     "\"%s\"" % s["proto"] if s["proto"] is not None else "NULL"))
         w("};")
         w("")
+    # The game's own type names, and the C type each resolves to: the table
+    # the port's normaliser reads, so a manifest's `sig=` that names one of
+    # them is read the way the build read the function's own prototype.
+    types = link.declared_types()
+    if types:
+        w("/* The game's own type names, and the C type each resolves to.")
+        w(" *")
+        w(" * The generator knows the game's headers, so it resolves a name the")
+        w(" * port cannot read (WMErrCode, WMCallbackFunc, WMLinkLevel, ...): an")
+        w(" * enum is an int, a struct by value is the one word the port carries")
+        w(" * it in, a pointer and a function pointer are void *.  The port reads")
+        w(" * this table, so the two sides reach the same answer")
+        w(" * (docs/mod-overrides.md, \"The prototype is checked\").")
+        w(" *")
+        w(" * The declaration is repeated here, the way sdk/mod_manifest.c")
+        w(" * repeats the port's own: the two must agree. */")
+        w("typedef struct BwModType {")
+        w("    const char *name;   /* the game's own type name */")
+        w("    const char *type;   /* the C type it resolves to */")
+        w("} BwModType;")
+        w("extern void bw_mod_manifest_publish_types(const BwModType *rows,")
+        w("                                      unsigned int count);")
+        w("static const BwModType k_mod_type_rows[] = {")
+        for name, ttype in types:
+            w("    { %s, %s }," % (c_str(name), c_str(ttype)))
+        w("};")
+        w("")
+    if publishing or types:
         w("#if defined(_MSC_VER) && !defined(__clang__)")
         w("/* cl.exe: a start-up initialiser in the C run-time's constructor")
         w(" * section. */")
@@ -2850,16 +2971,22 @@ def write_dispatch(link, path, set_name):
         w("    bw_ovl_mod_register;")
         w("static void bw_ovl_mod_register(void)")
         w("{")
-        w("    bw_mod_slot_set_overlay_publish(bw_ovl_mod_publish_dispatch);")
-        w("    bw_mod_publish_protos(k_mod_proto_rows, %du);"
-          % sum(len(link.state[oid].mod_slots) for oid in publishing))
+        if publishing:
+            w("    bw_mod_slot_set_overlay_publish(bw_ovl_mod_publish_dispatch);")
+            w("    bw_mod_publish_protos(k_mod_proto_rows, %du);"
+              % sum(len(link.state[oid].mod_slots) for oid in publishing))
+        if types:
+            w("    bw_mod_manifest_publish_types(k_mod_type_rows, %du);" % len(types))
         w("}")
         w("#else")
         w("__attribute__((constructor)) static void bw_ovl_mod_register(void)")
         w("{")
-        w("    bw_mod_slot_set_overlay_publish(bw_ovl_mod_publish_dispatch);")
-        w("    bw_mod_publish_protos(k_mod_proto_rows, %du);"
-          % sum(len(link.state[oid].mod_slots) for oid in publishing))
+        if publishing:
+            w("    bw_mod_slot_set_overlay_publish(bw_ovl_mod_publish_dispatch);")
+            w("    bw_mod_publish_protos(k_mod_proto_rows, %du);"
+              % sum(len(link.state[oid].mod_slots) for oid in publishing))
+        if types:
+            w("    bw_mod_manifest_publish_types(k_mod_type_rows, %du);" % len(types))
         w("}")
         w("#endif")
         w("")
@@ -2954,6 +3081,8 @@ def write_report(link, path):
             p("  %s slot %s 0x%08X (%s -> %s%s)" % (
                 st.ov.tag, s["name"], s["addr"], s["declared"], s["original"],
                 (", events " + ",".join(s["events"])) if s.get("events") else ""))
+    for name, ttype in link.declared_types():
+        p("  game type %s: %s" % (name, ttype))
     for line in link.notes:
         p("  note: " + line)
     for line in link.event_notes:

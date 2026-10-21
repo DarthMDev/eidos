@@ -45,6 +45,20 @@ typedef struct BwModOverride {
     char        *switch_name;  /* the switch name, or NULL for the row's own */
 } BwModOverride;
 
+/*
+ * One of the game's own type names and the type it resolves to, published
+ * by the build (tools/ovlink.py's table, the dispatcher's constructor
+ * calls bw_mod_manifest_publish_types).  The manifest's normaliser asks it
+ * for a name it cannot read otherwise, so a stated prototype that names a
+ * game type is compared instead of reported (docs/mod-overrides.md).
+ */
+typedef struct BwModType {
+    const char *name;          /* the game's own name, "WMErrCode" */
+    const char *type;          /* the type it resolves to, "int"    */
+} BwModType;
+
+void bw_mod_manifest_publish_types(const BwModType *rows, unsigned int count);
+
 /* One rule line, parsed: `<event> <path>`. */
 typedef struct BwModRule {
     char *event;   /* the stable event name */

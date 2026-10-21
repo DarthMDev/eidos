@@ -153,6 +153,19 @@ int         eidos_settings_net_dirty(void);
 int         eidos_settings_scancode_char(int scancode);
 
 /* ------------------------------------------------------------------ */
+/* The input injection's limit                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The longest press the port's input injection allows, in frames.  The
+ * port's own ceiling is a minute at the DS's 60 fps; the player may lower
+ * it, and 0 turns the injection off.  The setting lives in the file's
+ * [input] section (max_press).
+ */
+int         eidos_settings_input_inject_max(void);
+void        eidos_settings_input_set_inject_max(int frames);
+
+/* ------------------------------------------------------------------ */
 /* Key bindings                                                        */
 /* ------------------------------------------------------------------ */
 

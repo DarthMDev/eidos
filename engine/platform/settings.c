@@ -1,6 +1,11 @@
 /*
  * engine/platform/settings.c -- the settings model, settings.ini and the
  * apply functions.  See settings.h for the contract.
+ *
+ * The file holds the option table, the key and gamepad bindings, and two
+ * sections of the port's own that are not rows of that table: [network] (the
+ * relay, the two ports and the player's name) and [input] (the longest
+ * press the port's input injection allows).
  */
 
 #include <ctype.h>
@@ -10,6 +15,7 @@
 
 #include <SDL.h>
 
+#include "input.h"
 #include "setup.h"
 #include "settings.h"
 
@@ -99,6 +105,7 @@ typedef struct Model {
     int key[NBTN][EIDOS_BIND_SLOTS];
     PadCtl pad[NBTN][EIDOS_BIND_SLOTS];
     NetModel net;
+    int inject_max;                 /* the longest press the port allows */
 } Model;
 
 static Model g_cur, g_saved;
@@ -191,6 +198,9 @@ static void model_defaults(Model *m)
     m->net.relay_port = 0;
     m->net.control_port = 0;
     m->net.name[0] = '\0';
+    /* The input injection: the port allows a press of up to a minute, and
+     * the player may lower it (or turn the injection off with 0). */
+    m->inject_max = (int)BW_INPUT_INJECT_MAX_FRAMES;
 }
 
 static void model_reset_bindings(Model *m)
@@ -200,6 +210,20 @@ static void model_reset_bindings(Model *m)
     model_defaults(&d);
     memcpy(m->key, d.key, sizeof(m->key));
     memcpy(m->pad, d.pad, sizeof(m->pad));
+}
+
+/*
+ * The input injection's own setting, handed to the port's input layer: the
+ * longest press the port allows, in frames.  The player may lower it (a
+ * chat-controlled mod turns votes into presses, and the player decides how
+ * long a key may be held for it) or turn the injection off with 0.
+ *
+ * The port's own limit (a minute, sdk/input.h) is the ceiling: the setting
+ * lowers it, never raises it.
+ */
+static void apply_input(void)
+{
+    bw_input_set_max_press((u32)g_cur.inject_max);
 }
 
 /* ------------------------------------------------------------------ */
@@ -453,6 +477,30 @@ void eidos_settings_net_set_control_port(int port)
         port = EIDOS_NET_PORT_MAX;
     }
     g_cur.net.control_port = port;
+}
+
+/*
+ * The input injection's limit: the longest press the port allows, in frames.
+ * The player may lower the port's own ceiling, and 0 turns the injection
+ * off.  The value is applied to the input layer with the rest of the
+ * settings (apply_input).
+ */
+int eidos_settings_input_inject_max(void)
+{
+    ensure_init();
+    return g_cur.inject_max;
+}
+
+void eidos_settings_input_set_inject_max(int frames)
+{
+    ensure_init();
+    if (frames < 0) {
+        frames = 0;
+    }
+    if (frames > (int)BW_INPUT_INJECT_MAX_FRAMES) {
+        frames = (int)BW_INPUT_INJECT_MAX_FRAMES;
+    }
+    g_cur.inject_max = frames;
 }
 
 const char *eidos_settings_net_name(void)
@@ -1190,6 +1238,25 @@ static void parse_file(FILE *fp, Model *m)
             }
             continue;
         }
+        if (strcmp(section, "input") == 0) {
+            /* The port's own input setting: the longest press the port
+             * allows, in frames.  0 is off. */
+            if (strcmp(key, "max_press") == 0) {
+                long n = strtol(val, NULL, 10);
+
+                if (n < 0 || n > (long)BW_INPUT_INJECT_MAX_FRAMES) {
+                    fprintf(stderr, "eidos: settings.ini:%d: bad value '%s' "
+                            "for input.max_press, kept the default\n", lineno,
+                            val);
+                } else {
+                    m->inject_max = (int)n;
+                }
+            } else {
+                fprintf(stderr, "eidos: settings.ini:%d: unknown key '%s' in "
+                        "[input], ignored\n", lineno, key);
+            }
+            continue;
+        }
         if (strcmp(section, "keys") == 0 || strcmp(section, "pad") == 0) {
             int b;
 
@@ -1283,6 +1350,10 @@ static int write_file(FILE *fp, const Model *m)
     fprintf(fp, "relay_port = %d\n", m->net.relay_port);
     fprintf(fp, "control_port = %d\n", m->net.control_port);
     fprintf(fp, "name = %s\n", m->net.name);
+    /* The input injection: the longest press the port allows, in frames.
+     * 0 is off. */
+    fprintf(fp, "\n[input]\n");
+    fprintf(fp, "max_press = %d\n", m->inject_max);
     return ferror(fp) ? -1 : 0;
 }
 
@@ -1299,6 +1370,7 @@ int eidos_settings_load(void)
     }
     model_defaults(&m);
     g_cur = g_saved = m;
+    apply_input();
     if (path[0] == '\0') {
         return 1;
     }
@@ -1309,6 +1381,7 @@ int eidos_settings_load(void)
     parse_file(fp, &m);
     fclose(fp);
     g_cur = g_saved = m;
+    apply_input();
     if (g_plat != NULL) {
         apply_all();
     }
@@ -1405,6 +1478,7 @@ void eidos_settings_revert(void)
             g_cur.v[i] = g_ovr_val[i];
         }
     }
+    apply_input();
     apply_all();
 }
 
@@ -1417,6 +1491,7 @@ void eidos_settings_defaults(void)
     for (i = 0; i < EIDOS_OPT_COUNT; i++) {
         g_ovr[i] = 0;
     }
+    apply_input();
     apply_all();
 }
 

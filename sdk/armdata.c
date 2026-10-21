@@ -37,6 +37,23 @@
  * the metadata says which address the word holds, and a different value
  * means the image is not the build aletheia describes.  That is a panic at
  * reset, not a silently wrong pointer.
+ *
+ * A code pointer reaches a mod's hook.  A word that holds the address of a
+ * function is called through, so it does not pass a call site and the slot
+ * the build puts there never sees it (docs/mod-interface.md, section 2).
+ * The relocation asks the registry what the function's address answers
+ * (bw_arm9_code_entry, this module's version of the overlay's
+ * bw_ovl_code_entry): a mod's hook wins over the build's own function, and
+ * a function nobody hooked keeps its own address.  The overlay's own data
+ * is the overlay's image's business (sdk/overlay_image.c).
+ *
+ * The registry is asked when the words are written, so the answer is the
+ * one the registry holds at that moment.  The ARM9's data is written at
+ * every reset, and the mod layer loads after the first reset (the boot,
+ * demo/eidos_boot.c), so a hook installed after the reset reaches a stored
+ * pointer only when the data is written again.  bw_arm9_resolve_code_pointers
+ * closes that: it asks the registry again for the words the port rewrote
+ * and puts the hooks in their place.
  */
 
 #include <stdio.h>
@@ -46,6 +63,7 @@
 #include "dsmem.h"
 #include "armdata.h"
 #include "overlay_image.h"
+#include "mod_slot.h"
 
 #define PIECE 0x10000u            /* sdk/dsmem.c commits main RAM in 64 KiB */
 #define MAX_RANGES 16
@@ -58,6 +76,35 @@ static char               g_error[256];
 static u8                *g_flat[MAX_RANGES];
 static const BwDataImage *g_flat_img;
 static u32                g_scanned;
+
+/*
+ * The code words the port rewrote, so a hook installed later can be put in
+ * their place (bw_arm9_resolve_code_pointers).  The word's own content says
+ * whether the game has written over it since: the port wrote a host
+ * address there, and a word that holds something else is the game's now.
+ */
+#define BW_DATA_CODE_WORDS_MAX 4096
+
+typedef struct BwDataCodeWord {
+    u8                 *word;   /* the word the port rewrote              */
+    u32                 host;   /* what the port wrote there               */
+    const BwDataFunc   *func;   /* the function the word stood for         */
+} BwDataCodeWord;
+
+static BwDataCodeWord g_code_words[BW_DATA_CODE_WORDS_MAX];
+static u32            g_code_word_count;
+
+/* Remember a rewritten code word, so it can be resolved again later. */
+static void remember_code_word(u8 *word, u32 host, const BwDataFunc *func)
+{
+    if (g_code_word_count >= BW_DATA_CODE_WORDS_MAX) {
+        return;
+    }
+    g_code_words[g_code_word_count].word = word;
+    g_code_words[g_code_word_count].host = host;
+    g_code_words[g_code_word_count].func = func;
+    g_code_word_count++;
+}
 
 static int fail(int code, u32 addr, const char *what)
 {
@@ -236,6 +283,58 @@ static int listed(const BwDataImage *img, u32 where)
 }
 
 /*
+ * The host address a code pointer to the ARM9's function `f` holds: the
+ * registry's answer for the function's address when a mod installed a hook
+ * for it, the build's own function otherwise.
+ *
+ * The key is the pair (region, address): the ARM9's region and the
+ * function's even address.  A data word carries the instruction-set tag the
+ * game gave it and the entry table the tag the listing gave the function,
+ * and the two disagree for a few (the overlay's lookup has the same note,
+ * sdk/overlay_image.c, bw_ovl_code_entry), so the key is the address alone.
+ *
+ * An overlay's own image is left alone: its data is relocated by
+ * sdk/overlay_image.c, which asks the overlay's own table.
+ */
+static BwDataFn arm9_code_of(const BwDataImage *img, const BwDataFunc *f)
+{
+    void *h;
+
+    if (img->overlay >= 0) {
+        return f->fn;
+    }
+    h = bw_mod_slot_lookup(BW_MOD_REGION_ARM9, f->addr & ~1u);
+    return h != NULL ? (BwDataFn)h : f->fn;
+}
+
+/*
+ * The ARM9's version of bw_ovl_code_entry (sdk/overlay_image.h): the host
+ * function for a code pointer into the ARM9 static module, `value` as the DS
+ * stores it (the Thumb bit set for a Thumb function).
+ *
+ * The registry is consulted before the table, the way the overlay's is: a
+ * mod's hook for the function's (region, address) pair wins over the build's
+ * own function (docs/mod-interface.md, section 2).  NULL when the image's
+ * function table does not know the value: the word is not a code pointer
+ * into this region.  An overlay's own image answers with its own function:
+ * the registry is asked for the ARM9's region only, and the overlay's data
+ * is relocated by sdk/overlay_image.c.
+ */
+BwDataFn bw_arm9_code_entry(const BwDataImage *img, u32 value)
+{
+    long f;
+
+    if (img == NULL || img->funcs == NULL) {
+        return NULL;
+    }
+    f = func_at(img, value);
+    if (f < 0) {
+        return NULL;
+    }
+    return arm9_code_of(img, &img->funcs[f]);
+}
+
+/*
  * Code pointers the metadata does not list (docs/armdata.md): every word of
  * the scan ranges that equals a function's DS entry, Thumb bit included,
  * becomes that function's host address.  Listed words are already done and
@@ -272,7 +371,9 @@ static u32 scan_code_pointers(const BwDataImage *img)
                     continue;
                 }
                 if (f >= 0) {
-                    fn = img->funcs[f].fn;
+                    /* Into the ARM9's own code: the registry first, so a
+                     * mod's hook for the function wins (bw_arm9_code_entry). */
+                    fn = arm9_code_of(img, &img->funcs[f]);
                 } else if (img->overlay < 0) {
                     /* Into an overlay window: the ARM9 data's save block
                      * table points at ov010's functions. */
@@ -283,6 +384,7 @@ static u32 scan_code_pointers(const BwDataImage *img)
                 }
                 word = (u32)(uintptr_t)fn;
                 memcpy(w, &word, 4);
+                remember_code_word(w, word, &img->funcs[f]);
                 n++;
             }
         }
@@ -394,6 +496,9 @@ int bw_data_relocate(const BwDataImage *img)
     if (g_flat_img != img) {
         return fail(BW_DATA_E_LAYOUT, 0, "bw_data_relocate before bw_data_load");
     }
+    /* The words this pass rewrites are the ones a later resolve knows
+     * about, so the list starts empty. */
+    g_code_word_count = 0;
     /* First pass: every word must hold what the metadata says. */
     for (i = 0; i < img->reloc_count; i++) {
         const BwDataReloc *r = &img->relocs[i];
@@ -426,13 +531,17 @@ int bw_data_relocate(const BwDataImage *img)
         u8 *w = flat_word(img, r->where);
         uintptr_t v;
         u32 word;
+        int is_code = 0;
 
         switch (r->kind) {
         case BW_DATA_RELOC_CODE:
             if (r->index >= img->func_count) {
                 return fail(BW_DATA_E_LAYOUT, r->where, "function index out of range");
             }
-            v = (uintptr_t)img->funcs[r->index].fn;
+            /* The registry first: a mod's hook for the function wins over
+             * the build's own function (bw_arm9_code_entry). */
+            v = (uintptr_t)arm9_code_of(img, &img->funcs[r->index]);
+            is_code = 1;
             break;
         case BW_DATA_RELOC_HOST: {
             const BwDataAnchor *a;
@@ -455,6 +564,9 @@ int bw_data_relocate(const BwDataImage *img)
         }
         word = (u32)v;
         memcpy(w, &word, 4);
+        if (is_code) {
+            remember_code_word(w, word, &img->funcs[r->index]);
+        }
     }
     g_scanned = scan_code_pointers(img);
     return BW_DATA_OK;
@@ -464,12 +576,54 @@ u32 bw_data_scanned(void)
 {
     return g_scanned;
 }
-
 void bw_data_trap(u32 addr)
 {
     bw_stub_reached("armdata", addr,
                     "called through a pointer in the ARM9 data to code the build does "
                     "not define (tools/armdata.py lists it as a trap)");
+}
+
+/*
+ * Put the hooks in the ARM9's stored code pointers.
+ *
+ * The words are written when the data is relocated, which is at the reset,
+ * and the mod layer loads after the first reset, so the registry was empty
+ * when the words were written and they hold the build's own functions.  This
+ * asks the registry again for every word the port rewrote and puts the
+ * hook there instead.
+ *
+ * A word the game has written over since is left alone: the port wrote a
+ * host address there, and a word that holds something else is the game's
+ * now.  Returns how many words it changed.
+ */
+u32 bw_arm9_resolve_code_pointers(void)
+{
+    u32 n = 0;
+    u32 i;
+
+    for (i = 0; i < g_code_word_count; i++) {
+        BwDataCodeWord *cw = &g_code_words[i];
+        BwDataFn fn;
+        u32 now;
+        u32 word;
+
+        if (cw->word == NULL || cw->func == NULL) {
+            continue;
+        }
+        memcpy(&now, cw->word, 4);
+        if (now != cw->host) {
+            continue;              /* the game wrote its own value there */
+        }
+        fn = arm9_code_of(g_installed, cw->func);
+        if (fn == NULL || (u32)(uintptr_t)fn == cw->host) {
+            continue;              /* nothing changed */
+        }
+        word = (u32)(uintptr_t)fn;
+        memcpy(cw->word, &word, 4);
+        cw->host = word;
+        n++;
+    }
+    return n;
 }
 
 /* ------------------------------------------------------------------ */

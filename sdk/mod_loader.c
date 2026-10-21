@@ -109,17 +109,20 @@
  * this one runs again (docs/mod-overrides.md, "Several mods on one
  * function").
  */
+#include "armdata.h"
 #include "mod_api.h"
 #include "mod_avatar.h"
 #include "mod_event.h"
 #include "mod_export.h"
 #include "mod_frame.h"
 #include "mod_handoff.h"
+#include "mod_input.h"
 #include "mod_loader.h"
 #include "mod_menu.h"
 #include "mod_manifest.h"
 #include "mod_message.h"
 #include "mod_net.h"
+#include "mod_panel.h"
 #include "mod_rule.h"
 #include "mod_script.h"
 #include "mod_slot.h"
@@ -724,6 +727,10 @@ static void loader_install_overrides(BwModLoaderMod *m)
         m->overrides[m->override_count].fn = fn;
         m->override_count++;
     }
+    /* The ARM9's stored code pointers were written at the reset, before any
+     * mod was loaded, so they hold the build's own functions.  Now that this
+     * mod's hooks are in the registry, put them there (sdk/armdata.c). */
+    bw_arm9_resolve_code_pointers();
 }
 
 /* ------------------------------------------------------------------ */
@@ -940,6 +947,11 @@ static int loader_load(u32 index)
     /* The mod's own settings: the menu holds the player's choices, and the
      * mod reads them (sdk/mod_menu.h). */
     m->services.setting_get    = bw_mod_menu_setting_get;
+    /* The run-status panel: the model's sixteen lines (sdk/mod_panel.h). */
+    m->services.panel_set      = bw_mod_panel_set;
+    m->services.panel_clear    = bw_mod_panel_clear;
+    /* The input injection: the port's own press, held for its frames. */
+    m->services.input_press    = bw_mod_input_press;
     /* The field avatars, the run restart and the save handoff. */
     m->services.avatar_create = bw_mod_avatar_create;
     m->services.avatar_move   = bw_mod_avatar_move;

@@ -1,6 +1,7 @@
 /*
- * sdk/input.c -- the buttons, the hinge and the stylus, from the host and a
- * script, onto KEYINPUT and the ARM7 stand-in.
+ * sdk/input.c -- the buttons, the hinge and the stylus, from the host, a
+ * script and the port's own injection, onto KEYINPUT and the ARM7
+ * stand-in.
  *
  * Why this exists: sdk/input.h.  It is port glue, not an SDK module: the
  * SDK reads input straight from hardware (KEYINPUT, and two halfwords the
@@ -9,6 +10,13 @@
  * touch samples are the ARM7's to write, so this file only hands the ARM7
  * stand-in its frame (sdk/arm7/pad.c, sdk/arm7/tp.c), and they read the
  * state back through bw_input_current, as the ARM7 reads its pins.
+ *
+ * Three sources feed it and are merged every frame: the host (the platform
+ * layer's keyboard, gamepads and mouse, set with bw_input_set_host), a
+ * script of timed events (tests, recorded runs, eidos_boot), so a run can
+ * be driven with no window and repeated exactly, and the port's own
+ * injection (bw_input_inject), which is how a mod asks for a button to be
+ * held as if the player had pressed it.
  *
  * Threads.  No locks: the platform layer's pump, the script and the frame
  * driver all run on the thread that drives frames, and the game threads only
@@ -26,6 +34,13 @@
 #include "input.h"
 
 enum { EV_PRESS, EV_RELEASE, EV_TOUCH, EV_UNTOUCH, EV_LID };
+
+/*
+ * The buttons the game has: the twelve, the bits 0 to 11 (BW_KEY_GAME).
+ * The injection keeps one counter for each of them, so the debug button
+ * (bit 13) is not one it can hold.
+ */
+#define INPUT_N_HOLD 12
 
 typedef struct InputEvent {
     u32 frame;
@@ -48,11 +63,21 @@ static struct {
     int s_touch, s_x, s_y;
     int s_lid;
 
+    /* What the injection holds: the frames each button is still held for. */
+    u32 i_hold[INPUT_N_HOLD];
+
     /* Events not yet applied, sorted by (frame, seq).                     */
     InputEvent *ev;
     u32 ev_count;
     u32 ev_cap;
 } g_in;
+
+/*
+ * The longest press the port allows.  The player's own setting lowers it
+ * (bw_input_set_max_press); this is the port's own limit and it never moves.
+ * It is not part of the run's state, so a reset does not touch it.
+ */
+static u32 g_max_press = BW_INPUT_INJECT_MAX_FRAMES;
 
 /* ------------------------------------------------------------------ */
 /* Names                                                               */
@@ -118,11 +143,27 @@ static int clampi(int v, int lo, int hi)
     return v < lo ? lo : v > hi ? hi : v;
 }
 
+/*
+ * The buttons the injection holds now: the ones whose counter is not zero.
+ */
+static u32 inject_mask(void)
+{
+    u32 mask = 0;
+    int i;
+
+    for (i = 0; i < INPUT_N_HOLD; i++) {
+        if (g_in.i_hold[i] != 0)
+            mask |= 1u << i;
+    }
+    return mask;
+}
+
 static void merge(void)
 {
     BwInputState *c = &g_in.current;
 
-    c->buttons = (g_in.host.buttons | g_in.s_buttons) & BW_KEY_ALL;
+    c->buttons = (g_in.host.buttons | g_in.s_buttons | inject_mask()) &
+                 BW_KEY_ALL;
     if (g_in.s_touch) {
         c->touch = 1;
         c->touch_x = g_in.s_x;
@@ -537,6 +578,74 @@ int bw_input_script_load(const char *text, char *err, size_t err_size)
 }
 
 /* ------------------------------------------------------------------ */
+/* The injection                                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The port's own presses (docs/mod-services.md, "Input injection").  One
+ * counter per button: the frames the button is still held for.  The
+ * counters are part of the input state, so a reset lets them go, and the
+ * port ages them out one frame at a time, so a press ends on its own even
+ * when the mod that asked for it never asks again.
+ *
+ * Two presses of the same button hold it until the later of the two ends,
+ * which is what two mods pressing the same button mean: the game sees the
+ * button down while either of them holds it.
+ */
+
+int bw_input_inject(u32 buttons, u32 frames)
+{
+    int i;
+
+    if (buttons == 0 || (buttons & ~BW_KEY_GAME) != 0)
+        return -1;                    /* not one of the game's twelve */
+    if (frames == 0)
+        return 0;                     /* a press of no frames does nothing */
+    if (frames > g_max_press)
+        return -2;                    /* longer than the port allows */
+    for (i = 0; i < INPUT_N_HOLD; i++) {
+        if ((buttons & (1u << i)) != 0 && g_in.i_hold[i] < frames)
+            g_in.i_hold[i] = frames;
+    }
+    return 0;
+}
+
+u32 bw_input_injected(void)
+{
+    return inject_mask();
+}
+
+void bw_input_inject_clear(void)
+{
+    memset(g_in.i_hold, 0, sizeof g_in.i_hold);
+}
+
+void bw_input_set_max_press(u32 frames)
+{
+    g_max_press = frames > BW_INPUT_INJECT_MAX_FRAMES
+                      ? BW_INPUT_INJECT_MAX_FRAMES : frames;
+}
+
+u32 bw_input_max_press(void)
+{
+    return g_max_press;
+}
+
+/*
+ * One frame of every held button is used up.  The frame that was just
+ * published counted, so a button asked for N frames is gone after N frames.
+ */
+static void age_injection(void)
+{
+    int i;
+
+    for (i = 0; i < INPUT_N_HOLD; i++) {
+        if (g_in.i_hold[i] != 0)
+            g_in.i_hold[i]--;
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Life cycle and the frame                                            */
 /* ------------------------------------------------------------------ */
 
@@ -565,5 +674,9 @@ void bw_input_frame(void)
     merge();
     write_hardware();
     bw_arm7_tp_frame();
+    /* The injection ages: the frame that was just published counted, so a
+     * button asked for N frames is gone after N frames, whether the mod
+     * asks again or not. */
+    age_injection();
     g_in.frame++;
 }

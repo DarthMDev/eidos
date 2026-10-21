@@ -121,6 +121,17 @@ not scanned at all. The generator writes the list only with `--code-scan`
 (`eidos_armdata(... CODE_SCAN)`), which the boot passes: a program that
 links every function its sources define.
 
+**A code pointer and a mod's hook.** A word that holds the address of a
+function is called through, so it does not pass a call site and the slot the
+build puts there never sees it. The relocation therefore asks the registry
+for the function the word points at (`bw_arm9_code_entry`), and a mod's hook
+wins over the build's own function. The registry is asked when the words are
+written, and the words are written at the reset, which is before the mod
+layer loads: the port remembers the words it rewrote, and
+`bw_arm9_resolve_code_pointers` asks again after the mods are loaded and
+puts the hooks in their place. A word the game has written over since is
+left alone.
+
 A pointer is only as good as the function behind it. aletheia's
 disassembler took some functions reached only through tables for data
 (hidden functions: the save block callbacks at 0x02009ED4, the heap

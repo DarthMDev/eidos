@@ -67,6 +67,7 @@ extern "C" {
 #define BW_KEY_KEYINPUT 0x03FFu         /* the bits KEYINPUT carries       */
 #define BW_KEY_XY       0x2C00u         /* the bits the ARM7 carries       */
 #define BW_KEY_ALL      0x2FFFu         /* PAD_Read's mask                 */
+#define BW_KEY_GAME     0x0FFFu         /* the game's twelve buttons       */
 
 /* Where the ARM9 reads them.                                              */
 #define BW_REG_KEYINPUT     0x04000130u
@@ -90,9 +91,11 @@ typedef struct BwInputState {
 /* ------------------------------------------------------------------ */
 
 /*
- * Everything released, the lid open, the script emptied, the frame counter
- * at 0.  The input state is not part of the DS address space, so
- * bw_port_reset leaves it alone; a caller starting a new run calls this.
+ * Everything released, the lid open, the script emptied, the injection let
+ * go, the frame counter at 0.  The input state is not part of the DS
+ * address space, so bw_port_reset leaves it alone; a caller starting a new
+ * run calls this.  The longest press the port allows is a setting, not a
+ * part of the run, so it stays.
  */
 void bw_input_reset(void);
 
@@ -177,6 +180,54 @@ u32 bw_input_script_pending(void);
  * and no event of the text added.
  */
 int bw_input_script_load(const char *text, char *err, size_t err_size);
+
+/* ------------------------------------------------------------------ */
+/* The injection                                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The port's own way of pressing a button as if the player had pressed it
+ * (docs/mod-services.md, "Input injection").  The injected buttons are a
+ * third source beside the host's and the script's: they are ORed into what
+ * the game reads, so the player's own input is untouched and the game sees
+ * the injected button and the player's own at the same time.
+ *
+ * The port holds each button for the number of frames it was asked for and
+ * then lets it go, whether the mod asks again or not: the press ends on its
+ * own.
+ *
+ * The buttons are the game's twelve (BW_KEY_*): A, B, X, Y, L, R, START,
+ * SELECT and the four directions.  A mask with any other bit is refused: the
+ * debug button is not one of the game's buttons (the game reads it from the
+ * ARM7's halfword, and no press holds it).
+ */
+
+/* The longest press the port allows, in frames: a minute at the DS's sixty
+ * frames a second.  The port holds the button for the whole count, so a
+ * press longer than this would hold a key down long after the mod that
+ * asked for it stopped asking; the port refuses it instead.  The player's
+ * own setting may lower the limit (bw_input_set_max_press); it never raises
+ * it above this. */
+#define BW_INPUT_INJECT_MAX_FRAMES 3600u
+
+/*
+ * Hold `buttons` for `frames` frames.  A press of zero frames does nothing.
+ *
+ * 0 when the press was taken, -1 when a button is not one of the game's
+ * twelve, and -2 when the press is longer than the port allows.
+ */
+int  bw_input_inject(u32 buttons, u32 frames);
+
+/* The buttons the injection holds now. */
+u32  bw_input_injected(void);
+
+/* Let go of everything the injection holds. */
+void bw_input_inject_clear(void);
+
+/* The longest press the port allows now: the player's own setting, bounded
+ * by BW_INPUT_INJECT_MAX_FRAMES.  0 is off: every press is refused. */
+void bw_input_set_max_press(u32 frames);
+u32  bw_input_max_press(void);
 
 /* ------------------------------------------------------------------ */
 /* Names                                                               */

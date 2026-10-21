@@ -29,3 +29,4 @@ Waves 3 and 4 have no row. The log has no record for either.
 | 21 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the boot's restart and the handoff's reload, the mod menu's model, and the mod layer's documentation |
 | 22 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the restart entry point, the save window from the game's own events, the wrap chain, and the last four documents |
 | 23 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the mod menu's screen, the player's order, the switch name and the prototype check, and the save window's last gaps |
+| 24 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the run-status panel, the input injection, the ARM9's code pointers reach the registry, and the game's own type names in a prototype |

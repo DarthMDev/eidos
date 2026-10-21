@@ -462,6 +462,8 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_restart.c      # the run restart
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_handoff.c      # the save handoff
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_menu.c        # the mod menu's model
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_panel.c       # the run-status panel's model
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_input.c       # the input injection service
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_manifest.c   # the run-time manifest: the record, the parse, the apply
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_savedata.c   # a mod's own saved data: the file, the envelope, the versions
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_loader.c     # the loader: the library, the host table, the handlers
@@ -871,6 +873,7 @@ if(EIDOS_SDL_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_options_proc.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_panel_draw.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_replace.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_gl.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_gl3d.c

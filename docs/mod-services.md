@@ -236,8 +236,16 @@ void (*panel_set)(u32 line, const char *text);   /* lines 0 to 15 */
 void (*panel_clear)(void);
 ```
 
-**Not built.** Both calls are `NULL` in the services table, so a mod has to
-check the pointer before it calls one. The panel is drawn by the port outside the game's
+**The calls are bound; the panel is not shown yet.** The model is
+`sdk/mod_panel.c`: sixteen lines, a line set empty is cleared, the lines are
+kept per mod (the mod that calls is the one whose namespace is in force), and
+the port draws one panel. The picture is built (`engine/platform/mod_panel_draw.c`):
+the port's own font, drawn again only when the model changes. What is missing
+is the showing: the port's GPU presenter draws exactly two images today, so
+it needs a third texture and a third quad, and the window's arrangement has
+to grow by the panel's space (a hidden panel takes no space at all).
+
+The panel is drawn by the port outside the game's
 screens (to the side in the stacked layout, below in the side-by-side
 layout), so it never covers the game and is not part of a screenshot of the
 DS screens. Typical contents: deaths, encounters by route, the level cap, a
@@ -365,10 +373,16 @@ overlays that show the run's state.
 void (*input_press)(u32 buttons, u32 frames);
 ```
 
-**Not built.** The call is `NULL` in the services table. The plan is to hold
-the given DS buttons for the given number of frames, as if the player pressed
-them, with the real input and the injected input combining. A
-chat-controlled mod turns votes into presses.
+**Built.** The port's own input layer holds the given DS buttons for the
+given number of frames, as if the player pressed them, and the real input and
+the injected input combine: the injected buttons are a third source beside
+the host's and the script's, so the player's own keys are untouched and the
+game sees both. Only the game's twelve buttons may be pressed; a press of
+zero frames does nothing; a press longer than the port allows is refused
+with a report. The port's ceiling is a minute at the DS's 60 fps, and the
+player may lower it in the settings (`[input]`, `max_press`; 0 turns the
+injection off). The press ends on its own, so it does not depend on the mod
+layer still running. A chat-controlled mod turns votes into presses.
 
 ## Frame tick
 

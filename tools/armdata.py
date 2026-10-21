@@ -80,6 +80,11 @@ _PARSES = alcache.ParseCache("armdata-sourcefile", [
 
 EIDOS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_EXCLUSIONS = os.path.join(EIDOS_ROOT, "tools", "armdata_exclusions.txt")
+# The hookable set (docs/mod-interface.md, section 1): the rows a mod may
+# override.  The ARM9's rows are the addresses the code entries table
+# carries, so a code pointer stored in the data reaches the registry for
+# them (sdk/armdata.c, bw_arm9_code_entry).
+DECLARED_SET = os.path.join(EIDOS_ROOT, "mod", "declared_set.txt")
 
 # --------------------------------------------------------------------------
 # Small helpers
@@ -773,6 +778,33 @@ def load_exclusions(path: str):
     return out
 
 
+def declared_arm9_rows(path: str = DECLARED_SET):
+    """The ARM9's rows of mod/declared_set.txt: (address, name).  The rows
+    are the addresses a mod may hook (docs/mod-interface.md, section 1), and
+    the code entries table carries them, so a code pointer stored in the
+    data reaches the registry for them (sdk/armdata.c, bw_arm9_code_entry).
+
+    The file is the port's own, not aletheia's: a tree without it has no
+    declared rows, and the tables are the ones the code scan lists."""
+    rows = []
+    if not path or not os.path.exists(path):
+        return rows
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) < 3 or parts[2].strip() != "arm9":
+                continue
+            try:
+                addr = int(parts[0].strip(), 16)
+            except ValueError:
+                continue
+            rows.append((addr, parts[1].strip()))
+    return rows
+
+
 # --------------------------------------------------------------------------
 # The model
 # --------------------------------------------------------------------------
@@ -1222,12 +1254,24 @@ class Model:
         metadata covers (the static module from its first data object on,
         and the data autoloads).  A word there that equals an entry exactly,
         with the entry's own instruction-set bit, is a code pointer the
-        metadata did not list; the runtime relocates it like a listed one."""
+        metadata did not list; the runtime relocates it like a listed one.
+
+        The ARM9's declared addresses (mod/declared_set.txt) are in the
+        table as well: they are the addresses a mod may hook, and a code
+        pointer stored in the data reaches the registry for them
+        (sdk/armdata.c, bw_arm9_code_entry).  The code scan lists the same
+        functions when the program links them all; this makes the table
+        carry the seam's addresses by contract."""
         self.scan_ranges = []
         self.isa_unknown = 0
-        if self.region != "arm9" or not self.scan_code:
+        self.declared_rows = []
+        self.declared_missing = []
+        if self.region != "arm9":
             return
         self.by_path = {sf.path: sf for sf in self.sources}
+        self._declared_entries()
+        if not self.scan_code:
+            return
         for addr in sorted(self.func_names):
             n = self._function_name(addr)
             if n is None:
@@ -1266,6 +1310,32 @@ class Model:
                 s_ = max(s_, lo)
             if e_ > s_:
                 self.scan_ranges.append((s_, e_))
+
+    def _declared_entries(self):
+        """The ARM9's declared addresses (mod/declared_set.txt) in the code
+        entries table: the addresses a mod may hook (docs/mod-interface.md,
+        section 1), so a code pointer stored in the data reaches the registry
+        for them (sdk/armdata.c, bw_arm9_code_entry).
+
+        The entry is keyed by the value a pointer to the function holds, the
+        even address for an ARM function and the odd one for a Thumb
+        function, so the runtime's scan finds the word.  A row whose
+        instruction set is not known anywhere has no such value: the row is
+        reported and left out, because an entry with the wrong bit would
+        never match the word."""
+        for addr, name in declared_arm9_rows():
+            isa = self.isa_by_addr.get(addr)
+            if isa is None:
+                isa = self._isa_of(self._function_name(addr) or name, addr)
+            if isa is None:
+                self.declared_missing.append((addr, name))
+                continue
+            val = addr | (1 if isa == "thumb" else 0)
+            # The build's own name for the function, or None: the entry is
+            # then a trap, the way a listed relocation's is (the game calls
+            # the address and the port says which one it is).
+            self.funcs.setdefault(val, self._function_name(addr))
+            self.declared_rows.append((addr, name, val))
 
     def _function_name(self, addr: int):
         cands = list(self.func_names.get(addr, []))
@@ -1568,6 +1638,13 @@ def summary(m: Model, out):
     p("  skipped in port objects %d" % len(m.reloc_skipped_port))
     p("  code-pointer scan %d range(s); %d defined functions with no known "
       "instruction set left out" % (len(m.scan_ranges), m.isa_unknown))
+    if m.region == "arm9":
+        p("  declared rows    %d of %d in the code entries (a stored pointer "
+          "to one reaches the registry)" % (
+              len(m.declared_rows),
+              len(m.declared_rows) + len(m.declared_missing)))
+        for addr, name in m.declared_missing:
+            p("    no instruction set %-24s %s" % (name, hx(addr)))
     for n, why in sorted(m.unresolved.items()):
         p("  unresolved %-28s %s" % (n, why))
     for n, (addr, definer) in sorted(m.excluded_used.items()):

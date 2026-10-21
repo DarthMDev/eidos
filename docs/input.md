@@ -25,13 +25,16 @@ different bytes, so only 0x02FFFFA8 is written.
 
 The state is a button word in the DS's own bit order, active high (bit 10 is
 X wherever it appears), a stylus point on the bottom screen and the hinge.
-Two sources are merged every frame:
+Three sources are merged every frame:
 
 - **the host**, `bw_input_set_host`, which the platform layer calls after
   every pump;
 - **a script** of timed events, for tests, recorded runs and the headless
   boot: press, release, touch, untouch, lid, each at a frame number, with an
-  optional hold that schedules the release.
+  optional hold that schedules the release;
+- **an injection**, `bw_input_inject`, which a mod asks for through the
+  services table (`docs/mod-services.md`, "Input injection"): the port holds
+  the named buttons for a number of frames and the press ends on its own.
 
 Buttons are ORed, the script's stylus wins over the host's while it is down,
 and the lid is closed if either says so. `bw_input_frame`, once per DS frame

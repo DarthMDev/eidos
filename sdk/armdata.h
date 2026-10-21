@@ -23,6 +23,13 @@
  * relocation does not: bw_data_relocate refuses with BW_DATA_E_LP64 and
  * leaves every pointer word as the DS address it was, and the reset path
  * panics on it unless the installer said BW_DATA_ALLOW_UNRELOCATED.
+ *
+ * A code pointer reaches a mod's hook.  A word that holds the address of a
+ * function is called through, so it does not pass a call site (the
+ * declared set's slots are at call sites, docs/mod-interface.md, section 2).
+ * The relocation asks the registry what the function's address answers
+ * (bw_arm9_code_entry, below): a mod's hook wins over the build's own
+ * function, and a function nobody hooked keeps its own address.
  */
 
 #ifndef BW_PORT_ARMDATA_H
@@ -217,6 +224,32 @@ void bw_data_withdraw(const BwDataImage *img);
  * scan (BwDataImage.scan) and rewrote. */
 u32 bw_data_scanned(void);
 const char *bw_data_error(void);
+
+/*
+ * The ARM9's version of bw_ovl_code_entry (sdk/overlay_image.h): the host
+ * function for a code pointer into the ARM9 static module, `value` as the DS
+ * stores it (the Thumb bit set for a Thumb function), or NULL when the
+ * image's function table does not know the value.
+ *
+ * The registry is consulted before the table, the way the overlay's is: a
+ * mod's hook for the function's (region, address) pair wins over the
+ * build's own function, and a function nobody hooked keeps its own address
+ * (docs/mod-interface.md, section 2).  The relocation uses it for every code
+ * pointer it writes, listed ones and the ones the scan finds, so a stored
+ * pointer reaches the installed hook.
+ */
+BwDataFn bw_arm9_code_entry(const BwDataImage *img, u32 value);
+
+/*
+ * Put the hooks in the ARM9's stored code pointers.
+ *
+ * The words are written when the data is relocated, which is at the reset,
+ * and the mod layer loads after the first reset, so the registry was empty
+ * when the words were written.  This asks it again for every word the port
+ * rewrote and puts the hook there instead.  A word the game has written
+ * over since is left alone.  Returns how many words it changed.
+ */
+u32 bw_arm9_resolve_code_pointers(void);
 
 /* 1 where a pointer fits in the DS's 32-bit word, i.e. relocation works. */
 int bw_data_relocation_supported(void);

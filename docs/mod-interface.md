@@ -118,8 +118,11 @@ original.
 **Code pointers.** A function the game reaches through a pointer stored in
 data does not pass a call site. For overlay windows `bw_ovl_code_entry`
 consults the registry before its own table (`sdk/overlay_image.c`), so a
-stored pointer into an overlay reaches the installed hook. A stored pointer
-into the ARM9 static module does not yet consult it.
+stored pointer into an overlay reaches the installed hook. The ARM9 static
+module's stored pointers do the same: the relocation asks the registry for
+the function the word points at (`bw_arm9_code_entry`, `sdk/armdata.c`), and
+the words are asked again after the mods load, because the data is written at
+the reset and the mod layer loads after it (`bw_arm9_resolve_code_pointers`).
 
 **What a slot does not catch.** A call from inside the defining unit binds by
 name and does not pass the slot, because a textual rename cannot tell a
@@ -245,8 +248,10 @@ code and needs no such trust.
 
 ## Still to build
 
-1. **ARM9 code-pointer coverage.** Make the ARM9 data relocation consult the
-   registry, as `bw_ovl_code_entry` does for overlays (`docs/armdata.md`).
+1. **An overlay's own stored pointers.** A pointer an overlay's own data
+   holds at one of its own functions still takes the plain path and does not
+   consult the registry; the overlay's image is relocated by
+   `sdk/overlay_image.c`, which asks the overlay's own table.
 2. **The game's own type names** in a prototype: the port normalises the
    plain types and the integer typedefs, but not names like `WMErrCode`, so
    those rows are reported and not compared (`docs/mod-overrides.md`).

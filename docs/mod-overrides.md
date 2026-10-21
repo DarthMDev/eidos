@@ -65,9 +65,15 @@ but the function's is 'int (void *)'
 
 A mismatch refuses the override, not the mod: the mod still loads, the way a
 declared-address mismatch refuses the row it is on. A prototype the port
-cannot read (a game-specific type name) is reported and not compared, so
-there is no false refusal. A row the build does not carry publishes no
-prototype, and there is nothing to compare.
+cannot read is reported and not compared, so there is no false refusal. A
+row the build does not carry publishes no prototype, and there is nothing to
+compare.
+
+The game's own type names resolve too: the generator reads the headers the
+defining file includes and publishes what each name is (`WMErrCode` is an
+`int`, `WMCallbackFunc` a `void *`), and the normaliser asks that table for
+a name it cannot read otherwise. So a stated prototype that names a game
+type is compared like any other.
 
 The normalisation is the same on both sides: `"<return type> (<parameter
 types>)"`, the parameters separated by `", "`, `"void"` when there are none.
@@ -147,8 +153,10 @@ that does not know its own version reports the pin and does not check it.
 
 - **A call inside the defining file** binds by name and does not pass the slot,
   so a hook misses those calls (`docs/mod-interface.md`, section 2).
-- **Code pointers into the ARM9 static module** do not consult the registry
-  yet; code pointers into overlays do (`docs/mod-interface.md`, section 2).
+- **Code pointers into the ARM9 static module** consult the registry when
+  the data is written and again after the mods load, so a stored pointer
+  reaches the installed hook; an overlay's own stored pointers still do not
+  (`docs/mod-interface.md`, section 2).
 - **A prototype the port cannot read** is reported and not compared, so a
   game-specific type name is never a false refusal.
 - **An overlay row's prototype** is published only when that overlay is
@@ -156,11 +164,12 @@ that does not know its own version reports the pin and does not check it.
 
 ## Still to build
 
-1. **ARM9 code-pointer coverage**, as `docs/mod-interface.md`, "Still to
-   build", item 3.
-2. **The game's own type names** in a prototype: the port resolves the plain
-   types and the integer typedefs, but not names like `WMErrCode`, so those
-   rows are reported and not compared.
+1. **A game type name the declared rows do not use.** The build publishes the
+   resolution of the game's own type names the declared rows' prototypes use
+   (the generator reads the headers the defining file includes), so a
+   prototype that names one of those is compared. A name only some other
+   function uses is not published, and a stated prototype naming it is
+   reported rather than compared.
 
 ## Related documents
 

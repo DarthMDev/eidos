@@ -85,6 +85,8 @@
  *     char *bw_mod_manifest_default_namespace(const char *name);
  *     void bw_mod_manifest_set_port_version(const char *version);
  *     const char *bw_mod_manifest_port_version(void);
+ *     void bw_mod_manifest_publish_types(const BwModType *rows,
+ *                                         unsigned int count);
  *     u32  bw_mod_manifest_applied_count(void);
  *     const void *bw_mod_manifest_applied_at(u32 i);
  *     void bw_mod_manifest_applied_clear(void);
@@ -275,9 +277,10 @@ static int is_event_name(const char *s, size_t n)
  *   - a pointer, an array and a function pointer are all `void *`;
  *   - the game's integer typedefs are their C types (u32 is unsigned int,
  *     s16 is short, BOOL is int, and so on);
- *   - `enum` is int, and a struct or a union by value is the one word the
- *     port's calling convention carries it in, so it is unsigned int (a row
- *     whose aggregate is not one word has no slot, and so no prototype);
+ *   - the game's own type names are the C type they resolve to (an enum is
+ *     an int, a struct or a union by value is the one word the port's
+ *     calling convention carries it in, so it is unsigned int; a row whose
+ *     aggregate is not one word has no slot, and so no prototype);
  *   - the shape is "<return type> (<parameter types>)", the parameters
  *     separated by ", " and "void" when there are none.
  *
@@ -285,6 +288,77 @@ static int is_event_name(const char *s, size_t n)
  * stated, and nothing stated is nothing to compare.  A stated prototype the
  * port cannot read is reported and not compared either.
  */
+
+/* ------------------------------------------------------------------ */
+/* The game's own type names                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A type the game defines itself (a typedef in one of the game's headers)
+ * has a C type underneath.  The build knows the game's headers, so it
+ * resolves the name; the port does not, and it is a separate program: the
+ * tree is not there at run time.  The way the two agree is the table: the
+ * build publishes the resolution of every name it meets, and the port reads
+ * the published table (docs/mod-overrides.md, "The prototype is checked").
+ *
+ * The table is published by the generated link (tools/ovlink.py's
+ * dispatcher) at start-up, before any mod loads.  A build that publishes
+ * none has no game type names: a stated prototype that names one is then
+ * reported and not compared, the way it was before the table existed.
+ *
+ * One row: the game's own type name and the C type it resolves to.  The
+ * row is sdk/mod_manifest.h's BwModType, and the generated code repeats the
+ * shape (tools/ovlink.py), so the two must agree.
+ */
+
+/* How many type names the table holds. */
+#define BW_MOD_TYPES_MAX 64
+
+static BwModType   g_types[BW_MOD_TYPES_MAX];
+static unsigned int g_type_count;
+
+/* Publish the game's own type names.  The build calls this at start-up,
+ * beside the declared rows' prototypes.  The strings are the generated
+ * table's own and live as long as the program; the port's other publishers
+ * keep the pointers the same way. */
+void bw_mod_manifest_publish_types(const BwModType *rows, unsigned int count)
+{
+    unsigned int i;
+
+    if (rows == NULL) {
+        return;
+    }
+    for (i = 0; i < count; i++) {
+        if (rows[i].name == NULL || rows[i].type == NULL) {
+            continue;
+        }
+        if (g_type_count >= BW_MOD_TYPES_MAX) {
+            fprintf(stderr,
+                    "eidos: the game's type names hold %u entries, %d fit: the "
+                    "rest are not read\n", count, BW_MOD_TYPES_MAX);
+            return;
+        }
+        g_types[g_type_count].name = rows[i].name;
+        g_types[g_type_count].type = rows[i].type;
+        g_type_count++;
+    }
+}
+
+/* The C type the game's own type name stands for, as the build published
+ * it, or NULL when the build published none: a name the port cannot
+ * resolve is reported and not compared, so there is no false refusal. */
+static const char *game_type_of(const char *w, size_t n)
+{
+    unsigned int i;
+
+    for (i = 0; i < g_type_count; i++) {
+        if (strlen(g_types[i].name) == n &&
+            memcmp(g_types[i].name, w, n) == 0) {
+            return g_types[i].type;
+        }
+    }
+    return NULL;
+}
 
 /* How long a stated prototype may be. */
 #define BW_MOD_SIG_MAX 512
@@ -478,6 +552,12 @@ static int norm_type(const char *s, const char *e, char *out, size_t size)
         if (type != NULL) {
             return set_text(out, size, type);
         }
+        /* The game's own type name: the build published the type it
+         * resolves to (bw_mod_manifest_publish_types). */
+        type = game_type_of(words[0].start, words[0].len);
+        if (type != NULL) {
+            return set_text(out, size, type);
+        }
     }
     return -1;
 }
@@ -538,7 +618,8 @@ static int norm_ret(const char *s, const char *e, char *out, size_t size)
     }
     last = &words[nwords - 1];
     if (is_base_word(last->start, last->len) ||
-        int_type_of(last->start, last->len) != NULL) {
+        int_type_of(last->start, last->len) != NULL ||
+        game_type_of(last->start, last->len) != NULL) {
         /* The last word is a type word: the prototype names no function, so
          * the whole text is the return type. */
         return norm_type(s, e, out, size);
