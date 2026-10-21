@@ -8,10 +8,10 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `fa93861b626afc820675bd62efb3942d359299a1`
-- Date: 2026-10-21 05:04:48 +0100
-- Subject: Wave 20 phase 3d: no hidden declarations; field, ARM9 and menu
-  retypes; hand_waza is one file
+- Revision: `0934e62e3af4ea6f3e9ef3a6c24de9b84a0effb0`
+- Date: 2026-10-21 06:16:19 +0100
+- Subject: Wave 20 phase 3e: 0 mismatched declarations, empty EXCEPTIONS
+  list; Milestone 3 cleanup done
 
 At this pin every overlay compiles (EIDOS_OVERLAYS=ALL).  Each place the
 DS and the host differ is a whole-statement `#ifdef __MWERKS__` guard with
