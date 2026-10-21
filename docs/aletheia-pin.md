@@ -8,10 +8,15 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `0934e62e3af4ea6f3e9ef3a6c24de9b84a0effb0`
-- Date: 2026-10-21 06:16:19 +0100
-- Subject: Wave 20 phase 3e: 0 mismatched declarations, empty EXCEPTIONS
-  list; Milestone 3 cleanup done
+- Revision: `ed489422cd300f402b4cd26df9337ec96c1924d3`
+- Date: 2026-10-21 14:53:34 +0100
+- Subject: Every src/game header compiles on its own (host and mwcc)
+
+The step from `0934e62e3a`: e96969f058 gives the ov198 bag cursor
+callbacks real functions (they were filed as data, and the battle bag and
+Pokemon list panicked in an overlay stub), and ed489422cd makes every
+header self-contained, so a function tools/ovlink.py cuts out of its unit
+needs only that unit's includes.
 
 At this pin every overlay compiles (EIDOS_OVERLAYS=ALL).  Each place the
 DS and the host differ is a whole-statement `#ifdef __MWERKS__` guard with
