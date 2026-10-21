@@ -32,14 +32,12 @@ void bw_panic(const char *what, u32 address, const char *detail)
     }
     fprintf(stderr, "%s\n", msg);
     if (bw_plat_crash_installed()) {
-        /* A double-clicked game's console closes with it: the message also
-         * goes to eidos_crash.log beside the game, as a crash's report does
-         * (sdk/plat_crash.c). */
-        FILE *f = fopen("eidos_crash.log", "w");
-
-        if (f != NULL) {
-            fprintf(f, "%s\n", msg);
-            fclose(f);
+        /* A double-clicked game's console closes with it: the report goes
+         * to eidos_crash.log beside the game, as a crash's report does
+         * (sdk/plat_crash.c), the message and then the call chain below. */
+        fflush(stderr);
+        if (freopen("eidos_crash.log", "w", stderr) != NULL) {
+            fprintf(stderr, "%s\n", msg);
         }
     }
     bw_plat_crash_context_run();
