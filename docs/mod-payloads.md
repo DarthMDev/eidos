@@ -671,6 +671,36 @@ the amount.
 | `source` | u8 | Pokemon Centre or script, the HP-restore power |
 | `mask` | u8, *mod* | one bit per party position to heal |
 
+**`mon.revive`** (version 4)
+
+A fainted Pokemon is about to come back. Refused, it stays fainted.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `mon` | BwMonRef | the Pokemon |
+| `hp` | u16, *mod* | the HP it comes back with; at least 1, at most `max_hp` |
+| `max_hp` | u16 | the max HP |
+| `item` | u16 | the item, or 0 |
+| `move` | u16 | the move, or 0 |
+| `source` | u8 | `BW_REVIVE_FIELD_ITEM`, `_BATTLE_ITEM`, `_MOVE`, `_CENTRE`, `_POWER`, `_SCRIPT` |
+
+Where it fires and what a refusal does:
+
+- **A Revive, Max Revive or Revival Herb on the party screen**: at the
+  item check (`PLIST_DEMO_CheckItemUsable`). Refused, the game says the item
+  has no effect and the item stays in the bag.
+- **Sacred Ash**: it revives the party without the check, so the event
+  fires at the HP write (`PLIST_DEMO_RestoreHp`) for each fainted member.
+  Refused, that member stays fainted; the ash is used.
+- **A revive item in battle**: at the item's effect
+  (`BTL_SERVER_FLOW_ItemEffectRevive`). Refused, the effect has no effect
+  and the bag keeps the item.
+- **A party heal** (a Centre or another script, the HP-restore power):
+  once for each fainted member before the heal. Refused, that member stays
+  fainted and the others are healed. The source is `_SCRIPT` for every
+  script heal: the Centre's nurse runs the same script command, so the
+  port cannot yet tell a Centre from another script.
+
 **`heal.hp`** (version 4)
 
 | Field | Type | Meaning |
@@ -680,6 +710,9 @@ the amount.
 | `max_hp` | u16 | the max HP |
 | `amount` | u16, *mod* | the HP to add, before the cap at max HP |
 | `source` | u8 | field (an item from the bag or the party screen) or battle (any restore: bag item, held item, move, ability) |
+
+It fires for a Pokemon that has HP. A fainted Pokemon coming back is
+`mon.revive`.
 
 **What the items builder fills.** The items area's rows are in
 `sdk/mod_event_items.c`. `item.add` carries the item and the count from the

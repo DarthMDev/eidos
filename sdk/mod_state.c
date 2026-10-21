@@ -300,6 +300,8 @@ extern u8 PLAYTIME_GetSeconds(const struct PlayTime *playtime)
 extern u32 FILE_UTIL_GetItemParam(u32 item, u32 sel, u32 heap)
     __attribute__((weak));
 extern u32 WAZA_TOOL_GetParam(u32 move, u32 param) __attribute__((weak));
+extern void ARC_TOOL_ReadMember(void *dst, u32 archiveID, u32 memberIdx)
+    __attribute__((weak));
 
 /* The box and the withdraw: src/game/arm9/box_savedata.c, pokeparty.c and
  * poke_tool.c. */
@@ -1437,6 +1439,58 @@ static int state_mon_from_box(u32 box, u32 slot)
     return 0;
 }
 
+/*
+ * The evolution lines.  The evolution archive (0x13, a/0/1/9) holds one
+ * 0x2C byte record per species: seven rows of (method, argument, species
+ * it evolves into).  The port reads every record once and keeps, for each
+ * species, the species that evolves into it.
+ */
+#define BW_EVO_ARCHIVE   0x13u
+#define BW_EVO_SPECIES   649u     /* the national dex of Black and White */
+
+static u16 g_evo_parent[BW_EVO_SPECIES + 1u];
+static int g_evo_ready;
+
+static void evo_build(void)
+{
+    u16 rows[0x2C / 2];
+    u32 s, r;
+
+    memset(g_evo_parent, 0, sizeof g_evo_parent);
+    for (s = 1; s <= BW_EVO_SPECIES; s++) {
+        memset(rows, 0, sizeof rows);
+        ARC_TOOL_ReadMember(rows, BW_EVO_ARCHIVE, s);
+        for (r = 0; r < 7u; r++) {
+            u16 method = rows[r * 3u];
+            u16 target = rows[r * 3u + 2u];
+
+            if (method != 0u && target != 0u && target <= BW_EVO_SPECIES &&
+                g_evo_parent[target] == 0u) {
+                g_evo_parent[target] = (u16)s;
+            }
+        }
+    }
+    g_evo_ready = 1;
+}
+
+static s32 state_species_base(u16 species)
+{
+    u32 steps;
+
+    if (species == 0u || species > BW_EVO_SPECIES || ARC_TOOL_ReadMember == NULL) {
+        return -1;
+    }
+    if (!g_evo_ready) {
+        evo_build();
+    }
+    /* A line is at most three stages; the bound guards a loop in modded
+     * data. */
+    for (steps = 0; steps < 8u && g_evo_parent[species] != 0u; steps++) {
+        species = g_evo_parent[species];
+    }
+    return (s32)species;
+}
+
 static int state_mon_recalc(BwMonRef mon)
 {
     struct PokemonParam *member;
@@ -1597,7 +1651,9 @@ const BwModState bw_mod_state = {
 
     state_mon_to_box_n,
     state_mon_from_box,
-    state_mon_recalc
+    state_mon_recalc,
+
+    state_species_base
 };
 
 int bw_mod_state_party_slot(const void *mon)

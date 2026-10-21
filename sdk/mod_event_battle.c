@@ -2058,7 +2058,128 @@ static void refuse_heal_hp_battle(BwEventCall *call)
     call->ret = 0;
 }
 
+/*
+ * mon.revive in a battle.  A Revive from the battle bag runs
+ * BTL_SERVER_FLOW_ItemEffectRevive (flow, poke, item): the bag takes the
+ * item only when an effect answers 1, so a refusal there (answer 0, "it
+ * had no effect") keeps the item.  The effect writes a revive command that
+ * BTL_SERVER_FLOW_ProcHandExReviveAndSendIn (flow, cmd) carries out later:
+ * the Pokemon's id at +4, the HP it gets at +6, added straight to the
+ * record past BTL_SERVER_FLOW_ApplyHpRecover.  The port's own row there
+ * writes the HP the handlers chose.
+ */
+typedef struct BwPortReviveCmd {
+    u32 header;
+    u8  pokeId;     /* +4 */
+    u8  pad5;
+    u16 amount;     /* +6 */
+} BwPortReviveCmd;
+
+extern struct BtlPokeParam *BTL_SIDE_GetPokeByIdThunk(void *side, int pokeId)
+    BW_PORT_WEAK;                                        /* 0x021B9934 */
+
+extern u32 FILE_UTIL_GetItemParam(u32 item, u32 sel, u32 heap) BW_PORT_WEAK;
+
+/* The HP the handlers chose for a Pokemon the bag revives, by its id. */
+static struct {
+    int  set;
+    u8   pokeId;
+    u16  hp;
+} g_battle_revive;
+
+static void build_mon_revive_battle(const BwEventCall *call, BwEventPayload *out)
+{
+    const BwPortFlowHead *flow = (const BwPortFlowHead *)call->a[0];
+    struct BtlPokeParam *mon = (struct BtlPokeParam *)call->a[1];
+    u32 item = (u32)call->a[2];
+    u32 maxHp = 0, code;
+
+    memset(&out->mon_revive, 0, sizeof(out->mon_revive));
+    out->mon_revive.source = (u8)BW_REVIVE_BATTLE_ITEM;
+    out->mon_revive.item = (u16)item;
+    fill_battle_ref(&out->mon_revive.mon, mon, main_of_flow(call),
+                    flow != NULL ? flow->pokeCon : NULL);
+    if (mon != NULL && BTL_POKEPARAM_GetValue != NULL) {
+        maxHp = (u32)BTL_POKEPARAM_GetValue(mon, 14);
+    }
+    out->mon_revive.max_hp = (u16)maxHp;
+    /* The amount the effect works out: the item's HP code (0xFF all,
+     * 0xFE half, 0xFD a quarter, each at least 1), or a number. */
+    code = FILE_UTIL_GetItemParam != NULL ? FILE_UTIL_GetItemParam(item, 0x3Au, 3u) : 0xFFu;
+    if (code == 0xFFu) {
+        out->mon_revive.hp = (u16)maxHp;
+    } else if (code == 0xFEu || code == 0xFDu) {
+        u32 part = maxHp / (code == 0xFEu ? 2u : 4u);
+
+        out->mon_revive.hp = (u16)(part == 0u ? 1u : part);
+    } else {
+        out->mon_revive.hp = (u16)code;
+    }
+}
+
+static int when_battle_fainted(const BwEventCall *call)
+{
+    struct BtlPokeParam *mon = (struct BtlPokeParam *)call->a[1];
+
+    return mon != NULL && BTL_POKEPARAM_GetValue != NULL &&
+           BTL_POKEPARAM_GetValue(mon, 13) == 0;
+}
+
+static void apply_mon_revive_battle(const BwEventPayload *in, BwEventCall *call)
+{
+    struct BtlPokeParam *mon = (struct BtlPokeParam *)call->a[1];
+
+    if (mon == NULL || BTL_POKEPARAM_GetPokeId == NULL) {
+        return;
+    }
+    g_battle_revive.set = 1;
+    g_battle_revive.pokeId = (u8)BTL_POKEPARAM_GetPokeId(mon);
+    g_battle_revive.hp = in->mon_revive.hp;
+}
+
+/* mon.revive from the bag, refused: the effect answers 0 and the bag keeps
+ * the item. */
+static void refuse_mon_revive_battle(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
+/* The revive command: the HP the handlers chose replaces the effect's. */
+static void apply_revive_cmd(const BwEventPayload *unused, BwEventCall *call)
+{
+    BwPortReviveCmd *cmd = (BwPortReviveCmd *)call->a[1];
+    u32 maxHp = 0;
+
+    (void)unused;
+    if (cmd == NULL || !g_battle_revive.set || g_battle_revive.pokeId != cmd->pokeId) {
+        return;
+    }
+    g_battle_revive.set = 0;
+    {
+        const BwPortFlowHead *flow = (const BwPortFlowHead *)call->a[0];
+        struct BtlPokeParam *mon = NULL;
+
+        if (flow != NULL && flow->pokeCon != NULL && BTL_SIDE_GetPokeByIdThunk != NULL) {
+            mon = BTL_SIDE_GetPokeByIdThunk(flow->pokeCon, (int)cmd->pokeId);
+        }
+        if (mon != NULL && BTL_POKEPARAM_GetValue != NULL) {
+            maxHp = (u32)BTL_POKEPARAM_GetValue(mon, 14);
+        }
+    }
+    cmd->amount = g_battle_revive.hp == 0u ? 1u : g_battle_revive.hp;
+    if (maxHp != 0u && cmd->amount > maxHp) {
+        cmd->amount = (u16)maxHp;
+    }
+}
+
 static const BwEventBinding g_battle_rows[] = {
+    { BW_MOD_REGION_OVL(93), 0x021CC008u, BW_EVENT_MON_REVIVE, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_mon_revive_battle, apply_mon_revive_battle,
+      refuse_mon_revive_battle, when_battle_fainted },
+
+    { BW_MOD_REGION_OVL(93), 0x021CA270u, BW_EVENT_PORT, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_cmd, NULL },
+
     { BW_MOD_REGION_OVL(93), 0x021C33E8u, BW_EVENT_HEAL_HP, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_heal_hp_battle, apply_heal_hp_battle,
       refuse_heal_hp_battle },

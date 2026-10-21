@@ -30,7 +30,7 @@
 0x0200C29C	BEACON_SubPoints	arm9	money.change
 0x0200CDE0	ZUKAN_SAVE_RegisterCaught	arm9	dex.register
 0x0200CFA0	ZUKAN_SAVE_RegisterSeen	arm9	dex.register
-0x0201104C	GPOWER_UseHpRestore	arm9	heal
+0x0201104C	GPOWER_UseHpRestore	arm9	heal,mon.revive
 0x02012BF8	GAME_DATA_ContainsRecentId	arm9	
 0x02012C18	GAME_DATA_LoadFromSave	arm9	save.load
 0x02012F08	GAME_DATA_GetMiscSave	arm9	
@@ -85,7 +85,7 @@
 0x0215B138	SCRCMD_WORK_CmdSetMiscByte	ov010	
 0x0215B328	SCRCMD_WORK_CmdSetEventFlagOffset	ov010	
 0x0215B350	SCRCMD_WORK_CmdResetEventFlagOffset	ov010	
-0x0215B5A8	SCRCMD_PROC_HealParty	ov010	heal
+0x0215B5A8	SCRCMD_PROC_HealParty	ov010	heal,mon.revive
 0x0215BB50	SCRCMD_PROC_AddMonToPartySimple	ov010	
 0x0215BBD0	SCRCMD_PROC_AddMonToPartyDetailed	ov010	
 0x0215BD2C	SCRCMD_PROC_SetMonMove	ov010	move.learn
@@ -226,8 +226,8 @@
 0x021BC2C8	PLIST_MENU_ShowItemUsedThenClose	ov091	
 0x021BC30C	PLIST_MENU_ShowItemUsedThenContinue	ov091	
 0x021BC350	PLIST_MENU_StartItemUse	ov091	
-0x021BDD78	PLIST_DEMO_CheckItemUsable	ov091	item.use
-0x021BE914	PLIST_DEMO_RestoreHp	ov091	heal.hp
+0x021BDD78	PLIST_DEMO_CheckItemUsable	ov091	item.use,mon.revive
+0x021BE914	PLIST_DEMO_RestoreHp	ov091	heal.hp,mon.revive
 
 # ov092
 0x021B9614	EVENT_BATTLE_RETURN_Main	ov092	mon.receive
@@ -251,6 +251,7 @@
 0x021C557C	BTL_SERVER_FLOW_CureMajorStatusWithMessage	ov093	
 0x021C6564	BTL_SERVER_FLOW_DispatchMoveDoneEvent	ov093	
 0x021C84D8	BTL_SERVER_FLOW_GetBattleResult	ov093	
+0x021CA270	BTL_SERVER_FLOW_ProcHandExReviveAndSendIn	ov093	
 0x021CB2D4	BTL_SERVER_FLOW_CalcPartyExpShares	ov093	mon.exp
 0x021CB730	BTL_SERVER_FLOW_ProcBagItemUse	ov093	
 0x021CBA40	BTL_SERVER_FLOW_TryThrowBall	ov093	catch.attempt
@@ -258,7 +259,7 @@
 0x021CBD48	BTL_SERVER_FLOW_GetBallCatchRate	ov093	
 0x021CBEA8	BTL_SERVER_FLOW_RollCriticalCapture	ov093	
 0x021CBFA0	BTL_SERVER_FLOW_ItemEffectCheckSlotMessage	ov093	
-0x021CC008	BTL_SERVER_FLOW_ItemEffectRevive	ov093	
+0x021CC008	BTL_SERVER_FLOW_ItemEffectRevive	ov093	mon.revive
 0x021CC2C0	BTL_SERVER_FLOW_ItemEffectRecoverHp	ov093	
 0x021CC668	BTL_SERVER_FLOW_CheckBattleOutcome	ov093	
 0x021CE4D0	BTL_CLIENT_StepSelectAction	ov093	

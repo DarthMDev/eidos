@@ -113,6 +113,7 @@ static int unfilled_calls(const BwModState *t)
     if (t->mon_to_box_n == NULL) { n++; }
     if (t->mon_from_box == NULL) { n++; }
     if (t->mon_recalc == NULL) { n++; }
+    if (t->species_base == NULL) { n++; }
     return n;
 }
 
@@ -262,8 +263,11 @@ int main(void)
     BW_CHECK_EQ("the box moves and the recalculation follow",
                 (long)offsetof(BwModState, mon_recalc)
                 - (long)offsetof(BwModState, party_count), 35 * (long)sizeof(void *));
-    BW_CHECK_EQ("and nothing follows them",
-                (long)sizeof(BwModState) - (long)offsetof(BwModState, mon_recalc),
+    BW_CHECK_EQ("the species base follows",
+                (long)offsetof(BwModState, species_base)
+                - (long)offsetof(BwModState, party_count), 36 * (long)sizeof(void *));
+    BW_CHECK_EQ("and nothing follows it",
+                (long)sizeof(BwModState) - (long)offsetof(BwModState, species_base),
                 (long)sizeof(void *));
 
     printf("the services table\n");

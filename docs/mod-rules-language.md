@@ -187,6 +187,7 @@ names:
 | `place[m]`, `side[m]` | where a reference points: `BW_MON_*`, and in a battle the side (0 the player's) (version 4) | read |
 | `species_type1[s]`, `species_type2[s]` | a species' types | read |
 | `species_bst[s]` | a species' base stat total | read |
+| `species_base[s]` | the first stage of species `s`'s evolution line; two species are in one line when their bases are equal (version 4) | read |
 | `species_stage[s]`, `catch_rate[s]`, `gender_ratio[s]`, `growth[s]`, `egg_group1[s]`, `egg_group2[s]` | a species' data (version 4) | read |
 | `caught[s]` | whether a species is registered caught | read |
 | `owned[s]` | whether the party or a box holds a Pokemon of species `s` that is not an egg (version 4) | read |

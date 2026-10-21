@@ -1653,6 +1653,15 @@ add_executable(test_mod_table ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_table.c
 target_include_directories(test_mod_table PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_mod_table PRIVATE eidos)
 add_test(NAME test_mod_table COMMAND test_mod_table WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# The language-neutral API description (sdk/api/v4, tools/apigen.py): its
+# payload offsets compile against the headers, and the committed files are
+# the generator's current output.
+add_executable(test_api_layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_api_layout.c)
+target_include_directories(test_api_layout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk)
+target_link_libraries(test_api_layout PRIVATE eidos)
+add_test(NAME test_api_layout COMMAND test_api_layout)
+add_test(NAME apigen_check
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/apigen.py --check)
 # Loading an overlay whose code is not in the build must stop at the load and
 # say which overlay and which function.  The process aborts, so the check
 # runs through tests/expect_panic.cmake (see its header for why).

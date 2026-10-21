@@ -1,0 +1,455 @@
+{
+  "api": 4,
+  "language": 1,
+  "actions": [
+    "set <target> <expr>",
+    "add <target> <expr>",
+    "sub <target> <expr>",
+    "message <expr>",
+    "send <expr>",
+    "release <mon or party position>",
+    "give <item> <count>",
+    "box <mon or party position> <box>",
+    "withdraw <box> <slot>"
+  ],
+  "state_fields": [
+    {
+      "name": "money",
+      "subscript": null,
+      "readable": true,
+      "writable": true
+    },
+    {
+      "name": "badges",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "badge",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "zone",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "party_count",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "species",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "level",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "hp",
+      "subscript": "mon",
+      "readable": true,
+      "writable": true
+    },
+    {
+      "name": "max_hp",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "type1",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "type2",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "shiny",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "held_item",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "species_type1",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "species_type2",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "species_bst",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "caught",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "item_count",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "personality",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "ot_id",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "exp",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "friendship",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "ability",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "move1",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "move2",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "move3",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "move4",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "is_egg",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "gender",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "form",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "nature",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "has_nickname",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "fateful",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "origin_game",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "met_location",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "ball",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "met_level",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "place",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "side",
+      "subscript": "mon",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "species_stage",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "gender_ratio",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "egg_group1",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "egg_group2",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "growth",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "catch_rate",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "species_base",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "area",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "area_of",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "wild_battle",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "play_seconds",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "owned",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "party_max_level",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "party_alive",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "party_has_type",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "item_pocket",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "move_type",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "move_power",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "move_class",
+      "subscript": "int",
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "battle_style",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    },
+    {
+      "name": "in_battle",
+      "subscript": null,
+      "readable": true,
+      "writable": false
+    }
+  ],
+  "names": [
+    "event.<field>",
+    "state.<cell>[key]",
+    "setting.<key>",
+    "table.<name>[key]"
+  ],
+  "operators": [
+    "||",
+    "&&",
+    "!",
+    "==",
+    "!=",
+    "<",
+    "<=",
+    ">",
+    ">=",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%"
+  ],
+  "events": [
+    "game.new",
+    "save.begin",
+    "save.done",
+    "save.load",
+    "game.cleared",
+    "route.change",
+    "map.warp",
+    "player.step",
+    "trainer.spotted",
+    "npc.talk",
+    "menu.open",
+    "menu.build",
+    "field.move",
+    "pc.open",
+    "encounter.wild",
+    "encounter.static",
+    "encounter.trainer",
+    "mon.create",
+    "mon.receive",
+    "mon.nickname",
+    "mon.evolve",
+    "mon.exp",
+    "mon.levelup",
+    "move.learn",
+    "mon.release",
+    "box.deposit",
+    "box.withdraw",
+    "party.swap",
+    "mon.helditem",
+    "egg.hatch",
+    "trade.ingame",
+    "battle.start",
+    "battle.action",
+    "battle.item",
+    "battle.switch",
+    "battle.escape",
+    "battle.move",
+    "battle.damage",
+    "battle.faint",
+    "catch.attempt",
+    "catch.result",
+    "battle.end",
+    "whiteout",
+    "battle.trainer_mon",
+    "item.add",
+    "item.use",
+    "shop.buy",
+    "money.change",
+    "heal",
+    "heal.hp",
+    "mon.revive",
+    "badge.get",
+    "flag.set",
+    "dex.register"
+  ]
+}

@@ -119,6 +119,7 @@ typedef union BwEventPayload {
     BwMoneyChange money_change;
     BwHeal        heal;
     BwHealHp      heal_hp;
+    BwMonRevive   mon_revive;
 
     BwBadgeGet    badge_get;
     BwFlagSet     flag_set;
@@ -171,7 +172,19 @@ typedef struct BwEventBinding {
     BwEventBuild  build;      /* fills the payload from the call */
     BwEventApply  apply;      /* writes the modified fields back, or NULL */
     BwEventRefuse refuse;     /* produces the refused outcome, or NULL */
+    /* Whether the row applies to this call, or NULL for always.  One game
+     * function can carry two events that split its calls (a heal of a
+     * Pokemon that has HP, a revive of one that has none). */
+    int         (*when)(const BwEventCall *call);
 } BwEventBinding;
+
+/*
+ * A row whose kind is BW_EVENT_PORT (0) is the port's own work at the
+ * call: no handler runs, no payload is built, and the row's apply runs
+ * with an empty payload.  It finishes what another row started (a value a
+ * handler chose at a check, written where the game uses it).
+ */
+#define BW_EVENT_PORT 0u
 
 /* ------------------------------------------------------------------ */
 /* The dispatch                                                        */

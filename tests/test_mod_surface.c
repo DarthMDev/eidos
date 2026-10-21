@@ -58,8 +58,8 @@
  * The hash of the frozen surface on each layout the port is built at.
  *
  *   pointers  hash
- *   4         0x29D5958Du  the number in sdk/mod_api.h
- *   8         0xE079699Eu
+ *   4         0xE027155Au  the number in sdk/mod_api.h
+ *   8         0x16A3F8AAu
  *
  * The 32-bit one is the number the header carries.  The other is the same
  * surface on the other layout: the three tables hold host pointers, so
@@ -68,11 +68,11 @@
  */
 static unsigned int expected_hash(void)
 {
-    return (sizeof(void *) == 4) ? 0x29D5958Du : 0xE079699Eu;
+    return (sizeof(void *) == 4) ? 0xE027155Au : 0x16A3F8AAu;
 }
 
 /* The number in sdk/mod_api.h: the frozen one, the 32-bit hash. */
-#define BW_SURFACE_HASH_FROZEN 0x29D5958Du
+#define BW_SURFACE_HASH_FROZEN 0xE027155Au
 
 /* The running hash. */
 static unsigned int h;
@@ -162,7 +162,7 @@ int main(void)
     EV(BW_EVENT_CATCH_RESULT); EV(BW_EVENT_BATTLE_END); EV(BW_EVENT_WHITEOUT);
     EV(BW_EVENT_BATTLE_TRAINER_MON);
     EV(BW_EVENT_ITEM_ADD); EV(BW_EVENT_ITEM_USE); EV(BW_EVENT_SHOP_BUY);
-    EV(BW_EVENT_MONEY_CHANGE); EV(BW_EVENT_HEAL); EV(BW_EVENT_HEAL_HP);
+    EV(BW_EVENT_MONEY_CHANGE); EV(BW_EVENT_HEAL); EV(BW_EVENT_HEAL_HP); EV(BW_EVENT_MON_REVIVE);
     EV(BW_EVENT_BADGE_GET); EV(BW_EVENT_FLAG_SET); EV(BW_EVENT_DEX_REGISTER);
 #undef EV
 
@@ -188,6 +188,8 @@ int main(void)
     EN(BW_HEAL_CENTRE); EN(BW_HEAL_SCRIPT); EN(BW_HEAL_POWER);
     EN(BW_HEAL_HP_FIELD); EN(BW_HEAL_HP_BATTLE);
     EN(BW_EXP_BATTLE); EN(BW_EXP_DAYCARE);
+    EN(BW_REVIVE_FIELD_ITEM); EN(BW_REVIVE_BATTLE_ITEM); EN(BW_REVIVE_MOVE);
+    EN(BW_REVIVE_CENTRE); EN(BW_REVIVE_POWER); EN(BW_REVIVE_SCRIPT);
     EN(BW_SESSION_MESSAGE); EN(BW_SESSION_JOIN); EN(BW_SESSION_LEAVE);
     EN(BW_RESTART_NEW_GAME); EN(BW_RESTART_DELETE_SAVE);
     EN(BW_MON_FIELD_SPECIES); EN(BW_MON_FIELD_ITEM); EN(BW_MON_FIELD_EXP);
@@ -294,6 +296,8 @@ int main(void)
     PL(BwHeal, F(BwHeal, source), F(BwHeal, mask));
     PL(BwHealHp, F(BwHealHp, mon), F(BwHealHp, hp), F(BwHealHp, max_hp),
        F(BwHealHp, amount), F(BwHealHp, source));
+    PL(BwMonRevive, F(BwMonRevive, mon), F(BwMonRevive, hp), F(BwMonRevive, max_hp),
+       F(BwMonRevive, item), F(BwMonRevive, move), F(BwMonRevive, source));
     PL(BwBadgeGet, F(BwBadgeGet, badge), F(BwBadgeGet, count));
     PL(BwFlagSet, F(BwFlagSet, flag), F(BwFlagSet, value));
     PL(BwDexRegister, F(BwDexRegister, species), F(BwDexRegister, caught));
@@ -338,7 +342,7 @@ int main(void)
     S(mon_to_box); S(mon_take_item);
     S(mon_release); S(item_count); S(item_add);
     S(area_of); S(battle_wild); S(play_seconds); S(item_value); S(move_value);
-    S(mon_to_box_n); S(mon_from_box); S(mon_recalc);
+    S(mon_to_box_n); S(mon_from_box); S(mon_recalc); S(species_base);
 #undef S
 
     /* The services table. */

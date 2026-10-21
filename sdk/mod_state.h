@@ -180,6 +180,12 @@ typedef struct BwModState {
      * Call it after party_set changes any of those.  Not for a box or a
      * battle reference. */
     int (*mon_recalc)(BwMonRef mon);
+
+    /* The first stage of a species' evolution line: the species no other
+     * species evolves into, found by walking the evolution data backwards
+     * (a/0/1/9).  Two species are in the same line when their bases are
+     * equal.  A negative number for a species past the data. */
+    s32 (*species_base)(u16 species);
 } BwModState;
 
 /* ------------------------------------------------------------------ */

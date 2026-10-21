@@ -227,6 +227,7 @@ static u32 payload_size(u32 kind)
     case BW_EVENT_MONEY_CHANGE: return (u32)sizeof(BwMoneyChange);
     case BW_EVENT_HEAL:         return (u32)sizeof(BwHeal);
     case BW_EVENT_HEAL_HP:      return (u32)sizeof(BwHealHp);
+    case BW_EVENT_MON_REVIVE:   return (u32)sizeof(BwMonRevive);
 
     case BW_EVENT_BADGE_GET:    return (u32)sizeof(BwBadgeGet);
     case BW_EVENT_FLAG_SET:     return (u32)sizeof(BwFlagSet);
@@ -477,6 +478,16 @@ static int dispatch(unsigned int region, unsigned int addr, BwEventCall *call,
         }
         if (!bw_mod_event_scope_matches(b->scope_region, b->scope_addr,
                                         b->scope)) {
+            continue;
+        }
+        if (b->when != NULL && !b->when(call)) {
+            continue;
+        }
+        if (b->kind == BW_EVENT_PORT) {
+            if (b->apply != NULL) {
+                memset(payload, 0, sizeof(*payload));
+                b->apply(payload, call);
+            }
             continue;
         }
         if (b->build != NULL) {

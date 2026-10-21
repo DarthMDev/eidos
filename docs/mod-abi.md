@@ -234,8 +234,9 @@ The version moves when the surface moves.
 - **Version 4** appends and moves nothing, so version 3 mods still load. The
   state table gains `mon_release`, `item_count`, `item_add`, `area_of`,
   `battle_wild`, `play_seconds`, `item_value`, `move_value`,
-  `mon_to_box_n`, `mon_from_box` and `mon_recalc`; the services table gains
-  `table_get`; the events gain `heal.hp` and `battle.trainer_mon`;
+  `mon_to_box_n`, `mon_from_box`, `mon_recalc` and `species_base`; the
+  services table gains `table_get`; the events gain `heal.hp`, `mon.revive`
+  and `battle.trainer_mon`;
   `encounter.wild` and `mon.exp` gain fields at their ends. Version 4 is
   still open: more appended calls land before it is frozen and
   `sdk/api/v4` is published.
@@ -271,8 +272,8 @@ width and the hash follows it: the number beside the version number is the
 
 | Pointers | Hash |
 |---|---|
-| 32-bit | 0x29D5958D (the number in `sdk/mod_api.h`) |
-| 64-bit | 0xE079699E |
+| 32-bit | 0xE027155A (the number in `sdk/mod_api.h`) |
+| 64-bit | 0x16A3F8AA |
 
 The payload structs, the ids and the enums hold no pointer and hash the
 same everywhere.

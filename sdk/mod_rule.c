@@ -666,6 +666,15 @@ static const BwRuleField g_f_heal[] = {
     BW_RULE_FIELD(BwHeal, mask, BW_RULE_FK_INT, BW_RULE_FF_MOD)
 };
 
+static const BwRuleField g_f_mon_revive[] = {
+    BW_RULE_FIELD(BwMonRevive, mon, BW_RULE_FK_MON, 0),
+    BW_RULE_FIELD(BwMonRevive, hp, BW_RULE_FK_INT, BW_RULE_FF_MOD),
+    BW_RULE_FIELD(BwMonRevive, max_hp, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonRevive, item, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonRevive, move, BW_RULE_FK_INT, 0),
+    BW_RULE_FIELD(BwMonRevive, source, BW_RULE_FK_INT, 0)
+};
+
 static const BwRuleField g_f_heal_hp[] = {
     BW_RULE_FIELD(BwHealHp, mon, BW_RULE_FK_MON, 0),
     BW_RULE_FIELD(BwHealHp, hp, BW_RULE_FK_INT, 0),
@@ -809,6 +818,8 @@ static const BwRuleEvent g_events[] = {
       .fields = g_f_heal, .field_count = 2 },
     { .kind = BW_EVENT_HEAL_HP, .name = "heal.hp", .refusable = 1,
       .fields = g_f_heal_hp, .field_count = 5 },
+    { .kind = BW_EVENT_MON_REVIVE, .name = "mon.revive", .refusable = 1,
+      .fields = g_f_mon_revive, .field_count = 6 },
 
     { .kind = BW_EVENT_BADGE_GET, .name = "badge.get", .refusable = 0,
       .fields = g_f_badge_get, .field_count = 2 },
@@ -955,6 +966,8 @@ static const BwRuleStateField g_state_fields[] = {
     { .name = "growth", .kind = BW_RULE_SK_INT, .writable = 0,
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
     { .name = "catch_rate", .kind = BW_RULE_SK_INT, .writable = 0,
+      .readable = 1, .writable_ok = 0, .mon_field = 0 },
+    { .name = "species_base", .kind = BW_RULE_SK_INT, .writable = 0,
       .readable = 1, .writable_ok = 0, .mon_field = 0 },
 
     /* Interface version 4: the world, the battle, the party as a whole,
@@ -3436,6 +3449,8 @@ static const struct {
     { "species_stage", 36u }
 };
 
+/* species_base[s]: the first stage of the line (the state call). */
+
 /* The item and move data ids the rules name (FILE_UTIL_GetItemParam,
  * WAZA_TOOL_GetParam). */
 #define BW_RULE_ITEM_POCKET 5u
@@ -3537,6 +3552,17 @@ static int state_read_v4(const BwModState *st, const BwRuleStateField *f,
             return 1;
         }
         *out = a;
+        return 1;
+    }
+    if (strcmp(f->name, "species_base") == 0) {
+        s32 b;
+
+        if (st->species_base == NULL || sub == NULL ||
+            (b = st->species_base((u16)sub->i)) < 0) {
+            *rc = -1;
+            return 1;
+        }
+        *out = b;
         return 1;
     }
     if (strcmp(f->name, "wild_battle") == 0) {

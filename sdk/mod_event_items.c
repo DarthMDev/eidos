@@ -83,6 +83,23 @@ extern struct PokemonParam *POKEPARTY_GetMember(struct Party *party, u32 pos)
     BW_PORT_WEAK;                                        /* 0x0201AB28 */
 extern void POKE_TOOL_HealFull(struct PokemonParam *mon)
     BW_PORT_WEAK;                                        /* 0x0201B9F0 */
+extern u32 POKE_TOOL_GetPartyValue(struct PokemonParam *mon, u32 paramId,
+                                   u32 arg) BW_PORT_WEAK;
+extern void POKE_TOOL_SetPartyValue(struct PokemonParam *mon, u32 paramId,
+                                    u32 value) BW_PORT_WEAK;
+
+/* An item's own data (src/game/arm9/file_util.c), by the ids the party
+ * screen reads (src/game/ov091/plist_demo_types.h). */
+extern u32 FILE_UTIL_GetItemParam(u32 item, u32 sel, u32 heap) BW_PORT_WEAK;
+#define BW_ITEM_PARAM_REVIVES      26u
+#define BW_ITEM_PARAM_REVIVES_FULL 27u
+#define BW_ITEM_PARAM_RAISES_LEVEL 28u
+#define BW_ITEM_PARAM_HP_AMOUNT    58u
+#define BW_ITEM_HEAP               3u   /* the game's main heap */
+
+/* The Pokemon fields (POKE_TOOL_GetPartyValue). */
+#define BW_FIELD_HP     0xA0u
+#define BW_FIELD_MAX_HP 0xA1u
 
 /* ------------------------------------------------------------------ */
 /* The port's own views of the game's work blocks                     */
@@ -622,6 +639,233 @@ static void refuse_heal_hp_field(BwEventCall *call)
     call->ret = 0;
 }
 
+/*
+ * mon.revive on the field.  The party screen asks PLIST_DEMO_CheckItemUsable
+ * (mon, item, ...) before it uses an item and takes the item from the bag
+ * only when the check says yes, so the check is where a refusal keeps the
+ * item.  The HP the handlers chose is written where the game adds it,
+ * PLIST_DEMO_RestoreHp, by the port's own row below.  Sacred Ash revives
+ * the party without the check: the event fires at the HP write then, and a
+ * refusal there keeps the Pokemon fainted (the ash is used).
+ */
+static struct {
+    const struct PokemonParam *mon;
+    u16 hp;
+} g_field_revive;
+
+static u32 revive_hp_of_item(u32 item, u32 maxHp)
+{
+    u32 amount;
+
+    if (FILE_UTIL_GetItemParam == NULL) {
+        return maxHp;
+    }
+    amount = FILE_UTIL_GetItemParam(item, BW_ITEM_PARAM_HP_AMOUNT, BW_ITEM_HEAP);
+    return field_heal_amount(maxHp, amount);
+}
+
+static int item_revives(u32 item)
+{
+    if (FILE_UTIL_GetItemParam == NULL) {
+        return 0;
+    }
+    return (FILE_UTIL_GetItemParam(item, BW_ITEM_PARAM_REVIVES, BW_ITEM_HEAP) != 0u ||
+            FILE_UTIL_GetItemParam(item, BW_ITEM_PARAM_REVIVES_FULL, BW_ITEM_HEAP) != 0u) &&
+           FILE_UTIL_GetItemParam(item, BW_ITEM_PARAM_RAISES_LEVEL, BW_ITEM_HEAP) == 0u;
+}
+
+static int when_field_revive_check(const BwEventCall *call)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+
+    return mon != NULL && POKE_TOOL_GetPartyValue != NULL &&
+           POKE_TOOL_GetPartyValue(mon, BW_FIELD_HP, 0) == 0u &&
+           item_revives((u32)call->a[1]);
+}
+
+static void build_mon_revive_field(const BwEventCall *call, BwEventPayload *out)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+    u32 maxHp = POKE_TOOL_GetPartyValue(mon, BW_FIELD_MAX_HP, 0);
+
+    memset(&out->mon_revive, 0, sizeof(out->mon_revive));
+    party_ref_of(&out->mon_revive.mon, mon);
+    out->mon_revive.max_hp = (u16)maxHp;
+    out->mon_revive.hp = (u16)revive_hp_of_item((u32)call->a[1], maxHp);
+    out->mon_revive.item = (u16)call->a[1];
+    out->mon_revive.source = (u8)BW_REVIVE_FIELD_ITEM;
+}
+
+static void apply_mon_revive_field(const BwEventPayload *in, BwEventCall *call)
+{
+    g_field_revive.mon = (const struct PokemonParam *)call->a[0];
+    g_field_revive.hp = in->mon_revive.hp;
+}
+
+/* mon.revive at the check: refused, the item has no effect and stays. */
+static void refuse_mon_revive_field(BwEventCall *call)
+{
+    call->ret = 0;
+}
+
+/* The HP write: (mon, hp, maxHp, amount).  heal.hp sees the Pokemon that
+ * have HP; the port's own row finishes a revive. */
+static int when_restore_alive(const BwEventCall *call)
+{
+    return (u32)call->a[1] != 0u;
+}
+
+static int when_restore_fainted(const BwEventCall *call)
+{
+    return (u32)call->a[1] == 0u;
+}
+
+/* Write `hp` as the HP a fainted Pokemon comes back with, through the
+ * game's own arguments (see apply_heal_hp_field for the code values). */
+static void restore_set_revive_hp(BwEventCall *call, u32 hp)
+{
+    u32 maxHp = (u32)call->a[2];
+
+    if (hp > maxHp) {
+        hp = maxHp;
+    }
+    if (hp < 0xFDu) {
+        call->a[3] = (uintptr_t)hp;
+        return;
+    }
+    call->a[2] = (uintptr_t)hp;     /* the cap is the HP asked for */
+    call->a[3] = 0xFFu;
+}
+
+static void apply_restore_revive(const BwEventPayload *unused, BwEventCall *call)
+{
+    struct PokemonParam *mon = (struct PokemonParam *)call->a[0];
+    BwEventPayload p;
+    u32 maxHp = (u32)call->a[2];
+    u32 hp;
+
+    (void)unused;
+    if (mon != NULL && g_field_revive.mon == mon) {
+        hp = g_field_revive.hp;
+        g_field_revive.mon = NULL;
+    } else {
+        /* No check came first (Sacred Ash): the event fires here. */
+        memset(&p, 0, sizeof p);
+        party_ref_of(&p.mon_revive.mon, mon);
+        p.mon_revive.max_hp = (u16)maxHp;
+        p.mon_revive.hp = (u16)field_heal_amount(maxHp, (u32)call->a[3]);
+        p.mon_revive.source = (u8)BW_REVIVE_FIELD_ITEM;
+        if (bw_mod_event_fire(BW_EVENT_MON_REVIVE, &p)) {
+            call->a[3] = 0u;    /* it stays fainted */
+            if (maxHp == 1u) {
+                call->a[2] = 0u;
+            }
+            return;
+        }
+        hp = p.mon_revive.hp;
+    }
+    restore_set_revive_hp(call, hp < 1u ? 1u : hp);
+}
+
+/*
+ * mon.revive for a party heal (a Centre or another script, the HP-restore
+ * power).  The game's function heals the whole party at once, so the port
+ * asks about each fainted member before it, and after it puts each one a
+ * handler kept fainted back to 0 HP, and writes the HP a handler chose.
+ */
+static struct {
+    struct Party *party;
+    u8 count;
+    u8 fainted;         /* bit i: member i had fainted */
+    u8 refused;         /* bit i: a handler kept member i fainted */
+    u16 hp[6];          /* the HP each revived member gets */
+} g_party_revive;
+
+static void party_revive_before(struct Party *party, u8 source)
+{
+    u32 count, i;
+
+    memset(&g_party_revive, 0, sizeof g_party_revive);
+    if (party == NULL || POKEPARTY_GetCount == NULL || POKEPARTY_GetMember == NULL ||
+        POKE_TOOL_GetPartyValue == NULL) {
+        return;
+    }
+    count = POKEPARTY_GetCount(party);
+    if (count > 6u) {
+        count = 6u;
+    }
+    g_party_revive.party = party;
+    g_party_revive.count = (u8)count;
+    for (i = 0; i < count; i++) {
+        struct PokemonParam *mon = POKEPARTY_GetMember(party, i);
+        BwEventPayload p;
+        u32 maxHp;
+
+        if (mon == NULL || POKE_TOOL_GetPartyValue(mon, BW_FIELD_HP, 0) != 0u ||
+            POKE_TOOL_GetPartyValue(mon, 0x4Cu, 0) != 0u) {
+            continue;   /* it has HP, or it is an egg */
+        }
+        maxHp = POKE_TOOL_GetPartyValue(mon, BW_FIELD_MAX_HP, 0);
+        memset(&p, 0, sizeof p);
+        party_ref_of(&p.mon_revive.mon, mon);
+        p.mon_revive.max_hp = (u16)maxHp;
+        p.mon_revive.hp = (u16)maxHp;
+        p.mon_revive.source = source;
+        g_party_revive.fainted |= (u8)(1u << i);
+        if (bw_mod_event_fire(BW_EVENT_MON_REVIVE, &p)) {
+            g_party_revive.refused |= (u8)(1u << i);
+        }
+        g_party_revive.hp[i] = p.mon_revive.hp == 0u ? 1u : p.mon_revive.hp;
+        if (g_party_revive.hp[i] > maxHp) {
+            g_party_revive.hp[i] = (u16)maxHp;
+        }
+    }
+}
+
+static void party_revive_after(void)
+{
+    u32 i;
+
+    if (g_party_revive.party == NULL || POKE_TOOL_SetPartyValue == NULL) {
+        return;
+    }
+    for (i = 0; i < g_party_revive.count; i++) {
+        struct PokemonParam *mon;
+
+        if ((g_party_revive.fainted & (1u << i)) == 0u) {
+            continue;
+        }
+        mon = POKEPARTY_GetMember(g_party_revive.party, i);
+        if (mon == NULL) {
+            continue;
+        }
+        POKE_TOOL_SetPartyValue(mon, BW_FIELD_HP,
+                                (g_party_revive.refused & (1u << i)) != 0u
+                                    ? 0u : g_party_revive.hp[i]);
+    }
+    g_party_revive.party = NULL;
+}
+
+static void apply_revive_script_before(const BwEventPayload *unused, BwEventCall *call)
+{
+    (void)unused;
+    party_revive_before((struct Party *)script_party(call->a[1]),
+                        (u8)BW_REVIVE_SCRIPT);
+}
+
+static void apply_revive_power_before(const BwEventPayload *unused, BwEventCall *call)
+{
+    (void)unused;
+    party_revive_before((struct Party *)call->a[0], (u8)BW_REVIVE_POWER);
+}
+
+static void apply_revive_after(const BwEventPayload *unused, BwEventCall *call)
+{
+    (void)unused;
+    (void)call;
+    party_revive_after();
+}
+
 /* ------------------------------------------------------------------ */
 /* The rows                                                            */
 /* ------------------------------------------------------------------ */
@@ -638,9 +882,17 @@ static const BwEventBinding g_items_rows[] = {
     { BW_MOD_REGION_OVL(91), 0x021BDD78u, BW_EVENT_ITEM_USE, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_item_use, NULL, refuse_item_use },
 
+    { BW_MOD_REGION_OVL(91), 0x021BDD78u, BW_EVENT_MON_REVIVE, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, build_mon_revive_field, apply_mon_revive_field,
+      refuse_mon_revive_field, when_field_revive_check },
+
     { BW_MOD_REGION_OVL(91), 0x021BE914u, BW_EVENT_HEAL_HP, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_heal_hp_field, apply_heal_hp_field,
-      refuse_heal_hp_field },
+      refuse_heal_hp_field, when_restore_alive },
+
+    { BW_MOD_REGION_OVL(91), 0x021BE914u, BW_EVENT_PORT, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_restore_revive, NULL,
+      when_restore_fainted },
 
     { BW_MOD_REGION_OVL(21), 0x021B3370u, BW_EVENT_SHOP_BUY, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_shop_buy, apply_shop_buy, refuse_shop_buy },
@@ -655,9 +907,21 @@ static const BwEventBinding g_items_rows[] = {
       BW_SCOPE_ANY, 0u, 0u, build_heal_script, apply_heal_script,
       refuse_heal_script },
 
+    { BW_MOD_REGION_OVL(10), 0x0215B5A8u, BW_EVENT_PORT, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_script_before, NULL },
+
+    { BW_MOD_REGION_OVL(10), 0x0215B5A8u, BW_EVENT_PORT, BW_EVENT_AFTER,
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_after, NULL },
+
     { BW_MOD_REGION_ARM9, 0x0201104Cu, BW_EVENT_HEAL, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_heal_power, apply_heal_power,
-      refuse_heal_power }
+      refuse_heal_power },
+
+    { BW_MOD_REGION_ARM9, 0x0201104Cu, BW_EVENT_PORT, BW_EVENT_BEFORE,
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_power_before, NULL },
+
+    { BW_MOD_REGION_ARM9, 0x0201104Cu, BW_EVENT_PORT, BW_EVENT_AFTER,
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_revive_after, NULL }
 };
 
 /* The rows of this area, for the dispatch core. */

@@ -181,6 +181,7 @@ Notes from the callers:
 | `item.use` | `PLIST_DEMO_CheckItemUsable` 0x021BDD78 | ov091 | the game's "it won't have any effect"; the item stays | - |
 | `shop.buy` | `SCRCMD_PROC_FLD_PickQuantityOutcome` 0x021B3370 | ov021 | back to the item list; no money changes hands | price |
 | `money.change` | `BEACON_AddPoints` 0x0200C278; `BEACON_SubPoints` 0x0200C29C | arm9 | - | the amount |
+| `mon.revive` | `PLIST_DEMO_CheckItemUsable` 0x021BDD78 and `PLIST_DEMO_RestoreHp` 0x021BE914 (ov091); `BTL_SERVER_FLOW_ItemEffectRevive` 0x021CC008 (ov093); before the party heals of `heal` | - | the Pokemon stays fainted; an item is kept where the game allows (`docs/mod-payloads.md`) | the HP |
 | `heal.hp` | `PLIST_DEMO_RestoreHp` 0x021BE914 (ov091, an item on the field); `BTL_SERVER_FLOW_ApplyHpRecover` 0x021C33E8 (ov093, every restore in a battle) | - | no HP is added | the HP added |
 | `heal` | `SCRCMD_PROC_HealParty` 0x0215B5A8 (ov010, a centre or a script); `GPOWER_UseHpRestore` 0x0201104C (arm9, the HP-restore power) | - | the heal does not happen; the script's own text still plays | which Pokemon heal |
 

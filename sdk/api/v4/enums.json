@@ -1,0 +1,593 @@
+{
+  "api": 4,
+  "constants": [
+    {
+      "name": "BW_MON_PARTY",
+      "value": 0
+    },
+    {
+      "name": "BW_MON_BOX",
+      "value": 1
+    },
+    {
+      "name": "BW_MON_BATTLE",
+      "value": 2
+    },
+    {
+      "name": "BW_MON_WILD",
+      "value": 3
+    },
+    {
+      "name": "BW_EVENT_CONTINUE",
+      "value": 0
+    },
+    {
+      "name": "BW_EVENT_REFUSE",
+      "value": 1
+    },
+    {
+      "name": "BW_EVENT_GAME_NEW",
+      "value": 1
+    },
+    {
+      "name": "BW_EVENT_SAVE_BEGIN",
+      "value": 2
+    },
+    {
+      "name": "BW_EVENT_SAVE_DONE",
+      "value": 3
+    },
+    {
+      "name": "BW_EVENT_SAVE_LOAD",
+      "value": 4
+    },
+    {
+      "name": "BW_EVENT_GAME_CLEARED",
+      "value": 5
+    },
+    {
+      "name": "BW_EVENT_ROUTE_CHANGE",
+      "value": 10
+    },
+    {
+      "name": "BW_EVENT_MAP_WARP",
+      "value": 11
+    },
+    {
+      "name": "BW_EVENT_PLAYER_STEP",
+      "value": 12
+    },
+    {
+      "name": "BW_EVENT_TRAINER_SPOTTED",
+      "value": 13
+    },
+    {
+      "name": "BW_EVENT_NPC_TALK",
+      "value": 14
+    },
+    {
+      "name": "BW_EVENT_MENU_OPEN",
+      "value": 15
+    },
+    {
+      "name": "BW_EVENT_MENU_BUILD",
+      "value": 16
+    },
+    {
+      "name": "BW_EVENT_FIELD_MOVE",
+      "value": 17
+    },
+    {
+      "name": "BW_EVENT_PC_OPEN",
+      "value": 18
+    },
+    {
+      "name": "BW_EVENT_ENCOUNTER_WILD",
+      "value": 30
+    },
+    {
+      "name": "BW_EVENT_ENCOUNTER_STATIC",
+      "value": 31
+    },
+    {
+      "name": "BW_EVENT_ENCOUNTER_TRAINER",
+      "value": 32
+    },
+    {
+      "name": "BW_EVENT_MON_CREATE",
+      "value": 40
+    },
+    {
+      "name": "BW_EVENT_MON_RECEIVE",
+      "value": 41
+    },
+    {
+      "name": "BW_EVENT_MON_NICKNAME",
+      "value": 42
+    },
+    {
+      "name": "BW_EVENT_MON_EVOLVE",
+      "value": 43
+    },
+    {
+      "name": "BW_EVENT_MON_EXP",
+      "value": 44
+    },
+    {
+      "name": "BW_EVENT_MON_LEVELUP",
+      "value": 45
+    },
+    {
+      "name": "BW_EVENT_MOVE_LEARN",
+      "value": 46
+    },
+    {
+      "name": "BW_EVENT_MON_RELEASE",
+      "value": 47
+    },
+    {
+      "name": "BW_EVENT_BOX_DEPOSIT",
+      "value": 48
+    },
+    {
+      "name": "BW_EVENT_BOX_WITHDRAW",
+      "value": 49
+    },
+    {
+      "name": "BW_EVENT_PARTY_SWAP",
+      "value": 50
+    },
+    {
+      "name": "BW_EVENT_MON_HELDITEM",
+      "value": 51
+    },
+    {
+      "name": "BW_EVENT_EGG_HATCH",
+      "value": 52
+    },
+    {
+      "name": "BW_EVENT_TRADE_INGAME",
+      "value": 53
+    },
+    {
+      "name": "BW_EVENT_BATTLE_START",
+      "value": 70
+    },
+    {
+      "name": "BW_EVENT_BATTLE_ACTION",
+      "value": 71
+    },
+    {
+      "name": "BW_EVENT_BATTLE_ITEM",
+      "value": 72
+    },
+    {
+      "name": "BW_EVENT_BATTLE_SWITCH",
+      "value": 73
+    },
+    {
+      "name": "BW_EVENT_BATTLE_ESCAPE",
+      "value": 74
+    },
+    {
+      "name": "BW_EVENT_BATTLE_MOVE",
+      "value": 75
+    },
+    {
+      "name": "BW_EVENT_BATTLE_DAMAGE",
+      "value": 76
+    },
+    {
+      "name": "BW_EVENT_BATTLE_FAINT",
+      "value": 77
+    },
+    {
+      "name": "BW_EVENT_CATCH_ATTEMPT",
+      "value": 78
+    },
+    {
+      "name": "BW_EVENT_CATCH_RESULT",
+      "value": 79
+    },
+    {
+      "name": "BW_EVENT_BATTLE_END",
+      "value": 80
+    },
+    {
+      "name": "BW_EVENT_WHITEOUT",
+      "value": 81
+    },
+    {
+      "name": "BW_EVENT_BATTLE_TRAINER_MON",
+      "value": 82
+    },
+    {
+      "name": "BW_EVENT_ITEM_ADD",
+      "value": 90
+    },
+    {
+      "name": "BW_EVENT_ITEM_USE",
+      "value": 91
+    },
+    {
+      "name": "BW_EVENT_SHOP_BUY",
+      "value": 92
+    },
+    {
+      "name": "BW_EVENT_MONEY_CHANGE",
+      "value": 93
+    },
+    {
+      "name": "BW_EVENT_HEAL",
+      "value": 94
+    },
+    {
+      "name": "BW_EVENT_HEAL_HP",
+      "value": 95
+    },
+    {
+      "name": "BW_EVENT_MON_REVIVE",
+      "value": 96
+    },
+    {
+      "name": "BW_EVENT_BADGE_GET",
+      "value": 110
+    },
+    {
+      "name": "BW_EVENT_FLAG_SET",
+      "value": 111
+    },
+    {
+      "name": "BW_EVENT_DEX_REGISTER",
+      "value": 112
+    },
+    {
+      "name": "BW_ENCOUNTER_GRASS",
+      "value": 0
+    },
+    {
+      "name": "BW_ENCOUNTER_DARK_GRASS",
+      "value": 1
+    },
+    {
+      "name": "BW_ENCOUNTER_SURF",
+      "value": 2
+    },
+    {
+      "name": "BW_ENCOUNTER_FISHING",
+      "value": 3
+    },
+    {
+      "name": "BW_ENCOUNTER_SHAKING",
+      "value": 4
+    },
+    {
+      "name": "BW_ENCOUNTER_RIPPLING",
+      "value": 5
+    },
+    {
+      "name": "BW_ENCOUNTER_DUST",
+      "value": 6
+    },
+    {
+      "name": "BW_RECEIVE_CATCH",
+      "value": 0
+    },
+    {
+      "name": "BW_RECEIVE_GIFT",
+      "value": 1
+    },
+    {
+      "name": "BW_RECEIVE_STATIC",
+      "value": 2
+    },
+    {
+      "name": "BW_RECEIVE_EGG",
+      "value": 3
+    },
+    {
+      "name": "BW_RECEIVE_TRADE",
+      "value": 4
+    },
+    {
+      "name": "BW_FORMAT_SINGLE",
+      "value": 0
+    },
+    {
+      "name": "BW_FORMAT_DOUBLE",
+      "value": 1
+    },
+    {
+      "name": "BW_FORMAT_TRIPLE",
+      "value": 2
+    },
+    {
+      "name": "BW_FORMAT_ROTATION",
+      "value": 3
+    },
+    {
+      "name": "BW_FORMAT_MULTI",
+      "value": 4
+    },
+    {
+      "name": "BW_ACTION_FIGHT",
+      "value": 0
+    },
+    {
+      "name": "BW_ACTION_SWITCH",
+      "value": 1
+    },
+    {
+      "name": "BW_ACTION_RUN",
+      "value": 2
+    },
+    {
+      "name": "BW_OUTCOME_WIN",
+      "value": 0
+    },
+    {
+      "name": "BW_OUTCOME_LOSS",
+      "value": 1
+    },
+    {
+      "name": "BW_OUTCOME_FLED",
+      "value": 2
+    },
+    {
+      "name": "BW_OUTCOME_CAUGHT",
+      "value": 3
+    },
+    {
+      "name": "BW_OUTCOME_DRAW",
+      "value": 4
+    },
+    {
+      "name": "BW_MOVE_SOURCE_LEVEL",
+      "value": 0
+    },
+    {
+      "name": "BW_MOVE_SOURCE_TM",
+      "value": 1
+    },
+    {
+      "name": "BW_MOVE_SOURCE_TUTOR",
+      "value": 2
+    },
+    {
+      "name": "BW_MOVE_SOURCE_RELEARNER",
+      "value": 3
+    },
+    {
+      "name": "BW_EVOLVE_LEVEL",
+      "value": 0
+    },
+    {
+      "name": "BW_EVOLVE_ITEM",
+      "value": 1
+    },
+    {
+      "name": "BW_EVOLVE_TRADE",
+      "value": 2
+    },
+    {
+      "name": "BW_EVOLVE_FRIENDSHIP",
+      "value": 3
+    },
+    {
+      "name": "BW_EVOLVE_OTHER",
+      "value": 4
+    },
+    {
+      "name": "BW_HEAL_CENTRE",
+      "value": 0
+    },
+    {
+      "name": "BW_HEAL_SCRIPT",
+      "value": 1
+    },
+    {
+      "name": "BW_HEAL_POWER",
+      "value": 2
+    },
+    {
+      "name": "BW_EXP_BATTLE",
+      "value": 0
+    },
+    {
+      "name": "BW_EXP_DAYCARE",
+      "value": 1
+    },
+    {
+      "name": "BW_REVIVE_FIELD_ITEM",
+      "value": 0
+    },
+    {
+      "name": "BW_REVIVE_BATTLE_ITEM",
+      "value": 1
+    },
+    {
+      "name": "BW_REVIVE_MOVE",
+      "value": 2
+    },
+    {
+      "name": "BW_REVIVE_CENTRE",
+      "value": 3
+    },
+    {
+      "name": "BW_REVIVE_POWER",
+      "value": 4
+    },
+    {
+      "name": "BW_REVIVE_SCRIPT",
+      "value": 5
+    },
+    {
+      "name": "BW_HEAL_HP_FIELD",
+      "value": 0
+    },
+    {
+      "name": "BW_HEAL_HP_BATTLE",
+      "value": 1
+    },
+    {
+      "name": "BW_SCRIPT_VM_FIELD",
+      "value": 0
+    },
+    {
+      "name": "BW_SCRIPT_VM_BATTLE",
+      "value": 1
+    },
+    {
+      "name": "BW_SCRIPT_CONTINUE",
+      "value": 0
+    },
+    {
+      "name": "BW_SCRIPT_REPLACE",
+      "value": 1
+    },
+    {
+      "name": "BW_MON_FIELD_SPECIES",
+      "value": 5
+    },
+    {
+      "name": "BW_MON_FIELD_ITEM",
+      "value": 6
+    },
+    {
+      "name": "BW_MON_FIELD_EXP",
+      "value": 8
+    },
+    {
+      "name": "BW_MON_FIELD_LEVEL",
+      "value": 158
+    },
+    {
+      "name": "BW_MON_FIELD_HP",
+      "value": 160
+    },
+    {
+      "name": "BW_MON_FIELD_MAX_HP",
+      "value": 161
+    },
+    {
+      "name": "BW_MON_FIELD_ATK",
+      "value": 162
+    },
+    {
+      "name": "BW_MON_FIELD_DEF",
+      "value": 163
+    },
+    {
+      "name": "BW_MON_FIELD_SPEED",
+      "value": 164
+    },
+    {
+      "name": "BW_MON_FIELD_SPATK",
+      "value": 165
+    },
+    {
+      "name": "BW_MON_FIELD_SPDEF",
+      "value": 166
+    },
+    {
+      "name": "BW_MON_FIELD_TYPE1",
+      "value": 174
+    },
+    {
+      "name": "BW_MON_FIELD_TYPE2",
+      "value": 175
+    },
+    {
+      "name": "BW_MON_FIELD_PERSONALITY",
+      "value": 0
+    },
+    {
+      "name": "BW_MON_FIELD_OT_ID",
+      "value": 7
+    },
+    {
+      "name": "BW_MON_FIELD_FRIENDSHIP",
+      "value": 9
+    },
+    {
+      "name": "BW_MON_FIELD_ABILITY",
+      "value": 10
+    },
+    {
+      "name": "BW_MON_FIELD_MOVE1",
+      "value": 54
+    },
+    {
+      "name": "BW_MON_FIELD_MOVE2",
+      "value": 55
+    },
+    {
+      "name": "BW_MON_FIELD_MOVE3",
+      "value": 56
+    },
+    {
+      "name": "BW_MON_FIELD_MOVE4",
+      "value": 57
+    },
+    {
+      "name": "BW_MON_FIELD_IS_EGG",
+      "value": 76
+    },
+    {
+      "name": "BW_MON_FIELD_GENDER",
+      "value": 110
+    },
+    {
+      "name": "BW_MON_FIELD_FORM",
+      "value": 111
+    },
+    {
+      "name": "BW_MON_FIELD_NATURE",
+      "value": 112
+    },
+    {
+      "name": "BW_MON_FIELD_HAS_NICKNAME",
+      "value": 117
+    },
+    {
+      "name": "BW_MON_FIELD_FATEFUL",
+      "value": 109
+    },
+    {
+      "name": "BW_MON_FIELD_ORIGIN_GAME",
+      "value": 119
+    },
+    {
+      "name": "BW_MON_FIELD_MET_LOCATION",
+      "value": 150
+    },
+    {
+      "name": "BW_MON_FIELD_BALL",
+      "value": 152
+    },
+    {
+      "name": "BW_MON_FIELD_MET_LEVEL",
+      "value": 153
+    },
+    {
+      "name": "BW_SESSION_MESSAGE",
+      "value": 0
+    },
+    {
+      "name": "BW_SESSION_JOIN",
+      "value": 1
+    },
+    {
+      "name": "BW_SESSION_LEAVE",
+      "value": 2
+    },
+    {
+      "name": "BW_RESTART_NEW_GAME",
+      "value": 1
+    },
+    {
+      "name": "BW_RESTART_DELETE_SAVE",
+      "value": 2
+    }
+  ]
+}

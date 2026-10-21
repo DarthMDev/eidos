@@ -60,7 +60,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0x29D5958Du
+#define BW_MOD_API_HASH 0xE027155Au
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
@@ -192,6 +192,7 @@ enum {
     BW_EVENT_MONEY_CHANGE = 93,
     BW_EVENT_HEAL         = 94,
     BW_EVENT_HEAL_HP      = 95,     /* version 4 */
+    BW_EVENT_MON_REVIVE   = 96,     /* version 4 */
 
     /* progress */
     BW_EVENT_BADGE_GET    = 110,
@@ -276,6 +277,16 @@ enum {
 enum {
     BW_EXP_BATTLE  = 0,
     BW_EXP_DAYCARE = 1
+};
+
+/* What brought a fainted Pokemon back (mon.revive). */
+enum {
+    BW_REVIVE_FIELD_ITEM  = 0,  /* Revive, Max Revive, Revival Herb, Sacred Ash */
+    BW_REVIVE_BATTLE_ITEM = 1,  /* the same from the battle bag */
+    BW_REVIVE_MOVE        = 2,  /* a move or an ability */
+    BW_REVIVE_CENTRE      = 3,  /* a Pokemon Centre */
+    BW_REVIVE_POWER       = 4,  /* the Entralink HP-restore power */
+    BW_REVIVE_SCRIPT      = 5   /* any other script heal */
 };
 
 /* Where an HP restore happens (heal.hp). */
@@ -689,9 +700,25 @@ typedef struct BwHeal {
 } BwHeal;
 
 /*
- * heal.hp (version 4): one Pokemon gets HP back.  The amount is the HP the
- * game is about to add, before the cap at max_hp; a handler changes it, or
- * refuses the event and the Pokemon gets nothing.  On the field the item is
+ * mon.revive (version 4): a fainted Pokemon is about to come back.  A
+ * refusal keeps it fainted; for an item, the item is not used up.  The hp
+ * is what it comes back with, at least 1, at most max_hp.
+ */
+typedef struct BwMonRevive {
+    BwEvent h;
+    BwMonRef mon;
+    u16 hp;         /* *mod: the HP it comes back with */
+    u16 max_hp;
+    u16 item;       /* the item, or 0 */
+    u16 move;       /* the move, or 0 */
+    u8  source;     /* BW_REVIVE_* */
+} BwMonRevive;
+
+/*
+ * heal.hp (version 4): a Pokemon that has HP gets more.  The amount is the
+ * HP the game is about to add, before the cap at max_hp; a handler changes
+ * it, or refuses the event and the Pokemon gets nothing.  A fainted
+ * Pokemon coming back is mon.revive, not this event.  On the field the item is
  * still used up: a mod that wants the item kept refuses item.use instead.
  */
 typedef struct BwHealHp {

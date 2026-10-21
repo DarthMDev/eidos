@@ -1,0 +1,2024 @@
+{
+  "api": 4,
+  "events": [
+    {
+      "id": 1,
+      "name": "game.new",
+      "refusable": false,
+      "struct": "BwGameNew",
+      "size": 8,
+      "fields": []
+    },
+    {
+      "id": 2,
+      "name": "save.begin",
+      "refusable": false,
+      "struct": "BwSaveBegin",
+      "size": 16,
+      "fields": [
+        {
+          "name": "play_seconds",
+          "type": "u32",
+          "offset": 8,
+          "size": 4,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 12,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "save.done",
+      "refusable": false,
+      "struct": "BwSaveDone",
+      "size": 16,
+      "fields": [
+        {
+          "name": "play_seconds",
+          "type": "u32",
+          "offset": 8,
+          "size": 4,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 12,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "ok",
+          "type": "u8",
+          "offset": 14,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "save.load",
+      "refusable": false,
+      "struct": "BwSaveLoad",
+      "size": 16,
+      "fields": [
+        {
+          "name": "play_seconds",
+          "type": "u32",
+          "offset": 8,
+          "size": 4,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 12,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "state_in_step",
+          "type": "u8",
+          "offset": 14,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "game.cleared",
+      "refusable": false,
+      "struct": "BwGameCleared",
+      "size": 64,
+      "fields": [
+        {
+          "name": "play_seconds",
+          "type": "u32",
+          "offset": 8,
+          "size": 4,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "team_count",
+          "type": "u8",
+          "offset": 12,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "team",
+          "type": "BwMonRef",
+          "offset": 16,
+          "size": 48,
+          "count": 6,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "name": "route.change",
+      "refusable": false,
+      "struct": "BwRouteChange",
+      "size": 16,
+      "fields": [
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "prev_zone",
+          "type": "u16",
+          "offset": 10,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "season",
+          "type": "u8",
+          "offset": 12,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "name": "map.warp",
+      "refusable": false,
+      "struct": "BwMapWarp",
+      "size": 16,
+      "fields": [
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "dest_zone",
+          "type": "u16",
+          "offset": 10,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "dest_x",
+          "type": "s16",
+          "offset": 12,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "dest_z",
+          "type": "s16",
+          "offset": 14,
+          "size": 2,
+          "count": null,
+          "writable": true
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "name": "player.step",
+      "refusable": false,
+      "struct": "BwPlayerStep",
+      "size": 20,
+      "fields": [
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "x",
+          "type": "s16",
+          "offset": 10,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "y",
+          "type": "s16",
+          "offset": 12,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "z",
+          "type": "s16",
+          "offset": 14,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "dir",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "mode",
+          "type": "u8",
+          "offset": 17,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "name": "trainer.spotted",
+      "refusable": true,
+      "struct": "BwTrainerSpotted",
+      "size": 16,
+      "fields": [
+        {
+          "name": "trainer_id",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "partner_id",
+          "type": "u16",
+          "offset": 10,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "distance",
+          "type": "u8",
+          "offset": 12,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "name": "npc.talk",
+      "refusable": true,
+      "struct": "BwNpcTalk",
+      "size": 16,
+      "fields": [
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "object_id",
+          "type": "u16",
+          "offset": 10,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "script_id",
+          "type": "u16",
+          "offset": 12,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "name": "menu.open",
+      "refusable": true,
+      "struct": "BwMenuOpen",
+      "size": 8,
+      "fields": []
+    },
+    {
+      "id": 16,
+      "name": "menu.build",
+      "refusable": false,
+      "struct": "BwMenuBuild",
+      "size": 12,
+      "fields": [
+        {
+          "name": "entries",
+          "type": "u32",
+          "offset": 8,
+          "size": 4,
+          "count": null,
+          "writable": true
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "name": "field.move",
+      "refusable": true,
+      "struct": "BwFieldMove",
+      "size": 20,
+      "fields": [
+        {
+          "name": "move",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "user",
+          "type": "BwMonRef",
+          "offset": 12,
+          "size": 8,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "name": "pc.open",
+      "refusable": true,
+      "struct": "BwPcOpen",
+      "size": 8,
+      "fields": []
+    },
+    {
+      "id": 30,
+      "name": "encounter.wild",
+      "refusable": true,
+      "struct": "BwEncounterWild",
+      "size": 24,
+      "fields": [
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "method",
+          "type": "u8",
+          "offset": 10,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "slot",
+          "type": "u8",
+          "offset": 11,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 12,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "level",
+          "type": "u8",
+          "offset": 14,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "shiny",
+          "type": "u8",
+          "offset": 15,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "double_",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "reroll",
+          "type": "u8",
+          "offset": 17,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "level2",
+          "type": "u8",
+          "offset": 18,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "species2",
+          "type": "u16",
+          "offset": 20,
+          "size": 2,
+          "count": null,
+          "writable": true
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "name": "encounter.static",
+      "refusable": false,
+      "struct": "BwEncounterStatic",
+      "size": 16,
+      "fields": [
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 10,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "level",
+          "type": "u8",
+          "offset": 12,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "kind",
+          "type": "u8",
+          "offset": 13,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "name": "encounter.trainer",
+      "refusable": false,
+      "struct": "BwEncounterTrainer",
+      "size": 16,
+      "fields": [
+        {
+          "name": "trainer_id",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "partner_id",
+          "type": "u16",
+          "offset": 10,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "format",
+          "type": "u8",
+          "offset": 12,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "name": "mon.create",
+      "refusable": false,
+      "struct": "BwMonCreate",
+      "size": 20,
+      "fields": [
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "level",
+          "type": "u8",
+          "offset": 10,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "shiny",
+          "type": "u8",
+          "offset": 11,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "nature",
+          "type": "u8",
+          "offset": 12,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "personality",
+          "type": "u32",
+          "offset": 16,
+          "size": 4,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "name": "mon.receive",
+      "refusable": false,
+      "struct": "BwMonReceive",
+      "size": 24,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "source",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "to_box",
+          "type": "u8",
+          "offset": 17,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "level",
+          "type": "u8",
+          "offset": 20,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "shiny",
+          "type": "u8",
+          "offset": 21,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "zone",
+          "type": "u16",
+          "offset": 22,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "name": "mon.nickname",
+      "refusable": false,
+      "struct": "BwMonNickname",
+      "size": 20,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "force",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": true
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "name": "mon.evolve",
+      "refusable": true,
+      "struct": "BwMonEvolve",
+      "size": 24,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "from",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "to",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "method",
+          "type": "u8",
+          "offset": 20,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 44,
+      "name": "mon.exp",
+      "refusable": false,
+      "struct": "BwMonExp",
+      "size": 28,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "amount",
+          "type": "u32",
+          "offset": 16,
+          "size": 4,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "exp",
+          "type": "u32",
+          "offset": 20,
+          "size": 4,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "level",
+          "type": "u8",
+          "offset": 24,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "source",
+          "type": "u8",
+          "offset": 25,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "wild",
+          "type": "u8",
+          "offset": 26,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "name": "mon.levelup",
+      "refusable": false,
+      "struct": "BwMonLevelup",
+      "size": 20,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "from",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "to",
+          "type": "u8",
+          "offset": 17,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 46,
+      "name": "move.learn",
+      "refusable": true,
+      "struct": "BwMoveLearn",
+      "size": 24,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "move",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "source",
+          "type": "u8",
+          "offset": 18,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "slot",
+          "type": "u8",
+          "offset": 19,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "replaced",
+          "type": "u16",
+          "offset": 20,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 47,
+      "name": "mon.release",
+      "refusable": true,
+      "struct": "BwMonRelease",
+      "size": 20,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 48,
+      "name": "box.deposit",
+      "refusable": true,
+      "struct": "BwBoxDeposit",
+      "size": 20,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "box",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "slot",
+          "type": "u8",
+          "offset": 17,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 49,
+      "name": "box.withdraw",
+      "refusable": true,
+      "struct": "BwBoxWithdraw",
+      "size": 20,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "box",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "slot",
+          "type": "u8",
+          "offset": 17,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 50,
+      "name": "party.swap",
+      "refusable": true,
+      "struct": "BwPartySwap",
+      "size": 12,
+      "fields": [
+        {
+          "name": "slot_a",
+          "type": "u8",
+          "offset": 8,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "slot_b",
+          "type": "u8",
+          "offset": 9,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 51,
+      "name": "mon.helditem",
+      "refusable": false,
+      "struct": "BwMonHelditem",
+      "size": 20,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "item",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "previous",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 52,
+      "name": "egg.hatch",
+      "refusable": false,
+      "struct": "BwEggHatch",
+      "size": 20,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 53,
+      "name": "trade.ingame",
+      "refusable": true,
+      "struct": "BwTradeIngame",
+      "size": 24,
+      "fields": [
+        {
+          "name": "trade_id",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "given",
+          "type": "BwMonRef",
+          "offset": 12,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "received_species",
+          "type": "u16",
+          "offset": 20,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 70,
+      "name": "battle.start",
+      "refusable": false,
+      "struct": "BwBattleStart",
+      "size": 20,
+      "fields": [
+        {
+          "name": "wild",
+          "type": "u8",
+          "offset": 8,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "format",
+          "type": "u8",
+          "offset": 9,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "trainer_id",
+          "type": "u16",
+          "offset": 10,
+          "size": 4,
+          "count": 2,
+          "writable": false
+        },
+        {
+          "name": "level_adjust",
+          "type": "s8",
+          "offset": 14,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "opponent_party",
+          "type": "u32",
+          "offset": 16,
+          "size": 4,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 71,
+      "name": "battle.action",
+      "refusable": true,
+      "struct": "BwBattleAction",
+      "size": 24,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "side",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "action",
+          "type": "u8",
+          "offset": 17,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "move",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "switch_to",
+          "type": "u8",
+          "offset": 20,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 72,
+      "name": "battle.item",
+      "refusable": true,
+      "struct": "BwBattleItem",
+      "size": 24,
+      "fields": [
+        {
+          "name": "item",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 12,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "ball",
+          "type": "u8",
+          "offset": 20,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "revive",
+          "type": "u8",
+          "offset": 21,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 73,
+      "name": "battle.switch",
+      "refusable": false,
+      "struct": "BwBattleSwitch",
+      "size": 28,
+      "fields": [
+        {
+          "name": "out",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "in",
+          "type": "BwMonRef",
+          "offset": 16,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "forced",
+          "type": "u8",
+          "offset": 24,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 74,
+      "name": "battle.escape",
+      "refusable": true,
+      "struct": "BwBattleEscape",
+      "size": 16,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 75,
+      "name": "battle.move",
+      "refusable": false,
+      "struct": "BwBattleMove",
+      "size": 32,
+      "fields": [
+        {
+          "name": "user",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "move",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "target",
+          "type": "BwMonRef",
+          "offset": 20,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "turn",
+          "type": "u16",
+          "offset": 28,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 76,
+      "name": "battle.damage",
+      "refusable": false,
+      "struct": "BwBattleDamage",
+      "size": 40,
+      "fields": [
+        {
+          "name": "attacker",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "target",
+          "type": "BwMonRef",
+          "offset": 16,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "move",
+          "type": "u16",
+          "offset": 24,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "amount",
+          "type": "u32",
+          "offset": 28,
+          "size": 4,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "target_hp",
+          "type": "u16",
+          "offset": 32,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "target_max_hp",
+          "type": "u16",
+          "offset": 34,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "critical",
+          "type": "u8",
+          "offset": 36,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "effectiveness",
+          "type": "u8",
+          "offset": 37,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 77,
+      "name": "battle.faint",
+      "refusable": false,
+      "struct": "BwBattleFaint",
+      "size": 40,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "side",
+          "type": "u8",
+          "offset": 16,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "cause",
+          "type": "BwMonRef",
+          "offset": 20,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "cause_move",
+          "type": "u16",
+          "offset": 28,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "cause_damage",
+          "type": "u32",
+          "offset": 32,
+          "size": 4,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "turn",
+          "type": "u16",
+          "offset": 36,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 78,
+      "name": "catch.attempt",
+      "refusable": true,
+      "struct": "BwCatchAttempt",
+      "size": 24,
+      "fields": [
+        {
+          "name": "target",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "level",
+          "type": "u8",
+          "offset": 18,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "shiny",
+          "type": "u8",
+          "offset": 19,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "ball",
+          "type": "u16",
+          "offset": 20,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "rate",
+          "type": "u8",
+          "offset": 22,
+          "size": 1,
+          "count": null,
+          "writable": true
+        }
+      ]
+    },
+    {
+      "id": 79,
+      "name": "catch.result",
+      "refusable": false,
+      "struct": "BwCatchResult",
+      "size": 24,
+      "fields": [
+        {
+          "name": "target",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "ball",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "caught",
+          "type": "u8",
+          "offset": 20,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "shakes",
+          "type": "u8",
+          "offset": 21,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 80,
+      "name": "battle.end",
+      "refusable": false,
+      "struct": "BwBattleEnd",
+      "size": 16,
+      "fields": [
+        {
+          "name": "outcome",
+          "type": "u8",
+          "offset": 8,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "wild",
+          "type": "u8",
+          "offset": 9,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "trainer_id",
+          "type": "u16",
+          "offset": 10,
+          "size": 4,
+          "count": 2,
+          "writable": false
+        },
+        {
+          "name": "turns",
+          "type": "u16",
+          "offset": 14,
+          "size": 2,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 81,
+      "name": "whiteout",
+      "refusable": false,
+      "struct": "BwWhiteout",
+      "size": 16,
+      "fields": [
+        {
+          "name": "in_battle",
+          "type": "u8",
+          "offset": 8,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "money_lost",
+          "type": "u32",
+          "offset": 12,
+          "size": 4,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 82,
+      "name": "battle.trainer_mon",
+      "refusable": false,
+      "struct": "BwBattleTrainerMon",
+      "size": 28,
+      "fields": [
+        {
+          "name": "trainer_id",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "index",
+          "type": "u8",
+          "offset": 10,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "level",
+          "type": "u8",
+          "offset": 11,
+          "size": 1,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 12,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "item",
+          "type": "u16",
+          "offset": 14,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "move1",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "move2",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "move3",
+          "type": "u16",
+          "offset": 20,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "move4",
+          "type": "u16",
+          "offset": 22,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "ability",
+          "type": "u16",
+          "offset": 24,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "form",
+          "type": "u8",
+          "offset": 26,
+          "size": 1,
+          "count": null,
+          "writable": true
+        }
+      ]
+    },
+    {
+      "id": 90,
+      "name": "item.add",
+      "refusable": false,
+      "struct": "BwItemAdd",
+      "size": 16,
+      "fields": [
+        {
+          "name": "item",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "count",
+          "type": "u16",
+          "offset": 10,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "pocket",
+          "type": "u8",
+          "offset": 12,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 91,
+      "name": "item.use",
+      "refusable": true,
+      "struct": "BwItemUse",
+      "size": 20,
+      "fields": [
+        {
+          "name": "item",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "target",
+          "type": "BwMonRef",
+          "offset": 12,
+          "size": 8,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 92,
+      "name": "shop.buy",
+      "refusable": true,
+      "struct": "BwShopBuy",
+      "size": 16,
+      "fields": [
+        {
+          "name": "item",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "price",
+          "type": "u32",
+          "offset": 12,
+          "size": 4,
+          "count": null,
+          "writable": true
+        }
+      ]
+    },
+    {
+      "id": 93,
+      "name": "money.change",
+      "refusable": false,
+      "struct": "BwMoneyChange",
+      "size": 16,
+      "fields": [
+        {
+          "name": "delta",
+          "type": "s32",
+          "offset": 8,
+          "size": 4,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "before",
+          "type": "u32",
+          "offset": 12,
+          "size": 4,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 94,
+      "name": "heal",
+      "refusable": true,
+      "struct": "BwHeal",
+      "size": 12,
+      "fields": [
+        {
+          "name": "source",
+          "type": "u8",
+          "offset": 8,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "mask",
+          "type": "u8",
+          "offset": 9,
+          "size": 1,
+          "count": null,
+          "writable": true
+        }
+      ]
+    },
+    {
+      "id": 95,
+      "name": "heal.hp",
+      "refusable": true,
+      "struct": "BwHealHp",
+      "size": 24,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "hp",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "max_hp",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "amount",
+          "type": "u16",
+          "offset": 20,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "source",
+          "type": "u8",
+          "offset": 22,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 96,
+      "name": "mon.revive",
+      "refusable": true,
+      "struct": "BwMonRevive",
+      "size": 28,
+      "fields": [
+        {
+          "name": "mon",
+          "type": "BwMonRef",
+          "offset": 8,
+          "size": 8,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "hp",
+          "type": "u16",
+          "offset": 16,
+          "size": 2,
+          "count": null,
+          "writable": true
+        },
+        {
+          "name": "max_hp",
+          "type": "u16",
+          "offset": 18,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "item",
+          "type": "u16",
+          "offset": 20,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "move",
+          "type": "u16",
+          "offset": 22,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "source",
+          "type": "u8",
+          "offset": 24,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 110,
+      "name": "badge.get",
+      "refusable": false,
+      "struct": "BwBadgeGet",
+      "size": 12,
+      "fields": [
+        {
+          "name": "badge",
+          "type": "u8",
+          "offset": 8,
+          "size": 1,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "count",
+          "type": "u8",
+          "offset": 9,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 111,
+      "name": "flag.set",
+      "refusable": false,
+      "struct": "BwFlagSet",
+      "size": 12,
+      "fields": [
+        {
+          "name": "flag",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "value",
+          "type": "u8",
+          "offset": 10,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    },
+    {
+      "id": 112,
+      "name": "dex.register",
+      "refusable": false,
+      "struct": "BwDexRegister",
+      "size": 12,
+      "fields": [
+        {
+          "name": "species",
+          "type": "u16",
+          "offset": 8,
+          "size": 2,
+          "count": null,
+          "writable": false
+        },
+        {
+          "name": "caught",
+          "type": "u8",
+          "offset": 10,
+          "size": 1,
+          "count": null,
+          "writable": false
+        }
+      ]
+    }
+  ]
+}
