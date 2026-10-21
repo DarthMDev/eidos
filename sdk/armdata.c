@@ -497,8 +497,12 @@ int bw_data_relocate(const BwDataImage *img)
         return fail(BW_DATA_E_LAYOUT, 0, "bw_data_relocate before bw_data_load");
     }
     /* The words this pass rewrites are the ones a later resolve knows
-     * about, so the list starts empty. */
-    g_code_word_count = 0;
+     * about, so the list starts empty.  Only the ARM9's own image has
+     * them: an overlay's words are the overlay layer's (sdk/overlay_image.c),
+     * and an overlay loading must not take the ARM9's list away. */
+    if (img->overlay < 0) {
+        g_code_word_count = 0;
+    }
     /* First pass: every word must hold what the metadata says. */
     for (i = 0; i < img->reloc_count; i++) {
         const BwDataReloc *r = &img->relocs[i];
@@ -564,7 +568,10 @@ int bw_data_relocate(const BwDataImage *img)
         }
         word = (u32)v;
         memcpy(w, &word, 4);
-        if (is_code) {
+        if (is_code && img->overlay < 0) {
+            /* The ARM9's own words are the ones the resolve asks about
+             * again (bw_arm9_resolve_code_pointers); an overlay's own words
+             * are the overlay layer's business (sdk/overlay_image.c). */
             remember_code_word(w, word, &img->funcs[r->index]);
         }
     }

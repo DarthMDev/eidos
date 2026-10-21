@@ -13,17 +13,17 @@
   "implicit_decls": 0,
   "link_failed_targets": 0,
   "matched_total": 1374,
-  "note": "the panel is shown, the timer and the splits reach it, the settings screen's last rows, and the move-learning event's fields",
+  "note": "the mod layer's own tests: the menu, the panel and the input, and an overlay's stored pointers reach the registry",
   "shim_replaced": 239,
   "stubbed_asm": 17,
   "stubbed_open": 4,
   "tests": {
     "failed": 0,
-    "passed": 74,
-    "total": 74
+    "passed": 77,
+    "total": 77
   },
   "tree": "src/game",
   "undefined_refs": 0,
   "undefined_symbols": 0,
-  "wave": 25
+  "wave": 26
 }

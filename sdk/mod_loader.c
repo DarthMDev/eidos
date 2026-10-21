@@ -129,6 +129,7 @@
 #include "mod_state.h"
 #include "mod_text.h"
 #include "mod_timer.h"
+#include "overlay_image.h"
 #include "vfs.h"
 
 #include <stdio.h>
@@ -729,8 +730,11 @@ static void loader_install_overrides(BwModLoaderMod *m)
     }
     /* The ARM9's stored code pointers were written at the reset, before any
      * mod was loaded, so they hold the build's own functions.  Now that this
-     * mod's hooks are in the registry, put them there (sdk/armdata.c). */
+     * mod's hooks are in the registry, put them there (sdk/armdata.c).  An
+     * overlay's own stored pointers are the overlay layer's business, and
+     * they are asked too: an overlay may have loaded before this mod. */
     bw_arm9_resolve_code_pointers();
+    bw_ovl_resolve_code_pointers();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1034,6 +1038,11 @@ static void loader_stop(BwModLoaderMod *m)
                            m->overrides[i - 1].fn, m->name);
     }
     m->override_count = 0;
+    /* The stored code pointers that reached this mod's hook must reach the
+     * game's own function again: the library is unloaded below, and a word
+     * left holding the hook's address would jump into it. */
+    bw_arm9_resolve_code_pointers();
+    bw_ovl_resolve_code_pointers();
 
     /* 2. the mod's stop entry point.  The namespace is in force, so a
      *    state call the mod makes here reaches the mod's own file: this

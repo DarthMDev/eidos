@@ -87,6 +87,25 @@ int bw_ovl_resident_at(u32 addr);
 BwDataFn bw_ovl_code_entry(u32 value);
 
 /*
+ * Put the hooks in the overlays' own stored code pointers again.
+ *
+ * A word in an overlay's data that holds the address of one of that
+ * overlay's own functions is called through, so it does not pass a call
+ * site and the slot the build puts at the call sites never sees it
+ * (docs/mod-interface.md, section 2).  The overlay's own data asks the
+ * registry when the overlay loads, and the overlay loads after the mod
+ * layer has loaded, so the registry already holds the hooks then.  This
+ * asks it again for the words the port rewrote, for a hook installed (or
+ * taken out) after the overlay loaded: the player changes the mod list in
+ * game.  It is the overlay's own version of bw_arm9_resolve_code_pointers
+ * (sdk/armdata.h), which the mod loader calls for the ARM9's words.
+ *
+ * A word the game has written over since is left alone.  Returns how many
+ * words it changed.
+ */
+u32 bw_ovl_resolve_code_pointers(void);
+
+/*
  * The overlay file's bytes [offset, offset + size), or NULL when the file
  * is missing or shorter.  Read once per overlay and kept.
  */

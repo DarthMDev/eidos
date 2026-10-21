@@ -155,8 +155,10 @@ that does not know its own version reports the pin and does not check it.
   so a hook misses those calls (`docs/mod-interface.md`, section 2).
 - **Code pointers into the ARM9 static module** consult the registry when
   the data is written and again after the mods load, so a stored pointer
-  reaches the installed hook; an overlay's own stored pointers still do not
-  (`docs/mod-interface.md`, section 2).
+  reaches the installed hook; an overlay's own stored pointers do the same
+  (`docs/mod-interface.md`, section 2). A code pointer the game writes at
+  run time keeps the plain function, and an overlay's unlisted code
+  pointers are not relocated at all.
 - **A prototype the port cannot read** is reported and not compared, so a
   game-specific type name is never a false refusal.
 - **An overlay row's prototype** is published only when that overlay is

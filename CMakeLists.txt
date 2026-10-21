@@ -1526,15 +1526,33 @@ endforeach()
 # test_mod_rule checks the rule interpreter (docs/mod-rules-language.md);
 # test_mod_timer checks the timer, the splits and the mod's own random
 # source, and test_mod_export the export and import of a Pokemon
-# (docs/mod-services.md).
+# (docs/mod-services.md); test_mod_menu checks the mod menu's model (the
+# list, the switch, the order, the clear action, the orphan report and the
+# settings); test_mod_panel checks the run-status panel's model and its
+# picture, and test_mod_input the input injection.
 foreach(t test_mod_surface test_mod_event test_mod_state test_mod_declare test_mod_messages
-          test_mod_text test_mod_script test_mod_rule test_mod_timer test_mod_export)
+          test_mod_text test_mod_script test_mod_rule test_mod_timer test_mod_export
+          test_mod_menu test_mod_input)
     add_executable(${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/${t}.c)
     target_include_directories(${t} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(${t} PRIVATE eidos)
     add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# test_mod_panel drives the run-status panel's model and its picture.  The
+# picture and the arrangement it is placed in are the platform layer's own
+# files, which the eidos library does not carry, so the test takes them
+# itself; none of them needs SDL.
+add_executable(test_mod_panel ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_panel.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_panel_draw.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/geometry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/font.c)
+target_include_directories(test_mod_panel PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform)
+target_link_libraries(test_mod_panel PRIVATE eidos)
+add_test(NAME test_mod_panel COMMAND test_mod_panel)
 
 # The rest of the mod layer (docs/mod-implementation.md, section 6, steps 6
 # and 7).  test_mod_manifest drives the manifest's parse, the namespace, the

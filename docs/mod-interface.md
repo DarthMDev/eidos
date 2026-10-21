@@ -123,6 +123,10 @@ module's stored pointers do the same: the relocation asks the registry for
 the function the word points at (`bw_arm9_code_entry`, `sdk/armdata.c`), and
 the words are asked again after the mods load, because the data is written at
 the reset and the mod layer loads after it (`bw_arm9_resolve_code_pointers`).
+An overlay's *own* stored pointers reach the registry the same way, against
+the overlay's own region: the overlay's layer asks for each word it rewrote
+after the mod list changes (`bw_ovl_resolve_code_pointers`,
+`sdk/overlay_image.c`).
 
 **What a slot does not catch.** A call from inside the defining unit binds by
 name and does not pass the slot, because a textual rename cannot tell a
@@ -248,13 +252,15 @@ code and needs no such trust.
 
 ## Still to build
 
-1. **An overlay's own stored pointers.** A pointer an overlay's own data
-   holds at one of its own functions still takes the plain path and does not
-   consult the registry; the overlay's image is relocated by
-   `sdk/overlay_image.c`, which asks the overlay's own table.
+1. **A code pointer the game writes at run time** (a static initialiser, a
+   table filled later) keeps the plain function: the port cannot tell it from
+   any other pointer. The same limit holds for an overlay's unlisted code
+   pointers, which are not relocated at all.
 2. **The game's own type names** in a prototype: the port normalises the
-   plain types and the integer typedefs, but not names like `WMErrCode`, so
-   those rows are reported and not compared (`docs/mod-overrides.md`).
+   plain types and the integer typedefs, and the build publishes the
+   resolution of the names the declared rows use, but a name only some other
+   function uses is not published, so a stated prototype naming it is
+   reported rather than compared (`docs/mod-overrides.md`).
 
 ## Related documents
 

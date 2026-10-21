@@ -31,3 +31,4 @@ Waves 3 and 4 have no row. The log has no record for either.
 | 23 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the mod menu's screen, the player's order, the switch name and the prototype check, and the save window's last gaps |
 | 24 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the run-status panel, the input injection, the ARM9's code pointers reach the registry, and the game's own type names in a prototype |
 | 25 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the panel is shown, the timer and the splits reach it, the settings screen's last rows, and the move-learning event's fields |
+| 26 | 2026-10-21 | 31.22% | 429 | 0 | 0 | the mod layer's own tests: the menu, the panel and the input, and an overlay's stored pointers reach the registry |

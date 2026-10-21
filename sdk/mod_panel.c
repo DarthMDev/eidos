@@ -29,9 +29,10 @@
  *   - The mod's lines and the port's own lines are kept apart.  The mod's
  *     lines are the mod's and the port's lines are the port's: the port's
  *     own line is never drawn on a line the mod has used, so a mod's own
- *     line is never overwritten, and the mod's own line never lands on
- *     the port's own line either.  The port's own lines are the timer
- *     line and the split lines (sdk/mod_timer.c).
+ *     line is never overwritten, and a mod that takes the line the port's
+ *     own line held makes the port's own line take a free one instead
+ *     (the port writes its lines again every frame).  The port's own lines
+ *     are the timer line and the split lines (sdk/mod_timer.c).
  *   - The picture is marked as changed only when a line really changed,
  *     so the drawing is done again only then.
  *

@@ -49,8 +49,8 @@
  *
  *   - the port's own line is never drawn on a line the mod has used, so a
  *     mod's own line is never overwritten;
- *   - the mod's own line never lands on the port's own line either: the
- *     model keeps the two apart.
+ *   - a mod that takes the line the port's own line held makes the port's
+ *     own line take a free one instead: the model keeps the two apart.
  *
  * The port's own run -- the port's own timer, the port's own splits --
  * lives under the port's own namespace, the empty one, which is the name

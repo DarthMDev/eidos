@@ -936,7 +936,8 @@ static void read_choices(BwModMenuMod *m)
                     BwModMenuOption *o = &m->options[i];
                     long value;
 
-                    if (strcmp(o->key, ks) != 0) {
+                    if ((size_t)(ke - ks) != strlen(o->key) ||
+                        memcmp(o->key, ks, (size_t)(ke - ks)) != 0) {
                         continue;
                     }
                     value = strtol(vs, NULL, 10);
