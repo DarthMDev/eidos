@@ -17,6 +17,7 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "icon_rgba.h"
 #include "input.h"
 #include "mod_panel_draw.h"
 #include "platform.h"
@@ -1373,6 +1374,19 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
         fprintf(stderr, "eidos: SDL_CreateWindow failed: %s\n", SDL_GetError());
         eidos_platform_quit(p);
         return -1;
+    }
+    {
+        /* The window's icon (the executable's own on Windows comes from
+         * assets/eidos.rc; this one is for every platform's title bar and
+         * task switcher). */
+        SDL_Surface *icon = SDL_CreateRGBSurfaceWithFormatFrom(
+            (void *)k_eidos_icon_rgba, EIDOS_ICON_SIDE, EIDOS_ICON_SIDE, 32,
+            EIDOS_ICON_SIDE * 4, SDL_PIXELFORMAT_RGBA32);
+
+        if (icon != NULL) {
+            SDL_SetWindowIcon(p->window, icon);
+            SDL_FreeSurface(icon);
+        }
     }
 
     /*

@@ -2363,6 +2363,12 @@ add_executable(eidos_boot ${CMAKE_CURRENT_SOURCE_DIR}/demo/eidos_boot.c)
 target_link_libraries(eidos_boot PRIVATE eidos)
 target_compile_definitions(eidos_boot PRIVATE
     EIDOS_DEFAULT_DATA_ROOT="${BW_DATA_ROOT_ABS}")
+# The executable's icon on Windows (assets/eidos.rc; tools/mkicon.py makes
+# assets/icon.ico from assets/icon.png).
+if(WIN32)
+    enable_language(RC)
+    target_sources(eidos_boot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/assets/eidos.rc)
+endif()
 
 # A linker map, so a crash report's `exe+0x...` names its function.  The
 # boot's crash filter (sdk/plat_crash.c) reports the executable offset; the
