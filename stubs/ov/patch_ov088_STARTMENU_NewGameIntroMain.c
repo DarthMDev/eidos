@@ -1,0 +1,171 @@
+/*
+ * function: STARTMENU_NewGameIntroMain
+ * address:  0x021BC230
+ * packet:   pkt_ov088_021BC230
+ * region:   ov088
+ * compiler: dsi/1.1p1
+ * flags:    -O4,p
+ * lang:     c99
+ * isa:      thumb
+ * patches: src/game/ov088/startmenu.c STARTMENU_NewGameIntroMain
+ *
+ * The src/game form of stubs/ov/reimpl_ov088_func_021BC230.c (the same code, the
+ * tree's names): the title menu's Settings row (docs/hooks.md,
+ * "title_settings").  Written by tools/ov088_patches.py from
+ * that file; a change goes into the reimpl, then this is
+ * written again.
+ * port hook "title_settings" (docs/hooks.md, docs/multiplayer.md): the new
+ * game's intro.  In a multiplayer game the name entry opens with the
+ * player's multiplayer name already typed (the name the player set on the
+ * Multiplayer screen); the player can still change it.
+ *
+ * Without a multiplayer game this is the matched function, unchanged.
+ *
+ * original status:   EXACT
+ *
+ * symbols:
+ *   SAVE_CONTROL_INTR_Update  0x021BD2F4  thumb  ov088
+ *   PROCSYS_Main  0x02031330  arm
+ *   PROCSYS_Push  0x02031348  arm
+ *   MYSTATUS_GetSex  0x02008550  thumb
+ *   STARTMENU_SetNewPlayerNameAndGender  0x021BC4A4  thumb  ov088
+ *   STRBUF_GetLength  0x020458F8  arm
+ *   STRBUF_SetStringN  0x02045994  arm
+ *   d_021BFD24     0x021BFD24  data  ov204  a4
+ *   d_021F5580     0x021F5580  data  ov194  a4
+ *   ov204_id       0x000000CC  data
+ *   ov194_id       0x000000C2  data
+  */
+/* sdk/mp.h and sdk/mod_net.h, spelled out: the overlay link header declares
+ * what the file itself does not (docs/hooks.md). */
+extern int bw_mp_state(void);
+extern const char *bw_mod_net_name(void);
+typedef unsigned char u8;
+typedef unsigned short u16;
+typedef unsigned int u32;
+
+extern void SAVE_CONTROL_INTR_Update(void *saveIntr);
+extern u32 PROCSYS_Main(void *procSys);
+extern void PROCSYS_Push(void *procSys, u32 overlayId, const void *data, void *work);
+extern u32 MYSTATUS_GetSex(void *myStatus);
+extern void STARTMENU_SetNewPlayerNameAndGender(void *myStatus, void *name, u32 sex);
+extern u16 STRBUF_GetLength(void *strbuf);
+extern void STRBUF_SetStringN(void *strbuf, const u16 *chars, u32 n);
+extern char d_021BFD24[];
+extern char d_021F5580[];
+extern char ov204_id[];
+extern char ov194_id[];
+
+/* The work of the intro (src/game/ov088/startmenu_types.h,
+ * NewGameIntroWork) and of the name entry (src/game/ov010/namein_args.h),
+ * the fields this function reads. */
+typedef struct IntroParam {
+    void *myStatus;
+    void *config;
+    u32 phase;
+    void *saveIntr;
+    u32 voiceHandle;
+    u32 retryNameEntry;
+} IntroParam;
+
+typedef struct NameArgs {
+    int kind;
+    u16 species;
+    u16 traits;
+    void *mon;
+    void *boxName;
+    void *boxManager;
+    int boxIndex;
+    int maxLen;
+    int canceled;
+    void *name;
+    void *saveIntr;
+    void *pokedex;
+} NameArgs;
+
+typedef struct IntroWork {
+    u32 startMode;
+    void *config;
+    void *myStatus;             /* startArg.myStatus */
+    void *saveOptions;
+    IntroParam introParam;
+    NameArgs *nameInArgs;
+    void *saveIntr;
+    void *procSys;
+    void *waveArcSet;
+    u8 padding38[0x18];
+    u32 voiceHandle;
+    void *myStatus2;            /* the player's status the intro fills */
+    void *config2;
+} IntroWork;
+
+/* The multiplayer name, typed in already when nothing is typed yet. */
+static void prefill_name(NameArgs *a)
+{
+    const char *n;
+    u16 buf[8];
+    int i;
+
+    if (bw_mp_state() == 0 || a->name == 0 || STRBUF_GetLength(a->name) != 0) {
+        return;
+    }
+    n = bw_mod_net_name();
+    if (n == 0 || n[0] == '\0') {
+        return;
+    }
+    for (i = 0; i < 7 && n[i] != '\0'; i++) {
+        buf[i] = (u8)n[i];
+    }
+    buf[i] = 0xFFFF;
+    STRBUF_SetStringN(a->name, buf, (u32)(i + 1));
+}
+
+int STARTMENU_NewGameIntroMain(void *proc, int *seq, void *procWork, IntroWork *work)
+{
+    int busy;
+
+    (void)proc;
+    (void)procWork;
+    SAVE_CONTROL_INTR_Update(work->saveIntr);
+    busy = (int)PROCSYS_Main(work->procSys);
+    switch (*seq) {
+    case 0:
+        PROCSYS_Push(work->procSys, (u32)ov204_id, d_021BFD24, &work->introParam);
+        *seq = 1;
+        break;
+    case 1:
+        if (busy != 1)
+            *seq = 2;
+        break;
+    case 2:
+        work->nameInArgs->species = (u16)MYSTATUS_GetSex(work->myStatus);
+        work->nameInArgs->saveIntr = work->saveIntr;
+        prefill_name(work->nameInArgs);
+        PROCSYS_Push(work->procSys, (u32)ov194_id, d_021F5580, work->nameInArgs);
+        *seq = 3;
+        break;
+    case 3:
+        if (busy != 1)
+            *seq = 4;
+        break;
+    case 4:
+        STARTMENU_SetNewPlayerNameAndGender(work->myStatus2, work->nameInArgs->name, MYSTATUS_GetSex(work->myStatus2));
+        work->introParam.phase = 7;
+        PROCSYS_Push(work->procSys, (u32)ov204_id, d_021BFD24, &work->introParam);
+        *seq = 6;
+        break;
+    case 6:
+        if (busy != 1)
+            *seq = 5;
+        break;
+    case 5:
+        if (work->introParam.retryNameEntry == 0)
+            *seq = 7;
+        else
+            *seq = 2;
+        break;
+    case 7:
+        return 1;
+    }
+    return 0;
+}

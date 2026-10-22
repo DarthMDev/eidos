@@ -149,7 +149,7 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_NET_CPORT1  "The control port."
 #define HELP_NET_CPORT2  "A: type"
 #define HELP_NET_NAME1   "Your name."
-#define HELP_NET_NAME2   ""
+#define HELP_NET_NAME2   "A: change"
 #define HELP_NET_DEFAULTS1 "Reset this page."
 #define HELP_NET_DEFAULTS2 ""
 #define HELP_TEXT_EDIT1  "Type on the keyboard."
@@ -175,6 +175,10 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_MP_START2      ""
 #define HELP_MP_PLAYER1     "A player."
 #define HELP_MP_PLAYER2     ""
+#define HELP_MP_GAME1       "Host this game."
+#define HELP_MP_GAME2       ""
+#define HELP_MP_NEW1        "Host a new game."
+#define HELP_MP_NEW2        "You name it first."
 #define HELP_SESSION_REVERT1 "Undo the changes."
 #define HELP_SESSION_REVERT2 ""
 
@@ -266,6 +270,9 @@ static const ValueName k_choice_names[] = {
 #define STR_SESSION_SELF     "You"
 #define STR_SESSION_PEER     "Player"
 #define STR_SESSION_REVERT   "Revert changes"
+#define STR_MP_NEW_GAME      "New game"
+#define STR_KB_CODE          "The game code?"
+#define STR_KB_NEW_GAME      "Name the new game?"
 
 /* The run restart (the Mods section) and the menu's own question. */
 #define STR_MOD_RESTART "Restart the run"
@@ -348,6 +355,8 @@ enum {
     ROW_MP_PLAYER,        /* a player of the lobby: arg is its peer       */
     ROW_MP_STATUS,        /* a line of the Multiplayer tab: arg STATUS_*  */
     ROW_MP_JOIN_GO,       /* join with the code typed above               */
+    ROW_MP_GAME,          /* a game the host kept: arg is its index       */
+    ROW_MP_NEW_GAME,      /* a new game, named first                      */
     ROW_SESSION_REVERT,   /* the codes back to the committed state       */
     ROW_SESSION_DEFAULTS  /* the codes back to nothing                    */
 };
@@ -447,12 +456,31 @@ static void build_net_rows(void)
 }
 
 /*
- * The Multiplayer tab.  Before a game: Host and Join; Join asks for the
- * code.  In a game: the code, your name, the players, and Start (the host)
- * or the wait for the host.
+ * The Multiplayer tab.  Before a game: your name, Host and Join.  Host
+ * lists the games the host kept and a new one; Join asks for the code.  In
+ * a game: the code, the players, and Start (the host) or the wait for the
+ * host.
  */
 #define MP_VIEW_CHOOSE 0
 #define MP_VIEW_JOIN   1
+#define MP_VIEW_HOST   2
+
+/* The host's games, read when the Host view opens. */
+static char g_games[BW_MP_GAMES_MAX][BW_MP_GAME_NAME_MAX];
+static int  g_ngames;
+
+/* The game's keyboard: what it is open for (KB_*), and how. */
+#define KB_NONE     0
+#define KB_NAME     1
+#define KB_CODE     2
+#define KB_NEW_GAME 3
+
+static struct {
+    int  target;
+    int  kind;      /* the name entry's kind: 0 a player, 4 a plain text */
+    int  max;
+    char text[32];
+} g_kb;
 
 #define STATUS_CONNECTING 0
 #define STATUS_WAIT_HOST  1
@@ -488,7 +516,6 @@ static void build_session_rows(void)
 
     if (mp_in_game()) {
         add_row(ROW_SESSION_CODE, 0, 0);
-        add_row(ROW_NET_NAME, 0, 0);
         peers = bw_mp_player_count();
         for (i = 0; i < peers; i++) {
             BwMpPlayer p;
@@ -518,8 +545,108 @@ static void build_session_rows(void)
         add_row(ROW_MP_JOIN_GO, 0, 0);
         return;
     }
+    if (g_mp_view == MP_VIEW_HOST) {
+        int i;
+
+        for (i = 0; i < g_ngames; i++) {
+            add_row(ROW_MP_GAME, i, 0);
+        }
+        add_row(ROW_MP_NEW_GAME, 0, 0);
+        return;
+    }
+    add_row(ROW_NET_NAME, 0, 0);
     add_row(ROW_SESSION_HOST, 0, 0);
     add_row(ROW_SESSION_JOIN, 0, 0);
+}
+
+/* The game's keyboard opens for a text: the frame's result asks for it. */
+static int keyboard_open(int target)
+{
+    const char *start = "";
+
+    memset(&g_kb, 0, sizeof g_kb);
+    g_kb.target = target;
+    g_kb.kind = 4;
+    switch (target) {
+    case KB_NAME:
+        g_kb.kind = 0;
+        g_kb.max = 7;               /* the game's own length for a name */
+        start = eidos_settings_net_name();
+        break;
+    case KB_CODE:
+        g_kb.max = 6;               /* the relay's codes */
+        start = eidos_settings_session_join_code();
+        break;
+    default:
+        g_kb.max = 10;
+        break;
+    }
+    put(g_kb.text, (int)sizeof g_kb.text, start != NULL ? start : "");
+    return EIDOS_SUI_KEYBOARD | EIDOS_SUI_SFX_SELECT;
+}
+
+int eidos_sui_keyboard(int *kind, int *max, char *text, int n)
+{
+    if (g_kb.target == KB_NONE) {
+        return 0;
+    }
+    *kind = g_kb.kind;
+    *max = g_kb.max;
+    put(text, n, g_kb.text);
+    return g_kb.target;
+}
+
+/* The keyboard's question for the port's own texts; NULL keeps the
+ * game's own (the player's name). */
+const char *eidos_sui_keyboard_prompt(void)
+{
+    switch (g_kb.target) {
+    case KB_CODE:     return STR_KB_CODE;
+    case KB_NEW_GAME: return STR_KB_NEW_GAME;
+    default:          return NULL;
+    }
+}
+
+static int session_action(int type);
+
+void eidos_sui_keyboard_done(const char *text, int ok)
+{
+    int target = g_kb.target;
+    char buf[32];
+    int i;
+
+    g_kb.target = KB_NONE;
+    if (!ok || text == NULL) {
+        return;
+    }
+    put(buf, (int)sizeof buf, text);
+    switch (target) {
+    case KB_NAME:
+        if (buf[0] != '\0') {
+            eidos_settings_net_set_name(buf);
+            bw_mod_net_set_name(buf);
+            bw_mp_rename(buf);
+        }
+        break;
+    case KB_CODE:
+        for (i = 0; buf[i] != '\0'; i++) {
+            if (buf[i] >= 'a' && buf[i] <= 'z') {
+                buf[i] = (char)(buf[i] - 'a' + 'A');
+            }
+        }
+        eidos_settings_session_set_join_code(buf);
+        if (buf[0] != '\0') {
+            (void)session_action(ROW_MP_JOIN_GO);   /* joins at once */
+        }
+        break;
+    case KB_NEW_GAME:
+        if (bw_mp_game_create(buf, NULL, 0) == 0) {
+            (void)session_action(ROW_SESSION_HOST);
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 static void build_rows(void)
@@ -997,6 +1124,16 @@ static int session_action(int type)
 {
     switch (type) {
     case ROW_SESSION_HOST:
+        if (g_mp_view == MP_VIEW_CHOOSE) {
+            /* Host: the games the host kept, newest first, and a new one */
+            g_ngames = bw_mp_game_list(g_games, BW_MP_GAMES_MAX);
+            g_mp_view = MP_VIEW_HOST;
+            g_sess.have = 0;
+            build_rows();
+            g.cursor = 0;
+            g.scroll = 0;
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
         if (bw_port_session_start(1, NULL) == 0) {
             g_sess.busy = 1;
             g_sess.have = 0;
@@ -1006,16 +1143,21 @@ static int session_action(int type)
         }
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
     case ROW_SESSION_JOIN:
-        /* Join: the code is asked for, and typed at once */
+        /* Join: the code is asked for on the game's keyboard at once */
         g_mp_view = MP_VIEW_JOIN;
         g_sess.have = 0;
         build_rows();
         g.cursor = 0;
         g.scroll = 0;
-        eidos_settings_session_join_code_text_begin();
-        g.editing = 1;
-        eidos_settings_capture_begin();
-        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        return EIDOS_SUI_REDRAW | keyboard_open(KB_CODE);
+    case ROW_MP_GAME:
+        if (bw_mp_game_select(g_games[g.rows[g.cursor].arg]) != 0) {
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
+        }
+        return session_action(ROW_SESSION_HOST);
+    case ROW_MP_NEW_GAME:
+        /* the new game is named first */
+        return keyboard_open(KB_NEW_GAME);
     case ROW_MP_JOIN_GO: {
         const char *code = eidos_settings_session_join_code();
 
@@ -1117,6 +1259,22 @@ static int move_mod(int mod, int up)
  * keys come in one at a time through the platform's capture, the same one
  * the key bindings use.
  */
+static void begin_text_edit(int type);
+
+/* A text row: the name and the code on the game's keyboard, the others on
+ * the host keyboard. */
+static int text_row_action(int type)
+{
+    if (type == ROW_NET_NAME) {
+        return EIDOS_SUI_REDRAW | keyboard_open(KB_NAME);
+    }
+    if (type == ROW_SESSION_JOINCODE) {
+        return EIDOS_SUI_REDRAW | keyboard_open(KB_CODE);
+    }
+    begin_text_edit(type);
+    return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+}
+
 static void begin_text_edit(int type)
 {
     if (type == ROW_NET_RELAY) {
@@ -1315,11 +1473,21 @@ static int sui_input(unsigned pressed, unsigned held)
 
     act = repeat_dirs(pressed, held);
     if (pressed & 2u) {
-        if (g.tab == TAB_SESSION && g_mp_view == MP_VIEW_JOIN &&
-            !mp_in_game()) {
+        if (g.tab == TAB_SESSION && g_mp_view != MP_VIEW_CHOOSE &&
+            !mp_in_game() && !g_sess.busy) {
+            int join = g_mp_view == MP_VIEW_JOIN;
+
             g_mp_view = MP_VIEW_CHOOSE;
             build_rows();
-            g.cursor = 1;           /* back on Join */
+            /* back on the row the view came from */
+            for (g.cursor = 0; g.cursor < g.nrows - 1; g.cursor++) {
+                if (g.rows[g.cursor].type ==
+                    (join ? ROW_SESSION_JOIN : ROW_SESSION_HOST)) {
+                    break;
+                }
+            }
+            g.scroll = 0;
+            clamp_scroll();
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
         }
         return EIDOS_SUI_EXIT | EIDOS_SUI_SFX_BACK;
@@ -1444,15 +1612,15 @@ static int sui_input(unsigned pressed, unsigned held)
     if (r->type == ROW_NET_RELAY || r->type == ROW_NET_NAME ||
         r->type == ROW_SESSION_JOINCODE) {
         if (pressed & 1u) {
-            begin_text_edit(r->type);
-            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            return text_row_action(r->type);
         }
         return 0;
     }
     if (r->type == ROW_SESSION_HOST || r->type == ROW_SESSION_JOIN ||
         r->type == ROW_SESSION_LEAVE || r->type == ROW_SESSION_REVERT ||
         r->type == ROW_SESSION_DEFAULTS || r->type == ROW_MP_START ||
-        r->type == ROW_MP_JOIN_GO) {
+        r->type == ROW_MP_JOIN_GO || r->type == ROW_MP_GAME ||
+        r->type == ROW_MP_NEW_GAME) {
         if (pressed & 1u) {
             return session_action(r->type);
         }
@@ -1719,8 +1887,7 @@ int eidos_sui_touch(int row, int zone)
     case ROW_NET_NAME:
     case ROW_SESSION_JOINCODE:
         if (was) {
-            begin_text_edit(r->type);
-            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+            res = text_row_action(r->type);
         }
         break;
     case ROW_SESSION_HOST:
@@ -1729,6 +1896,9 @@ int eidos_sui_touch(int row, int zone)
     case ROW_SESSION_REVERT:
     case ROW_SESSION_DEFAULTS:
     case ROW_MP_START:
+    case ROW_MP_JOIN_GO:
+    case ROW_MP_GAME:
+    case ROW_MP_NEW_GAME:
         if (was) {
             res = session_action(r->type);
         }
@@ -2017,6 +2187,18 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
     case ROW_MP_JOIN_GO:
         put(label, nl, STR_SESSION_JOIN);
         session_value(0, value, nv);
+        break;
+    case ROW_MP_GAME:
+        put(label, nl, g_games[r->arg]);
+        if (strcmp(g_games[r->arg], bw_mp_game()) == 0) {
+            session_value(1, value, nv);
+        }
+        break;
+    case ROW_MP_NEW_GAME:
+        put(label, nl, STR_MP_NEW_GAME);
+        if (bw_mp_game()[0] == '\0') {
+            session_value(1, value, nv);
+        }
         break;
     case ROW_INJECT_MAX:
         /* The longest press the injection allows, in frames.  0 is off. */
@@ -2319,6 +2501,14 @@ void eidos_sui_help_line(int i, char *out, int n)
             l[0] = HELP_MP_PLAYER1;
             l[1] = HELP_MP_PLAYER2;
             break;
+        case ROW_MP_GAME:
+            l[0] = HELP_MP_GAME1;
+            l[1] = HELP_MP_GAME2;
+            break;
+        case ROW_MP_NEW_GAME:
+            l[0] = HELP_MP_NEW1;
+            l[1] = HELP_MP_NEW2;
+            break;
         case ROW_SESSION_REVERT:
             l[0] = HELP_SESSION_REVERT1;
             l[1] = HELP_SESSION_REVERT2;
@@ -2338,6 +2528,13 @@ void eidos_sui_help_line(int i, char *out, int n)
         }
         l[2] = HELP_KEYS_L1;
         l[3] = HELP_KEYS_L1B;
+        /* a refused host or join: the relay's own words */
+        if ((r->type == ROW_SESSION_HOST || r->type == ROW_MP_JOIN_GO ||
+             r->type == ROW_MP_GAME || r->type == ROW_MP_NEW_GAME) &&
+            g_sess.have && g_sess.rc != BW_MOD_NET_OK &&
+            bw_mod_net_last_error_text()[0] != '\0') {
+            l[1] = bw_mod_net_last_error_text();
+        }
     }
     if (i >= 0 && i < 4) {
         put(out, n, l[i]);

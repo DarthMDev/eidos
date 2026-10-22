@@ -99,7 +99,11 @@ extern void *func_0203159C(void *, u32, u32);
 extern void func_020315D4(void *);
 extern void func_020306F0(u32);
 extern void func_020312F8(int, const void *, void *);
+extern void func_020312CC(int, const void *, void *);      /* PROCSYS_PushGlobal */
 extern void func_02082BCC(void *, int, int);
+extern void *func_02030734(u32, u32, u32, const char *, u32); /* GFL_HEAP_Alloc */
+extern void func_020307B0(void *);                         /* GFL_HEAP_Free */
+extern void func_02045A38(void *, u16 *, u32);             /* STRBUF_ToChars */
 
 extern void func_0204335C(u32);
 extern void func_020433E0(const void *);
@@ -197,6 +201,9 @@ extern int eidos_sui_touch(int row, int zone);
 extern int eidos_settings_touch(int *x, int *y);
 extern int eidos_sui_help_count(void);
 extern void eidos_sui_help_line(int i, char *out, int n);
+extern int eidos_sui_keyboard(int *kind, int *max, char *text, int n);
+extern void eidos_sui_keyboard_done(const char *text, int ok);
+extern const char *eidos_sui_keyboard_prompt(void);
 
 #define OPT_HEAP 0xb
 #define OPT_HEAP_SIZE 0x80000u
@@ -265,7 +272,31 @@ typedef struct OptWork {
     int tick;                   /* frames, for the pulse of the selected bar */
     int flash;                  /* frames left of the flash after a change */
     int touch_was;              /* the stylus was down on the frame before */
+    struct KbArgs *kb;          /* the game's keyboard, while it is open */
 } OptWork;
+
+/*
+ * The game's keyboard: the name entry screen (overlay 194), the one the
+ * game opens for the player's name.  It takes the argument block of
+ * src/game/ov010/namein_args.h; this is the same block.
+ */
+typedef struct KbArgs {
+    int kind;                   /* 0 a player's name, 4 a plain text      */
+    u16 species;                /* the player's gender for kind 0; 0xFFFF: none */
+    u16 traits;
+    void *mon;
+    void *boxName;
+    void *boxManager;
+    int boxIndex;
+    int maxLen;
+    int canceled;
+    void *name;                 /* the text: the start, then the answer   */
+    void *saveIntr;
+    void *pokedex;
+} KbArgs;
+
+#define NAMEIN_OVERLAY   0xC2u          /* ov194 */
+#define NAMEIN_PROC_DATA 0x021F5580u    /* gNameInProcData */
 
 /* Text colours, bank 15 of both screens. */
 #define TC_TEXT   0xfu      /* white */
@@ -821,6 +852,73 @@ static int touch_input(OptWork *w)
     return eidos_sui_touch(mrow, zone);
 }
 
+/* ---- the game's keyboard ---- */
+
+/* The keyboard opens on the text the screen asked for; the screen's own
+ * graphics are gone by now, and the keyboard is a process run before this
+ * one goes on (PROCSYS_PushGlobal). */
+static int kb_open(OptWork *w)
+{
+    KbArgs *a;
+    char text[32];
+    u16 buf[33];
+    int kind = 4, max = 10, i;
+
+    if (eidos_sui_keyboard(&kind, &max, text, (int)sizeof text) == 0) {
+        return 0;
+    }
+    a = (KbArgs *)func_02030734(OPT_HEAP, (u32)sizeof(KbArgs), 0, "eidos", 0);
+    if (a == NULL) {
+        eidos_sui_keyboard_done(NULL, 0);
+        return 0;
+    }
+    func_02082BCC(a, 0, (int)sizeof(KbArgs));
+    a->kind = kind;
+    a->species = kind == 0 ? 0 : 0xFFFFu;
+    a->maxLen = max;
+    for (i = 0; text[i] != '\0' && i < max && i < 32; i++) {
+        buf[i] = (u8)text[i];
+    }
+    buf[i] = 0xFFFF;
+    a->name = func_020457B0(0x20, OPT_HEAP);
+    func_02045994(a->name, buf, (u32)(i + 1));
+    w->kb = a;
+    func_020312CC((int)NAMEIN_OVERLAY, bw_ds_ptr(NAMEIN_PROC_DATA), a);
+    return 1;
+}
+
+/* The keyboard is closed: its text goes back to the screen. */
+static void kb_close(OptWork *w)
+{
+    KbArgs *a = w->kb;
+    u16 buf[33];
+    char text[33];
+    int i, n = 0;
+
+    if (a == NULL) {
+        return;
+    }
+    func_02082BCC(buf, 0, (int)sizeof buf);
+    func_02045A38(a->name, buf, 32);
+    for (i = 0; i < 32 && buf[i] != 0xFFFF && buf[i] != 0; i++) {
+        u16 c = buf[i];
+
+        if (c >= 0xFF01u && c <= 0xFF5Eu) {
+            c = (u16)(c - 0xFEE0u);         /* the full-width forms */
+        } else if (c == 0x3000u) {
+            c = ' ';
+        }
+        if (c >= 0x20u && c < 0x7Fu) {
+            text[n++] = (char)c;
+        }
+    }
+    text[n] = '\0';
+    eidos_sui_keyboard_done(text, !a->canceled);
+    func_02045808(a->name);
+    func_020307B0(a);
+    w->kb = NULL;
+}
+
 /* ---- the process ---- */
 
 static u32 opt_init(void *proc, u32 *seq, u32 pwork, u32 work)
@@ -883,6 +981,10 @@ static u32 opt_main(void *proc, u32 *seq, u32 pwork, u32 work)
         if (r & 2) {
             func_0204E720(3, 0, 0x10, 2);
             *seq = 3;
+        } else if (r & 4) {
+            /* the game's keyboard: the screen fades out and goes */
+            func_0204E720(3, 0, 0x10, 2);
+            *seq = 4;
         }
         break;
     }
@@ -892,6 +994,19 @@ static u32 opt_main(void *proc, u32 *seq, u32 pwork, u32 work)
             return 1;
         }
         break;
+    case 4:
+        if (func_0204E804() == 0) {
+            screen_free(w);
+            *seq = kb_open(w) ? 5 : 0;
+            return 0;               /* the screen's tasks are gone */
+        }
+        break;
+    case 5:
+        /* back from the keyboard: the screen is built again */
+        kb_close(w);
+        w->built = 0;               /* the palettes are made again too */
+        *seq = 0;
+        return 0;
     }
     func_020310C4(w->tcb);
     func_0204A600();
@@ -969,3 +1084,36 @@ void eidos_mod_handoff_install_confirm(void)
 {
     bw_mod_handoff_set_confirm(handoff_confirm, NULL);
 }
+
+/* ------------------------------------------------------------------ */
+/* The keyboard's question                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The name entry asks its question by kind ("Your friend's name?" for the
+ * plain kind); opened for a text of the port's own, it asks the port's
+ * question instead.  The question is the one message the name entry reads
+ * (MSGDATA_ReadString, for its message box), so while the port's keyboard
+ * is open that read is answered here.  The link sends the game's reads
+ * through this function (CMakeLists.txt, --wrap).
+ */
+#ifdef EIDOS_WRAP_MSGDATA
+extern void __real_MSGDATA_ReadString(void *, u32, void *) __attribute__((weak));
+void __wrap_MSGDATA_ReadString(void *bank, u32 id, void *dest)
+{
+    const char *q = (g_w != NULL && g_w->kb != NULL) ? eidos_sui_keyboard_prompt() : NULL;
+
+    if (q != NULL && dest != NULL) {
+        u16 buf[64];
+        int i;
+
+        for (i = 0; q[i] != '\0' && i < 63; i++) {
+            buf[i] = (u8)q[i];
+        }
+        buf[i] = 0xFFFF;
+        func_02045994(dest, buf, (u32)(i + 1));
+        return;
+    }
+    __real_MSGDATA_ReadString(bank, id, dest);
+}
+#endif

@@ -28,6 +28,7 @@ extern "C" {
 /* Result flags of eidos_sui_input. */
 #define EIDOS_SUI_REDRAW      0x01   /* rebuild the rows                      */
 #define EIDOS_SUI_EXIT        0x02   /* the player left the screen            */
+#define EIDOS_SUI_KEYBOARD    0x04   /* open the game's keyboard (below)      */
 #define EIDOS_SUI_SFX_MOVE    0x10
 #define EIDOS_SUI_SFX_SELECT  0x20
 #define EIDOS_SUI_SFX_BACK    0x40
@@ -70,6 +71,18 @@ int  eidos_sui_row_adjustable(int row);     /* left and right change its value *
 #define EIDOS_SUI_ZONE_DEC (-2)
 #define EIDOS_SUI_ZONE_INC (-3)
 int  eidos_sui_touch(int row, int zone);
+/*
+ * The game's own keyboard (the name entry screen) for a text of the screen.
+ * After EIDOS_SUI_KEYBOARD, eidos_sui_keyboard says what it is for: the
+ * name entry's kind and length and the text it starts with; it answers 0
+ * when nothing waits.  The screen that opened it hands the text back with
+ * eidos_sui_keyboard_done (ok 0: the player cancelled).
+ */
+int  eidos_sui_keyboard(int *kind, int *max, char *text, int n);
+void eidos_sui_keyboard_done(const char *text, int ok);
+/* The question the keyboard asks for that text, or NULL: the game's own. */
+const char *eidos_sui_keyboard_prompt(void);
+
 /* Non-zero while waiting for a key or pad control. */
 int  eidos_sui_capturing(void);
 

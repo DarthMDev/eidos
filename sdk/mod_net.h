@@ -209,6 +209,9 @@ int  bw_mod_net_session_hosting(void);
  * "full", ...), or "" when there was none.  A refused host or join
  * answers BW_MOD_NET_E_RELAY; this says why. */
 const char *bw_mod_net_last_error(void);
+/* The relay's own text after that word ("no session has code ZZZZZZ"), or
+ * "". */
+const char *bw_mod_net_last_error_text(void);
 void bw_mod_net_on_session(BwSessionHandler fn);
 
 /*

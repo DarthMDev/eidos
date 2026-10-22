@@ -40,6 +40,19 @@ A joiner says `hello` when it joins, when it joins again after a drop, and
 when the host comes back. The host sends the roster after every change, and
 `start` to a player who comes back while the game runs.
 
+## The Multiplayer screen (built)
+
+- The title menu's MULTIPLAYER line opens it: Your name, Host and Join.
+- Your name, the join code and the name of a new game are typed on the
+  game's own keyboard (the name entry screen, overlay 194). The name uses
+  the player's kind (up to 7 letters, the game's own question); the code
+  and the game name use the plain kind with the port's own question.
+- Host lists the host's games, newest first, and New game. New game asks
+  for a name first, then hosts. Join asks for the code at once and joins
+  when it is typed.
+- In a multiplayer New Game, the professor's name entry opens with the
+  player's multiplayer name typed in; the player can still change it.
+
 ## The lobby and the start (built)
 
 - The lobby lists the players: here or missing, the game, and whether the
@@ -99,10 +112,12 @@ use multiplayer for now (SPEC section 17).
 
 ## The saves (built, first part)
 
-- The host keeps one save per joiner in `<save folder>/multiplayer`, named
-  by the joiner's fingerprint; the last three versions stay as `.1` to
-  `.3`.
-- Who a joiner is: the host has a lasting id (`host_id.txt`) and sends it
+- The host keeps each game in a folder of its own,
+  `<save folder>/multiplayer/games/<name>`: its own save (`host.sav`),
+  one save per joiner named by the joiner's fingerprint (the last three
+  versions stay as `.1` to `.3`), and its own lasting id.
+- Who a joiner is: each of the host's games has a lasting id
+  (`host_id.txt`) and the host sends it
   (`hostid <id>`) when a player joins. The joiner keeps one random secret
   per host id (`secrets.txt`) and says hello with its fingerprint, never
   the secret itself: `hello <v> <game> <mods> <fingerprint> <in game>`.
@@ -122,9 +137,10 @@ use multiplayer for now (SPEC section 17).
 - Only the host saves. A joiner's field menu has no Save (the label stays,
   the button does nothing). When the host's game writes its save, the host
   sends `savenow`; each joiner's game runs the game's own save at its next
-  quiet moment (the next step on the field) and the file goes to the host.
-- The host's own game in a multiplayer game is `multiplayer/host.sav`,
-  not one of the single-player slots.
+  quiet moment (the first frame where the field runs and no field event
+  does) and the file goes to the host.
+- The host's own game in a multiplayer game is the game folder's
+  `host.sav`, not one of the single-player slots.
 - A save belongs to one game: the host keeps `<fingerprint>.sav.game`
   (`B` or `W`), and the lobby will not start while a player plays the
   other game than their save's.
@@ -143,11 +159,10 @@ use multiplayer for now (SPEC section 17).
 
 1. With 8 slots used: choosing which save New Game replaces.
 2. The host's "saved" waiting for every player's save to arrive.
-3. Several multiplayer saves (one per group of players).
-4. Positions and event forwarding.
-5. The shared table for mods.
-6. TLS.
-7. Adding players after the first start.
+3. Positions and event forwarding.
+4. The shared table for mods.
+5. TLS.
+6. Adding players after the first start.
 
 The mods' own session events for the lobby, the start and the pause need
 new event kinds and a `session_start` service: they come with the next mod
@@ -160,7 +175,11 @@ host at frame 300, write its code to the file and start as soon as the
 lobby is ready; `EIDOS_MP_TEST=join:<file>` makes another join with that
 code. Run both headless against a relay (each with its own `BW_SAVE_DIR`
 and `EIDOS_SETTINGS`, and START pressed to reach the title menu): both
-games go into the game when the host starts.
+games go into the game when the host starts. With
+`EIDOS_SAVE_TEST_AT=<frame>` the host's game saves at its first quiet
+moment after that frame, as if the player had saved, so the joiners' saves
+follow it. The relay's refusals carry a text after the reason word; the
+screen shows it on the help line.
 
 
 `tests/test_mp.c` drives the layer as the host's game and as a joiner's,

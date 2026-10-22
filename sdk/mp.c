@@ -27,10 +27,13 @@
 #include "mp.h"
 #include "mod_loader.h"
 #include "mod_net.h"
+#include "plat_dir.h"
 #include "plat_save.h"
 #include "plat_thread.h"
 #include "save.h"
 #include "save_slots.h"
+
+#include <sys/stat.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -328,6 +331,177 @@ static int mp_path(char *out, u32 size, const char *name)
     return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* The host's games                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A host keeps each multiplayer game in a folder of its own,
+ * <save>/multiplayer/games/<name>: its own save (host.sav), its players'
+ * saves and its own lasting id.  The joiner's own files (secrets.txt and
+ * the save it plays) stay in <save>/multiplayer.  The game chosen last is
+ * kept through a reset, so it is outside g_mp.
+ */
+static char g_game[BW_MP_GAME_NAME_MAX];
+
+static int games_dir(char *out, u32 size)
+{
+    char dir[400];
+
+    if (bw_mp_dir(dir, sizeof(dir)) != 0 ||
+        snprintf(out, size, "%s/games", dir) >= (int)size) {
+        return -1;
+    }
+    (void)bw_plat_mkdirs(out);
+    return 0;
+}
+
+/* A file of the chosen game; with no game chosen, the multiplayer folder
+ * itself (the layout before the games, and the tests). */
+static int game_path(char *out, u32 size, const char *name)
+{
+    char dir[440];
+
+    if (g_game[0] == '\0') {
+        return mp_path(out, size, name);
+    }
+    if (games_dir(dir, sizeof(dir)) != 0 ||
+        snprintf(out, size, "%s/%s", dir, g_game) >= (int)size) {
+        return -1;
+    }
+    (void)bw_plat_mkdirs(out);
+    snprintf(dir, sizeof(dir), "%s", out);
+    if (snprintf(out, size, "%s/%s", dir, name) >= (int)size) {
+        return -1;
+    }
+    return 0;
+}
+
+/* When a game was last played: its save's time, else its folder's. */
+static long game_time(const char *dir, const char *name)
+{
+    char path[520];
+    struct stat st;
+
+    snprintf(path, sizeof(path), "%s/%s/host.sav", dir, name);
+    if (stat(path, &st) == 0) {
+        return (long)st.st_mtime;
+    }
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    return stat(path, &st) == 0 ? (long)st.st_mtime : 0;
+}
+
+typedef struct GameList {
+    char (*names)[BW_MP_GAME_NAME_MAX];
+    long times[BW_MP_GAMES_MAX];
+    int  n, max;
+    const char *dir;
+} GameList;
+
+static int game_list_one(void *ctx, const char *name)
+{
+    GameList *l = (GameList *)ctx;
+    char path[520];
+    long t;
+    int i;
+
+    snprintf(path, sizeof(path), "%s/%s", l->dir, name);
+    if (bw_plat_path_kind(path) != BW_PATH_DIR ||
+        strlen(name) >= BW_MP_GAME_NAME_MAX || l->n >= l->max) {
+        return 0;
+    }
+    /* newest first */
+    t = game_time(l->dir, name);
+    for (i = l->n; i > 0 && l->times[i - 1] < t; i--) {
+        memcpy(l->names[i], l->names[i - 1], BW_MP_GAME_NAME_MAX);
+        l->times[i] = l->times[i - 1];
+    }
+    snprintf(l->names[i], BW_MP_GAME_NAME_MAX, "%s", name);
+    l->times[i] = t;
+    l->n++;
+    return 0;
+}
+
+int bw_mp_game_list(char names[][BW_MP_GAME_NAME_MAX], int max)
+{
+    char dir[440];
+    GameList l;
+
+    if (games_dir(dir, sizeof(dir)) != 0) {
+        return 0;
+    }
+    memset(&l, 0, sizeof(l));
+    l.names = names;
+    l.max = max < BW_MP_GAMES_MAX ? max : BW_MP_GAMES_MAX;
+    l.dir = dir;
+    (void)bw_plat_list_dir(dir, game_list_one, &l);
+    return l.n;
+}
+
+int bw_mp_game_select(const char *name)
+{
+    if (name == NULL || name[0] == '\0' ||
+        strlen(name) >= BW_MP_GAME_NAME_MAX) {
+        return -1;
+    }
+    snprintf(g_game, sizeof(g_game), "%s", name);
+    g_mp.host_id[0] = '\0';         /* each game has its own */
+    fprintf(stderr, "eidos: multiplayer: the host's game is \"%s\"\n", g_game);
+    return 0;
+}
+
+int bw_mp_game_create(const char *name, char *out, u32 size)
+{
+    char clean[BW_MP_GAME_NAME_MAX], dir[440], path[520];
+    int i, n = 0, k;
+
+    /* a folder name: letters, digits, space, '-' and '_' */
+    for (i = 0; name != NULL && name[i] != '\0' && n < BW_MP_GAME_NAME_MAX - 4; i++) {
+        char c = name[i];
+
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == ' ' || c == '-' || c == '_') {
+            clean[n++] = c;
+        }
+    }
+    while (n > 0 && clean[n - 1] == ' ') {
+        n--;
+    }
+    clean[n] = '\0';
+    if (n == 0 || clean[0] == ' ') {
+        snprintf(clean, sizeof(clean), "Game");
+        n = 4;
+    }
+    if (games_dir(dir, sizeof(dir)) != 0) {
+        return -1;
+    }
+    /* a name already taken gets a number */
+    for (k = 1; k < 100; k++) {
+        char cand[BW_MP_GAME_NAME_MAX];
+
+        if (k == 1) {
+            snprintf(cand, sizeof(cand), "%s", clean);
+        } else {
+            snprintf(cand, sizeof(cand), "%s %d", clean, k);
+        }
+        snprintf(path, sizeof(path), "%s/%s", dir, cand);
+        if (bw_plat_path_kind(path) == BW_PATH_NONE) {
+            (void)bw_plat_mkdirs(path);
+            if (out != NULL && size > 0) {
+                snprintf(out, size, "%s", cand);
+            }
+            fprintf(stderr, "eidos: multiplayer: new game \"%s\"\n", cand);
+            return bw_mp_game_select(cand);
+        }
+    }
+    return -1;
+}
+
+const char *bw_mp_game(void)
+{
+    return g_game;
+}
+
 static u8 *read_whole(const char *path, u32 *size)
 {
     FILE *f = fopen(path, "rb");
@@ -370,7 +544,7 @@ static const char *host_id(void)
     if (g_mp.host_id[0] != '\0') {
         return g_mp.host_id;
     }
-    if (mp_path(path, sizeof(path), "host_id.txt") == 0 &&
+    if (game_path(path, sizeof(path), "host_id.txt") == 0 &&
         (f = fopen(path, "rb")) != NULL) {
         if (fscanf(f, "%32s", g_mp.host_id) != 1) {
             g_mp.host_id[0] = '\0';
@@ -379,7 +553,7 @@ static const char *host_id(void)
     }
     if (strlen(g_mp.host_id) != 32) {
         random_hex(g_mp.host_id);
-        if (mp_path(path, sizeof(path), "host_id.txt") == 0) {
+        if (game_path(path, sizeof(path), "host_id.txt") == 0) {
             (void)bw_save_write_atomic(path, g_mp.host_id, 32);
         }
     }
@@ -567,7 +741,7 @@ static void host_store(const BwMpPlayer *p, const u8 *buf, u32 size)
         return;
     }
     snprintf(name, sizeof(name), "%s.sav", p->fp);
-    if (mp_path(path, sizeof(path), name) != 0) {
+    if (game_path(path, sizeof(path), name) != 0) {
         return;
     }
     for (i = 3; i > 0; i--) {
@@ -605,7 +779,7 @@ static void host_send_save(const BwMpPlayer *p)
 
     if (p->fp[0] != '\0') {
         snprintf(name, sizeof(name), "%s.sav", p->fp);
-        if (mp_path(path, sizeof(path), name) == 0) {
+        if (game_path(path, sizeof(path), name) == 0) {
             buf = read_whole(path, &size);
         }
     }
@@ -623,7 +797,7 @@ static void host_install(void)
     FILE *f;
     int have = 0;
 
-    if (mp_path(path, sizeof(path), "host.sav") != 0) {
+    if (game_path(path, sizeof(path), "host.sav") != 0) {
         return;
     }
     if ((f = fopen(path, "rb")) != NULL) {
@@ -837,7 +1011,7 @@ static int host_ready(void)
             int c = 0;
 
             snprintf(name, sizeof(name), "%s.sav.game", p->fp);
-            if (mp_path(gpath, sizeof(gpath), name) == 0 &&
+            if (game_path(gpath, sizeof(gpath), name) == 0 &&
                 (f = fopen(gpath, "rb")) != NULL) {
                 c = fgetc(f);
                 fclose(f);

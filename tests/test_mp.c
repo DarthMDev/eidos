@@ -424,6 +424,31 @@ static void test_saves(void)
     bw_mp_reset();
 }
 
+/* The host's games: a folder each, named from what the player typed, and
+ * a taken name gets a number. */
+static void test_games(void)
+{
+    char names[BW_MP_GAMES_MAX][BW_MP_GAME_NAME_MAX];
+    char made[BW_MP_GAME_NAME_MAX];
+    int n, i, a = 0, b = 0;
+
+    printf("the host's games\n");
+    BW_CHECK_EQ("a new game", bw_mp_game_create("Tour/1", made, sizeof made), 0);
+    BW_CHECK_EQ("a folder name", strcmp(made, "Tour1") == 0 ||
+                strncmp(made, "Tour1 ", 6) == 0, 1);
+    BW_CHECK_EQ("chosen", strcmp(bw_mp_game(), made), 0);
+    BW_CHECK_EQ("the same name again", bw_mp_game_create("Tour1", made, sizeof made), 0);
+    BW_CHECK_EQ("gets a number", strncmp(made, "Tour1 ", 6), 0);
+    n = bw_mp_game_list(names, BW_MP_GAMES_MAX);
+    for (i = 0; i < n; i++) {
+        a |= strcmp(names[i], "Tour1") == 0;
+        b |= strcmp(names[i], made) == 0;
+    }
+    BW_CHECK_EQ("both are listed", a && b, 1);
+    BW_CHECK_EQ("an empty name is refused", bw_mp_game_select(""), -1);
+    BW_CHECK_EQ("chosen again", bw_mp_game_select("Tour1"), 0);
+}
+
 int main(void)
 {
     /* every file the layer writes goes to the test's own folder */
@@ -432,5 +457,6 @@ int main(void)
     test_joiner();
     test_relay_restart();
     test_saves();
+    test_games();
     BW_REPORT("test_mp");
 }

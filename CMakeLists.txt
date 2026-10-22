@@ -2497,6 +2497,15 @@ else()
         "-Wl,-Map,${CMAKE_BINARY_DIR}/eidos_boot.map")
 endif()
 
+# The game's keyboard opened for the port's own texts asks its own
+# question (engine/platform/mod_options_proc.c, "The keyboard's
+# question"): the message read goes through the port first.  GNU ld only;
+# elsewhere the keyboard keeps the game's question.
+if(NOT MSVC)
+    target_link_options(eidos_boot PRIVATE "-Wl,--wrap=MSGDATA_ReadString")
+    target_compile_definitions(eidos_platform PRIVATE EIDOS_WRAP_MSGDATA=1)
+endif()
+
 # A fixed image base on Windows.  The DS address space sits at its own
 # addresses (main RAM at host 0x02000000, sdk/dsmem.c); with address space
 # layout randomisation the loader may put the 17 MB executable across that

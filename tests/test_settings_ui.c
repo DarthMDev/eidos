@@ -150,8 +150,9 @@ int main(void)
     eidos_sui_help_line(0, help, sizeof help);
     BW_CHECK_EQ("bind help", help[0] != 0, 1);
 
-    /* B leaves; the title menu's MULTIPLAYER opens its own screen: Host
-     * and Join; Join asks for the code; B goes back. */
+    /* B leaves; the title menu's MULTIPLAYER opens its own screen: your
+     * name, Host and Join.  The name and the code are typed on the game's
+     * keyboard; Host lists the kept games and a new one; B goes back. */
     r = press(B);
     BW_CHECK_EQ("B leaves the settings", r & EIDOS_SUI_EXIT, EIDOS_SUI_EXIT);
     eidos_sui_leave();
@@ -161,22 +162,58 @@ int main(void)
     BW_CHECK_EQ("no tabs on it", eidos_sui_tab_count(), 0);
     press(R);
     BW_CHECK_EQ("R does not leave it", eidos_sui_tab(), 6);
-    BW_CHECK_EQ("two buttons", eidos_sui_row_count(), 1 + 2);
+    BW_CHECK_EQ("name and two buttons", eidos_sui_row_count(), 1 + 3);
     row(1);
-    BW_CHECK_EQ("Host", strcmp(g_label, "Host"), 0);
+    BW_CHECK_EQ("Your name", strcmp(g_label, "Your name"), 0);
     row(2);
+    BW_CHECK_EQ("Host", strcmp(g_label, "Host"), 0);
+    row(3);
     BW_CHECK_EQ("Join", strcmp(g_label, "Join"), 0);
-    press(DOWN);
-    press(A);
-    BW_CHECK_EQ("the code row and the Join button", eidos_sui_row_count(), 1 + 2);
-    row(1);
-    BW_CHECK_EQ("the code", strcmp(g_label, "Code"), 0);
-    eidos_sui_input(0, 0);                    /* the typing ends: no keyboard */
-    eidos_sui_input(0, 0);
+    {
+        int kind = -1, max = 0;
+        char text[32];
+
+        /* the name: the game's keyboard, the player's kind */
+        r = press(A);
+        BW_CHECK_EQ("A opens the keyboard", r & EIDOS_SUI_KEYBOARD, EIDOS_SUI_KEYBOARD);
+        BW_CHECK_EQ("for the name", eidos_sui_keyboard(&kind, &max, text, sizeof text) != 0, 1);
+        BW_CHECK_EQ("a player's name", kind, 0);
+        BW_CHECK_EQ("seven letters", max, 7);
+        BW_CHECK_EQ("the game's own question", eidos_sui_keyboard_prompt() == NULL, 1);
+        eidos_sui_keyboard_done("Cheren", 1);
+        BW_CHECK_EQ("nothing waits", eidos_sui_keyboard(&kind, &max, text, sizeof text), 0);
+        row(1);
+        BW_CHECK_EQ("the new name", strcmp(g_value, "Cheren"), 0);
+
+        /* Host: the kept games (none here) and a new one, named first */
+        press(DOWN);
+        press(A);
+        BW_CHECK_EQ("New game alone", eidos_sui_row_count(), 1 + 1);
+        row(1);
+        BW_CHECK_EQ("New game", strcmp(g_label, "New game"), 0);
+        r = press(A);
+        BW_CHECK_EQ("named first", r & EIDOS_SUI_KEYBOARD, EIDOS_SUI_KEYBOARD);
+        BW_CHECK_EQ("its question", eidos_sui_keyboard_prompt() != NULL, 1);
+        eidos_sui_keyboard_done(NULL, 0);
+        r = press(B);
+        BW_CHECK_EQ("B goes back, not out", r & EIDOS_SUI_EXIT, 0);
+        BW_CHECK_EQ("the cursor on Host", eidos_sui_cursor_row(), 2);
+
+        /* Join: the code on the keyboard at once */
+        press(DOWN);
+        r = press(A);
+        BW_CHECK_EQ("the code row and the Join button", eidos_sui_row_count(), 1 + 2);
+        row(1);
+        BW_CHECK_EQ("the code", strcmp(g_label, "Code"), 0);
+        BW_CHECK_EQ("the code's keyboard", r & EIDOS_SUI_KEYBOARD, EIDOS_SUI_KEYBOARD);
+        (void)eidos_sui_keyboard(&kind, &max, text, sizeof text);
+        BW_CHECK_EQ("six letters", max, 6);
+        eidos_sui_keyboard_done(NULL, 0);    /* cancelled: nothing is joined */
+    }
     r = press(B);
     BW_CHECK_EQ("B goes back, not out", r & EIDOS_SUI_EXIT, 0);
-    BW_CHECK_EQ("Host and Join again", eidos_sui_row_count(), 1 + 2);
-    BW_CHECK_EQ("the cursor on Join", eidos_sui_cursor_row(), 2);
+    BW_CHECK_EQ("name, Host and Join again", eidos_sui_row_count(), 1 + 3);
+    BW_CHECK_EQ("the cursor on Join", eidos_sui_cursor_row(), 3);
 
     /* B leaves; leaving commits. */
     r = press(B);
