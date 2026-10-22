@@ -97,11 +97,13 @@ jobs:
           python tools/fetch_mbedtls.py
       - name: Stand-ins for the few ROM bytes the sources include (docs/release.md)
         run: python tools/package_release.py placeholders --aletheia-root aletheia
+      # The flags of the build players test with: the game's C relies on
+      # wrapping arithmetic and loose aliasing, as the DS compiler gave it.
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
             -DALETHEIA_ROOT="$(cygpath -m "$PWD/aletheia")" \
             -DBW_DATA_ROOT="$(cygpath -m "$PWD/no-game-data/extract/data")" \
             -DEIDOS_BOOT=ON -DEIDOS_OVERLAYS=ALL \
@@ -154,7 +156,7 @@ jobs:
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
             -DALETHEIA_ROOT="$PWD/aletheia" \
             -DBW_DATA_ROOT="$PWD/no-game-data/extract/data" \
             -DEIDOS_BOOT=ON -DEIDOS_OVERLAYS=ALL \
@@ -210,7 +212,7 @@ jobs:
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DALETHEIA_ROOT="$PWD/aletheia" \
             -DBW_DATA_ROOT="$PWD/no-game-data/extract/data" \
