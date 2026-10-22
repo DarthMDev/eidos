@@ -82,6 +82,8 @@ static struct {
     u32        last_writes;         /* the save writes already acted on */
     int        save_wanted;         /* a joiner: the host saved; save at the next quiet moment */
     int        saving;              /* a joiner: the game's save runs */
+    void      *save_gd;             /* the game data the save runs on */
+    int        save_test;           /* the port's own check */
 } g_mp;
 
 /* ------------------------------------------------------------------ */
@@ -104,7 +106,13 @@ extern int  bw_arm7_backup_dirty(void) BW_MP_WEAK;
  * (src/game/arm9/game_data.c), and the game data the port has bound. */
 extern int GAME_DATA_SaveStart(void *gameData) BW_MP_WEAK;
 extern int GAME_DATA_SaveMain(void *gameData) BW_MP_WEAK;
-extern void *bw_mod_state_game_data(void);
+
+/* The game system (src/game/arm9/gamesystem.c): its global's first word is
+ * the running one, and the field and the event are read from it. */
+extern void *bw_dsref__GameSystemGlobal BW_MP_WEAK;
+extern void *GAMESYSTEM_GetGameData(const void *gameSystem) BW_MP_WEAK;
+extern void *GAMESYSTEM_GetEvent(const void *gameSystem) BW_MP_WEAK;
+extern void *GAMESYSTEM_GetFieldMap(const void *gameSystem) BW_MP_WEAK;
 
 static void (*g_boot)(int new_game);
 
@@ -119,9 +127,17 @@ typedef struct BwMpSend {
     u8  *buf;
     u32  size;
     u32  off;
+    u32  acked;                 /* the bytes the receiver confirmed */
+    u32  idle;                  /* frames without a confirmation */
     u32  crc;
     int  used;
 } BwMpSend;
+
+/* The bytes in flight before the receiver's confirmation: a few pieces,
+ * so its queue keeps up whatever its frame rate. */
+#define BW_MP_WINDOW (4u * BW_MP_PIECE)
+/* Frames without a confirmation before the unconfirmed pieces go again. */
+#define BW_MP_RESEND_FRAMES 120u
 
 typedef struct BwMpRecv {
     u8  *buf;
@@ -459,7 +475,19 @@ static void sends_pump(void)
     for (i = 0; i < BW_MP_SENDS_MAX && budget > 0; i++) {
         BwMpSend *s = &g_sends[i];
 
-        while (s->used && budget > 0) {
+        if (s->used && s->off - s->acked >= BW_MP_WINDOW) {
+            /* the window is full: wait for the receiver; send the
+             * unconfirmed pieces again when nothing comes */
+            if (++s->idle >= BW_MP_RESEND_FRAMES) {
+                fprintf(stderr, "eidos: multiplayer: no answer for a save "
+                        "piece; sending it again from %u\n", (unsigned)s->acked);
+                s->off = s->acked;
+                s->idle = 0;
+            }
+            continue;
+        }
+        while (s->used && budget > 0 && s->off - s->acked < BW_MP_WINDOW &&
+               s->off < s->size) {
             u8 msg[BW_MP_PIECE + 64];
             u32 n = s->size - s->off;
             int h;
@@ -475,11 +503,41 @@ static void sends_pump(void)
             }
             s->off += n;
             budget--;
-            if (s->off >= s->size) {
-                free(s->buf);
-                memset(s, 0, sizeof(*s));
-            }
         }
+    }
+}
+
+/* The receiver confirmed `got` bytes of the save it is getting from us:
+ * "saveack <got> <total>".  The whole file confirmed ends the transfer. */
+static void on_save_ack(u32 peer, const char *msg, u32 size)
+{
+    char text[64];
+    unsigned got = 0, total = 0;
+    u32 i;
+
+    copy_n(text, sizeof(text), msg, size);
+    if (sscanf(text, "saveack %u %u", &got, &total) != 2) {
+        return;
+    }
+    for (i = 0; i < BW_MP_SENDS_MAX; i++) {
+        BwMpSend *s = &g_sends[i];
+
+        if (!s->used || s->peer != peer || s->size != total) {
+            continue;
+        }
+        if (got > s->acked) {
+            s->acked = got;
+            s->idle = 0;
+        } else if (got < s->off && ++s->idle >= 2) {
+            /* the receiver lost a piece: send again from what it has */
+            s->off = got;
+            s->idle = 0;
+        }
+        if (s->acked >= s->size) {
+            free(s->buf);
+            memset(s, 0, sizeof(*s));
+        }
+        return;
     }
 }
 
@@ -551,6 +609,8 @@ static void host_send_save(const BwMpPlayer *p)
             buf = read_whole(path, &size);
         }
     }
+    fprintf(stderr, "eidos: multiplayer: sending %s their save (%s)\n",
+            p->name, size > 0 ? "their last save" : "none yet: a new game");
     send_bytes(p->peer, buf, size);
     free(buf);
 }
@@ -570,7 +630,8 @@ static void host_install(void)
         have = fseek(f, 0, SEEK_END) == 0 && ftell(f) > 0;
         fclose(f);
     }
-    (void)have;
+    fprintf(stderr, "eidos: multiplayer: the host plays %s\n",
+            have ? "its multiplayer save" : "a new game");
     (void)bw_slots_load_file(path);
     g_mp.in_game = 1;
     g_mp.last_writes = bw_arm7_backup_writes != NULL ? bw_arm7_backup_writes() : 0;
@@ -588,6 +649,8 @@ static void joiner_install(const u8 *buf, u32 size)
     if (mp_path(path, sizeof(path), "session.sav") != 0) {
         return;
     }
+    fprintf(stderr, "eidos: multiplayer: the host sent %s\n",
+            size > 0 ? "this player's save" : "no save: a new game");
     (void)remove(path);
     if (size > 0 && bw_save_write_atomic(path, buf, size) != 0) {
         fprintf(stderr, "eidos: multiplayer: the save could not be written\n");
@@ -650,11 +713,18 @@ static void on_save_piece(u32 peer, const u8 *msg, u32 size,
         }
     }
     n = size - (u32)(nl + 1 - msg);
-    if (off != r->got || off + n > total) {
-        return;                         /* a piece out of turn: dropped */
+    if (off == r->got && off + n <= total) {
+        memcpy(r->buf + off, nl + 1, n);
+        r->got += n;
     }
-    memcpy(r->buf + off, nl + 1, n);
-    r->got += n;
+    {
+        /* what has arrived, so the sender sends on (or again) */
+        char ack[48];
+        int a = snprintf(ack, sizeof(ack), "saveack %u %u", (unsigned)r->got,
+                         total);
+
+        (void)g_net->send(peer, ack, (u32)a);
+    }
     if (r->got == total) {
         if (crc32_of(r->buf, total) == crc) {
             done(peer, r->buf, total);
@@ -848,6 +918,7 @@ static void host_on_join(u32 peer)
     }
     p->peer = peer;
     p->connected = 1;
+    fprintf(stderr, "eidos: multiplayer: player %u joined\n", (unsigned)peer);
     if (g_net->peer_name == NULL ||
         g_net->peer_name(peer, p->name, (u32)sizeof(p->name)) != 0 ||
         p->name[0] == '\0') {
@@ -874,6 +945,7 @@ static void host_on_leave(u32 peer)
         return;
     }
     p->connected = 0;
+    fprintf(stderr, "eidos: multiplayer: %s left\n", p->name);
     if (!g_mp.roster_set) {
         /* in the first lobby a player who leaves is forgotten */
         memset(p, 0, sizeof(*p));
@@ -893,6 +965,10 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
     int version = 0;
 
     if (p == NULL || p->peer != peer) {
+        return;
+    }
+    if (size >= 8 && memcmp(msg, "saveack ", 8) == 0) {
+        on_save_ack(peer, msg, size);
         return;
     }
     if (size >= 5 && memcmp(msg, "save ", 5) == 0) {
@@ -1003,6 +1079,10 @@ static void joiner_on_roster(const char *msg, u32 size)
 static void joiner_on_message(u32 peer, const char *msg, u32 size)
 {
     if (peer != 1u) {
+        return;
+    }
+    if (size >= 8 && memcmp(msg, "saveack ", 8) == 0) {
+        on_save_ack(peer, msg, size);
         return;
     }
     if (size >= 5 && memcmp(msg, "save ", 5) == 0) {
@@ -1229,21 +1309,50 @@ int bw_mp_hide_save(void)
     return !g_mp.host && g_mp.in_game && g_mp.state != BW_MP_OFF;
 }
 
-void bw_mp_field_quiet(void)
+/* The game data when the field runs and no field event does (the game's
+ * own save runs inside the save menu's event, so nothing else runs then
+ * either), else NULL. */
+static void *field_quiet_game_data(void)
+{
+    void *gs;
+
+    if (&bw_dsref__GameSystemGlobal == NULL || bw_dsref__GameSystemGlobal == NULL ||
+        GAMESYSTEM_GetGameData == NULL ||
+        GAMESYSTEM_GetEvent == NULL || GAMESYSTEM_GetFieldMap == NULL) {
+        return NULL;
+    }
+    gs = *(void **)bw_dsref__GameSystemGlobal;
+    if (gs == NULL || GAMESYSTEM_GetFieldMap(gs) == NULL ||
+        GAMESYSTEM_GetEvent(gs) != NULL) {
+        return NULL;
+    }
+    return GAMESYSTEM_GetGameData(gs);
+}
+
+/* A joiner's game saves at the first quiet moment after the host saved. */
+static void field_quiet_save(void)
 {
     void *gd;
 
-    if (!g_mp.save_wanted || g_mp.saving || g_mp.host ||
-        GAME_DATA_SaveStart == NULL) {
+    if (!g_mp.save_wanted || g_mp.saving ||
+        (g_mp.host && !g_mp.save_test) || GAME_DATA_SaveStart == NULL) {
         return;
     }
-    gd = bw_mod_state_game_data();
+    gd = field_quiet_game_data();
     if (gd == NULL) {
         return;
     }
+    fprintf(stderr, "eidos: multiplayer: saving this game (the host saved)\n");
     g_mp.save_wanted = 0;
     g_mp.saving = 1;
+    g_mp.save_gd = gd;
     (void)GAME_DATA_SaveStart(gd);
+}
+
+void bw_mp_request_save_for_test(void)
+{
+    g_mp.save_wanted = 1;
+    g_mp.save_test = 1;
 }
 
 const char *bw_mp_code(void)
@@ -1442,25 +1551,29 @@ void bw_mp_frame_at(u64 t)
 {
     g_mp.now_ms = t;
     sends_pump();
-    if (g_mp.in_game && bw_arm7_backup_writes != NULL &&
+    if (g_mp.in_game && !g_mp.saving && bw_arm7_backup_writes != NULL &&
         bw_arm7_backup_writes() != g_mp.last_writes &&
         (bw_arm7_backup_dirty == NULL || !bw_arm7_backup_dirty())) {
         g_mp.last_writes = bw_arm7_backup_writes();
         if (g_mp.host) {
             /* the host saved: every player's game saves now */
+            fprintf(stderr, "eidos: multiplayer: the host saved; every "
+                    "player's game saves too\n");
             host_send_word("savenow");
         } else {
+            fprintf(stderr, "eidos: multiplayer: this game saved; the save "
+                    "goes to the host\n");
             joiner_upload();
         }
     }
+    field_quiet_save();
     if (g_mp.saving && GAME_DATA_SaveMain != NULL) {
-        int r = GAME_DATA_SaveMain(bw_mod_state_game_data());
+        int r = GAME_DATA_SaveMain(g_mp.save_gd);
 
         if (r == 2 || r == 3) {
             g_mp.saving = 0;
-            if (r == 3) {
-                fprintf(stderr, "eidos: multiplayer: the save failed\n");
-            }
+            fprintf(stderr, "eidos: multiplayer: the save %s\n",
+                    r == 2 ? "is written" : "failed");
         }
     }
     switch (g_mp.state) {
@@ -1524,7 +1637,7 @@ void bw_mp_hold_wait(void)
 
 void bw_mp_frame(void)
 {
-    if (g_mp.state != BW_MP_OFF) {
+    if (g_mp.state != BW_MP_OFF || g_mp.save_test) {
         bw_mp_frame_at(now_ms());
     }
 }

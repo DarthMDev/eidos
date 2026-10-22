@@ -142,6 +142,8 @@ static void reload(int has_save)
     }
     sc = (unsigned char *)SAVE_CONTROL_Get();
     if (sc == NULL) {
+        fprintf(stderr, "eidos: save: the game has no save control yet; "
+                "the save is read at its start-up\n");
         return;
     }
     if (has_save && SAVE_CONTROL_Reload != NULL) {
@@ -149,6 +151,8 @@ static void reload(int has_save)
 
         /* 1 and 2: loaded (clean or recovered) */
         has_save = (r == 1 || r == 2);
+        fprintf(stderr, "eidos: save: read again: %s (answer %d)\n",
+                has_save ? "loaded" : "not loaded", r);
     }
     sc[SAVE_CONTROL_HAS_SAVE] = (unsigned char)(has_save ? 1 : 0);
     sc[SAVE_CONTROL_IS_NEW_GAME] = (unsigned char)(has_save ? 0 : 1);

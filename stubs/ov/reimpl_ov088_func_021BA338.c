@@ -74,6 +74,7 @@ extern int func_021BC080(char *p, int v);
 extern u32 func_0203633C(void);
 extern int func_021BB890(char *p, int d);
 extern u8 func_0200C308(void *, unsigned);
+extern int func_020071EC(void *);
 
 /* The settings screen's cursor state. */
 static int settings_state(char *p)
@@ -110,31 +111,18 @@ static int settings_state(char *p)
  * New Game when there is no save) would. */
 static int autostart(char *p)
 {
-    int i, row = -1;
-
-    for (i = 0; i < 8; i++) {
-        if (*(u8 *)(p + 0x120 + i) == 0) {
-            row = i;
-            break;
-        }
-    }
-    if (row < 0) {
-        for (i = 0; i < 8; i++) {
-            if (*(u8 *)(p + 0x120 + i) == 1) {
-                row = i;
-                break;
-            }
-        }
-    }
-    if (row < 0)
-        return -1;
-    *(u8 *)(p + 0x128) = (u8)row;
+    /* The save the game holds now decides, not the rows: they were built
+     * before the multiplayer save was loaded. */
     func_020061E4(0x54c);
-    if (*(u8 *)(p + 0x120 + row) == 0) {
+    if (func_020071EC(*(void **)p) == 1) {
+        /* Continue */
         *(u8 *)(p + 0x129) = 0;
         return func_021BC0AC(p, 7);
     }
-    return func_021BC0AC(p, 8);
+    /* New Game, without the "there is a save" warning: the prompt's own
+     * path for a menu without Continue */
+    *(u8 *)(p + 0x129) = 1;
+    return func_021BC080(p, 1);
 }
 
 int func_021BA338(char *p)

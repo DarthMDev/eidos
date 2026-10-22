@@ -1490,7 +1490,10 @@ static void boot_frame(void *user)
         const char *t = getenv("EIDOS_MP_TEST");
         u64 n = eidos_frame_count(&run->loop);
 
-        if (t != NULL && !mp_test_done && n >= 300u) {
+        const char *at = getenv("EIDOS_MP_TEST_AT");
+
+        if (t != NULL && !mp_test_done &&
+            n >= (at != NULL ? (u64)strtoul(at, NULL, 10) : 300u)) {
             char code[40];
             FILE *f;
 
@@ -1516,6 +1519,19 @@ static void boot_frame(void *user)
             printf("eidos_boot: multiplayer test: the host starts\n");
             fflush(stdout);
             (void)bw_mp_start();
+        }
+    }
+
+    {
+        /* EIDOS_SAVE_TEST_AT=<frame>: the next step after that frame saves
+         * the way a joiner's game saves when the host saved (sdk/mp.h). */
+        const char *st = getenv("EIDOS_SAVE_TEST_AT");
+        static int save_test_done;
+
+        if (st != NULL && !save_test_done &&
+            eidos_frame_count(&run->loop) >= (u64)strtoul(st, NULL, 10)) {
+            save_test_done = 1;
+            bw_mp_request_save_for_test();
         }
     }
 

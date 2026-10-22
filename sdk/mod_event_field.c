@@ -154,6 +154,9 @@ extern int EVENT_TRAINER_EYE_FindTrainer(struct FieldMap *fieldMap,
 /* The field menu. */
 extern void CLACT_SetActorDrawEnable(void *actor, int enable)
     BW_PORT_WEAK;                                        /* 0x0204B3DC */
+extern void *BMP_WIN_GetBmp(void *bmpWin) BW_PORT_WEAK;   /* 0x02045770 */
+extern void BMP_Clear(void *bmp, unsigned int color) BW_PORT_WEAK; /* 0x02043B5C */
+extern void BMP_WIN_TransferChars(void *bmpWin) BW_PORT_WEAK;      /* 0x02045334 */
 
 /* The script command that opens the PC. */
 extern u16 *SCRIPT_WORK_ReadWorkPointer(struct ScriptVm *vm,
@@ -957,9 +960,6 @@ static void build_player_step(const BwEventCall *call, BwEventPayload *out)
     if (bw_mod_state_pending() > 0u) {
         bw_mod_state_apply_pending();
     }
-    /* ... and the moment a joiner's game saves when the host saved
-     * (sdk/mp.h). */
-    bw_mp_field_quiet();
 
     const BwPortFieldEventInput *input =
         (const BwPortFieldEventInput *)call->a[0];
@@ -1164,6 +1164,12 @@ static void apply_menu_save(const BwEventPayload *in, BwEventCall *call)
             menu->items[i].buttonId = BW_PORT_MENU_BUTTON_EMPTY;
             if (menu->items[i].actor != NULL && CLACT_SetActorDrawEnable != NULL) {
                 CLACT_SetActorDrawEnable(menu->items[i].actor, 0);
+            }
+            /* the label goes too: the slot is empty, as in a link */
+            if (menu->items[i].bmpWin != NULL && BMP_WIN_GetBmp != NULL &&
+                BMP_Clear != NULL && BMP_WIN_TransferChars != NULL) {
+                BMP_Clear(BMP_WIN_GetBmp(menu->items[i].bmpWin), 0);
+                BMP_WIN_TransferChars(menu->items[i].bmpWin);
             }
         }
     }

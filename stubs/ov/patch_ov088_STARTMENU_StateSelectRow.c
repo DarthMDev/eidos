@@ -80,6 +80,7 @@ extern int STARTMENU_BeginFadeIn(char *p, int v);
 extern u32 KEY_GetRepeat(void);
 extern int STARTMENU_MoveCursor(char *p, int d);
 extern u8 MISC_GetSlotState(void *, unsigned);
+extern int SAVE_CONTROL_HasFlashSave(void *);
 
 /* The settings screen's cursor state. */
 static int settings_state(char *p)
@@ -116,31 +117,18 @@ static int settings_state(char *p)
  * New Game when there is no save) would. */
 static int autostart(char *p)
 {
-    int i, row = -1;
-
-    for (i = 0; i < 8; i++) {
-        if (*(u8 *)(p + 0x120 + i) == 0) {
-            row = i;
-            break;
-        }
-    }
-    if (row < 0) {
-        for (i = 0; i < 8; i++) {
-            if (*(u8 *)(p + 0x120 + i) == 1) {
-                row = i;
-                break;
-            }
-        }
-    }
-    if (row < 0)
-        return -1;
-    *(u8 *)(p + 0x128) = (u8)row;
+    /* The save the game holds now decides, not the rows: they were built
+     * before the multiplayer save was loaded. */
     GFL_USE_PlaySeDefaultVolume(0x54c);
-    if (*(u8 *)(p + 0x120 + row) == 0) {
+    if (SAVE_CONTROL_HasFlashSave(*(void **)p) == 1) {
+        /* Continue */
         *(u8 *)(p + 0x129) = 0;
         return STARTMENU_BeginSelectAnim(p, 7);
     }
-    return STARTMENU_BeginSelectAnim(p, 8);
+    /* New Game, without the "there is a save" warning: the prompt's own
+     * path for a menu without Continue */
+    *(u8 *)(p + 0x129) = 1;
+    return STARTMENU_BeginFadeIn(p, 1);
 }
 
 int STARTMENU_StateSelectRow(char *p)
