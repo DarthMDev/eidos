@@ -195,10 +195,27 @@ use multiplayer for now (SPEC section 17).
   whole table. The host keeps it in its game's folder (`shared.txt`).
 - Both are mod interface version 5 (`docs/mod-services.md`, "Multiplayer").
 
+## TLS (built)
+
+- A relay address written `tls://name` (Settings, Network, Relay address)
+  is reached over TLS 1.2 or 1.3; the protocol is the same one. The port
+  is the relay's TLS port (443 on a public relay; `tls://name:443` names
+  it in the address).
+- The library is Mbed TLS 3.6 (`tools/fetch_mbedtls.py` fetches 3.6.7 and
+  checks its SHA-256 into the user's cache; CMake builds it when it is
+  there). Without it a `tls://` relay is refused with a message.
+- The relay's certificate is checked against Let's Encrypt's ISRG Root X1
+  and X2 (`sdk/tls_roots.c`) and the relay's name. `EIDOS_TLS_CA=<pem
+  file>` adds one more root, for a relay with a certificate of its own.
+- A refused certificate or a failed handshake is logged with Mbed TLS's
+  own reason.
+- Checked with metaxy serving TLS on a local port with a test CA: both
+  games went into the game, the joiner's save reached the host, and
+  without the test CA the certificate was refused.
+
 ## Not built yet
 
-1. TLS.
-2. Adding players after the first start.
+1. Adding players after the first start.
 
 The mods' own session events for the lobby, the start and the pause need
 new event kinds and a `session_start` service: they come with the next mod

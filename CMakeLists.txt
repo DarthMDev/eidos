@@ -466,6 +466,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_export.c        # a Pokemon's export and import
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_net.c          # the peer sessions and the external control
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mp.c               # multiplayer: the lobby, the start and the pause
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/tls_roots.c        # the roots a TLS relay is checked against
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/save_slots.c       # several single-player saves
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_frame.c        # the mod layer's frame tick
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_avatar.c       # the field avatars
@@ -816,6 +817,40 @@ if(EIDOS_WASM AND EXISTS "${EIDOS_WAMR_ROOT}/build-scripts/runtime_lib.cmake")
     message(STATUS "eidos: wasm code mods on (${EIDOS_WAMR_ROOT})")
 else()
     message(STATUS "eidos: wasm code mods off (run tools/fetch_wamr.py)")
+endif()
+
+# TLS for the multiplayer relay (docs/multiplayer.md, "TLS"): Mbed TLS 3.6,
+# fetched and checked by tools/fetch_mbedtls.py into the user's local data
+# folder.  Without it the port builds and runs; a tls:// relay is refused
+# with a message.
+if(DEFINED ENV{EIDOS_MBEDTLS_CACHE})
+    file(TO_CMAKE_PATH "$ENV{EIDOS_MBEDTLS_CACHE}" _eidos_mbedtls_home)
+elseif(WIN32)
+    file(TO_CMAKE_PATH "$ENV{LOCALAPPDATA}/eidos/mbedtls" _eidos_mbedtls_home)
+elseif(APPLE)
+    set(_eidos_mbedtls_home "$ENV{HOME}/Library/Caches/eidos/mbedtls")
+elseif(DEFINED ENV{XDG_CACHE_HOME})
+    set(_eidos_mbedtls_home "$ENV{XDG_CACHE_HOME}/eidos/mbedtls")
+else()
+    set(_eidos_mbedtls_home "$ENV{HOME}/.cache/eidos/mbedtls")
+endif()
+set(EIDOS_MBEDTLS_ROOT "${_eidos_mbedtls_home}/mbedtls-3.6.7" CACHE PATH
+    "Mbed TLS 3.6.7 source folder (tools/fetch_mbedtls.py)")
+option(EIDOS_TLS "Build TLS for the relay when Mbed TLS is present" ON)
+if(EIDOS_TLS AND EXISTS "${EIDOS_MBEDTLS_ROOT}/library/ssl_tls.c")
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+    set(GEN_FILES OFF CACHE BOOL "" FORCE)
+    set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+    add_subdirectory(${EIDOS_MBEDTLS_ROOT} ${CMAKE_BINARY_DIR}/mbedtls EXCLUDE_FROM_ALL)
+    target_link_libraries(eidos PUBLIC mbedtls mbedx509 mbedcrypto)
+    set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_net.c APPEND PROPERTY
+        COMPILE_DEFINITIONS EIDOS_HAVE_TLS=1)
+    message(STATUS "eidos: TLS for the relay on (${EIDOS_MBEDTLS_ROOT})")
+else()
+    message(STATUS "eidos: TLS for the relay off (run tools/fetch_mbedtls.py)")
 endif()
 
 if(EIDOS_HEAP_MATCHED)

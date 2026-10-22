@@ -1208,7 +1208,211 @@ static const BwModNetTransport *the_transport(void)
     return &g_transport;
 }
 
-/* The port's own TCP transport. */
+/* The port's own TCP transport.  A relay written `tls://name` is reached
+ * over TLS on the same transport (below, "TLS"). */
+static int g_relay_tls;             /* the relay's address said tls:// */
+
+#ifdef EIDOS_HAVE_TLS
+/* ------------------------------------------------------------------ */
+/* TLS                                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The relay over TLS (metaxy docs/SPEC.md sections 2 and 9): Mbed TLS 3.6
+ * (tools/fetch_mbedtls.py), TLS 1.2 or 1.3, the relay's certificate checked
+ * against Let's Encrypt's two roots (sdk/tls_roots.c) and the relay's name.
+ * EIDOS_TLS_CA names one more root in a PEM file, for a relay with a
+ * certificate of its own (a self-hosted test).  The protocol is the same
+ * one; only the bytes go through the TLS layer.
+ */
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/error.h"
+#include "mbedtls/net_sockets.h"
+#include "mbedtls/ssl.h"
+#include "mbedtls/x509_crt.h"
+#include "psa/crypto.h"
+#include "tls_roots.h"
+
+typedef struct BwTls {
+    int                      up;        /* the handshake is done */
+    int                      made;      /* the structures below are set up */
+    mbedtls_ssl_context      ssl;
+    mbedtls_ssl_config       conf;
+    mbedtls_x509_crt         ca;
+    mbedtls_entropy_context  entropy;
+    mbedtls_ctr_drbg_context drbg;
+} BwTls;
+
+static BwTls g_tls;
+
+static int tls_bio_send(void *ctx, const unsigned char *buf, size_t len)
+{
+    BwSock s = *(BwSock *)ctx;
+    int rc = SOCK_SEND(s, (const char *)buf, (int)len, 0);
+
+    if (rc < 0) {
+        return sock_would_block() ? MBEDTLS_ERR_SSL_WANT_WRITE
+                                  : MBEDTLS_ERR_NET_SEND_FAILED;
+    }
+    return rc;
+}
+
+static int tls_bio_recv(void *ctx, unsigned char *buf, size_t len)
+{
+    BwSock s = *(BwSock *)ctx;
+    int rc;
+
+    if (sock_wait(s, 0, 0) != 1) {
+        return MBEDTLS_ERR_SSL_WANT_READ;
+    }
+    rc = SOCK_RECV(s, (char *)buf, (int)len, 0);
+    if (rc < 0) {
+        return sock_would_block() ? MBEDTLS_ERR_SSL_WANT_READ
+                                  : MBEDTLS_ERR_NET_RECV_FAILED;
+    }
+    return rc;                          /* 0: the other end closed it */
+}
+
+static void tls_free(void)
+{
+    if (g_tls.made) {
+        mbedtls_ssl_free(&g_tls.ssl);
+        mbedtls_ssl_config_free(&g_tls.conf);
+        mbedtls_x509_crt_free(&g_tls.ca);
+        mbedtls_ctr_drbg_free(&g_tls.drbg);
+        mbedtls_entropy_free(&g_tls.entropy);
+    }
+    memset(&g_tls, 0, sizeof(g_tls));
+}
+
+static void tls_say(const char *what, int rc)
+{
+    char why[128];
+
+    mbedtls_strerror(rc, why, sizeof(why));
+    fprintf(stderr, "eidos: the relay's TLS: %s: %s (-0x%04X)\n", what, why,
+            (unsigned)-rc);
+}
+
+/* The handshake over the connected socket `*s`, with the relay `host`. */
+static int tls_open(BwSock *s, const char *host)
+{
+    const char *extra = getenv("EIDOS_TLS_CA");
+    unsigned long long until = bw_clock_ns() + (unsigned long long)BW_MOD_NET_TIMEOUT_MS * 3000000ull;
+    int rc;
+
+    tls_free();
+    if (psa_crypto_init() != PSA_SUCCESS) {
+        fprintf(stderr, "eidos: the relay's TLS: the crypto library did not start\n");
+        return -1;
+    }
+    mbedtls_ssl_init(&g_tls.ssl);
+    mbedtls_ssl_config_init(&g_tls.conf);
+    mbedtls_x509_crt_init(&g_tls.ca);
+    mbedtls_entropy_init(&g_tls.entropy);
+    mbedtls_ctr_drbg_init(&g_tls.drbg);
+    g_tls.made = 1;
+    if ((rc = mbedtls_ctr_drbg_seed(&g_tls.drbg, mbedtls_entropy_func,
+                                    &g_tls.entropy, (const unsigned char *)"eidos", 5)) != 0) {
+        tls_say("no random source", rc);
+        return -1;
+    }
+    if ((rc = mbedtls_x509_crt_parse(&g_tls.ca, (const unsigned char *)bw_tls_roots_pem,
+                                     strlen(bw_tls_roots_pem) + 1)) != 0) {
+        tls_say("the built-in roots", rc);
+        return -1;
+    }
+    if (extra != NULL && extra[0] != '\0' &&
+        (rc = mbedtls_x509_crt_parse_file(&g_tls.ca, extra)) != 0) {
+        tls_say("EIDOS_TLS_CA", rc);
+        return -1;
+    }
+    if ((rc = mbedtls_ssl_config_defaults(&g_tls.conf, MBEDTLS_SSL_IS_CLIENT,
+                                          MBEDTLS_SSL_TRANSPORT_STREAM,
+                                          MBEDTLS_SSL_PRESET_DEFAULT)) != 0) {
+        tls_say("the settings", rc);
+        return -1;
+    }
+    mbedtls_ssl_conf_authmode(&g_tls.conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_ca_chain(&g_tls.conf, &g_tls.ca, NULL);
+    mbedtls_ssl_conf_rng(&g_tls.conf, mbedtls_ctr_drbg_random, &g_tls.drbg);
+    mbedtls_ssl_conf_min_tls_version(&g_tls.conf, MBEDTLS_SSL_VERSION_TLS1_2);
+    if ((rc = mbedtls_ssl_setup(&g_tls.ssl, &g_tls.conf)) != 0 ||
+        (rc = mbedtls_ssl_set_hostname(&g_tls.ssl, host)) != 0) {
+        tls_say("the session", rc);
+        return -1;
+    }
+    mbedtls_ssl_set_bio(&g_tls.ssl, s, tls_bio_send, tls_bio_recv, NULL);
+    while ((rc = mbedtls_ssl_handshake(&g_tls.ssl)) != 0) {
+        if (rc != MBEDTLS_ERR_SSL_WANT_READ && rc != MBEDTLS_ERR_SSL_WANT_WRITE) {
+            u32 flags = mbedtls_ssl_get_verify_result(&g_tls.ssl);
+
+            if (flags != 0 && flags != (u32)-1) {
+                char why[256];
+
+                mbedtls_x509_crt_verify_info(why, sizeof(why), "", flags);
+                fprintf(stderr, "eidos: the relay's TLS: its certificate is "
+                        "refused: %s", why);
+            }
+            tls_say("the handshake", rc);
+            return -1;
+        }
+        if (bw_clock_ns() > until) {
+            fprintf(stderr, "eidos: the relay's TLS: the handshake took too long\n");
+            return -1;
+        }
+        (void)sock_wait(*s, 50, rc == MBEDTLS_ERR_SSL_WANT_WRITE);
+    }
+    g_tls.up = 1;
+    fprintf(stderr, "eidos: the relay's TLS: %s, %s\n",
+            mbedtls_ssl_get_version(&g_tls.ssl),
+            mbedtls_ssl_get_ciphersuite(&g_tls.ssl));
+    return 0;
+}
+
+static int tls_send_all(const void *buf, u32 size)
+{
+    const unsigned char *p = (const unsigned char *)buf;
+    u32 left = size;
+
+    while (left > 0) {
+        int rc = mbedtls_ssl_write(&g_tls.ssl, p, left);
+
+        if (rc == MBEDTLS_ERR_SSL_WANT_WRITE || rc == MBEDTLS_ERR_SSL_WANT_READ) {
+            continue;
+        }
+        if (rc <= 0) {
+            tls_say("a send", rc);
+            return -1;
+        }
+        p += rc;
+        left -= (u32)rc;
+    }
+    return 0;
+}
+
+/* 1 when bytes were read, 0 when there is nothing now, -1 when closed. */
+static int tls_recv_some(void *buf, u32 size, u32 *out)
+{
+    int rc = mbedtls_ssl_read(&g_tls.ssl, (unsigned char *)buf, size);
+
+    *out = 0;
+    if (rc > 0) {
+        *out = (u32)rc;
+        return 1;
+    }
+    if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE ||
+        rc == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {
+        return 0;
+    }
+    if (rc != 0 && rc != MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+        tls_say("a read", rc);
+    }
+    return -1;
+}
+#endif /* EIDOS_HAVE_TLS */
+
 static int tcp_connect(void *user, const char *host, u16 port)
 {
     BwSock *s = (BwSock *)user;
@@ -1226,6 +1430,21 @@ static int tcp_connect(void *user, const char *host, u16 port)
         *s = BW_SOCK_INVALID;
         return -1;
     }
+    if (g_relay_tls) {
+#ifdef EIDOS_HAVE_TLS
+        if (tls_open(s, host) != 0) {
+            sock_shutdown(*s);
+            *s = BW_SOCK_INVALID;
+            return -1;
+        }
+#else
+        fprintf(stderr, "eidos: the relay %s asks for TLS, and this build has "
+                "none (tools/fetch_mbedtls.py)\n", host);
+        sock_shutdown(*s);
+        *s = BW_SOCK_INVALID;
+        return -1;
+#endif
+    }
     return 0;
 }
 
@@ -1236,6 +1455,11 @@ static int tcp_send(void *user, const void *buf, u32 size)
     if (s == NULL || *s == BW_SOCK_INVALID) {
         return -1;
     }
+#ifdef EIDOS_HAVE_TLS
+    if (g_tls.up) {
+        return tls_send_all(buf, size);
+    }
+#endif
     return sock_send_all(*s, buf, size);
 }
 
@@ -1249,6 +1473,11 @@ static int tcp_recv(void *user, void *buf, u32 size, u32 *out_size)
     if (s == NULL || *s == BW_SOCK_INVALID) {
         return -1;
     }
+#ifdef EIDOS_HAVE_TLS
+    if (g_tls.up) {
+        return tls_recv_some(buf, size, out_size);
+    }
+#endif
     return sock_recv_some(*s, buf, size, out_size);
 }
 
@@ -1257,6 +1486,12 @@ static void tcp_close(void *user)
     BwSock *s = (BwSock *)user;
 
     if (s != NULL && *s != BW_SOCK_INVALID) {
+#ifdef EIDOS_HAVE_TLS
+        if (g_tls.up) {
+            (void)mbedtls_ssl_close_notify(&g_tls.ssl);
+        }
+        tls_free();
+#endif
         sock_shutdown(*s);
         *s = BW_SOCK_INVALID;
     }
@@ -2619,6 +2854,12 @@ void bw_mod_net_set_relay(const char *host, u16 port)
 
     net_init();
     bw_mutex_lock(g_lock);
+    /* "tls://relay.example.org": the relay is reached over TLS */
+    g_relay_tls = host != NULL && strncmp(host, "tls://", 6) == 0;
+    if (g_relay_tls) {
+        host += 6;
+        colon = strchr(host, ':');
+    }
     copy_text(g_relay, sizeof(g_relay), host);
     g_relay_port = port;
     /* "relay.example.org:4141": a port written after the name wins (one

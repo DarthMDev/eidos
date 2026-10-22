@@ -143,7 +143,7 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 
 /* The Network section: the port's own settings for the network service. */
 #define HELP_NET_RELAY1  "The relay address."
-#define HELP_NET_RELAY2  ""
+#define HELP_NET_RELAY2  "tls://name: secure"
 #define HELP_NET_RPORT1  "The relay port."
 #define HELP_NET_RPORT2  "A: type"
 #define HELP_NET_CPORT1  "The control port."
