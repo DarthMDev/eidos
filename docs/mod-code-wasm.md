@@ -131,13 +131,17 @@ namespace, settings and tables, and the same place in the load order.
   the handler had answered `EIDOS_EVENT_CONTINUE`, and the mod stays loaded.
 - `on_frame` uses a pool of 16 host trampolines, one per mod that binds a
   frame handler. A mod's slot is given back when the mod stops.
+- `on_session` and `on_command` use pools of the same kind. A session
+  handler is a table entry `(peer, kind, bytes, size)`; a command handler is
+  `(text, length)`. The bytes and the text are copies in the port's page
+  (the text ends in a NUL), made the way an event's payload is.
 - The Mods page of the settings reloads a changed `.wasm` file the same way
   it reloads a native library: the instance is stopped and freed, and a new
   one is made from the file.
 
-Not yet: `override` and `original` answer -1, and `on_session`,
-`on_command` and `on_save_received` bind nothing; each says so once in the
-log. The memory cap and the step budget of "Seams" item 5 are not
+Not yet: `override` and `original` answer -1, and `on_save_received`
+binds nothing (a save does not fit the port's page); each says so once in
+the log. The memory cap and the step budget of "Seams" item 5 are not
 enforced.
 
 `tests/test_mod_wasm.c` loads a hand-assembled module through the loader:

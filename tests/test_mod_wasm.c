@@ -79,6 +79,7 @@
 #define T_IMPORT T_ROOT "/import"
 #define T_NOGROW T_ROOT "/nogrow"
 #define T_NESTED T_ROOT "/nested"
+#define T_SESSION T_ROOT "/session"
 #define T_FLAG 0x123u
 
 static const unsigned char k_module[] = {
@@ -184,6 +185,115 @@ static const unsigned char k_nested[] = {
 };
 
 #include "wasm_export.h"
+#include "mod_net.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+/*
+ * The session module: it binds services.on_session, and its handler hands
+ * what it was given back through a test import:
+ *
+ *   (import "eidos" "on_session" (func (param i32)))
+ *   (import "eidostest" "note" (func $note (param i32 i32 i32 i32)))
+ *   (func (export "eidos_mod_start") (result i32)
+ *     (call 0 (i32.const 0)) (i32.const 0))
+ *   (func $session (param $peer i32) (param $kind i32) (param $p i32)
+ *                  (param $n i32)
+ *     (call $note (local.get $peer) (local.get $kind)
+ *       (if (result i32) (local.get $n)
+ *         (then (i32.load8_u (local.get $p))) (else (i32.const 0)))
+ *       (local.get $n)))
+ */
+static const unsigned char k_session[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x13, 0x04, 0x60,
+    0x01, 0x7f, 0x00, 0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x00, 0x60, 0x00,
+    0x01, 0x7f, 0x60, 0x00, 0x00, 0x02, 0x25, 0x02, 0x05, 0x65, 0x69, 0x64,
+    0x6f, 0x73, 0x0a, 0x6f, 0x6e, 0x5f, 0x73, 0x65, 0x73, 0x73, 0x69, 0x6f,
+    0x6e, 0x00, 0x00, 0x09, 0x65, 0x69, 0x64, 0x6f, 0x73, 0x74, 0x65, 0x73,
+    0x74, 0x04, 0x6e, 0x6f, 0x74, 0x65, 0x00, 0x01, 0x03, 0x04, 0x03, 0x02,
+    0x03, 0x01, 0x04, 0x04, 0x01, 0x70, 0x00, 0x01, 0x05, 0x03, 0x01, 0x00,
+    0x01, 0x07, 0x2d, 0x03, 0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02,
+    0x00, 0x0f, 0x65, 0x69, 0x64, 0x6f, 0x73, 0x5f, 0x6d, 0x6f, 0x64, 0x5f,
+    0x73, 0x74, 0x61, 0x72, 0x74, 0x00, 0x02, 0x0e, 0x65, 0x69, 0x64, 0x6f,
+    0x73, 0x5f, 0x6d, 0x6f, 0x64, 0x5f, 0x73, 0x74, 0x6f, 0x70, 0x00, 0x03,
+    0x09, 0x07, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x01, 0x04, 0x0a, 0x25, 0x03,
+    0x08, 0x00, 0x41, 0x00, 0x10, 0x00, 0x41, 0x00, 0x0b, 0x02, 0x00, 0x0b,
+    0x17, 0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x03, 0x04, 0x7f, 0x20, 0x02,
+    0x2d, 0x00, 0x00, 0x05, 0x41, 0x00, 0x0b, 0x20, 0x03, 0x10, 0x01, 0x0b
+};
+
+/* What the session handler noted: peer, kind, first byte, size. */
+static u32 g_note[8][4];
+static u32 g_notes;
+
+static void test_note(wasm_exec_env_t env, int32_t peer, int32_t kind,
+                      int32_t first, int32_t size)
+{
+    (void)env;
+    if (g_notes < 8) {
+        g_note[g_notes][0] = (u32)peer;
+        g_note[g_notes][1] = (u32)kind;
+        g_note[g_notes][2] = (u32)first;
+        g_note[g_notes][3] = (u32)size;
+        g_notes++;
+    }
+}
+
+/* A relay that says a fixed script: the code, a peer's join, and one
+ * message for the session module's key. */
+static const char k_relay_script[] =
+    "C 6\nABC234"
+    "P 7\n2 guest"
+    "D 16\n2\nwasmsession\nZ!";
+static u32 g_relay_at;
+
+static int fake_connect(void *user, const char *host, u16 port)
+{
+    (void)user;
+    (void)host;
+    (void)port;
+    g_relay_at = 0;
+    return 0;
+}
+
+static int fake_send(void *user, const void *buf, u32 size)
+{
+    (void)user;
+    (void)buf;
+    (void)size;
+    return 0;
+}
+
+static int fake_recv(void *user, void *buf, u32 size, u32 *out_size)
+{
+    u32 left = (u32)sizeof(k_relay_script) - 1u - g_relay_at;
+    u32 n = left < size ? left : size;
+
+    (void)user;
+    *out_size = 0;
+    if (n == 0) {
+        return 0;
+    }
+    memcpy(buf, k_relay_script + g_relay_at, n);
+    g_relay_at += n;
+    *out_size = n;
+    return 1;
+}
+
+static void fake_close(void *user)
+{
+    (void)user;
+}
+
+static void t_sleep_ms(unsigned ms)
+{
+#ifdef _WIN32
+    Sleep(ms);
+#else
+    usleep(ms * 1000u);
+#endif
+}
 
 /* eidostest.fire: flag.set for flag 0x200, from inside a handler. */
 static int32_t test_fire(wasm_exec_env_t env, int32_t unused)
@@ -200,6 +310,7 @@ static int32_t test_fire(wasm_exec_env_t env, int32_t unused)
 
 static NativeSymbol k_test_natives[] = {
     { "fire", (void *)test_fire, "(i)i", NULL },
+    { "note", (void *)test_note, "(iiii)", NULL },
 };
 #endif
 
@@ -285,7 +396,7 @@ static int write_mod(const char *dir, const char *title, const char *ns,
 
 static void clean_tree(void)
 {
-    static const char *const dirs[] = { T_GOOD, T_BAD, T_IMPORT, T_NOGROW, T_NESTED };
+    static const char *const dirs[] = { T_GOOD, T_BAD, T_IMPORT, T_NOGROW, T_NESTED, T_SESSION };
     char path[512];
     size_t i;
 
@@ -301,6 +412,7 @@ static void clean_tree(void)
     BW_RMDIR(T_ROOT "/save/mods/wasmimport");
     BW_RMDIR(T_ROOT "/save/mods/wasmnogrow");
     BW_RMDIR(T_ROOT "/save/mods/wasmnested");
+    BW_RMDIR(T_ROOT "/save/mods/wasmsession");
     BW_RMDIR(T_ROOT "/save/mods");
     BW_RMDIR(T_ROOT "/save");
     BW_RMDIR(T_ROOT);
@@ -438,7 +550,7 @@ int main(void)
                write_mod(T_NESTED, "Nested", "wasmnested", k_nested,
                          sizeof k_nested) == 0);
     BW_REQUIRE("the test's import is registered",
-               wasm_runtime_register_natives("eidostest", k_test_natives, 1));
+               wasm_runtime_register_natives("eidostest", k_test_natives, 2));
     bw_clear_mods();
     BW_REQUIRE("the nested module is added", bw_add_mod_root(T_NESTED) == 0);
     BW_CHECK_EQ("it loads", (long)bw_mod_loader_load_all(), 1);
@@ -452,6 +564,47 @@ int main(void)
                 (long)bw_mod_event_enter(menu_row->region, menu_row->addr,
                                          &call, &payload), 1);
     bw_mod_loader_stop_all();
+
+    printf("a session handler\n");
+    {
+        static BwModNetTransport fake = {
+            NULL, fake_connect, fake_send, fake_recv, fake_close
+        };
+        char code[BW_MOD_NET_CODE_MAX + 1];
+        int spins;
+
+        BW_MKDIR(T_SESSION);
+        BW_REQUIRE("the session module is written",
+                   write_mod(T_SESSION, "Session", "wasmsession", k_session,
+                             sizeof k_session) == 0);
+        bw_mod_net_reset();
+        bw_mod_net_set_transport(&fake);
+        bw_mod_net_set_relay("relay.test", 4141);
+        bw_clear_mods();
+        BW_REQUIRE("the session module is added",
+                   bw_add_mod_root(T_SESSION) == 0);
+        BW_CHECK_EQ("it loads", (long)bw_mod_loader_load_all(), 1);
+        BW_REQUIRE("the session is hosted",
+                   bw_mod_net_session_host(code, sizeof code) ==
+                   (int)BW_MOD_NET_OK);
+        for (spins = 0; spins < 2000 && g_notes < 2; spins++) {
+            bw_mod_net_frame();
+            t_sleep_ms(1);
+        }
+        BW_CHECK_EQ("the handler saw the join and the message",
+                    (long)g_notes, 2);
+        BW_CHECK_EQ("the join names peer 2", (long)g_note[0][0], 2);
+        BW_CHECK_EQ("as a join", (long)g_note[0][1], (long)BW_SESSION_JOIN);
+        BW_CHECK_EQ("the message is from peer 2", (long)g_note[1][0], 2);
+        BW_CHECK_EQ("as a message", (long)g_note[1][1],
+                    (long)BW_SESSION_MESSAGE);
+        BW_CHECK_EQ("its bytes reached the module's copy",
+                    (long)g_note[1][2], (long)'Z');
+        BW_CHECK_EQ("all of them", (long)g_note[1][3], 2);
+        bw_mod_net_session_leave();
+        bw_mod_loader_stop_all();
+        bw_mod_net_reset();
+    }
 #endif
 
     clean_tree();

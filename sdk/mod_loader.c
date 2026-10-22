@@ -1127,6 +1127,7 @@ static int loader_load(u32 index)
         m->loaded = 0;
         if (m->wasm != NULL) {
             bw_mod_frame_remove_for(m->ns);
+            bw_mod_net_remove_for(m->ns);
             bw_mod_wasm_close(m->wasm);
             m->wasm = NULL;
         } else {
@@ -1207,6 +1208,7 @@ static void loader_stop(BwModLoaderMod *m)
      *     into a library that is gone. */
     bw_mod_script_remove_for(m->ns);
     bw_mod_frame_remove_for(m->ns);
+    bw_mod_net_remove_for(m->ns);
 
     /* 2. the mod's stop entry point.  The namespace is in force, so a
      *    state call the mod makes here reaches the mod's own file: this

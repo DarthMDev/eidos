@@ -189,6 +189,10 @@ void bw_mod_net_on_session(BwSessionHandler fn);
  * connected tool.
  */
 void bw_mod_net_on_command(BwCommandHandler fn);
+
+/* Forget the session and command handlers of the mod with namespace `ns`
+ * (the loader, when it stops the mod). */
+void bw_mod_net_remove_for(const char *ns);
 void bw_mod_net_publish(const char *topic, const char *json);
 
 /* ------------------------------------------------------------------ */

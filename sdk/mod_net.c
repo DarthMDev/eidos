@@ -1897,9 +1897,9 @@ int bw_mod_net_session_host(char *code_out, u32 size)
         token_keep(clean, token);
     }
     g_net_stop = 0;
-    g_rx.state = 0;
-    g_rx.len = 0;
-    g_rx.pos = 0;
+    /* The read buffer is kept: the frames that came in the same read as the
+     * relay's answer (the welcome after the code, the peers after the
+     * welcome) are the reader's first. */
     g_net_thread = bw_thread_start(net_reader, NULL);
     bw_mutex_unlock(g_lock);
     return BW_MOD_NET_OK;
@@ -2029,9 +2029,9 @@ int bw_mod_net_session_join(const char *code)
     }
     copy_text(g_session.token, sizeof(g_session.token), token);
     g_net_stop = 0;
-    g_rx.state = 0;
-    g_rx.len = 0;
-    g_rx.pos = 0;
+    /* The read buffer is kept: the frames that came in the same read as the
+     * relay's answer (the welcome after the code, the peers after the
+     * welcome) are the reader's first. */
     g_net_thread = bw_thread_start(net_reader, NULL);
     bw_mutex_unlock(g_lock);
     return BW_MOD_NET_OK;
@@ -2310,6 +2310,27 @@ void bw_mod_net_on_command(BwCommandHandler fn)
     }
     bw_mutex_unlock(g_lock);
     (void)control_start();
+}
+
+/*
+ * Forget the handlers of one mod: the loader calls this when it stops the
+ * mod, before the mod's code goes away.
+ */
+void bw_mod_net_remove_for(const char *ns)
+{
+    u32 i;
+
+    net_init();
+    if (ns == NULL) {
+        return;
+    }
+    bw_mutex_lock(g_lock);
+    for (i = 0; i < BW_MOD_NET_MODS_MAX; i++) {
+        if (g_mods[i].used && strcmp(g_mods[i].ns, ns) == 0) {
+            memset(&g_mods[i], 0, sizeof(g_mods[i]));
+        }
+    }
+    bw_mutex_unlock(g_lock);
 }
 
 /*

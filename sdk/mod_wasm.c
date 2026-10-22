@@ -68,6 +68,8 @@ typedef struct BwWasmMod {
     u32                 script_count;
     s32                 frame_slot;     /* the frame trampoline, -1 none */
     u32                 frame_index;
+    u32                 session_index;
+    u32                 command_index;
     int                 said_unsupported;
     u32                 scratch_base;   /* the port's page: payload copies */
     u32                 scratch_size;
@@ -256,18 +258,170 @@ static void wasm_bind_on_frame(BwWasmMod *w, int32_t index)
     w->host->services->on_frame(g_frame_fn[w->frame_slot]);
 }
 
-/* The handlers this version does not carry over yet. */
-static void wasm_bind_on_session(BwWasmMod *w, int32_t index)
+/* ------------------------------------------------------------------ */
+/* The session and command handlers: the same kind of pool              */
+/* ------------------------------------------------------------------ */
+
+/* Call the function at table `index` with `argc` i32 arguments, `bytes`
+ * copied into the port's page first (its address goes in argv[ptr_arg]). */
+static void wasm_call_with_bytes(BwWasmMod *w, u32 index, uint32_t *argv,
+                                 u32 argc, u32 ptr_arg, const void *bytes,
+                                 u32 size)
 {
-    (void)index;
-    say_unsupported(w, "services.on_session");
+    u32 need = (size + 8u) & ~7u;      /* one byte more: a text's NUL */
+    u32 app = 0;
+
+    if (size > 0 || bytes != NULL) {
+        void *native;
+
+        if (need > w->scratch_size - w->scratch_used) {
+            fprintf(stderr, "eidos: mod %s: %u bytes do not fit the port's "
+                    "page\n", w->label, (unsigned)size);
+            return;
+        }
+        app = w->scratch_base + w->scratch_used;
+        native = wasm_runtime_addr_app_to_native(w->inst, app);
+        if (native == NULL) {
+            return;
+        }
+        if (size > 0) {
+            memcpy(native, bytes, size);
+        }
+        ((u8 *)native)[size] = 0;
+        w->scratch_used += need;
+    }
+    argv[ptr_arg] = app;
+    wasm_thread_ready();
+    if (!wasm_runtime_call_indirect(w->env, index, argc, argv)) {
+        fprintf(stderr, "eidos: mod %s: %s\n", w->label,
+                wasm_runtime_get_exception(w->inst));
+        wasm_runtime_clear_exception(w->inst);
+    }
+    if (app != 0) {
+        w->scratch_used -= need;
+    }
 }
 
+static BwWasmMod *g_session_mod[BW_WASM_FRAME_SLOTS];
+static BwWasmMod *g_command_mod[BW_WASM_FRAME_SLOTS];
+
+/* A session event: (peer, kind, bytes, size) for the module. */
+static void wasm_session_run(u32 slot, u32 peer, int kind, const void *buf,
+                             u32 size)
+{
+    BwWasmMod *w = g_session_mod[slot];
+    uint32_t argv[4];
+
+    if (w == NULL) {
+        return;
+    }
+    argv[0] = peer;
+    argv[1] = (uint32_t)kind;
+    argv[3] = size;
+    wasm_call_with_bytes(w, w->session_index, argv, 4, 2, buf, size);
+}
+
+/* A command line: (text, length) for the module; the text ends in a NUL. */
+static void wasm_command_run(u32 slot, const char *line)
+{
+    BwWasmMod *w = g_command_mod[slot];
+    uint32_t argv[2];
+    u32 len = line != NULL ? (u32)strlen(line) : 0u;
+
+    if (w == NULL) {
+        return;
+    }
+    argv[1] = len;
+    wasm_call_with_bytes(w, w->command_index, argv, 2, 0,
+                         line != NULL ? line : "", len);
+}
+
+#define BW_WASM_SESSION(n) \
+    static void wasm_session_##n(u32 peer, int kind, const void *buf, u32 size) \
+    { wasm_session_run(n, peer, kind, buf, size); } \
+    static void wasm_command_##n(const char *line) { wasm_command_run(n, line); }
+BW_WASM_SESSION(0) BW_WASM_SESSION(1) BW_WASM_SESSION(2) BW_WASM_SESSION(3)
+BW_WASM_SESSION(4) BW_WASM_SESSION(5) BW_WASM_SESSION(6) BW_WASM_SESSION(7)
+BW_WASM_SESSION(8) BW_WASM_SESSION(9) BW_WASM_SESSION(10) BW_WASM_SESSION(11)
+BW_WASM_SESSION(12) BW_WASM_SESSION(13) BW_WASM_SESSION(14) BW_WASM_SESSION(15)
+#undef BW_WASM_SESSION
+
+static const BwSessionHandler g_session_fn[BW_WASM_FRAME_SLOTS] = {
+    wasm_session_0, wasm_session_1, wasm_session_2, wasm_session_3,
+    wasm_session_4, wasm_session_5, wasm_session_6, wasm_session_7,
+    wasm_session_8, wasm_session_9, wasm_session_10, wasm_session_11,
+    wasm_session_12, wasm_session_13, wasm_session_14, wasm_session_15
+};
+
+static const BwCommandHandler g_command_fn[BW_WASM_FRAME_SLOTS] = {
+    wasm_command_0, wasm_command_1, wasm_command_2, wasm_command_3,
+    wasm_command_4, wasm_command_5, wasm_command_6, wasm_command_7,
+    wasm_command_8, wasm_command_9, wasm_command_10, wasm_command_11,
+    wasm_command_12, wasm_command_13, wasm_command_14, wasm_command_15
+};
+
+/* A slot of `pool` for `w`: the one it holds, or a free one; -1 when the
+ * pool is full. */
+static s32 pool_slot(BwWasmMod **pool, BwWasmMod *w)
+{
+    u32 i;
+
+    for (i = 0; i < BW_WASM_FRAME_SLOTS; i++) {
+        if (pool[i] == w) {
+            return (s32)i;
+        }
+    }
+    for (i = 0; i < BW_WASM_FRAME_SLOTS; i++) {
+        if (pool[i] == NULL) {
+            pool[i] = w;
+            return (s32)i;
+        }
+    }
+    return -1;
+}
+
+/* services.on_session from a wasm mod.  The handler is the module's table
+ * entry (peer, kind, bytes, size); the bytes are a copy in the port's page. */
+static void wasm_bind_on_session(BwWasmMod *w, int32_t index)
+{
+    s32 slot;
+
+    if (w == NULL || w->host == NULL || w->host->services == NULL ||
+        w->host->services->on_session == NULL) {
+        return;
+    }
+    slot = pool_slot(g_session_mod, w);
+    if (slot < 0) {
+        fprintf(stderr, "eidos: mod %s: too many wasm mods hold a session "
+                "handler\n", w->label);
+        return;
+    }
+    w->session_index = (u32)index;
+    w->host->services->on_session(g_session_fn[slot]);
+}
+
+/* services.on_command from a wasm mod.  The handler is the module's table
+ * entry (text, length); the text is a copy in the port's page, NUL-ended. */
 static void wasm_bind_on_command(BwWasmMod *w, int32_t index)
 {
-    (void)index;
-    say_unsupported(w, "services.on_command");
+    s32 slot;
+
+    if (w == NULL || w->host == NULL || w->host->services == NULL ||
+        w->host->services->on_command == NULL) {
+        return;
+    }
+    slot = pool_slot(g_command_mod, w);
+    if (slot < 0) {
+        fprintf(stderr, "eidos: mod %s: too many wasm mods hold a command "
+                "handler\n", w->label);
+        return;
+    }
+    w->command_index = (u32)index;
+    w->host->services->on_command(g_command_fn[slot]);
 }
+
+/* The handler this version does not carry over yet: a save is larger than
+ * the port's page. */
 
 static void wasm_bind_on_save_received(BwWasmMod *w, int32_t index)
 {
@@ -709,6 +863,20 @@ void bw_mod_wasm_close(void *wasm)
     }
     if (w->frame_slot >= 0) {
         g_frame_mod[w->frame_slot] = NULL;
+    }
+    /* A trampoline the network service still holds finds no mod and does
+     * nothing. */
+    {
+        u32 i;
+
+        for (i = 0; i < BW_WASM_FRAME_SLOTS; i++) {
+            if (g_session_mod[i] == w) {
+                g_session_mod[i] = NULL;
+            }
+            if (g_command_mod[i] == w) {
+                g_command_mod[i] = NULL;
+            }
+        }
     }
     if (w->env != NULL) {
         wasm_runtime_destroy_exec_env(w->env);

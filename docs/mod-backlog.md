@@ -39,5 +39,5 @@ cannot be verified stays here rather than shipping half-working.
 | Field object codes | `FLDMMDL_OBJCODE_TABLE_COUNT` is named; the code-to-table remap is the port's. |
 | Species to 2047 | Waits on aletheia's names for the species sites. |
 | Wasm overrides | `override` and `original` answer -1 in a wasm mod. A hook of `hooks.json` needs a native function per prototype that calls the module's table entry; the pool is generated from `hooks.json`. |
-| Wasm session, command and save handlers | `on_session`, `on_command` and `on_save_received` answer nothing in a wasm mod and say so once. Each needs its payload copied into the module the way an event's is. |
+| Wasm save handler | `on_save_received` answers nothing in a wasm mod and says so once. A save is larger than the port's 64 KiB page, so it needs a copy made in memory the module grows for it. |
 | Wasm limits | The memory cap (`memory = <MiB>`) and a step budget per call are not enforced yet; a module that loops forever stops the game. |
