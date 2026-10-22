@@ -619,6 +619,15 @@ void *bw_mod_wasm_open(const char *path, const char *label, char *err,
             bw_mod_wasm_close(w);
             return NULL;
         }
+        /* WAMR folds the memory of a module that never grows it into one
+         * page of its own size; tools/fetch_wamr.py turns that off, and a
+         * runtime built without the change is caught here. */
+        if (wasm_memory_get_bytes_per_page(mem) != BW_WASM_PAGE) {
+            snprintf(err, err_size, "the wasm runtime fixed the module's "
+                     "memory size (run tools/fetch_wamr.py again and rebuild)");
+            bw_mod_wasm_close(w);
+            return NULL;
+        }
         if (pages + BW_WASM_SCRATCH_PAGES > max ||
             pages + BW_WASM_SCRATCH_PAGES > 65536u ||
             !wasm_runtime_enlarge_memory(w->inst, BW_WASM_SCRATCH_PAGES)) {

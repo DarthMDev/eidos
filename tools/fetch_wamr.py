@@ -14,12 +14,16 @@ One pinned release, verified against the SHA-256 below:
 
   WAMR-2.2.0.tar.gz   the source of the release tag WAMR-2.2.0
 
-Two small changes are made to the unpacked source so it builds with MinGW
-(GCC for Windows), which the release supports only with MSVC: the Windows
-platform header does not define ssize_t again when the C library already
-does, and win_clock.c does not declare NtQueryTimerResolution again when
-MinGW's own headers do.  Each change is idempotent; the unpacked tree is
-otherwise the release's.
+Three small changes are made to the unpacked source.  Two let it build
+with MinGW (GCC for Windows), which the release supports only with MSVC:
+the Windows platform header does not define ssize_t again when the C
+library already does, and win_clock.c does not declare
+NtQueryTimerResolution again when MinGW's own headers do.  The third keeps
+a module's memory as the module declared it: WAMR's loader shrinks the
+memory of a module that has no memory.size or memory.grow opcode to its
+data and fixes its maximum there, and the port grows every module's memory
+by one page after instantiation for its payload copies (sdk/mod_wasm.c).
+Each change is idempotent; the unpacked tree is otherwise the release's.
 
 Where things go.  Nothing is written into the repository.  The cache is,
 in order: --cache, the EIDOS_WAMR_CACHE environment variable, then the
@@ -102,6 +106,16 @@ def patch(root):
                  'PULONG MinimumResolution, PULONG MaximumResolution,\n'
                  '                       PULONG CurrentResolution);\n#endif',
                  '#ifndef __MINGW32__\nextern NTSTATUS')
+    replace_once(os.path.join(root, 'core', 'iwasm', 'interpreter',
+                              'wasm_loader.c'),
+                 '    if (!module->possible_memory_grow) {\n'
+                 '        WASMMemoryImport *memory_import;',
+                 '    /* eidos: the port grows every module\'s memory by one page\n'
+                 '     * after instantiation (sdk/mod_wasm.c), so the memory keeps\n'
+                 '     * the size, page size and maximum the module declared. */\n'
+                 '    if (0 && !module->possible_memory_grow) {\n'
+                 '        WASMMemoryImport *memory_import;',
+                 '/* eidos: the port grows every module')
 
 
 def main(argv):

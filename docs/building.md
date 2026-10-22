@@ -79,7 +79,11 @@ Code mods built for WebAssembly (docs/mod-code-wasm.md) run in WAMR 2.2.0,
 the interpreter only. `python tools/fetch_wamr.py` downloads the release,
 checks its SHA-256, unpacks it into the per-user cache (the same places as
 SDL's, under `eidos/wamr`; `EIDOS_WAMR_CACHE` or `--cache` names another)
-and makes the two small changes MinGW needs. CMake finds it there
+and makes three small changes: two that MinGW needs, and one that keeps
+a module's memory as the module declared it (WAMR otherwise fixes the size
+of a module that never grows its memory, and the port adds a page to every
+module).  An older unpack is patched when the script runs again; CMake
+stops with a message when the tree lacks the third change. CMake finds it there
 (`-DEIDOS_WAMR_ROOT=` names another source folder) and builds it as one
 static library, `eidos_wamr`, with the host's own struct layout. The
 configure line says `eidos: wasm code mods on` or `off`. Without it, or with

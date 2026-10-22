@@ -797,6 +797,15 @@ set(EIDOS_WAMR_ROOT "${_eidos_wamr_home}/wasm-micro-runtime-WAMR-2.2.0" CACHE PA
     "WAMR 2.2.0 source folder (tools/fetch_wamr.py)")
 option(EIDOS_WASM "Build the wasm code-mod runtime when WAMR is present" ON)
 if(EIDOS_WASM AND EXISTS "${EIDOS_WAMR_ROOT}/build-scripts/runtime_lib.cmake")
+    # The port grows every module's memory by a page (sdk/mod_wasm.c); a
+    # tree without fetch_wamr.py's memory change would refuse modules that
+    # never grow their memory.
+    file(STRINGS "${EIDOS_WAMR_ROOT}/core/iwasm/interpreter/wasm_loader.c"
+         _eidos_wamr_keep LIMIT_COUNT 1 REGEX "eidos: the port grows every module")
+    if(NOT _eidos_wamr_keep)
+        message(FATAL_ERROR "${EIDOS_WAMR_ROOT} lacks the memory change: "
+                "run python tools/fetch_wamr.py again")
+    endif()
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cmake/wamr ${CMAKE_BINARY_DIR}/wamr)
     target_link_libraries(eidos PUBLIC eidos_wamr)
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_wasm.c

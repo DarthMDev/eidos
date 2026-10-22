@@ -38,6 +38,7 @@
  *   - a handler that traps lets the action go on and the port runs on;
  *   - a file with the wasm magic that is not a valid module is refused;
  *   - a module with an import the port does not provide is refused at load;
+ *   - a module with no memory.grow opcode loads and gets the same page;
  *   - after the stop no handler of the module runs.
  *
  * A build without the runtime refuses the module with a message; the test
@@ -74,6 +75,7 @@
 #define T_GOOD T_ROOT "/good"
 #define T_BAD  T_ROOT "/bad"
 #define T_IMPORT T_ROOT "/import"
+#define T_NOGROW T_ROOT "/nogrow"
 #define T_FLAG 0x123u
 
 static const unsigned char k_module[] = {
@@ -112,6 +114,28 @@ static const unsigned char k_bad_import[] = {
     0x0b, 0x14, 0x00, 0x20, 0x00, 0x2f, 0x00, 0x08, 0x41, 0xa3, 0x02, 0x46,
     0x20, 0x00, 0x41, 0x10, 0x76, 0x41, 0x01, 0x46, 0x71, 0x0b, 0x03, 0x00,
     0x00, 0x0b
+};
+
+/* The module without its memory.grow: no memory.size or memory.grow opcode
+ * at all.  WAMR's loader fixes the memory of such a module at its data
+ * unless tools/fetch_wamr.py's change is in; the port's page must still be
+ * added, and it is page 1 here too. */
+static const unsigned char k_no_grow[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x13, 0x04, 0x60,
+    0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x00,
+    0x01, 0x7f, 0x60, 0x00, 0x00, 0x02, 0x0c, 0x01, 0x05, 0x65, 0x69, 0x64,
+    0x6f, 0x73, 0x02, 0x6f, 0x6e, 0x00, 0x00, 0x03, 0x05, 0x04, 0x02, 0x03,
+    0x01, 0x01, 0x04, 0x04, 0x01, 0x70, 0x00, 0x02, 0x05, 0x03, 0x01, 0x00,
+    0x01, 0x07, 0x2d, 0x03, 0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02,
+    0x00, 0x0f, 0x65, 0x69, 0x64, 0x6f, 0x73, 0x5f, 0x6d, 0x6f, 0x64, 0x5f,
+    0x73, 0x74, 0x61, 0x72, 0x74, 0x00, 0x01, 0x0e, 0x65, 0x69, 0x64, 0x6f,
+    0x73, 0x5f, 0x6d, 0x6f, 0x64, 0x5f, 0x73, 0x74, 0x6f, 0x70, 0x00, 0x02,
+    0x09, 0x08, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x02, 0x03, 0x04, 0x0a, 0x31,
+    0x04, 0x13, 0x00, 0x41, 0xef, 0x00, 0x41, 0x00, 0x10, 0x00, 0x1a, 0x41,
+    0x0f, 0x41, 0x01, 0x10, 0x00, 0x1a, 0x41, 0x00, 0x0b, 0x02, 0x00, 0x0b,
+    0x14, 0x00, 0x20, 0x00, 0x2f, 0x00, 0x08, 0x41, 0xa3, 0x02, 0x46, 0x20,
+    0x00, 0x41, 0x10, 0x76, 0x41, 0x01, 0x46, 0x71, 0x0b, 0x03, 0x00, 0x00,
+    0x0b
 };
 
 /* The wasm magic and version, then bytes that are no section. */
@@ -196,7 +220,7 @@ static int write_mod(const char *dir, const char *title, const char *ns,
 
 static void clean_tree(void)
 {
-    static const char *const dirs[] = { T_GOOD, T_BAD, T_IMPORT };
+    static const char *const dirs[] = { T_GOOD, T_BAD, T_IMPORT, T_NOGROW };
     char path[512];
     size_t i;
 
@@ -210,6 +234,7 @@ static void clean_tree(void)
     BW_RMDIR(T_ROOT "/save/mods/wasmgood");
     BW_RMDIR(T_ROOT "/save/mods/wasmbad");
     BW_RMDIR(T_ROOT "/save/mods/wasmimport");
+    BW_RMDIR(T_ROOT "/save/mods/wasmnogrow");
     BW_RMDIR(T_ROOT "/save/mods");
     BW_RMDIR(T_ROOT "/save");
     BW_RMDIR(T_ROOT);
@@ -245,6 +270,7 @@ int main(void)
     BW_MKDIR(T_GOOD);
     BW_MKDIR(T_BAD);
     BW_MKDIR(T_IMPORT);
+    BW_MKDIR(T_NOGROW);
     bw_set_save_dir(T_ROOT "/save");
     BW_REQUIRE("the module is written",
                write_mod(T_GOOD, "Wasm Mod", "wasmgood", k_module,
@@ -255,6 +281,9 @@ int main(void)
     BW_REQUIRE("the module with a missing import is written",
                write_mod(T_IMPORT, "Missing Import", "wasmimport",
                          k_bad_import, sizeof k_bad_import) == 0);
+    BW_REQUIRE("the module that never grows its memory is written",
+               write_mod(T_NOGROW, "No Grow", "wasmnogrow", k_no_grow,
+                         sizeof k_no_grow) == 0);
     snprintf(path, sizeof path, "%s/mod.wasm", T_GOOD);
     BW_CHECK_EQ("the module is told from a library",
                 (long)bw_mod_wasm_is_module(path), 1);
@@ -324,6 +353,15 @@ int main(void)
     BW_CHECK_EQ("the module loads a second time",
                 (long)bw_mod_loader_load_all(), 1);
     BW_CHECK_EQ("and refuses again",
+                (long)fire_flag(T_FLAG), 1);
+    bw_mod_loader_stop_all();
+
+    printf("a module that never grows its memory\n");
+    bw_clear_mods();
+    BW_REQUIRE("the module is added", bw_add_mod_root(T_NOGROW) == 0);
+    BW_CHECK_EQ("it loads: the port's page is added all the same",
+                (long)bw_mod_loader_load_all(), 1);
+    BW_CHECK_EQ("and its handler gets the copy in that page",
                 (long)fire_flag(T_FLAG), 1);
     bw_mod_loader_stop_all();
 
