@@ -61,6 +61,8 @@
 /* sdk/mod_title.h, spelled out: the overlay link header declares what the
  * file itself does not (docs/hooks.md). */
 extern int bw_mod_title_settings_on(void);
+/* The widest line of a text in a font (PRINTSYS_MeasureWidestLine). */
+extern unsigned int func_0201D304(void *text, void *font, unsigned int spacing);
 extern int bw_mod_title_in_settings(void);
 extern int bw_mod_title_set_in_settings(int on);
 #define BW_TITLE_ROW_SETTINGS 7
