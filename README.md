@@ -3,11 +3,16 @@
 A native PC port of Pokémon Black, built from the
 [aletheia](https://github.com/Project-Holon/aletheia) decompilation.
 
+> eidos is an unofficial fan project. It is not affiliated with or endorsed
+> by Nintendo, Game Freak, Creatures Inc. or The Pokémon Company. It contains
+> no game data: you need your own legally obtained copy of Pokémon Black or
+> White. Pokémon and Nintendo DS are trademarks of their respective owners.
+
 ## Status
 
 eidos compiles the game's own decompiled C and runs it natively. It does
 not emulate the DS. It reads the game data from your own ROM; it ships no
-game data and no game code.
+game data.
 
 The game plays from the title screen into the opening hours: new game,
 the first battles, the field menu, saving and
@@ -110,7 +115,7 @@ Tab: fast forward. Alt+Return: fullscreen. F12: screenshot. Escape: quit.
 
 ## Legal
 
-MIT (`LICENSE`). eidos contains no game data and no game code: it compiles
-the source from your aletheia checkout and reads data extracted from your
-own ROM. See `LEGAL.md`. Pokémon and Nintendo DS are trademarks of
+MIT (`LICENSE`). This repository contains no game data and no game source:
+it compiles the source from aletheia and reads data extracted from your own
+ROM. A release holds the built program and no game data. See `LEGAL.md`. Pokémon and Nintendo DS are trademarks of
 Nintendo; the game belongs to Nintendo, Creatures Inc. and GAME FREAK inc.

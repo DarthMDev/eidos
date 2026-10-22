@@ -73,7 +73,7 @@ jobs:
         with:
           repository: Project-Holon/aletheia
           ref: ${{ needs.meta.outputs.pin }}
-          token: ${{ secrets.ALETHEIA_TOKEN }}
+          token: ${{ secrets.ALETHEIA_TOKEN || github.token }}
           path: aletheia
       # 32-bit MinGW-w64: the game builds for 32-bit pointers (docs/pointer-width.md).
       - uses: msys2/setup-msys2@v2
@@ -123,6 +123,10 @@ jobs:
   linux:
     name: linux
     needs: meta
+    # The game builds only with 32-bit pointers for now (docs/lp64.md); a
+    # 64-bit Linux build waits on that.  Set the repository variable
+    # EIDOS_BUILD_64BIT to true to try it.
+    if: vars.EIDOS_BUILD_64BIT == 'true'
     runs-on: ubuntu-22.04     # the oldest glibc we ship against
     env:
       EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
@@ -133,7 +137,7 @@ jobs:
         with:
           repository: Project-Holon/aletheia
           ref: ${{ needs.meta.outputs.pin }}
-          token: ${{ secrets.ALETHEIA_TOKEN }}
+          token: ${{ secrets.ALETHEIA_TOKEN || github.token }}
           path: aletheia
       - name: Packages
         run: sudo apt-get update && sudo apt-get install -y ninja-build libsdl2-dev libgl1-mesa-dev libfuse2 file
@@ -177,6 +181,8 @@ jobs:
   macos:
     name: macos
     needs: meta
+    # macOS has no 32-bit programs: it waits on the 64-bit build, as Linux.
+    if: vars.EIDOS_BUILD_64BIT == 'true'
     runs-on: macos-14
     env:
       EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
@@ -187,7 +193,7 @@ jobs:
         with:
           repository: Project-Holon/aletheia
           ref: ${{ needs.meta.outputs.pin }}
-          token: ${{ secrets.ALETHEIA_TOKEN }}
+          token: ${{ secrets.ALETHEIA_TOKEN || github.token }}
           path: aletheia
       - name: Packages
         run: brew install ninja sdl2
@@ -223,11 +229,48 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
+  # --------------------------------------------------------------- Launcher
+  launcher:
+    name: launcher (windows)
+    needs: meta
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: launcher/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the installer
+        working-directory: launcher
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          npm ci
+          npx tauri build --bundles nsis
+      - name: Name it
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          mkdir -p out
+          cp launcher/src-tauri/target/release/bundle/nsis/*-setup.exe \
+             "out/eidos-launcher-${VERSION}-windows-setup.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-windows
+          path: out/*
+          if-no-files-found: error
+
   # ---------------------------------------------------------------- Release
   release:
     name: draft release
-    needs: [meta, windows, linux, macos]
-    if: github.ref_type == 'tag' || inputs.draft
+    needs: [meta, windows, linux, macos, launcher]
+    if: >-
+      !cancelled() && needs.windows.result == 'success' &&
+      needs.launcher.result == 'success' &&
+      (github.ref_type == 'tag' || inputs.draft)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -249,9 +292,9 @@ jobs:
             echo "> Pokemon Black or White. Pokemon and Nintendo DS are trademarks of their"
             echo "> respective owners."
             echo
-            echo "Unzip the Windows or macOS file anywhere and run \`eidos\`. On Linux, make"
-            echo "the AppImage executable and run it. On the first start, pick your own"
-            echo "Pokemon Black ROM."
+            echo "Install the launcher (eidos-launcher-...-setup.exe) and press Play, or"
+            echo "unzip the game (eidos-...-windows.zip) anywhere and run \`eidos\`. On the"
+            echo "first start, pick your own Pokemon Black ROM."
             echo
             echo "The macOS build is not signed. If macOS refuses to open it, run"
             echo "\`xattr -dr com.apple.quarantine .\` in the unzipped folder, or right-click"
