@@ -783,6 +783,10 @@ static u32      g_dropped;
  * join and leave, and the end of the session. */
 static BwSessionHandler g_port_handler;
 
+/* The relay's last error (`E <reason>`), for the port: "unknown-code"
+ * after a relay restart, "removed", "full" and the others. */
+static char g_last_error[128];
+
 /* When the client last wrote a frame (for the keep-alive). */
 static unsigned long long g_last_tx_ns;
 
@@ -1681,6 +1685,7 @@ static void relay_frame(char type, const u8 *payload, u32 size)
 
             copy_text_n(reason, sizeof(reason), (const char *)payload, size);
             fprintf(stderr, "eidos: the relay says: %s\n", reason);
+            copy_text(g_last_error, sizeof(g_last_error), reason);
             if (queue_put(&g_q_in, 0, BW_MOD_NET_EV_ENDED, NULL, 0,
                           (const u8 *)reason, (u32)strlen(reason)) != 0) {
                 g_dropped++;
@@ -1879,6 +1884,7 @@ int bw_mod_net_session_host(char *code_out, u32 size)
 
                 copy_text_n(reason, sizeof(reason), (const char *)frame,
                             frame_size);
+                copy_text(g_last_error, sizeof(g_last_error), reason);
                 fprintf(stderr, "eidos: the relay refused the session: %s\n",
                         reason);
                 rc = BW_MOD_NET_E_RELAY;
@@ -2019,6 +2025,7 @@ int bw_mod_net_session_join(const char *code)
 
                 copy_text_n(reason, sizeof(reason), (const char *)frame,
                             frame_size);
+                copy_text(g_last_error, sizeof(g_last_error), reason);
                 fprintf(stderr, "eidos: the relay refused the join: %s\n",
                         reason);
                 rc = BW_MOD_NET_E_RELAY;
@@ -2128,6 +2135,11 @@ int bw_mod_net_session_remove(u32 peer)
     rc = relay_send(BW_MOD_NET_MSG_REMOVE, text, (u32)n);
     bw_mutex_unlock(g_lock);
     return (rc == 0) ? BW_MOD_NET_OK : BW_MOD_NET_E_IO;
+}
+
+const char *bw_mod_net_last_error(void)
+{
+    return g_last_error;
 }
 
 /* Whether this player hosts the session. */

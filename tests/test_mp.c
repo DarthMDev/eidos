@@ -28,10 +28,19 @@ static void sent_reset(void)
     g_removed = 0;
 }
 
+static const char *g_next_code = "ABC234";
+static const char *g_error = "";
+static const char *g_peer3 = "Bianca";
+
 static int t_host(char *code, u32 size)
 {
-    snprintf(code, size, "ABC234");
+    snprintf(code, size, "%s", g_next_code);
     return 0;
+}
+
+static const char *t_last_error(void)
+{
+    return g_error;
 }
 
 static int t_join(const char *code)
@@ -71,7 +80,7 @@ static u32 t_self(void)
 
 static int t_peer_name(u32 peer, char *out, u32 size)
 {
-    snprintf(out, size, "%s", peer == 2 ? "Cheren" : peer == 3 ? "Bianca" : "N");
+    snprintf(out, size, "%s", peer == 2 ? "Cheren" : peer == 3 ? g_peer3 : "N");
     return 0;
 }
 
@@ -81,7 +90,8 @@ static const char *t_own_name(void)
 }
 
 static const BwMpNet k_test_net = {
-    t_host, t_join, t_leave, t_send, t_remove, t_self, t_peer_name, t_own_name
+    t_host, t_join, t_leave, t_send, t_remove, t_self, t_peer_name, t_own_name,
+    t_last_error
 };
 
 /* Whether the layer sent `word` (a whole message or a message's start). */
@@ -242,9 +252,69 @@ static void test_joiner(void)
     bw_mp_reset();
 }
 
+static void test_relay_restart(void)
+{
+    char code[16];
+
+    printf("the relay restarts under the host\n");
+    bw_mp_reset();
+    bw_mp_set_net(&k_test_net);
+    bw_mp_set_local('B', "");
+    g_next_code = "ABC234";
+    (void)bw_mp_host(code, sizeof code);
+    bw_mp_frame_at(1000);
+    bw_mp_on_net(2, (int)BW_SESSION_JOIN, NULL, 0);
+    say(2, "hello 1 W -");
+    BW_CHECK_EQ("the game starts", bw_mp_start(), 0);
+    bw_mp_on_net(0, BW_MOD_NET_PORT_ENDED, "lost", 4);
+    g_join_fails = 1;
+    g_error = "unknown-code";
+    g_next_code = "NEW567";
+    bw_mp_frame_at(1000 + BW_MP_REJOIN_EVERY_MS);
+    BW_CHECK_EQ("the host opens a new session", strcmp(bw_mp_code(), "NEW567"), 0);
+    BW_CHECK_EQ("and says so", strstr(bw_mp_end_reason(), "NEW567") != NULL, 1);
+    BW_CHECK_EQ("every game waits for the host's start", (long)bw_mp_state(),
+                (long)BW_MP_PAUSED);
+    g_peer3 = "Cheren";
+    sent_reset();
+    bw_mp_on_net(3, (int)BW_SESSION_JOIN, NULL, 0);
+    BW_CHECK_EQ("the player who comes back under a new number is not removed",
+                (long)g_removed, 0);
+    say(3, "hello 1 W -");
+    BW_CHECK_EQ("it takes its roster place: the host may start",
+                bw_mp_start(), 0);
+    g_peer3 = "Bianca";
+    g_join_fails = 0;
+    g_error = "";
+    g_next_code = "ABC234";
+
+    printf("the relay restarts under a joiner\n");
+    bw_mp_reset();
+    bw_mp_set_net(&k_test_net);
+    (void)bw_mp_join("ABC234");
+    say(1, "start");
+    bw_mp_frame_at(1000);
+    bw_mp_on_net(0, BW_MOD_NET_PORT_ENDED, "lost", 4);
+    g_join_fails = 1;
+    g_error = "unknown-code";
+    bw_mp_frame_at(1000 + BW_MP_REJOIN_EVERY_MS);
+    BW_CHECK_EQ("the joiner's session ends", (long)bw_mp_state(),
+                (long)BW_MP_ENDED);
+    BW_CHECK_EQ("asking for the new code",
+                strstr(bw_mp_end_reason(), "new code") != NULL, 1);
+    g_join_fails = 0;
+    g_error = "";
+
+    printf("a plain leave\n");
+    bw_mp_leave();
+    BW_CHECK_EQ("says why", strcmp(bw_mp_end_reason(), "left"), 0);
+    bw_mp_reset();
+}
+
 int main(void)
 {
     test_host();
     test_joiner();
+    test_relay_restart();
     BW_REPORT("test_mp");
 }

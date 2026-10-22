@@ -204,6 +204,11 @@ int  bw_mod_net_session_remove(u32 peer);
 
 /* 1 when this player hosts the running session. */
 int  bw_mod_net_session_hosting(void);
+
+/* The reason word of the relay's last `E` ("unknown-code", "removed",
+ * "full", ...), or "" when there was none.  A refused host or join
+ * answers BW_MOD_NET_E_RELAY; this says why. */
+const char *bw_mod_net_last_error(void);
 void bw_mod_net_on_session(BwSessionHandler fn);
 
 /*

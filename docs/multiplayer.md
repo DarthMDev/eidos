@@ -87,6 +87,16 @@ use multiplayer for now (SPEC section 17).
   (`net_tokens.txt` in the save folder), so it is the same peer, even after
   a restart of the game.
 
+- The relay restarts (it keeps nothing, so the code is gone): the host's
+  game sees `unknown-code` when it joins again, opens a new session at
+  once, and shows "the relay restarted: the new code is XYZ" on its held
+  screen. Its lobby stays: a player who joins the new code takes its
+  roster place again by its name, until the identity of step 4 replaces
+  the name. A joiner cannot learn the new code by itself: its session ends
+  with "the relay restarted: ask the host for the new code", its game goes
+  back to the title, and the player joins the new code.
+- The timers are `#ifndef` in `sdk/mp.h`, so a test build can shorten them.
+
 ## Not built yet
 
 In the order of SPEC section 18:

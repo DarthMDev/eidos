@@ -39,9 +39,15 @@ typedef enum BwMpState {
 
 /* How long the others play on after a player drops, and how long a host
  * has to come back. */
+#ifndef BW_MP_GRACE_MS
 #define BW_MP_GRACE_MS (15u * 1000u)
+#endif
+#ifndef BW_MP_HOST_WAIT_MS
 #define BW_MP_HOST_WAIT_MS (10u * 60u * 1000u)
+#endif
+#ifndef BW_MP_REJOIN_EVERY_MS
 #define BW_MP_REJOIN_EVERY_MS (5u * 1000u)
+#endif
 
 /* One player as the lobby shows it. */
 typedef struct BwMpPlayer {
@@ -88,7 +94,11 @@ int  bw_mp_paused(void);
 /* The line the "waiting for players" screen shows. */
 const char *bw_mp_wait_text(void);
 
-/* Why the session ended (BW_MP_ENDED). */
+/* The code the session has now: a host whose relay restarted opens a new
+ * one and shows it (the players join it again). */
+const char *bw_mp_code(void);
+
+/* Why the session ended (BW_MP_ENDED), or why the code changed. */
 const char *bw_mp_end_reason(void);
 
 /* The players, in peer order (the host first). */
@@ -127,6 +137,7 @@ typedef struct BwMpNet {
     u32  (*self_peer)(void);
     int  (*peer_name)(u32 peer, char *out, u32 size);
     const char *(*own_name)(void);
+    const char *(*last_error)(void);
 } BwMpNet;
 
 void bw_mp_set_net(const BwMpNet *net);

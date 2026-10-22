@@ -50,7 +50,8 @@ static const BwMpNet k_net = {
     bw_mod_net_session_remove,
     bw_mod_net_self_peer,
     bw_mod_net_peer_name,
-    bw_mod_net_name
+    bw_mod_net_name,
+    bw_mod_net_last_error
 };
 
 static const BwMpNet *g_net = &k_net;
@@ -70,7 +71,7 @@ static struct {
     u64        next_rejoin;
     char       blocker[256];
     char       wait[200];
-    char       reason[64];
+    char       reason[96];
 } g_mp;
 
 /* ------------------------------------------------------------------ */
@@ -320,9 +321,37 @@ static void host_on_join(u32 peer)
         return;
     }
     if (g_mp.roster_set && !(p->peer == peer && p->on_roster)) {
-        /* the roster is set: a player who is not on it is removed */
-        (void)g_net->remove(peer);
-        return;
+        /* After a relay restart the numbers are new: a missing roster
+         * player with the same name takes its place under the new number
+         * (SPEC section 12's identity replaces the name).  Anyone else is
+         * not on the roster and is removed. */
+        char name[BW_MP_NAME_MAX + 1];
+        u32 i;
+
+        name[0] = '\0';
+        if (g_net->peer_name != NULL) {
+            (void)g_net->peer_name(peer, name, (u32)sizeof(name));
+        }
+        for (i = 1; i < BW_MP_PLAYERS_MAX && name[0] != '\0'; i++) {
+            BwMpPlayer *old = &g_mp.players[i];
+
+            if (old != p && old->peer != 0 && old->on_roster &&
+                !old->connected && strcmp(old->name, name) == 0 &&
+                !p->connected) {
+                /* swap: whoever had this slot keeps the other one, and is
+                 * found by name in turn when it joins */
+                BwMpPlayer tmp = *p;
+
+                *p = *old;
+                *old = tmp;
+                old->peer = old->peer != 0 ? i + 1u : 0u;
+                break;
+            }
+        }
+        if (!(p->peer != 0 && p->on_roster)) {
+            (void)g_net->remove(peer);
+            return;
+        }
     }
     p->peer = peer;
     p->connected = 1;
@@ -604,6 +633,42 @@ void bw_mp_leave(void)
 {
     g_net->leave();
     g_mp.state = BW_MP_OFF;
+    snprintf(g_mp.reason, sizeof(g_mp.reason), "left");
+}
+
+const char *bw_mp_code(void)
+{
+    return g_mp.code;
+}
+
+/* The relay no longer knows the code: it restarted, and it keeps nothing.
+ * The host opens a new session and keeps its lobby: the players join the
+ * new code, and each one takes its place on the roster again by its name
+ * (the identity of SPEC section 12 replaces the name).  A joiner cannot
+ * learn the new code by itself: its session ends with the reason, and the
+ * player joins the code the host gives them. */
+static void relay_restarted(void)
+{
+    char code[40];
+    u32 i;
+
+    if (!g_mp.host) {
+        g_mp.state = BW_MP_ENDED;
+        snprintf(g_mp.reason, sizeof(g_mp.reason),
+                 "the relay restarted: ask the host for the new code");
+        return;
+    }
+    if (g_net->host(code, sizeof(code)) != 0) {
+        return;                         /* tried again at the next attempt */
+    }
+    copy_n(g_mp.code, sizeof(g_mp.code), code, strlen(code));
+    for (i = 1; i < BW_MP_PLAYERS_MAX; i++) {
+        g_mp.players[i].connected = 0;
+    }
+    g_mp.state = g_mp.roster_set ? BW_MP_PAUSED : BW_MP_LOBBY;
+    snprintf(g_mp.reason, sizeof(g_mp.reason),
+             "the relay restarted: the new code is %s", code);
+    fprintf(stderr, "eidos: %s\n", g_mp.reason);
 }
 
 u32 bw_mp_stamp(void)
@@ -776,7 +841,14 @@ void bw_mp_frame_at(u64 t)
             snprintf(g_mp.reason, sizeof(g_mp.reason), "the relay could not be reached");
         } else if (t >= g_mp.next_rejoin) {
             g_mp.next_rejoin = t + BW_MP_REJOIN_EVERY_MS;
-            if (g_net->join(g_mp.code) == 0) {
+            if (g_net->join(g_mp.code) != 0) {
+                const char *why = g_net->last_error != NULL
+                                  ? g_net->last_error() : "";
+
+                if (strcmp(why, "unknown-code") == 0) {
+                    relay_restarted();
+                }
+            } else {
                 if (g_mp.host) {
                     /* the host is back: every game waits for its start */
                     g_mp.state = BW_MP_PAUSED;

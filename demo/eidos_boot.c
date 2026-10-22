@@ -1392,8 +1392,11 @@ static void boot_mp_hold(BootRun *run)
                 (void)bw_mp_start();
             }
             if (top != NULL && bottom != NULL && work != NULL) {
+                /* a host whose relay restarted shows its new code */
                 hold_draw(work, top, n, bw_mp_wait_text(),
-                          bw_mp_is_host() ? "" : "The host starts the game.");
+                          !bw_mp_is_host() ? "The host starts the game." :
+                          strncmp(bw_mp_end_reason(), "the relay", 9) == 0
+                          ? bw_mp_end_reason() : "");
                 memcpy(run->hi_top, work, bytes);
                 hold_draw(work, bottom, n, bw_mp_wait_text(), "");
                 memcpy(run->hi_bottom, work, bytes);
