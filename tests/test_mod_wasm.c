@@ -11,23 +11,33 @@
  *     (memory (export "memory") 1)
  *     (elem (i32.const 0) $flag $trap)
  *     (func (export "eidos_mod_start") (result i32)
+ *       (drop (memory.grow (i32.const 2)))                ;; pages 2 and 3
  *       (drop (call $on (i32.const 111) (i32.const 0)))   ;; flag.set -> $flag
  *       (drop (call $on (i32.const 15) (i32.const 1)))    ;; menu.open -> $trap
  *       (i32.const 0))
  *     (func (export "eidos_mod_stop"))
- *     ;; refuse when the flag is 0x123 (BwFlagSet.flag is at offset 8)
+ *     ;; refuse when the flag is 0x123 (BwFlagSet.flag is at offset 8) and
+ *     ;; the copy is in page 1, the port's page: above the page the module
+ *     ;; declared and below the pages it grew
  *     (func $flag (param $e i32) (result i32)
- *       (i32.eq (i32.load16_u offset=8 align=1 (local.get $e)) (i32.const 0x123)))
+ *       (i32.and
+ *         (i32.eq (i32.load16_u offset=8 align=1 (local.get $e)) (i32.const 0x123))
+ *         (i32.eq (i32.shr_u (local.get $e) (i32.const 16)) (i32.const 1))))
  *     (func $trap (param i32) (result i32) (unreachable)))
+ *
+ * k_bad_import is the same module with one more import,
+ * (import "eidos" "nonexistent" (func)), which the port does not provide.
  *
  * What the test checks:
  *
  *   - the loader tells the module from a native library and starts it;
  *   - the module's `on` imports bind handlers through the loader;
- *   - the payload reaches the handler (a copy in the module's memory), and
- *     the handler's answer refuses or lets the action go on;
+ *   - the payload reaches the handler as a copy in the port's own page, not
+ *     in memory the module declared or grew, and the handler's answer
+ *     refuses or lets the action go on;
  *   - a handler that traps lets the action go on and the port runs on;
  *   - a file with the wasm magic that is not a valid module is refused;
+ *   - a module with an import the port does not provide is refused at load;
  *   - after the stop no handler of the module runs.
  *
  * A build without the runtime refuses the module with a message; the test
@@ -63,6 +73,7 @@
 #define T_ROOT "mod_wasm_tmp"
 #define T_GOOD T_ROOT "/good"
 #define T_BAD  T_ROOT "/bad"
+#define T_IMPORT T_ROOT "/import"
 #define T_FLAG 0x123u
 
 static const unsigned char k_module[] = {
@@ -75,11 +86,32 @@ static const unsigned char k_module[] = {
     0x00, 0x0f, 0x65, 0x69, 0x64, 0x6f, 0x73, 0x5f, 0x6d, 0x6f, 0x64, 0x5f,
     0x73, 0x74, 0x61, 0x72, 0x74, 0x00, 0x01, 0x0e, 0x65, 0x69, 0x64, 0x6f,
     0x73, 0x5f, 0x6d, 0x6f, 0x64, 0x5f, 0x73, 0x74, 0x6f, 0x70, 0x00, 0x02,
-    0x09, 0x08, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x02, 0x03, 0x04, 0x0a, 0x28,
-    0x04, 0x13, 0x00, 0x41, 0xef, 0x00, 0x41, 0x00, 0x10, 0x00, 0x1a, 0x41,
-    0x0f, 0x41, 0x01, 0x10, 0x00, 0x1a, 0x41, 0x00, 0x0b, 0x02, 0x00, 0x0b,
-    0x0b, 0x00, 0x20, 0x00, 0x2f, 0x00, 0x08, 0x41, 0xa3, 0x02, 0x46, 0x0b,
-    0x03, 0x00, 0x00, 0x0b
+    0x09, 0x08, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x02, 0x03, 0x04, 0x0a, 0x36,
+    0x04, 0x18, 0x00, 0x41, 0x02, 0x40, 0x00, 0x1a, 0x41, 0xef, 0x00, 0x41,
+    0x00, 0x10, 0x00, 0x1a, 0x41, 0x0f, 0x41, 0x01, 0x10, 0x00, 0x1a, 0x41,
+    0x00, 0x0b, 0x02, 0x00, 0x0b, 0x14, 0x00, 0x20, 0x00, 0x2f, 0x00, 0x08,
+    0x41, 0xa3, 0x02, 0x46, 0x20, 0x00, 0x41, 0x10, 0x76, 0x41, 0x01, 0x46,
+    0x71, 0x0b, 0x03, 0x00, 0x00, 0x0b
+};
+
+static const unsigned char k_bad_import[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x13, 0x04, 0x60,
+    0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x00,
+    0x01, 0x7f, 0x60, 0x00, 0x00, 0x02, 0x20, 0x02, 0x05, 0x65, 0x69, 0x64,
+    0x6f, 0x73, 0x02, 0x6f, 0x6e, 0x00, 0x00, 0x05, 0x65, 0x69, 0x64, 0x6f,
+    0x73, 0x0b, 0x6e, 0x6f, 0x6e, 0x65, 0x78, 0x69, 0x73, 0x74, 0x65, 0x6e,
+    0x74, 0x00, 0x03, 0x03, 0x05, 0x04, 0x02, 0x03, 0x01, 0x01, 0x04, 0x04,
+    0x01, 0x70, 0x00, 0x02, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07, 0x2d, 0x03,
+    0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00, 0x0f, 0x65, 0x69,
+    0x64, 0x6f, 0x73, 0x5f, 0x6d, 0x6f, 0x64, 0x5f, 0x73, 0x74, 0x61, 0x72,
+    0x74, 0x00, 0x02, 0x0e, 0x65, 0x69, 0x64, 0x6f, 0x73, 0x5f, 0x6d, 0x6f,
+    0x64, 0x5f, 0x73, 0x74, 0x6f, 0x70, 0x00, 0x03, 0x09, 0x08, 0x01, 0x00,
+    0x41, 0x00, 0x0b, 0x02, 0x04, 0x05, 0x0a, 0x36, 0x04, 0x18, 0x00, 0x41,
+    0x02, 0x40, 0x00, 0x1a, 0x41, 0xef, 0x00, 0x41, 0x00, 0x10, 0x00, 0x1a,
+    0x41, 0x0f, 0x41, 0x01, 0x10, 0x00, 0x1a, 0x41, 0x00, 0x0b, 0x02, 0x00,
+    0x0b, 0x14, 0x00, 0x20, 0x00, 0x2f, 0x00, 0x08, 0x41, 0xa3, 0x02, 0x46,
+    0x20, 0x00, 0x41, 0x10, 0x76, 0x41, 0x01, 0x46, 0x71, 0x0b, 0x03, 0x00,
+    0x00, 0x0b
 };
 
 /* The wasm magic and version, then bytes that are no section. */
@@ -164,7 +196,7 @@ static int write_mod(const char *dir, const char *title, const char *ns,
 
 static void clean_tree(void)
 {
-    static const char *const dirs[] = { T_GOOD, T_BAD };
+    static const char *const dirs[] = { T_GOOD, T_BAD, T_IMPORT };
     char path[512];
     size_t i;
 
@@ -177,6 +209,7 @@ static void clean_tree(void)
     }
     BW_RMDIR(T_ROOT "/save/mods/wasmgood");
     BW_RMDIR(T_ROOT "/save/mods/wasmbad");
+    BW_RMDIR(T_ROOT "/save/mods/wasmimport");
     BW_RMDIR(T_ROOT "/save/mods");
     BW_RMDIR(T_ROOT "/save");
     BW_RMDIR(T_ROOT);
@@ -211,6 +244,7 @@ int main(void)
     BW_MKDIR(T_ROOT);
     BW_MKDIR(T_GOOD);
     BW_MKDIR(T_BAD);
+    BW_MKDIR(T_IMPORT);
     bw_set_save_dir(T_ROOT "/save");
     BW_REQUIRE("the module is written",
                write_mod(T_GOOD, "Wasm Mod", "wasmgood", k_module,
@@ -218,6 +252,9 @@ int main(void)
     BW_REQUIRE("the broken module is written",
                write_mod(T_BAD, "Broken Wasm", "wasmbad", k_broken,
                          sizeof k_broken) == 0);
+    BW_REQUIRE("the module with a missing import is written",
+               write_mod(T_IMPORT, "Missing Import", "wasmimport",
+                         k_bad_import, sizeof k_bad_import) == 0);
     snprintf(path, sizeof path, "%s/mod.wasm", T_GOOD);
     BW_CHECK_EQ("the module is told from a library",
                 (long)bw_mod_wasm_is_module(path), 1);
@@ -240,16 +277,18 @@ int main(void)
     bw_clear_mods();
     BW_REQUIRE("the broken mod is added", bw_add_mod_root(T_BAD) == 0);
     BW_REQUIRE("the good mod is added", bw_add_mod_root(T_GOOD) == 0);
+    BW_REQUIRE("the mod with a missing import is added",
+               bw_add_mod_root(T_IMPORT) == 0);
 
     printf("the load\n");
     loaded = bw_mod_loader_load_all();
     if (!bw_mod_wasm_available()) {
-        printf("this build has no wasm runtime: both modules are refused\n");
+        printf("this build has no wasm runtime: every module is refused\n");
         BW_CHECK_EQ("no module is loaded", (long)loaded, 0);
         clean_tree();
         BW_REPORT("test_mod_wasm");
     }
-    BW_CHECK_EQ("the good module is loaded, the broken one is not",
+    BW_CHECK_EQ("only the good module is loaded",
                 (long)loaded, 1);
     BW_CHECK_EQ("the loader holds one mod", (long)bw_mod_loader_count(), 1);
     BW_CHECK_EQ("it is the good one",

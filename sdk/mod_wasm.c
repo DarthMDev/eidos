@@ -4,8 +4,9 @@
  *
  * The runtime is WAMR's interpreter (tools/fetch_wamr.py, cmake/wamr/).  One
  * runtime serves every mod; each mod is one module instance with its own
- * linear memory, its own 64 KiB stack and a 64 KiB heap the port allocates
- * payload copies in.
+ * linear memory and its own 64 KiB stack.  The port grows the module's memory
+ * by one page right after instantiation and copies payloads there: the
+ * pages the module declared and the pages it grows later stay its own.
  *
  * What crosses the boundary is values, never host pointers
  * (docs/mod-code-wasm.md, "Seams"): an event payload is copied into the
@@ -33,9 +34,12 @@
 #include "mod_frame.h"
 #include "mod_state.h"
 
-/* The stack and the heap of one instance. */
+/* The stack of one instance, and the pages the port adds to its memory for
+ * payload copies.  WAMR's own app heap is not used: WAMR places it at the
+ * module's __heap_base, inside the memory the module's allocator owns. */
 #define BW_WASM_STACK  (64u * 1024u)
-#define BW_WASM_HEAP   (64u * 1024u)
+#define BW_WASM_PAGE   65536u
+#define BW_WASM_SCRATCH_PAGES 1u
 
 /* The event kinds a handler index is kept for (the ids are below 256). */
 #define BW_WASM_KINDS  256u
@@ -65,6 +69,9 @@ typedef struct BwWasmMod {
     s32                 frame_slot;     /* the frame trampoline, -1 none */
     u32                 frame_index;
     int                 said_unsupported;
+    u32                 scratch_base;   /* the port's page: payload copies */
+    u32                 scratch_size;
+    u32                 scratch_used;
 } BwWasmMod;
 
 static int g_runtime_ready;
@@ -118,28 +125,36 @@ static s32 wasm_call_index(BwWasmMod *w, u32 index, u32 arg)
     return (s32)argv[0];
 }
 
-/* Copy `size` bytes into the module's heap, call the handler at `index`
- * on the copy, and copy the bytes back.  The handler's answer, or -1. */
+/* Copy `size` bytes into the port's page, call the handler at `index` on
+ * the copy, and copy the bytes back.  The handler's answer, or -1.  The
+ * page is a stack: a handler that calls a service that fires an event back
+ * into the same mod gets the next copy above its own. */
 static s32 wasm_call_on_copy(BwWasmMod *w, u32 index, void *data, u32 size)
 {
-    void *native = NULL;
-    uint64_t app;
+    u32 need = (size + 7u) & ~7u;
+    u32 app;
+    void *native;
     s32 rc;
 
-    app = wasm_runtime_module_malloc(w->inst, size, &native);
-    if (app == 0 || native == NULL) {
-        fprintf(stderr, "eidos: mod %s: no room in the module's heap for "
-                "a payload\n", w->label);
+    if (need > w->scratch_size - w->scratch_used) {
+        fprintf(stderr, "eidos: mod %s: payloads nested too deep for the "
+                "port's page\n", w->label);
+        return -1;
+    }
+    app = w->scratch_base + w->scratch_used;
+    native = wasm_runtime_addr_app_to_native(w->inst, app);
+    if (native == NULL) {
         return -1;
     }
     memcpy(native, data, size);
-    rc = wasm_call_index(w, index, (u32)app);
-    /* The heap may have moved if the module grew its memory. */
+    w->scratch_used += need;
+    rc = wasm_call_index(w, index, app);
+    w->scratch_used -= need;
+    /* The memory may have moved if the module grew it. */
     native = wasm_runtime_addr_app_to_native(w->inst, app);
     if (native != NULL) {
         memcpy(data, native, size);
     }
-    wasm_runtime_module_free(w->inst, app);
     return rc;
 }
 
@@ -563,12 +578,57 @@ void *bw_mod_wasm_open(const char *path, const char *label, char *err,
         bw_mod_wasm_close(w);
         return NULL;
     }
-    w->inst = wasm_runtime_instantiate(w->module, BW_WASM_STACK, BW_WASM_HEAP,
+    /* Every import must be one of the port's functions, with the port's
+     * signature.  WAMR loads a module whose import it cannot link and traps
+     * only when the import is called; the port refuses it here instead. */
+    {
+        int32_t n = wasm_runtime_get_import_count(w->module);
+        int32_t k;
+
+        for (k = 0; k < n; k++) {
+            wasm_import_t imp;
+
+            memset(&imp, 0, sizeof imp);
+            wasm_runtime_get_import_type(w->module, k, &imp);
+            if (imp.kind != WASM_IMPORT_EXPORT_KIND_FUNC || !imp.linked) {
+                snprintf(err, err_size, "the module imports %s.%s, which the "
+                         "port does not provide with that signature",
+                         imp.module_name != NULL ? imp.module_name : "?",
+                         imp.name != NULL ? imp.name : "?");
+                bw_mod_wasm_close(w);
+                return NULL;
+            }
+        }
+    }
+    w->inst = wasm_runtime_instantiate(w->module, BW_WASM_STACK, 0u,
                                        why, sizeof why);
     if (w->inst == NULL) {
         snprintf(err, err_size, "the module did not start: %s", why);
         bw_mod_wasm_close(w);
         return NULL;
+    }
+    /* The port's page: added above the memory the module has now, so the
+     * module's data, its heap and the pages it grows later never meet it. */
+    {
+        wasm_memory_inst_t mem = wasm_runtime_get_default_memory(w->inst);
+        uint64_t pages = mem != NULL ? wasm_memory_get_cur_page_count(mem) : 0;
+        uint64_t max = mem != NULL ? wasm_memory_get_max_page_count(mem) : 0;
+
+        if (mem == NULL) {
+            snprintf(err, err_size, "the module has no memory");
+            bw_mod_wasm_close(w);
+            return NULL;
+        }
+        if (pages + BW_WASM_SCRATCH_PAGES > max ||
+            pages + BW_WASM_SCRATCH_PAGES > 65536u ||
+            !wasm_runtime_enlarge_memory(w->inst, BW_WASM_SCRATCH_PAGES)) {
+            snprintf(err, err_size, "the module's memory cannot grow by the "
+                     "port's page (its maximum is %u pages)", (unsigned)max);
+            bw_mod_wasm_close(w);
+            return NULL;
+        }
+        w->scratch_base = (u32)(pages * BW_WASM_PAGE);
+        w->scratch_size = BW_WASM_SCRATCH_PAGES * BW_WASM_PAGE;
     }
     w->env = wasm_runtime_create_exec_env(w->inst, BW_WASM_STACK);
     if (w->env == NULL) {
