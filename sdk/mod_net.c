@@ -77,6 +77,7 @@
  *     D  <peer>\n<key>\n<bytes>            a mod's message, to one peer or
  *                                           to every peer (peer 0)
  *     B  (empty)                           leave the session
+ *     K  (empty)                           keep-alive, after 20 s of silence
  *
  * and the relay sends:
  *
@@ -175,6 +176,13 @@ static void net_leave_mod(const char *saved)
  * for a connection to be made. */
 #define BW_MOD_NET_TIMEOUT_MS 3000u
 
+/* After how long without a frame of its own the client sends a keep-alive
+ * (the relay drops a client that is silent for 60 seconds). */
+#define BW_MOD_NET_KEEPALIVE_MS 20000u
+
+/* How many session codes the client keeps a token for. */
+#define BW_MOD_NET_TOKENS_MAX 32u
+
 /* How long the reader waits between two polls of the transport. */
 #define BW_MOD_NET_POLL_MS 2u
 
@@ -200,6 +208,7 @@ static void net_leave_mod(const char *saved)
 #define BW_MOD_NET_MSG_JOIN    'J'   /* client -> relay: join a session    */
 #define BW_MOD_NET_MSG_DATA    'D'   /* both ways: a mod's message         */
 #define BW_MOD_NET_MSG_BYE     'B'   /* client -> relay: leave             */
+#define BW_MOD_NET_MSG_KEEPALIVE 'K' /* client -> relay: still here        */
 #define BW_MOD_NET_MSG_CODE    'C'   /* relay -> client: the session's code */
 #define BW_MOD_NET_MSG_WELCOME 'W'   /* relay -> client: you are in        */
 #define BW_MOD_NET_MSG_PEER    'P'   /* relay -> client: a peer joined     */
@@ -726,6 +735,7 @@ typedef struct BwModNetRx {
     u32 pos;                                     /* the byte being read      */
     u32 want;                                    /* the payload's length     */
     u32 acc;                                     /* the length so far        */
+    u32 digits;                                  /* the length's digits      */
     int state;                                   /* the parser's state       */
 } BwModNetRx;
 
@@ -764,6 +774,23 @@ static int      g_client_count;
 static int      g_control_port;
 
 static u32      g_dropped;
+
+/* When the client last wrote a frame (for the keep-alive). */
+static unsigned long long g_last_tx_ns;
+
+/* The tokens: one per session code, so a player who comes back to a code
+ * (after a drop, or after the game was restarted) is the same peer, and the
+ * relay cannot link one player's sessions. */
+typedef struct BwModNetToken {
+    char code[BW_MOD_NET_CODE_MAX + 1];
+    char token[33];
+} BwModNetToken;
+
+static BwModNetToken g_tokens[BW_MOD_NET_TOKENS_MAX];
+static u32           g_token_count;
+static u32           g_token_next;      /* the entry a new code replaces */
+static char          g_token_file[512];
+static int           g_tokens_read;
 
 /* ------------------------------------------------------------------ */
 /* The small helpers                                                   */
@@ -1240,6 +1267,7 @@ static int relay_send(char type, const void *payload, u32 size)
     if (size > 0 && t->send(t->user, payload, size) != 0) {
         return -1;
     }
+    g_last_tx_ns = bw_clock_ns();
     return 0;
 }
 
@@ -1299,6 +1327,7 @@ static int rx_parse(char *type, u8 **payload, u32 *size)
             }
             *type = (char)g_rx.buf[g_rx.pos++];
             g_rx.acc = 0;
+            g_rx.digits = 0;
             g_rx.state = 1;
             break;
 
@@ -1312,7 +1341,8 @@ static int rx_parse(char *type, u8 **payload, u32 *size)
                 break;
             }
             if (c == (u8)'\n') {
-                if (g_rx.acc == 0 || g_rx.acc > BW_MOD_NET_RX_MAX) {
+                /* A length of 0 is a frame with an empty payload. */
+                if (g_rx.digits == 0 || g_rx.acc > BW_MOD_NET_RX_MAX) {
                     return -1;
                 }
                 g_rx.want = g_rx.acc;
@@ -1327,6 +1357,7 @@ static int rx_parse(char *type, u8 **payload, u32 *size)
                 return -1;
             }
             g_rx.acc = g_rx.acc * 10u + (u32)(c - (u8)'0');
+            g_rx.digits++;
             g_rx.pos++;
             break;
 
@@ -1370,32 +1401,179 @@ static int rx_frame(char *type, u8 **payload, u32 *size)
 /* The session                                                         */
 /* ------------------------------------------------------------------ */
 
-/* The token the relay remembers this player by.  It is made once per
- * process, so a rejoin with the same code gets the same peer number back
- * (the relay maps the token to the number). */
-static const char *the_token(void)
+/* `n` bytes from the operating system's random source.  0 on success. */
+static int os_random(u8 *out, u32 n)
 {
-    static char token[33];
-    static int made;
+#if defined(_WIN32)
+    typedef LONG (WINAPI *GenRandomFn)(void *, unsigned char *, ULONG, ULONG);
+    static GenRandomFn gen;
+    static int tried;
+
+    if (!tried) {
+        HMODULE lib = LoadLibraryA("bcrypt.dll");
+
+        tried = 1;
+        if (lib != NULL) {
+            gen = (GenRandomFn)(void *)GetProcAddress(lib, "BCryptGenRandom");
+        }
+    }
+    /* 2 is BCRYPT_USE_SYSTEM_PREFERRED_RNG. */
+    return (gen != NULL && gen(NULL, out, n, 2u) == 0) ? 0 : -1;
+#else
+    FILE *f = fopen("/dev/urandom", "rb");
+    size_t got;
+
+    if (f == NULL) {
+        return -1;
+    }
+    got = fread(out, 1, n, f);
+    fclose(f);
+    return got == n ? 0 : -1;
+#endif
+}
+
+/* A new token: 32 hexadecimal digits from the operating system's random
+ * source, or from the clock when there is none (said once). */
+static void token_make(char token[33])
+{
     static const char digits[] = "0123456789abcdef";
-    u64 state;
-    u64 v;
+    u8 raw[16];
     int i;
 
-    if (made) {
-        return token;
-    }
-    state = (u64)bw_clock_ns() ^
-            ((u64)(uintptr_t)&token * UINT64_C(0x9E3779B97F4A7C15));
-    v = splitmix64(&state);
-    for (i = 0; i < 16; i++) {
-        int nibble = (int)((v >> (60 - 4 * i)) & 0xFu);
+    if (os_random(raw, sizeof(raw)) != 0) {
+        u64 state = (u64)bw_clock_ns() ^
+                    ((u64)(uintptr_t)token * UINT64_C(0x9E3779B97F4A7C15));
+        u64 a = splitmix64(&state);
+        u64 b = splitmix64(&state);
 
-        token[i] = digits[nibble];
+        fprintf(stderr, "eidos: no random source for the session token; "
+                "the clock stands in\n");
+        for (i = 0; i < 8; i++) {
+            raw[i] = (u8)(a >> (8 * i));
+            raw[8 + i] = (u8)(b >> (8 * i));
+        }
     }
-    token[16] = '\0';
-    made = 1;
-    return token;
+    for (i = 0; i < 16; i++) {
+        token[2 * i] = digits[raw[i] >> 4];
+        token[2 * i + 1] = digits[raw[i] & 0xFu];
+    }
+    token[32] = '\0';
+}
+
+/* A session code as the relay knows it: upper case, without the spaces and
+ * dashes a player may type. */
+static void code_clean(char *out, size_t size, const char *code)
+{
+    size_t n = 0;
+
+    for (; code != NULL && *code != '\0' && n + 1 < size; code++) {
+        char c = *code;
+
+        if (c == ' ' || c == '-' || c == '\t') {
+            continue;
+        }
+        if (c >= 'a' && c <= 'z') {
+            c = (char)(c - 'a' + 'A');
+        }
+        out[n++] = c;
+    }
+    out[n] = '\0';
+}
+
+/* Read the token file once: "<code> <token>" lines. */
+static void tokens_read(void)
+{
+    FILE *f;
+    char line[128];
+
+    if (g_tokens_read || g_token_file[0] == '\0') {
+        return;
+    }
+    g_tokens_read = 1;
+    f = fopen(g_token_file, "rb");
+    if (f == NULL) {
+        return;
+    }
+    while (g_token_count < BW_MOD_NET_TOKENS_MAX &&
+           fgets(line, sizeof(line), f) != NULL) {
+        BwModNetToken *t = &g_tokens[g_token_count];
+
+        if (sscanf(line, "%32s %32s", t->code, t->token) == 2 &&
+            strlen(t->token) == 32) {
+            g_token_count++;
+        }
+    }
+    fclose(f);
+    g_token_next = g_token_count % BW_MOD_NET_TOKENS_MAX;
+}
+
+/* Write the token file whole. */
+static void tokens_write(void)
+{
+    FILE *f;
+    u32 i;
+
+    if (g_token_file[0] == '\0') {
+        return;
+    }
+    f = fopen(g_token_file, "wb");
+    if (f == NULL) {
+        return;
+    }
+    for (i = 0; i < g_token_count; i++) {
+        fprintf(f, "%s %s\n", g_tokens[i].code, g_tokens[i].token);
+    }
+    fclose(f);
+}
+
+/* The token kept for a code, or NULL. */
+static const char *token_find(const char *code)
+{
+    u32 i;
+
+    tokens_read();
+    for (i = 0; i < g_token_count; i++) {
+        if (strcmp(g_tokens[i].code, code) == 0) {
+            return g_tokens[i].token;
+        }
+    }
+    return NULL;
+}
+
+/* Keep `token` for `code`; the oldest entry goes when the table is full. */
+static void token_keep(const char *code, const char *token)
+{
+    BwModNetToken *t;
+    u32 i;
+
+    tokens_read();
+    for (i = 0; i < g_token_count; i++) {
+        if (strcmp(g_tokens[i].code, code) == 0) {
+            copy_text(g_tokens[i].token, sizeof(g_tokens[i].token), token);
+            tokens_write();
+            return;
+        }
+    }
+    if (g_token_count < BW_MOD_NET_TOKENS_MAX) {
+        t = &g_tokens[g_token_count++];
+    } else {
+        t = &g_tokens[g_token_next];
+        g_token_next = (g_token_next + 1u) % BW_MOD_NET_TOKENS_MAX;
+    }
+    copy_text(t->code, sizeof(t->code), code);
+    copy_text(t->token, sizeof(t->token), token);
+    tokens_write();
+}
+
+void bw_mod_net_set_token_file(const char *path)
+{
+    net_init();
+    bw_mutex_lock(g_lock);
+    copy_text(g_token_file, sizeof(g_token_file), path);
+    g_tokens_read = 0;
+    g_token_count = 0;
+    g_token_next = 0;
+    bw_mutex_unlock(g_lock);
 }
 
 /* The peer number in a frame's "<peer> <name>" text. */
@@ -1525,6 +1703,12 @@ static void net_reader(void *arg)
         if (rc == 1) {
             relay_frame(type, payload, size);
         }
+        /* The keep-alive: the relay drops a client that is silent for a
+         * minute, and a player who stands still sends nothing. */
+        if (rc == 0 && bw_clock_ns() - g_last_tx_ns >
+                (unsigned long long)BW_MOD_NET_KEEPALIVE_MS * 1000000ull) {
+            (void)relay_send(BW_MOD_NET_MSG_KEEPALIVE, NULL, 0);
+        }
         bw_mutex_unlock(g_lock);
         if (rc < 0) {
             /* the connection is gone: the peers are gone too */
@@ -1600,6 +1784,7 @@ int bw_mod_net_session_host(char *code_out, u32 size)
     const BwModNetTransport *t;
     char payload[256];
     char reply[BW_MOD_NET_CODE_MAX + 1];
+    char token[33];
     unsigned long long deadline;
     int n;
     int rc;
@@ -1633,8 +1818,11 @@ int bw_mod_net_session_host(char *code_out, u32 size)
         bw_mutex_unlock(g_lock);
         return BW_MOD_NET_E_IO;
     }
+    /* A new session: a new token, kept under the code once the relay has
+     * named it. */
+    token_make(token);
     n = snprintf(payload, sizeof(payload), "%s %s %s", BW_MOD_NET_PROTO,
-                 the_token(), g_player[0] != '\0' ? g_player : "player");
+                 token, g_player[0] != '\0' ? g_player : "player");
     if (n < 0 || (size_t)n >= sizeof(payload)) {
         bw_mutex_unlock(g_lock);
         return BW_MOD_NET_E_ARG;
@@ -1701,7 +1889,13 @@ int bw_mod_net_session_host(char *code_out, u32 size)
         copy_text(g_session.name, sizeof(g_session.name),
                   g_player[0] != '\0' ? g_player : "player");
     }
-    copy_text(g_session.token, sizeof(g_session.token), the_token());
+    copy_text(g_session.token, sizeof(g_session.token), token);
+    {
+        char clean[BW_MOD_NET_CODE_MAX + 1];
+
+        code_clean(clean, sizeof(clean), reply);
+        token_keep(clean, token);
+    }
     g_net_stop = 0;
     g_rx.state = 0;
     g_rx.len = 0;
@@ -1719,12 +1913,18 @@ int bw_mod_net_session_join(const char *code)
 {
     const BwModNetTransport *t;
     char payload[256];
+    char clean[BW_MOD_NET_CODE_MAX + 1];
+    char token[33];
     unsigned long long deadline;
     int n;
     int rc;
 
     net_init();
-    if (code == NULL || *code == '\0') {
+    if (code == NULL) {
+        return BW_MOD_NET_E_ARG;
+    }
+    code_clean(clean, sizeof(clean), code);
+    if (clean[0] == '\0') {
         return BW_MOD_NET_E_ARG;
     }
     bw_mutex_lock(g_lock);
@@ -1751,8 +1951,20 @@ int bw_mod_net_session_join(const char *code)
         bw_mutex_unlock(g_lock);
         return BW_MOD_NET_E_IO;
     }
+    /* The token kept for this code: a player who comes back to a code is
+     * the same peer, even after the game was restarted. */
+    {
+        const char *kept = token_find(clean);
+
+        if (kept != NULL) {
+            copy_text(token, sizeof(token), kept);
+        } else {
+            token_make(token);
+            token_keep(clean, token);
+        }
+    }
     n = snprintf(payload, sizeof(payload), "%s %s %s %s", BW_MOD_NET_PROTO,
-                 the_token(), code, g_player[0] != '\0' ? g_player : "player");
+                 token, clean, g_player[0] != '\0' ? g_player : "player");
     if (n < 0 || (size_t)n >= sizeof(payload)) {
         bw_mutex_unlock(g_lock);
         return BW_MOD_NET_E_ARG;
@@ -1810,12 +2022,12 @@ int bw_mod_net_session_join(const char *code)
     }
     g_session.running = 1;
     g_session.hosting = 0;
-    copy_text(g_session.code, sizeof(g_session.code), code);
+    copy_text(g_session.code, sizeof(g_session.code), clean);
     if (g_session.name[0] == '\0') {
         copy_text(g_session.name, sizeof(g_session.name),
                   g_player[0] != '\0' ? g_player : "player");
     }
-    copy_text(g_session.token, sizeof(g_session.token), the_token());
+    copy_text(g_session.token, sizeof(g_session.token), token);
     g_net_stop = 0;
     g_rx.state = 0;
     g_rx.len = 0;
@@ -1870,6 +2082,11 @@ int bw_mod_net_session_send(u32 peer, const void *buf, u32 size)
         return BW_MOD_NET_E_NO_SESSION;
     }
     key_len = (u32)strlen(key);
+    if (key_len == 0) {
+        /* a mod with no namespace has no key a peer could match */
+        bw_mutex_unlock(g_lock);
+        return BW_MOD_NET_E_ARG;
+    }
     if (key_len > BW_MOD_NET_KEY_MAX) {
         key_len = BW_MOD_NET_KEY_MAX;
     }

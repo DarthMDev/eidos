@@ -228,6 +228,13 @@ void bw_mod_net_set_name(const char *name);
 const char *bw_mod_net_name(void);
 
 /*
+ * The file the session tokens are kept in: one random token per session
+ * code, so a player who comes back to a code (after a drop or a restart)
+ * is the same peer.  Without a file the tokens last for the process.
+ */
+void bw_mod_net_set_token_file(const char *path);
+
+/*
  * The port the external control listens on: the number the port's settings
  * hold.  Zero means the control is off.  Setting it while the control is
  * running restarts the listener on the new port.

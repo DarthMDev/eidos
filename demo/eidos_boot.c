@@ -81,6 +81,7 @@
 #include "bw_limits.h"
 #include "mod_menu.h"
 #include "mod_net.h"
+#include "save.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1644,6 +1645,14 @@ static int boot_run_start(EidosFrameHooks *hooks, int own_thread)
     bw_mod_net_set_relay(eidos_settings_net_relay(),
                          (u16)eidos_settings_net_relay_port());
     bw_mod_net_set_name(eidos_settings_net_name());
+    {
+        /* The session tokens, one per code, next to the save. */
+        char tokens[512];
+
+        if (bw_save_path(tokens, sizeof tokens, "net_tokens.txt") == 0) {
+            bw_mod_net_set_token_file(tokens);
+        }
+    }
     bw_mod_net_control_set_port(eidos_settings_net_control_port());
     /* The player's own mod list: the menu's record restores the roots the
      * player chose, before the loader reads them (sdk/mod_menu.h). */

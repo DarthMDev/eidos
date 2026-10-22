@@ -104,6 +104,7 @@ The client sends:
 | `J` | `<version> <token> <code> <name>` | join a session |
 | `D` | `<peer>\n<key>\n<bytes>` | a mod's message, to one peer or to every peer (peer 0) |
 | `B` | empty | leave the session |
+| `K` | empty | keep-alive: sent after 20 seconds without another frame (the relay drops a client that is silent for 60) |
 
 and the relay sends:
 
@@ -124,6 +125,16 @@ number in the message it forwards is the sender's own, not the target the
 sender named; it keeps a peer's number for the session's lifetime, so the
 same token joining the same code again gets the same number back; and it
 refuses a join with an unknown code with `E`.
+
+The relay is metaxy (its own repository; its `docs/SPEC.md` is the relay's
+side of this protocol). `<version>` is the text `eidos-net/1`. The token is
+32 hexadecimal digits from the operating system's random source, one per
+session code, kept in `net_tokens.txt` in the save folder, so a player who
+comes back to a code (after a drop or a restart) is the same peer. The
+client upper-cases a code and drops the spaces and dashes a player types. A
+frame of any length, 0 included, is read; a type the client does not know is
+read past. A mod with no namespace cannot send (`E_ARG`): its key would be
+empty. The client speaks plain TCP; TLS is to come.
 
 **What the port has to know to reach the relay:** the host (a name or a
 dotted address), the port, and the session's code, which the relay hands out

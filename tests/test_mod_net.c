@@ -653,15 +653,15 @@ static int wait_clients(int want)
 }
 
 /* Whether the token the client made is one the port could have made: a
- * run of sixteen hexadecimal digits. */
+ * run of thirty-two hexadecimal digits. */
 static int is_token(const char *text)
 {
     size_t i;
 
-    if (text == NULL || strlen(text) != 16) {
+    if (text == NULL || strlen(text) != 32) {
         return 0;
     }
-    for (i = 0; i < 16; i++) {
+    for (i = 0; i < 32; i++) {
         char c = text[i];
 
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
@@ -802,11 +802,26 @@ static void test_protocol(void)
     BW_CHECK_EQ("the first is the protocol's version",
                 strcmp(version, T_PROTO), 0);
     BW_CHECK_EQ("the second is the token", is_token(token), 1);
-    BW_CHECK_EQ("and it is the token of the host request",
-                strcmp(token, host_token), 0);
+    BW_CHECK_EQ("another code has a token of its own",
+                strcmp(token, host_token) != 0, 1);
     BW_CHECK_EQ("the third is the code the port was given",
                 strcmp(join_code, T_JOIN_CODE), 0);
     BW_CHECK_EQ("the fourth is the player's name", strcmp(name, T_NAME), 0);
+
+    printf("a join back to the hosted code\n");
+    bw_mod_net_session_leave();
+    relay_reset();
+    relay_say('W', "1 " T_NAME);
+    BW_STEP("the join succeeds",
+            bw_mod_net_session_join(" abc-123 ") == (int)BW_MOD_NET_OK);
+    BW_STEP("the client wrote a frame", relay_take(&frame) == 1);
+    got = sscanf(frame.payload, "%63s %63s %63s %63s", version, token,
+                 join_code, name);
+    BW_CHECK_EQ("the request has four fields", got, 4);
+    BW_CHECK_EQ("the code is cleaned: upper case, no spaces or dashes",
+                strcmp(join_code, T_CODE), 0);
+    BW_CHECK_EQ("the token is the one kept for that code",
+                strcmp(token, host_token), 0);
 
     printf("the message\n");
     relay_reset();
@@ -1056,8 +1071,13 @@ static void test_bad_frame(void)
     BW_STEP("the host call succeeds",
                bw_mod_net_session_host(code, sizeof code) ==
                (int)BW_MOD_NET_OK);
+    /* an empty frame of a type the port does not know comes first: the
+     * port reads past it and takes the next one */
+    relay_say('Z', "");
     relay_say('P', "2 guest");
     BW_CHECK_EQ("the port waits for the peer", wait_peers(1), 1);
+    BW_CHECK_EQ("an empty frame does not end the session",
+                bw_mod_net_session_active(), 1);
 
     /* the length is not a number: the frame is not the protocol's */
     relay_write_raw("Z 1x\n");
