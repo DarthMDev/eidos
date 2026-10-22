@@ -179,6 +179,31 @@ int  bw_mod_net_session_host(char *code_out, u32 size);
 int  bw_mod_net_session_join(const char *code);
 void bw_mod_net_session_leave(void);
 int  bw_mod_net_session_send(u32 peer, const void *buf, u32 size);
+
+/*
+ * The port's own messages (the multiplayer layer: lobby, saves, positions),
+ * under a key no mod can have: a mod's key is its namespace, which has no
+ * ':' (sdk/mod_manifest.c).
+ */
+#define BW_MOD_NET_PORT_KEY "eidos:port"
+
+/* The kind the port's handler gets when the session is over; the bytes are
+ * the reason ("lost", or the relay's error such as "removed"). */
+#define BW_MOD_NET_PORT_ENDED 100
+
+/* Send under BW_MOD_NET_PORT_KEY (peer 0: every other player). */
+int  bw_mod_net_port_send(u32 peer, const void *buf, u32 size);
+
+/* The port's handler: the messages under BW_MOD_NET_PORT_KEY, every join
+ * and leave (before the mods hear them), and BW_MOD_NET_PORT_ENDED.  It
+ * runs on the game's frame, like the mods' handlers. */
+void bw_mod_net_set_port_handler(BwSessionHandler fn);
+
+/* The host removes a player (`Q`); the player is told `E removed`. */
+int  bw_mod_net_session_remove(u32 peer);
+
+/* 1 when this player hosts the running session. */
+int  bw_mod_net_session_hosting(void);
 void bw_mod_net_on_session(BwSessionHandler fn);
 
 /*

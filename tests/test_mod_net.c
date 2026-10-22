@@ -1181,6 +1181,95 @@ static void test_control(void)
 
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* The port's own messages                                            */
+/* ------------------------------------------------------------------ */
+
+static HandlerLog g_port_log;
+static int        g_port_ended;
+static char       g_port_reason[64];
+
+static void on_port(u32 peer, int kind, const void *buf, u32 size)
+{
+    if (kind == BW_MOD_NET_PORT_ENDED) {
+        g_port_ended++;
+        snprintf(g_port_reason, sizeof g_port_reason, "%.*s", (int)size,
+                 (const char *)buf);
+        return;
+    }
+    note_session(&g_port_log, peer, kind, buf, size);
+}
+
+/* Run the frame until `cond` holds or the wait is over. */
+static int frame_until(const int *value, int want)
+{
+    unsigned long long deadline = bw_clock_ns() + T_WAIT_NS;
+
+    while (bw_clock_ns() < deadline) {
+        bw_mod_net_frame();
+        if (*value >= want) {
+            return 1;
+        }
+        t_sleep_ms(1);
+    }
+    return 0;
+}
+
+static void test_port(void)
+{
+    char code[BW_MOD_NET_CODE_MAX + 1];
+    RelayFrame frame;
+
+    printf("the port's own messages\n");
+    bw_mod_net_reset();
+    relay_reset();
+    log_reset(&g_alpha_session);
+    log_reset(&g_port_log);
+    g_port_ended = 0;
+    bw_mod_net_set_transport(&g_fake_transport);
+    bw_mod_net_set_relay(T_RELAY_HOST, T_RELAY_PORT);
+    bw_mod_net_set_name(T_NAME);
+    bw_mod_net_set_port_handler(on_port);
+    bw_mod_savedata_set_namespace(T_NS_A);
+    bw_mod_net_on_session(on_alpha_session);
+    relay_say('C', T_CODE);
+    BW_STEP("the host call succeeds",
+            bw_mod_net_session_host(code, sizeof code) == (int)BW_MOD_NET_OK);
+    BW_CHECK_EQ("the port knows it hosts", bw_mod_net_session_hosting(), 1);
+    relay_reset();
+
+    BW_STEP("the port's send is taken",
+            bw_mod_net_port_send(2, "lobby", 5) == (int)BW_MOD_NET_OK);
+    BW_STEP("the client wrote a frame", relay_take(&frame) == 1);
+    BW_CHECK_EQ("the frame is a message", frame.type, 'D');
+    BW_CHECK_EQ("under the port's key",
+                strcmp(frame.payload, "2\n" BW_MOD_NET_PORT_KEY "\nlobby"), 0);
+
+    BW_STEP("the host removes a player",
+            bw_mod_net_session_remove(2) == (int)BW_MOD_NET_OK);
+    BW_STEP("the client wrote a frame", relay_take(&frame) == 1);
+    BW_CHECK_EQ("the frame is the removal", frame.type, 'Q');
+    BW_CHECK_EQ("of that peer", strcmp(frame.payload, "2"), 0);
+
+    relay_say('P', "2 guest");
+    relay_say('D', "2\n" BW_MOD_NET_PORT_KEY "\nhello port");
+    BW_CHECK_EQ("the port hears the join and its message",
+                frame_until(&g_port_log.messages, 1), 1);
+    BW_CHECK_EQ("the join too", g_port_log.joins, 1);
+    BW_CHECK_EQ("the message is the port's",
+                strcmp(g_port_log.msg_text, "hello port"), 0);
+    BW_CHECK_EQ("the mod heard the join", g_alpha_session.joins, 1);
+    BW_CHECK_EQ("but not the port's message", g_alpha_session.messages, 0);
+
+    relay_say('E', "removed");
+    BW_CHECK_EQ("the port hears the end of the session",
+                frame_until(&g_port_ended, 1), 1);
+    BW_CHECK_EQ("with the relay's reason",
+                strcmp(g_port_reason, "removed"), 0);
+    bw_mod_net_set_port_handler(NULL);
+    bw_mod_net_session_leave();
+}
+
 int main(void)
 {
     g_relay.lock = bw_mutex_create();
@@ -1197,6 +1286,7 @@ int main(void)
     test_frame();
     test_limits();
     test_bad_frame();
+    test_port();
     test_control();
 
     bw_mod_net_reset();

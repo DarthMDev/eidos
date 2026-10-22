@@ -209,6 +209,7 @@ static void net_leave_mod(const char *saved)
 #define BW_MOD_NET_MSG_DATA    'D'   /* both ways: a mod's message         */
 #define BW_MOD_NET_MSG_BYE     'B'   /* client -> relay: leave             */
 #define BW_MOD_NET_MSG_KEEPALIVE 'K' /* client -> relay: still here        */
+#define BW_MOD_NET_MSG_REMOVE 'Q'    /* client -> relay: the host removes a player */
 #define BW_MOD_NET_MSG_CODE    'C'   /* relay -> client: the session's code */
 #define BW_MOD_NET_MSG_WELCOME 'W'   /* relay -> client: you are in        */
 #define BW_MOD_NET_MSG_PEER    'P'   /* relay -> client: a peer joined     */
@@ -218,6 +219,9 @@ static void net_leave_mod(const char *saved)
 /* The record kinds in the queue.  The first three are the session kinds of
  * sdk/mod_state.h; the fourth is the control's own. */
 #define BW_MOD_NET_EV_COMMAND 3u
+/* The session is over (the relay's error, or the connection lost): told
+ * to the port's own handler only, with the reason as the bytes. */
+#define BW_MOD_NET_EV_ENDED 100u
 
 /* ------------------------------------------------------------------ */
 /* The sockets                                                         */
@@ -774,6 +778,10 @@ static int      g_client_count;
 static int      g_control_port;
 
 static u32      g_dropped;
+
+/* The port's own handler: the messages under BW_MOD_NET_PORT_KEY, every
+ * join and leave, and the end of the session. */
+static BwSessionHandler g_port_handler;
 
 /* When the client last wrote a frame (for the keep-alive). */
 static unsigned long long g_last_tx_ns;
@@ -1673,6 +1681,10 @@ static void relay_frame(char type, const u8 *payload, u32 size)
 
             copy_text_n(reason, sizeof(reason), (const char *)payload, size);
             fprintf(stderr, "eidos: the relay says: %s\n", reason);
+            if (queue_put(&g_q_in, 0, BW_MOD_NET_EV_ENDED, NULL, 0,
+                          (const u8 *)reason, (u32)strlen(reason)) != 0) {
+                g_dropped++;
+            }
         }
         g_net_stop = 1;
         break;
@@ -1729,6 +1741,11 @@ static void net_reader(void *arg)
                 }
             }
             g_session.running = 0;
+            if (!g_net_stop &&
+                queue_put(&g_q_in, 0, BW_MOD_NET_EV_ENDED, NULL, 0,
+                          (const u8 *)"lost", 4u) != 0) {
+                g_dropped++;
+            }
             g_net_stop = 1;
             bw_mutex_unlock(g_lock);
             break;
@@ -2061,9 +2078,61 @@ void bw_mod_net_session_leave(void)
  * The message carries the calling mod's key, so that the mod with the same
  * key on the other side is the one that receives it.
  */
+static int send_keyed(u32 peer, const char *key, const void *buf, u32 size);
+
 int bw_mod_net_session_send(u32 peer, const void *buf, u32 size)
 {
-    const char *key = current_namespace();
+    return send_keyed(peer, current_namespace(), buf, size);
+}
+
+/* The port's own message, under BW_MOD_NET_PORT_KEY. */
+int bw_mod_net_port_send(u32 peer, const void *buf, u32 size)
+{
+    return send_keyed(peer, BW_MOD_NET_PORT_KEY, buf, size);
+}
+
+void bw_mod_net_set_port_handler(BwSessionHandler fn)
+{
+    net_init();
+    bw_mutex_lock(g_lock);
+    g_port_handler = fn;
+    bw_mutex_unlock(g_lock);
+}
+
+/* `Q`: the host removes a player from the session. */
+int bw_mod_net_session_remove(u32 peer)
+{
+    char text[16];
+    int n;
+    int rc;
+
+    net_init();
+    if (peer == 0) {
+        return BW_MOD_NET_E_ARG;
+    }
+    bw_mutex_lock(g_lock);
+    if (!g_session.running) {
+        bw_mutex_unlock(g_lock);
+        return BW_MOD_NET_E_NO_SESSION;
+    }
+    if (!g_session.hosting) {
+        bw_mutex_unlock(g_lock);
+        return BW_MOD_NET_E_ARG;
+    }
+    n = snprintf(text, sizeof(text), "%u", (unsigned int)peer);
+    rc = relay_send(BW_MOD_NET_MSG_REMOVE, text, (u32)n);
+    bw_mutex_unlock(g_lock);
+    return (rc == 0) ? BW_MOD_NET_OK : BW_MOD_NET_E_IO;
+}
+
+/* Whether this player hosts the session. */
+int bw_mod_net_session_hosting(void)
+{
+    return g_session.running && g_session.hosting;
+}
+
+static int send_keyed(u32 peer, const char *key, const void *buf, u32 size)
+{
     u8 payload[BW_MOD_NET_TX_MAX];
     u32 key_len;
     int n;
@@ -2406,6 +2475,19 @@ void bw_mod_net_frame(void)
                         &data, &size)) {
             break;
         }
+        if (kind == BW_MOD_NET_EV_ENDED) {
+            if (g_port_handler != NULL) {
+                g_port_handler(peer, (int)kind, (const void *)data, size);
+            }
+            continue;
+        }
+        if (kind == (u32)BW_SESSION_MESSAGE &&
+            strcmp(key, BW_MOD_NET_PORT_KEY) == 0) {
+            if (g_port_handler != NULL) {
+                g_port_handler(peer, (int)kind, (const void *)data, size);
+            }
+            continue;
+        }
         if (kind == (u32)BW_SESSION_MESSAGE) {
             /* the message goes to the mod with the same key, and to
              * nobody else */
@@ -2434,8 +2516,11 @@ void bw_mod_net_frame(void)
             }
             continue;
         }
-        /* a join or a drop: every mod that asked for the session's events
-         * is told */
+        /* a join or a drop: the port and every mod that asked for the
+         * session's events are told */
+        if (g_port_handler != NULL) {
+            g_port_handler(peer, (int)kind, NULL, 0);
+        }
         for (i = 0; i < BW_MOD_NET_MODS_MAX; i++) {
             if (g_mods[i].used && g_mods[i].session != NULL) {
                 g_mods[i].session(peer, (int)kind, NULL, 0);

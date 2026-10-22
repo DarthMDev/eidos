@@ -105,6 +105,7 @@ The client sends:
 | `D` | `<peer>\n<key>\n<bytes>` | a mod's message, to one peer or to every peer (peer 0) |
 | `B` | empty | leave the session |
 | `K` | empty | keep-alive: sent after 20 seconds without another frame (the relay drops a client that is silent for 60) |
+| `Q` | `<peer>` | the host removes a player; the player is told `E removed` |
 
 and the relay sends:
 
@@ -135,6 +136,13 @@ client upper-cases a code and drops the spaces and dashes a player types. A
 frame of any length, 0 included, is read; a type the client does not know is
 read past. A mod with no namespace cannot send (`E_ARG`): its key would be
 empty. The client speaks plain TCP; TLS is to come.
+
+The port's own multiplayer messages (the lobby, the saves, the positions)
+travel as `D` frames under the key `eidos:port`, which no mod can have: a
+mod's key is its namespace, and a namespace has no `:`. The port's handler
+(`bw_mod_net_set_port_handler`) gets those messages, every join and leave
+before the mods do, and the end of the session with its reason (`lost`, or
+the relay's error such as `removed`).
 
 **What the port has to know to reach the relay:** the host (a name or a
 dotted address), the port, and the session's code, which the relay hands out
