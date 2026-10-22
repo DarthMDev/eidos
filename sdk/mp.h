@@ -144,6 +144,14 @@ void bw_mp_reset(void);
  */
 void bw_mp_set_boot(void (*fn)(int new_game));
 
+/* 1 on a joiner's game in a multiplayer game: its field menu has no Save
+ * (only the host saves). */
+int  bw_mp_hide_save(void);
+
+/* The field is quiet (the player took a step): a joiner's game saves here
+ * when the host has saved. */
+void bw_mp_field_quiet(void);
+
 /* The folder of the multiplayer files: <save folder>/multiplayer. */
 int  bw_mp_dir(char *out, u32 size);
 

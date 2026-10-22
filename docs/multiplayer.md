@@ -117,15 +117,33 @@ use multiplayer for now (SPEC section 17).
   keeps it as that player's save.
 - The port's reset keeps the session while a multiplayer game runs.
 
+## Saving (built)
+
+- Only the host saves. A joiner's field menu has no Save (the label stays,
+  the button does nothing). When the host's game writes its save, the host
+  sends `savenow`; each joiner's game runs the game's own save at its next
+  quiet moment (the next step on the field) and the file goes to the host.
+- The host's own game in a multiplayer game is `multiplayer/host.sav`,
+  not one of the single-player slots.
+- A save belongs to one game: the host keeps `<fingerprint>.sav.game`
+  (`B` or `W`), and the lobby will not start while a player plays the
+  other game than their save's.
+
+## Save slots (built)
+
+- Up to 8 single-player saves: slot 1 is `pokeblack.sav`, slots 2 to 8
+  are `slots/save<n>.sav`; `slot.txt` holds the slot in force.
+- The Continue card shows `< 2/3 >`; left and right switch the save.
+- New Game takes a free slot, with no warning; the game's own "this
+  deletes your save" comes only when all 8 are used.
+- The title menu's MULTIPLAYER line (in the Mic Test's place, third)
+  opens Host / Join.
+
 ## Not built yet
 
-1. Saving by the host only: the host's save makes every joiner's game save
-   at its next safe moment, and the host's "saved" waits for all; the
-   joiners' own Save option goes. Until then a joiner's save reaches the
-   host whenever that joiner saves.
-2. Several save slots, and a multiplayer save as one of them; the title
-   menu's Multiplayer line.
-3. The game check (Black or White) against the player's save.
+1. With 8 slots used: choosing which save New Game replaces.
+2. The host's "saved" waiting for every player's save to arrive.
+3. Several multiplayer saves (one per group of players).
 4. Positions and event forwarding.
 5. The shared table for mods.
 6. TLS.

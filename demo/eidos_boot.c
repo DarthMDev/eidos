@@ -238,6 +238,7 @@ static int parse_shots(const char *list)
 #include "settings.h"
 #endif
 #include "mp.h"
+#include "save_slots.h"
 
 #ifndef EIDOS_OVERLAYS
 #define EIDOS_OVERLAYS 0
@@ -1830,6 +1831,11 @@ static int boot_run_start(EidosFrameHooks *hooks, int own_thread)
         if (bw_save_path(tokens, sizeof tokens, "net_tokens.txt") == 0) {
             bw_mod_net_set_token_file(tokens);
         }
+    }
+    /* The save slot in force is the backup chip's file (sdk/save_slots.h);
+     * a multiplayer game holds its own file and keeps it. */
+    if (bw_mp_state() == BW_MP_OFF || bw_mp_state() == BW_MP_ENDED) {
+        bw_slots_apply();
     }
     bw_mod_net_control_set_port(eidos_settings_net_control_port());
     /* The player's own mod list: the menu's record restores the roots the

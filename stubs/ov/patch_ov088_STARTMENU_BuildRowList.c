@@ -62,8 +62,14 @@ void STARTMENU_BuildRowList(char *p)
         i++;
     }
     (p + i)[0x120] = 1;
-    (p + i)[0x121] = 2;
-    i += 2;
+    i++;
+    if (hook) {
+        /* MULTIPLAYER (kind 6, the game's Mic Test) comes third */
+        (p + i)[0x120] = 6;
+        i++;
+    }
+    (p + i)[0x120] = 2;
+    i++;
     if (MISC_GetSlotState(*(void **)(p + 8), 1)) {
         (p + i)[0x120] = 3;
         i++;
@@ -73,8 +79,11 @@ void STARTMENU_BuildRowList(char *p)
         i++;
     }
     (p + i)[0x120] = 5;
-    (p + i)[0x121] = 6;
-    i += 2;
+    i++;
+    if (!hook) {
+        (p + i)[0x120] = 6;
+        i++;
+    }
     if (MISC_GetSlotState(*(void **)(p + 8), 3) || hook) {
         (p + i)[0x120] = 7;
         i++;

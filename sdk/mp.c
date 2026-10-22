@@ -30,6 +30,7 @@
 #include "plat_save.h"
 #include "plat_thread.h"
 #include "save.h"
+#include "save_slots.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -78,7 +79,9 @@ static struct {
     char       host_id[33];         /* the host's lasting id (SPEC 12)  */
     char       fp[33];              /* a joiner: who it is to this host */
     int        in_game;             /* a joiner: its game runs the save the host sent */
-    u32        last_writes;         /* a joiner: the save writes uploaded */
+    u32        last_writes;         /* the save writes already acted on */
+    int        save_wanted;         /* a joiner: the host saved; save at the next quiet moment */
+    int        saving;              /* a joiner: the game's save runs */
 } g_mp;
 
 /* ------------------------------------------------------------------ */
@@ -96,6 +99,12 @@ static struct {
 extern void bw_arm7_backup_set_path(const char *path) BW_MP_WEAK;
 extern u32  bw_arm7_backup_writes(void) BW_MP_WEAK;
 extern int  bw_arm7_backup_dirty(void) BW_MP_WEAK;
+
+/* The game's save, run by the port on a joiner when the host saved
+ * (src/game/arm9/game_data.c), and the game data the port has bound. */
+extern int GAME_DATA_SaveStart(void *gameData) BW_MP_WEAK;
+extern int GAME_DATA_SaveMain(void *gameData) BW_MP_WEAK;
+extern void *bw_mod_state_game_data(void);
 
 static void (*g_boot)(int new_game);
 
@@ -518,6 +527,13 @@ static void host_store(const BwMpPlayer *p, const u8 *buf, u32 size)
                 p->name);
         return;
     }
+    {
+        /* the game the save belongs to */
+        char gpath[520];
+
+        snprintf(gpath, sizeof(gpath), "%s.game", path);
+        (void)bw_save_write_atomic(gpath, &p->game, 1);
+    }
     fprintf(stderr, "eidos: multiplayer: %s's save is kept (%u bytes)\n",
             p->name, (unsigned)size);
 }
@@ -537,6 +553,31 @@ static void host_send_save(const BwMpPlayer *p)
     }
     send_bytes(p->peer, buf, size);
     free(buf);
+}
+
+/* The host's own game in the multiplayer save: host.sav, not one of the
+ * single-player slots. */
+static void host_install(void)
+{
+    char path[512];
+    FILE *f;
+    int have = 0;
+
+    if (mp_path(path, sizeof(path), "host.sav") != 0) {
+        return;
+    }
+    if ((f = fopen(path, "rb")) != NULL) {
+        have = fseek(f, 0, SEEK_END) == 0 && ftell(f) > 0;
+        fclose(f);
+    }
+    if (bw_arm7_backup_set_path != NULL) {
+        bw_arm7_backup_set_path(path);
+    }
+    g_mp.in_game = 1;
+    g_mp.last_writes = bw_arm7_backup_writes != NULL ? bw_arm7_backup_writes() : 0;
+    if (g_boot != NULL) {
+        g_boot(!have);
+    }
 }
 
 /* A joiner's game starts on the save the host sent: the file is the
@@ -724,6 +765,26 @@ static int host_ready(void)
             snprintf(g_mp.blocker, sizeof(g_mp.blocker),
                      "waiting for %s's game to answer", p->name);
             return 0;
+        }
+        if (p->fp[0] != '\0') {
+            /* a save belongs to one game: Black or White */
+            char name[48], gpath[512];
+            FILE *f;
+            int c = 0;
+
+            snprintf(name, sizeof(name), "%s.sav.game", p->fp);
+            if (mp_path(gpath, sizeof(gpath), name) == 0 &&
+                (f = fopen(gpath, "rb")) != NULL) {
+                c = fgetc(f);
+                fclose(f);
+            }
+            if ((c == 'B' || c == 'W') && c != p->game) {
+                snprintf(g_mp.blocker, sizeof(g_mp.blocker),
+                         "%s's save is %s; they play %s", p->name,
+                         c == 'W' ? "White" : "Black",
+                         p->game == 'W' ? "White" : "Black");
+                return 0;
+            }
         }
         if (!mods_match(mine, p->mods, why, sizeof(why))) {
             snprintf(g_mp.blocker, sizeof(g_mp.blocker), "%s: %s", p->name, why);
@@ -970,6 +1031,8 @@ static void joiner_on_message(u32 peer, const char *msg, u32 size)
         g_mp.state = BW_MP_PLAYING;
     } else if (size == 5 && memcmp(msg, "pause", 5) == 0) {
         g_mp.state = BW_MP_PAUSED;
+    } else if (size == 7 && memcmp(msg, "savenow", 7) == 0) {
+        g_mp.save_wanted = 1;
     }
 }
 
@@ -1114,9 +1177,9 @@ int bw_mp_join(const char *code)
 
 void bw_mp_leave(void)
 {
-    if (!g_mp.host && g_mp.in_game && bw_arm7_backup_set_path != NULL) {
+    if (g_mp.in_game) {
         /* the player's own save is the chip's file again */
-        bw_arm7_backup_set_path(NULL);
+        bw_slots_apply();
     }
     g_mp.in_game = 0;
     g_net->leave();
@@ -1155,6 +1218,28 @@ void bw_mp_rename(const char *name)
     if (n > 0) {
         (void)g_net->send(1, msg, (u32)n);
     }
+}
+
+int bw_mp_hide_save(void)
+{
+    return !g_mp.host && g_mp.in_game && g_mp.state != BW_MP_OFF;
+}
+
+void bw_mp_field_quiet(void)
+{
+    void *gd;
+
+    if (!g_mp.save_wanted || g_mp.saving || g_mp.host ||
+        GAME_DATA_SaveStart == NULL) {
+        return;
+    }
+    gd = bw_mod_state_game_data();
+    if (gd == NULL) {
+        return;
+    }
+    g_mp.save_wanted = 0;
+    g_mp.saving = 1;
+    (void)GAME_DATA_SaveStart(gd);
 }
 
 const char *bw_mp_code(void)
@@ -1220,9 +1305,6 @@ int bw_mp_start(void)
     if (!host_ready()) {
         return -1;
     }
-    if (g_mp.state == BW_MP_LOBBY) {
-        g_mp.started = 1;
-    }
     if (!g_mp.roster_set) {
         /* the first start sets the roster: the players here now */
         for (i = 0; i < BW_MP_PLAYERS_MAX; i++) {
@@ -1243,6 +1325,9 @@ int bw_mp_start(void)
         }
     }
     host_send_word("start");
+    if (!g_mp.in_game) {
+        host_install();
+    }
     return 0;
 }
 
@@ -1353,11 +1438,26 @@ void bw_mp_frame_at(u64 t)
 {
     g_mp.now_ms = t;
     sends_pump();
-    if (!g_mp.host && g_mp.in_game && bw_arm7_backup_writes != NULL &&
+    if (g_mp.in_game && bw_arm7_backup_writes != NULL &&
         bw_arm7_backup_writes() != g_mp.last_writes &&
         (bw_arm7_backup_dirty == NULL || !bw_arm7_backup_dirty())) {
         g_mp.last_writes = bw_arm7_backup_writes();
-        joiner_upload();
+        if (g_mp.host) {
+            /* the host saved: every player's game saves now */
+            host_send_word("savenow");
+        } else {
+            joiner_upload();
+        }
+    }
+    if (g_mp.saving && GAME_DATA_SaveMain != NULL) {
+        int r = GAME_DATA_SaveMain(bw_mod_state_game_data());
+
+        if (r == 2 || r == 3) {
+            g_mp.saving = 0;
+            if (r == 3) {
+                fprintf(stderr, "eidos: multiplayer: the save failed\n");
+            }
+        }
     }
     switch (g_mp.state) {
     case BW_MP_GRACE:

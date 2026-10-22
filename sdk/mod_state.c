@@ -367,6 +367,12 @@ void bw_mod_state_set_game_data(void *game_data)
     g_game_data = game_data;
 }
 
+/* The game data bound, or NULL (multiplayer saves a joiner's game). */
+void *bw_mod_state_game_data(void)
+{
+    return g_game_data;
+}
+
 /* Bind the battle's main object (a struct BtlMain *), or NULL when the
  * battle is over. */
 void bw_mod_state_set_battle(void *battle_main)

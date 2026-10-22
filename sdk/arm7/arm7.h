@@ -188,6 +188,7 @@ const u8 *bw_arm7_backup_image(u32 *size);
 u32  bw_arm7_backup_type(void);     /* identified CARDBackupType, 0 = none  */
 int  bw_arm7_backup_dirty(void);
 u32  bw_arm7_backup_writes(void);   /* file writes so far                   */
+void bw_arm7_backup_switch_path(const char *path); /* another file, live  */
 
 /*
  * The firmware flash (sdk/arm7/nvram.c).  The file: NULL = <save dir>/

@@ -35,6 +35,7 @@
 #include "mod_context.h"
 #include "mod_slot.h"
 #include "mod_state.h"
+#include "mp.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -956,6 +957,9 @@ static void build_player_step(const BwEventCall *call, BwEventPayload *out)
     if (bw_mod_state_pending() > 0u) {
         bw_mod_state_apply_pending();
     }
+    /* ... and the moment a joiner's game saves when the host saved
+     * (sdk/mp.h). */
+    bw_mp_field_quiet();
 
     const BwPortFieldEventInput *input =
         (const BwPortFieldEventInput *)call->a[0];
@@ -1133,6 +1137,34 @@ static void apply_menu_build(const BwEventPayload *in, BwEventCall *call)
         menu->items[i].buttonId = BW_PORT_MENU_BUTTON_EMPTY;
         if (menu->items[i].actor != NULL && CLACT_SetActorDrawEnable != NULL) {
             CLACT_SetActorDrawEnable(menu->items[i].actor, 0);
+        }
+    }
+}
+
+/*
+ * The port's own work at the field menu: in a multiplayer game only the
+ * host saves, so a joiner's menu has no Save (the label stays, the button
+ * does nothing and its icon is gone).  Button 5 is Save: it is the one
+ * the game's own layouts leave out during a link.
+ */
+#define BW_PORT_MENU_BUTTON_SAVE 5
+
+static void apply_menu_save(const BwEventPayload *in, BwEventCall *call)
+{
+    BwPortFieldMenu *menu = (BwPortFieldMenu *)(uintptr_t)call->ret;
+    u32 i;
+
+    (void)in;
+    if (menu == NULL || !bw_mp_hide_save()) {
+        return;
+    }
+    for (i = 0; i < BW_PORT_MENU_ITEMS; i++) {
+        if (menu->items[i].inUse != 0 &&
+            menu->items[i].buttonId == BW_PORT_MENU_BUTTON_SAVE) {
+            menu->items[i].buttonId = BW_PORT_MENU_BUTTON_EMPTY;
+            if (menu->items[i].actor != NULL && CLACT_SetActorDrawEnable != NULL) {
+                CLACT_SetActorDrawEnable(menu->items[i].actor, 0);
+            }
         }
     }
 }
@@ -1522,6 +1554,9 @@ static const BwEventBinding g_field_rows[] = {
 
     { BW_MOD_REGION_OVL(21), 0x021A836Cu, BW_EVENT_MENU_BUILD, BW_EVENT_AFTER,
       BW_SCOPE_ANY, 0u, 0u, build_menu_build, apply_menu_build, NULL, NULL },
+
+    { BW_MOD_REGION_OVL(21), 0x021A836Cu, BW_EVENT_PORT, BW_EVENT_AFTER,
+      BW_SCOPE_ANY, 0u, 0u, NULL, apply_menu_save, NULL, NULL },
 
     { BW_MOD_REGION_OVL(10), 0x021644C4u, BW_EVENT_FIELD_MOVE, BW_EVENT_BEFORE,
       BW_SCOPE_ANY, 0u, 0u, build_field_move, NULL, refuse_field_move, NULL },

@@ -46,6 +46,8 @@ extern int bw_mod_title_set_in_settings(int on);
 extern int bw_mod_title_set_rebuild(void);
 extern int bw_mod_title_take_autostart(void);
 extern void bw_mod_title_open_multiplayer(void);
+extern int bw_slots_flip(int d);
+extern int bw_slots_new_game(void);
 extern int bw_mp_take_started(void);
 extern void eidos_sui_enter(void);
 extern int eidos_sui_input(unsigned pressed, unsigned held);
@@ -153,6 +155,15 @@ int func_021BA338(char *p)
             *(u8 *)(p + 0x129) = *(u8 *)(p + *(u8 *)(p + 0x128) + 0x120);
             return func_021BC0AC(p, 7);
         case 1:
+            /* New Game takes a free slot when there is one, so the
+             * game's "this deletes your save" comes only when every slot
+             * is used (sdk/save_slots.h) */
+            if (bw_mod_title_settings_on() && bw_slots_new_game()) {
+                /* the new game goes to a free slot: no warning, as the
+                 * prompt's own path for a menu without Continue */
+                *(u8 *)(p + 0x129) = 1;
+                return func_021BC080(p, 1);
+            }
             return func_021BC0AC(p, 8);
         case 2:
             *(u8 *)(p + 0x129) = *(u8 *)(p + *(u8 *)(p + 0x128) + 0x120);
@@ -188,6 +199,24 @@ int func_021BA338(char *p)
             }
             *(u8 *)(p + 0x129) = *(u8 *)(p + *(u8 *)(p + 0x128) + 0x120);
             return func_021BC0AC(p, 11);
+        }
+    }
+    /* Left and right on the Continue card: the next save slot */
+    if (bw_mod_title_settings_on() &&
+        *(u8 *)(p + *(u8 *)(p + 0x128) + 0x120) == 0 &&
+        (func_020362DC() & 0x30)) {
+        if (bw_slots_flip((func_020362DC() & 0x10) ? 1 : -1)) {
+            func_020061E4(0x548);
+            func_021BB474(p);
+            func_021BB164(p);
+            func_021BB5C4(p);
+            func_021BB4B4(p);
+            func_021BB544(p);
+            func_021BAD08(p);
+            func_021BB380(p);
+            func_021BB608(p);
+            bw_mod_title_set_rebuild();
+            return 4;
         }
     }
     if (func_020362DC() & 2) {

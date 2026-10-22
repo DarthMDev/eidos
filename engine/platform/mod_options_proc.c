@@ -236,9 +236,21 @@ static const LayerCfg k_layers[6] = {
  * positions beside it): three choices at 112, 160 and 208, two at 112 and 184;
  * eidos's names are longer than SLOW, MID and FAST, so three sit at 100, 148 and
  * 196. */
-static const int k_text3[3] = { 100, 148, 196 };
-static const int k_text2[2] = { 112, 184 };
-#define VALUE_X 120            /* where a value that is not a choice starts */
+static const int k_text3[3] = { 86, 126, 166 };
+static const int k_text2[2] = { 100, 160 };
+#define VALUE_X 100            /* where a value that is not a choice starts */
+
+/*
+ * The list's margins: the bars run from tile column BAR_L to BAR_R (the
+ * game's art ran edge to edge), the row text sits inside them, and the
+ * scrollbar has its own column right of the bars.
+ */
+#define BAR_L    1             /* the bars' first tile column */
+#define BAR_R    28            /* their last */
+#define ROW_X    (BAR_L + 1)   /* the row text's window */
+#define ROW_W    (BAR_R - BAR_L - 1)
+#define ROW_PX   (ROW_W * 8)   /* its width in pixels */
+#define SCROLL_X (BAR_R + 1)   /* the scrollbar's column */
 #define ARROW_W 14
 
 typedef struct OptWork {
@@ -345,12 +357,12 @@ static void draw_rows(void)
     eidos_sui_row_text(0, label, sizeof label, value, sizeof value);
     upper(label);
     win_clear_and_commit_begin(g_w->win_head);
-    put_text(g_w->win_head, label, 4, -1, 16 * 8 - 8, 0, TC_HEAD, TC_SHADOW);
+    put_text(g_w->win_head, label, BAR_L * 8 + 4, -1, 16 * 8 - 8, 0, TC_HEAD, TC_SHADOW);
     {
         /* the tabs, as the bag shows its pockets: one box each, the one
          * shown lit, with L and R on either side */
         int tabs = eidos_sui_tab_count(), cur = eidos_sui_tab(), t;
-        int x = 240 - 12 - tabs * 14 - 12;
+        int x = (BAR_R + 1) * 8 - 12 - tabs * 14 - 12;
         void *bmp = func_02045770(g_w->win_head);
 
         if (tabs == 0) {
@@ -430,7 +442,7 @@ no_tabs:
                     put_text(win, "<", x, -1, 16, 4, TC_LIVE, TC_SHADOW);
                     x += ARROW_W;
                 }
-                vw = put_text(win, value, x, -1, 240 - x - (adj && sel ? 20 : 8), 4,
+                vw = put_text(win, value, x, -1, ROW_PX - x - (adj && sel ? 20 : 4), 4,
                               adj ? (sel ? TC_LIVE : TC_ACTIVE) : TC_TEXT, TC_SHADOW);
                 if (adj && sel) {
                     put_text(win, ">", x + vw + 8, -1, 16, 4, TC_LIVE, TC_SHADOW);
@@ -606,12 +618,52 @@ static void highlight(OptWork *w)
         if (i == bar) {
             pal = 9u;
         }
-        func_020413B0(2, 0, (u32)(2 + 3 * i), 32, 3, pal);
+        func_020413B0(2, BAR_L, (u32)(2 + 3 * i), BAR_R - BAR_L + 1, 3, pal);
     }
     func_02041B6C(2);
 }
 
 /* ---- the screen ---- */
+
+/*
+ * The bars of the game's art run edge to edge.  Their map is rewritten so
+ * they run from BAR_L to BAR_R: the caps keep their tiles, the middle is
+ * the middle tile repeated, and the columns outside take the empty
+ * palette bank, so nothing is drawn there.
+ */
+extern void *func_0204162C(int layer);         /* BG_SYS_GetBuf */
+
+static void narrow_bars(void)
+{
+    u16 *map = (u16 *)func_0204162C(2);
+    int i, r, x;
+
+    if (map == NULL) {
+        return;
+    }
+    for (i = 0; i < OPT_ROWS; i++) {
+        for (r = 0; r < 3; r++) {
+            u16 *row = map + (2 + 3 * i + r) * 32;
+            u16 old[32];
+
+            memcpy(old, row, sizeof old);
+            for (x = 0; x < 32; x++) {
+                u16 t;
+
+                if (x < BAR_L || x > BAR_R) {
+                    t = (u16)((old[2] & 0x0FFFu) | (13u << 12));
+                } else if (x < BAR_L + 2) {
+                    t = old[x - BAR_L];               /* the left cap */
+                } else if (x > BAR_R - 2) {
+                    t = old[31 - (BAR_R - x)];        /* the right cap */
+                } else {
+                    t = old[2];                       /* the middle */
+                }
+                row[x] = t;
+            }
+        }
+    }
+}
 
 static void vblank_task(u32 task, u32 arg)
 {
@@ -645,6 +697,7 @@ static void gfx_build(OptWork *w)
     func_02049658(h, 0, 2, 0, 0, 0, heap);              /* layer 2: the bars */
     func_020498F4(h, 2, 2, 0, 0, 0, heap);
     func_02049658(h, 0x10, 3, 1, 0, 0, heap);           /* layer 3: text tiles */
+    narrow_bars();
     func_02049B68(h, 8, 4, 0, 0, heap);                 /* sub palette */
     func_02049658(h, 7, 5, 0, 0, 0, heap);              /* layer 5: the grid */
     func_020498F4(h, 9, 5, 0, 0, 0, heap);
@@ -653,9 +706,9 @@ static void gfx_build(OptWork *w)
 
     w->win_help = func_020450F0(4, 1, 0x13, 0x1e, 4, 0xf, 1);
     w->win_head = func_020450F0(0, 0, 0, 0x1e, 3, 0xf, 1);   /* wide: the tabs on the right */
-    w->win_scroll = func_020450F0(3, 31, 2, 1, 3 * OPT_ROWS, 0xf, 1);
+    w->win_scroll = func_020450F0(3, SCROLL_X, 2, 1, 3 * OPT_ROWS, 0xf, 1);
     for (i = 0; i < OPT_ROWS; i++) {
-        w->win_row[i] = func_020450F0(3, 1, (u32)(2 + 3 * i), 0x1e, 3, 0xf, 1);
+        w->win_row[i] = func_020450F0(3, ROW_X, (u32)(2 + 3 * i), ROW_W, 3, 0xf, 1);
     }
     for (i = 0; i < OPT_ROWS; i++) {
         func_02043B5C(func_02045770(w->win_row[i]), 0);
@@ -744,6 +797,7 @@ static int touch_input(OptWork *w)
         return 0;
     }
     bar = (y - 16) / 24;
+    x -= ROW_X * 8;
     {
         /* the sixth bar is the grey one inside a section, a row on the
          * main list */

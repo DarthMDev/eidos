@@ -483,6 +483,29 @@ void bw_arm7_backup_set_path(const char *path)
     g_fs.type = 0;
 }
 
+/* Another file while the game runs: the chip keeps its type and size, and
+ * its contents are read again from the new file at once (save slots). */
+void bw_arm7_backup_switch_path(const char *path)
+{
+    long n;
+
+    (void)bw_arm7_backup_flush();
+    if (path == NULL || strlen(path) >= sizeof g_fs.path) {
+        g_fs.path_set = 0;
+    } else {
+        strcpy(g_fs.path, path);
+        g_fs.path_set = 1;
+    }
+    if (g_fs.image != NULL && g_fs.image_size > 0) {
+        memset(g_fs.image, 0xFF, g_fs.image_size);
+        n = bw_save_read(save_path(), g_fs.image, g_fs.image_size);
+        if (n >= 0 && (u32)n < g_fs.image_size)
+            memset(g_fs.image + n, 0xFF, g_fs.image_size - (u32)n);
+        g_fs.loaded = 1;
+    }
+    g_fs.dirty = 0;
+}
+
 void bw_arm7_backup_set_flush_delay(int seconds)
 {
     g_fs.flush_delay = seconds < 0 ? 0 : seconds;

@@ -147,6 +147,8 @@ static void *settings_label(void)
     return s;
 }
 
+extern void bw_slots_label(char *out, unsigned size);
+
 /* The label of kind 6 (the game's Mic Test): the MULTIPLAYER row. */
 static void *multiplayer_label(void)
 {
@@ -281,6 +283,16 @@ void STARTMENU_CreateRowWindows(struct Menu *p)
     PRINTSYS_PrintQueColor(bg, BMP_WIN_GetBmp(p->slot[0].obj), 0, 4, a, p->f58, 0x440);
     p->slot[0].on = 1;
     STRBUF_Delete(a);
+    if (bw_mod_title_settings_on()) {
+        /* the save slot on the Continue card: "< 2/3 >", left and right
+         * change it (sdk/save_slots.h) */
+        char label[16];
+        int right = gStartMenuWindowTemplates[0].a3 * 8 - 6;
+
+        bw_slots_label(label, sizeof label);
+        if (label[0] != 0)
+            settings_text(p, 0, label, 0, right, right / 2);
+    }
 
     a = MSGDATA_AllocString(p->f5c, 12);
     WORDSET_SetSlotMyStatus(p->f60, 0, p->f04);

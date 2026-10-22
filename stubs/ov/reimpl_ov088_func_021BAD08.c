@@ -141,6 +141,8 @@ static void *settings_label(void)
     return s;
 }
 
+extern void bw_slots_label(char *out, unsigned size);
+
 /* The label of kind 6 (the game's Mic Test): the MULTIPLAYER row. */
 static void *multiplayer_label(void)
 {
@@ -275,6 +277,16 @@ void func_021BAD08(struct Menu *p)
     func_0201C724(bg, func_02045770(p->slot[0].obj), 0, 4, a, p->f58, 0x440);
     p->slot[0].on = 1;
     func_02045808(a);
+    if (bw_mod_title_settings_on()) {
+        /* the save slot on the Continue card: "< 2/3 >", left and right
+         * change it (sdk/save_slots.h) */
+        char label[16];
+        int right = d_021BD7C4[0].a3 * 8 - 6;
+
+        bw_slots_label(label, sizeof label);
+        if (label[0] != 0)
+            settings_text(p, 0, label, 0, right, right / 2);
+    }
 
     a = func_02045EC0(p->f5c, 12);
     func_0201F02C(p->f60, 0, p->f04);
