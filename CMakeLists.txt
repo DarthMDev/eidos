@@ -2543,8 +2543,16 @@ option(EIDOS_BOOT
 
 add_executable(eidos_boot ${CMAKE_CURRENT_SOURCE_DIR}/demo/eidos_boot.c)
 target_link_libraries(eidos_boot PRIVATE eidos)
+# A release build (docs/release.md) compiles in no data root: the build
+# machine's path means nothing to a player, so the game looks in the user
+# folder (docs/installer.md) and asks for the ROM when there is none.
+if(EIDOS_RELEASE)
+    set(_eidos_default_data_root "")
+else()
+    set(_eidos_default_data_root "${BW_DATA_ROOT_ABS}")
+endif()
 target_compile_definitions(eidos_boot PRIVATE
-    EIDOS_DEFAULT_DATA_ROOT="${BW_DATA_ROOT_ABS}")
+    EIDOS_DEFAULT_DATA_ROOT="${_eidos_default_data_root}")
 # The executable's icon on Windows (assets/eidos.rc; tools/mkicon.py makes
 # assets/icon.ico from assets/icon.png).
 if(WIN32)

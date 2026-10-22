@@ -3,7 +3,7 @@
 This is the plan for the public release: what a player downloads, where
 the files go, how updates, profiles, mods and invites work, and how the
 release pipeline is built and tested before the repositories go public.
-Nothing here is built yet unless it says so.
+Nothing here is built yet unless it says so. The launcher is described in `docs/launcher.md`.
 
 ## Decisions
 

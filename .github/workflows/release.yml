@@ -1,0 +1,273 @@
+# The release workflow (docs/release.md, docs/distribution.md "Release pipeline").
+#
+#   git tag v0.1.0 && git push origin v0.1.0     builds, packages, drafts a release
+#   Actions > release > Run workflow             builds and packages; no release
+#
+# Secret: ALETHEIA_TOKEN, a token that can read the private aletheia
+# repository (docs/release.md says how to make it).  The workflow ends with a
+# DRAFT release.  A person reviews it and publishes it.
+#
+# Runners: GitHub-hosted by default.  To use the self-hosted runner that
+# docs/release.md describes, set the repository variable EIDOS_RUNNER_WINDOWS
+# to a JSON array such as ["self-hosted","windows"].
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Also make a draft release (tag name v<version>-test)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  # The relay the release builds talk to by default.  Empty: none.
+  EIDOS_DEFAULT_RELAY: ${{ vars.EIDOS_DEFAULT_RELAY }}
+  LINUXDEPLOY_URL: https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20250213-2/linuxdeploy-x86_64.AppImage
+  LINUXDEPLOY_SHA256: 4648f278ab3ef31f819e67c30d50f462640e5365a77637d7e6f2ad9fd0b4522a
+
+jobs:
+  meta:
+    name: version and pin
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.m.outputs.version }}
+      pin: ${{ steps.m.outputs.pin }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        shell: bash
+        run: |
+          version=$(sed -n 's/^project(eidos VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          pin=$(sed -n 's/^set(EIDOS_ALETHEIA_PIN "\([0-9a-f]*\)").*/\1/p' cmake/aletheia_pin.cmake)
+          [ -n "$version" ] && [ -n "$pin" ] || { echo "cannot read version or pin"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match CMakeLists.txt version ${version}"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+          echo "eidos $version, aletheia $pin"
+
+  # ---------------------------------------------------------------- Windows
+  windows:
+    name: windows
+    needs: meta
+    runs-on: ${{ fromJSON(vars.EIDOS_RUNNER_WINDOWS || '["windows-2022"]') }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      EIDOS_SDL_CACHE: ${{ github.workspace }}/.cache/sdl
+      EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
+      EIDOS_MBEDTLS_CACHE: ${{ github.workspace }}/.cache/mbedtls
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Project-Holon/aletheia
+          ref: ${{ needs.meta.outputs.pin }}
+          token: ${{ secrets.ALETHEIA_TOKEN }}
+          path: aletheia
+      # 32-bit MinGW-w64: the game builds for 32-bit pointers (docs/pointer-width.md).
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: false
+          install: >-
+            mingw-w64-i686-gcc
+            mingw-w64-i686-cmake
+            mingw-w64-i686-ninja
+            mingw-w64-i686-python
+            zip
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: deps-windows-${{ hashFiles('tools/fetch_sdl.py', 'tools/fetch_wamr.py', 'tools/fetch_mbedtls.py') }}
+      - name: Fetch SDL2, WAMR, Mbed TLS (each is checked against a recorded SHA-256)
+        run: |
+          python tools/fetch_sdl.py --flavor mingw
+          python tools/fetch_wamr.py
+          python tools/fetch_mbedtls.py
+      - name: Stand-ins for the few ROM bytes the sources include (docs/release.md)
+        run: python tools/package_release.py placeholders --aletheia-root aletheia
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DALETHEIA_ROOT="$(cygpath -m "$PWD/aletheia")" \
+            -DBW_DATA_ROOT="$(cygpath -m "$PWD/no-game-data/extract/data")" \
+            -DEIDOS_BOOT=ON -DEIDOS_OVERLAYS=ALL \
+            -DEIDOS_RELEASE=ON \
+            -DEIDOS_DEFAULT_RELAY="$EIDOS_DEFAULT_RELAY"
+      - name: Build
+        run: cmake --build build
+      - name: Test (no ROM; tests that need one skip themselves)
+        run: ctest --test-dir build --output-on-failure -j 4
+      - name: Package
+        run: python tools/package_release.py windows --build-dir build --version "${{ needs.meta.outputs.version }}" --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ Linux
+  linux:
+    name: linux
+    needs: meta
+    runs-on: ubuntu-22.04     # the oldest glibc we ship against
+    env:
+      EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
+      EIDOS_MBEDTLS_CACHE: ${{ github.workspace }}/.cache/mbedtls
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Project-Holon/aletheia
+          ref: ${{ needs.meta.outputs.pin }}
+          token: ${{ secrets.ALETHEIA_TOKEN }}
+          path: aletheia
+      - name: Packages
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libsdl2-dev libgl1-mesa-dev libfuse2 file
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: deps-linux-${{ hashFiles('tools/fetch_wamr.py', 'tools/fetch_mbedtls.py') }}
+      - name: Fetch WAMR and Mbed TLS (each is checked against a recorded SHA-256)
+        run: |
+          python3 tools/fetch_wamr.py
+          python3 tools/fetch_mbedtls.py
+      - name: Stand-ins for the few ROM bytes the sources include (docs/release.md)
+        run: python3 tools/package_release.py placeholders --aletheia-root aletheia
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DALETHEIA_ROOT="$PWD/aletheia" \
+            -DBW_DATA_ROOT="$PWD/no-game-data/extract/data" \
+            -DEIDOS_BOOT=ON -DEIDOS_OVERLAYS=ALL \
+            -DEIDOS_RELEASE=ON \
+            -DEIDOS_DEFAULT_RELAY="$EIDOS_DEFAULT_RELAY"
+      - name: Build
+        run: cmake --build build
+      - name: Test (no ROM; tests that need one skip themselves)
+        run: ctest --test-dir build --output-on-failure -j 4
+      - name: linuxdeploy (pinned, checked)
+        run: |
+          curl -sSL -o linuxdeploy "$LINUXDEPLOY_URL"
+          echo "$LINUXDEPLOY_SHA256  linuxdeploy" | sha256sum -c -
+          chmod +x linuxdeploy
+      - name: Package
+        run: python3 tools/package_release.py linux --build-dir build --version "${{ needs.meta.outputs.version }}" --out dist --linuxdeploy "$PWD/linuxdeploy"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-linux
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ macOS
+  macos:
+    name: macos
+    needs: meta
+    runs-on: macos-14
+    env:
+      EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
+      EIDOS_MBEDTLS_CACHE: ${{ github.workspace }}/.cache/mbedtls
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Project-Holon/aletheia
+          ref: ${{ needs.meta.outputs.pin }}
+          token: ${{ secrets.ALETHEIA_TOKEN }}
+          path: aletheia
+      - name: Packages
+        run: brew install ninja sdl2
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: deps-macos-${{ hashFiles('tools/fetch_wamr.py', 'tools/fetch_mbedtls.py') }}
+      - name: Fetch WAMR and Mbed TLS (each is checked against a recorded SHA-256)
+        run: |
+          python3 tools/fetch_wamr.py
+          python3 tools/fetch_mbedtls.py
+      - name: Stand-ins for the few ROM bytes the sources include (docs/release.md)
+        run: python3 tools/package_release.py placeholders --aletheia-root aletheia
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DALETHEIA_ROOT="$PWD/aletheia" \
+            -DBW_DATA_ROOT="$PWD/no-game-data/extract/data" \
+            -DEIDOS_BOOT=ON -DEIDOS_OVERLAYS=ALL \
+            -DEIDOS_RELEASE=ON \
+            -DEIDOS_DEFAULT_RELAY="$EIDOS_DEFAULT_RELAY"
+      - name: Build
+        run: cmake --build build
+      - name: Test (no ROM; tests that need one skip themselves)
+        run: ctest --test-dir build --output-on-failure -j 4
+      - name: Package
+        run: python3 tools/package_release.py macos --build-dir build --version "${{ needs.meta.outputs.version }}" --out dist --lib "$(brew --prefix sdl2)/lib/libSDL2-2.0.0.dylib"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-macos
+          path: dist/*.zip
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- Release
+  release:
+    name: draft release
+    needs: [meta, windows, linux, macos]
+    if: github.ref_type == 'tag' || inputs.draft
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and notes
+        run: |
+          cd dist
+          sha256sum eidos-* > SHA256SUMS
+          cat SHA256SUMS
+          cd ..
+          python3 tools/package_release.py --self-test
+          {
+            echo "> eidos is an unofficial fan project. It is not affiliated with or"
+            echo "> endorsed by Nintendo, Game Freak, Creatures Inc. or The Pokemon Company."
+            echo "> It contains no game data: you need your own legally obtained copy of"
+            echo "> Pokemon Black or White. Pokemon and Nintendo DS are trademarks of their"
+            echo "> respective owners."
+            echo
+            echo "Unzip the Windows or macOS file anywhere and run \`eidos\`. On Linux, make"
+            echo "the AppImage executable and run it. On the first start, pick your own"
+            echo "Pokemon Black ROM."
+            echo
+            echo "The macOS build is not signed. If macOS refuses to open it, run"
+            echo "\`xattr -dr com.apple.quarantine .\` in the unzipped folder, or right-click"
+            echo "the file and choose Open."
+            echo
+            echo "SHA-256 of every file is in \`SHA256SUMS\`."
+          } > notes.md
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            tag="${GITHUB_REF_NAME}"; target=""
+          else
+            tag="v${VERSION}-test"; target="--target ${GITHUB_SHA}"
+          fi
+          gh release create "$tag" dist/* --draft --title "eidos ${VERSION}" \
+            --notes-file notes.md $target

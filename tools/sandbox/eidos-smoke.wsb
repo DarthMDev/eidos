@@ -1,0 +1,33 @@
+<!--
+  Windows Sandbox config: a clean Windows runs the release zip once.
+
+  1. Put eidos-<version>-windows.zip in C:\eidos-sandbox\in
+     (read-only inside the sandbox) and copy tools\sandbox\smoke.ps1 there.
+  2. Make the empty folder C:\eidos-sandbox\out (the log goes there).
+  3. Double-click this file.
+
+  The sandbox runs smoke.ps1 at logon: it unzips the package to its desktop,
+  starts eidos with a hidden window for 300 frames, and writes smoke.log and
+  smoke-result.txt to the out folder.  The sandbox has no game data, so the
+  run checks that the program starts and reaches the first-run ROM prompt
+  logic without a crash.  It has no network and no clipboard sharing.
+-->
+<Configuration>
+  <Networking>Disable</Networking>
+  <ClipboardRedirection>Disable</ClipboardRedirection>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\eidos-sandbox\in</HostFolder>
+      <SandboxFolder>C:\Users\WDAGUtilityAccount\Desktop\in</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>C:\eidos-sandbox\out</HostFolder>
+      <SandboxFolder>C:\Users\WDAGUtilityAccount\Desktop\out</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>powershell.exe -ExecutionPolicy Bypass -File C:\Users\WDAGUtilityAccount\Desktop\in\smoke.ps1</Command>
+  </LogonCommand>
+</Configuration>

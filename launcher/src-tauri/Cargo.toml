@@ -1,0 +1,28 @@
+[package]
+name = "eidos-launcher"
+description = "The launcher for the native port of Pokemon Black and White: profiles, versions, mods and invite links"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Project-Holon/eidos"
+
+[lib]
+name = "eidos_launcher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+eidos-mod = { git = "https://github.com/Project-Holon/morphe", tag = "v0.1.0" }
+releases = { git = "https://github.com/Project-Holon/morphe", tag = "v0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"
