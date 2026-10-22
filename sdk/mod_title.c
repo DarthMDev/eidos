@@ -37,6 +37,21 @@ int bw_mod_title_take_rebuild(void)
     return r;
 }
 
+static int g_autostart;
+
+void bw_mod_title_request_autostart(void)
+{
+    g_autostart = 1;
+}
+
+int bw_mod_title_take_autostart(void)
+{
+    int r = g_autostart;
+
+    g_autostart = 0;
+    return r;
+}
+
 static int g_return_ov;
 static const void *g_return_table;
 

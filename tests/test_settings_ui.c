@@ -1,6 +1,7 @@
 /*
  * tests/test_settings_ui.c -- the settings screen's model (tabs, rows,
- * navigation, value changes, revert, defaults, commit) with no platform.
+ * navigation, value changes, defaults, commit, the Multiplayer tab's views)
+ * with no platform.
  */
 
 #include <stdio.h>
@@ -18,6 +19,7 @@
 #define LEFT 0x20u
 #define UP 0x40u
 #define DOWN 0x80u
+#define R 0x100u
 #define L 0x200u
 
 static char g_label[64];
@@ -36,48 +38,22 @@ static int press(unsigned b)
 
 int main(void)
 {
-    int r, i;
+    int r, i, first, shown, total;
     char help[96];
     remove(INI);
     eidos_settings_set_path(INI);
     eidos_settings_load();
     eidos_sui_enter();
 
-    /* Level 0: the section list. */
-    BW_CHECK_EQ("starts at level 0", eidos_sui_level(), 0);
-    BW_CHECK_EQ("no section yet", eidos_sui_tab(), -1);
+    /* The screen opens on a tab: no list of sections, no grey bar. */
+    BW_CHECK_EQ("seven tabs", eidos_sui_tab_count(), 7);
+    BW_CHECK_EQ("the first tab", eidos_sui_tab(), 0);
+    BW_CHECK_EQ("its name", strcmp(eidos_sui_tab_name(0), "Display"), 0);
+    BW_CHECK_EQ("the last tab", strcmp(eidos_sui_tab_name(6), "Multiplayer"), 0);
+    BW_CHECK_EQ("no grey bar", eidos_sui_has_back(), 0);
     row(0);
-    BW_CHECK_EQ("header", strcmp(g_label, "Settings"), 0);
-    BW_CHECK_EQ("the header says the list goes on",
-                strcmp(g_value, "More below"), 0);
-    BW_CHECK_EQ("six sections and no Done bar", eidos_sui_row_count(), 1 + 6);
-    BW_CHECK_EQ("no grey bar on the list", eidos_sui_has_back(), 0);
-    row(1);
-    BW_CHECK_EQ("first section", strcmp(g_label, "Multiplayer"), 0);
-    row(2);
-    BW_CHECK_EQ("then Display", strcmp(g_label, "Display"), 0);
-    row(6);
-    BW_CHECK_EQ("last section shown", strcmp(g_label, "Mods"), 0);
-    press(UP);                                /* wraps to Network */
-    row(0);
-    BW_CHECK_EQ("scrolled: the header says so",
-                strcmp(g_value, "More above"), 0);
-    press(DOWN);                              /* wraps to Multiplayer */
-    BW_CHECK_EQ("back on the first section", eidos_sui_cursor_row(), 1);
-    r = press(L);
-    BW_CHECK_EQ("L does nothing", r, 0);
-    r = press(RIGHT);
-    BW_CHECK_EQ("right does nothing", r, 0);
-
-    /* A enters Display; the header is the section name. */
-    press(DOWN);
-    r = press(A);
-    BW_CHECK_EQ("A redraws", r & EIDOS_SUI_REDRAW, EIDOS_SUI_REDRAW);
-    BW_CHECK_EQ("level 1", eidos_sui_level(), 1);
-    BW_CHECK_EQ("display section", eidos_sui_tab(), 0);
-    row(0);
-    BW_CHECK_EQ("display header", strcmp(g_label, "Display"), 0);
-    BW_CHECK_EQ("display rows", eidos_sui_row_count(), 1 + 3 + 1);
+    BW_CHECK_EQ("the header is the tab", strcmp(g_label, "Display"), 0);
+    BW_CHECK_EQ("display rows", eidos_sui_row_count(), 1 + 3);
     row(1);
     BW_CHECK_EQ("mode label", strcmp(g_label, "Window mode"), 0);
     BW_CHECK_EQ("mode value", strcmp(g_value, "Windowed"), 0);
@@ -94,7 +70,7 @@ int main(void)
     press(LEFT);
     BW_CHECK_EQ("mode back", eidos_settings_get(EIDOS_OPT_DISPLAY_MODE), 0);
 
-    /* Down moves, resolution steps, fit text. */
+    /* Down moves, resolution steps. */
     press(DOWN);
     BW_CHECK_EQ("cursor moved", eidos_sui_cursor_row(), 2);
     row(2);
@@ -104,58 +80,50 @@ int main(void)
     row(2);
     BW_CHECK_EQ("resolution 2x", strcmp(g_value, "2x"), 0);
 
-    /* The one action row puts the defaults back. */
+    /* The action row puts the defaults back. */
     press(DOWN);
     row(eidos_sui_cursor_row());
     BW_CHECK_EQ("defaults row", strcmp(g_label, "Restore defaults"), 0);
     press(A);
     BW_CHECK_EQ("defaults restored", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
-
-    /* B goes back to level 0 with the cursor on Display. */
-    r = press(B);
-    BW_CHECK_EQ("B back redraws", r & EIDOS_SUI_REDRAW, EIDOS_SUI_REDRAW);
-    BW_CHECK_EQ("B back does not exit", r & EIDOS_SUI_EXIT, 0);
-    BW_CHECK_EQ("level 0 again", eidos_sui_level(), 0);
-    BW_CHECK_EQ("cursor on Display", eidos_sui_cursor_row(), 2);
-
-    /* Layout: three options. */
     press(DOWN);
-    press(A);
-    BW_CHECK_EQ("layout section", eidos_sui_tab(), 1);
-    BW_CHECK_EQ("layout rows", eidos_sui_row_count(), 1 + 4 + 1);
-    press(B);
-    BW_CHECK_EQ("cursor on Layout", eidos_sui_cursor_row(), 3);
+    BW_CHECK_EQ("the cursor wraps to the top", eidos_sui_cursor_row(), 1);
+
+    /* R and L change the tab, and wrap. */
+    r = press(R);
+    BW_CHECK_EQ("R redraws", r & EIDOS_SUI_REDRAW, EIDOS_SUI_REDRAW);
+    BW_CHECK_EQ("R: Layout", eidos_sui_tab(), 1);
+    BW_CHECK_EQ("layout rows", eidos_sui_row_count(), 1 + 4);
+    press(L);
+    BW_CHECK_EQ("L: Display", eidos_sui_tab(), 0);
+    press(L);
+    BW_CHECK_EQ("L wraps to Multiplayer", eidos_sui_tab(), 6);
+    press(R);
+    BW_CHECK_EQ("R wraps to Display", eidos_sui_tab(), 0);
 
     /* Sound: volume steps of 5. */
-    press(DOWN);
-    press(DOWN);
-    press(A);
-    BW_CHECK_EQ("sound section", eidos_sui_tab(), 3);
+    press(R);
+    press(R);
+    press(R);
+    BW_CHECK_EQ("sound tab", eidos_sui_tab(), 3);
     row(1);
     BW_CHECK_EQ("volume label", strcmp(g_label, "Master volume"), 0);
     press(LEFT);
     BW_CHECK_EQ("volume -5", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 95);
-    press(B);
 
-    /* Controls scrolls: 12 buttons + 2 actions, 6 visible. */
-    press(UP);
-    BW_CHECK_EQ("cursor on Controls", eidos_sui_cursor_row(), 4);
-    press(A);
-    BW_CHECK_EQ("controls section", eidos_sui_tab(), 2);
-    BW_CHECK_EQ("controls rows", eidos_sui_row_count(), 1 + EIDOS_SUI_VISIBLE + 1);
-    press(UP);                                /* wraps to the grey bar */
-    BW_CHECK_EQ("cursor on the grey bar", eidos_sui_cursor_row(), eidos_sui_row_count() - 1);
-    row(eidos_sui_cursor_row());
-    BW_CHECK_EQ("grey bar is Back", strcmp(g_label, "Back"), 0);
-    press(UP);                                /* the last real row */
-    BW_CHECK_EQ("cursor at bottom", eidos_sui_cursor_row(), EIDOS_SUI_VISIBLE);
+    /* Controls: 12 buttons and the defaults, six shown, a scrollbar. */
+    press(L);
+    BW_CHECK_EQ("controls tab", eidos_sui_tab(), 2);
+    BW_CHECK_EQ("controls rows shown", eidos_sui_row_count(), 1 + 6);
+    eidos_sui_scroll(&first, &shown, &total);
+    BW_CHECK_EQ("the scroll starts at the top", first, 0);
+    BW_CHECK_EQ("six shown", shown, 6);
+    BW_CHECK_EQ("thirteen in all", total, 13);
+    press(UP);                                /* wraps to the last row */
     row(eidos_sui_cursor_row());
     BW_CHECK_EQ("last row", strcmp(g_label, "Restore defaults"), 0);
-    press(A);
-    BW_CHECK_EQ("defaults volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 100);
-
-    /* Every Controls value fits the value column (about 17 characters). */
-    press(DOWN);                              /* the grey bar */
+    eidos_sui_scroll(&first, &shown, &total);
+    BW_CHECK_EQ("scrolled to the bottom", first, 13 - 6);
     press(DOWN);                              /* wraps to the first row */
     for (i = 0; i < 12; i++) {
         row(eidos_sui_cursor_row());
@@ -163,7 +131,6 @@ int main(void)
         BW_CHECK_EQ("bind value short", (int)strlen(g_value) <= 20, 1);
         press(DOWN);
     }
-    press(DOWN);
     press(DOWN);                              /* back to the first row */
     row(eidos_sui_cursor_row());
     BW_CHECK_EQ("first button", strcmp(g_label, "A"), 0);
@@ -177,19 +144,33 @@ int main(void)
     BW_CHECK_EQ("capture help", help[0] != 0, 1);
     eidos_sui_input(B, B);
     BW_CHECK_EQ("cancelled", eidos_sui_capturing(), 0);
-    BW_CHECK_EQ("still in the section", eidos_sui_level(), 1);
-
-    /* Help text exists for every visible row. */
-    BW_CHECK_EQ("help lines", eidos_sui_help_count() > 0, 1);
+    BW_CHECK_EQ("still on the tab", eidos_sui_tab(), 2);
     eidos_sui_help_line(0, help, sizeof help);
     BW_CHECK_EQ("bind help", help[0] != 0, 1);
 
-    /* B twice leaves; leaving commits. */
-    press(B);
-    press(DOWN);                              /* Sound */
+    /* Multiplayer: Host and Join; Join asks for the code; B goes back. */
+    press(L);
+    press(L);
+    press(L);
+    BW_CHECK_EQ("multiplayer tab", eidos_sui_tab(), 6);
+    BW_CHECK_EQ("two buttons", eidos_sui_row_count(), 1 + 2);
+    row(1);
+    BW_CHECK_EQ("Host", strcmp(g_label, "Host"), 0);
+    row(2);
+    BW_CHECK_EQ("Join", strcmp(g_label, "Join"), 0);
+    press(DOWN);
     press(A);
-    press(LEFT);
-    press(B);
+    BW_CHECK_EQ("the code row and the Join button", eidos_sui_row_count(), 1 + 2);
+    row(1);
+    BW_CHECK_EQ("the code", strcmp(g_label, "Code"), 0);
+    eidos_sui_input(0, 0);                    /* the typing ends: no keyboard */
+    eidos_sui_input(0, 0);
+    r = press(B);
+    BW_CHECK_EQ("B goes back, not out", r & EIDOS_SUI_EXIT, 0);
+    BW_CHECK_EQ("Host and Join again", eidos_sui_row_count(), 1 + 2);
+    BW_CHECK_EQ("the cursor on Join", eidos_sui_cursor_row(), 2);
+
+    /* B leaves; leaving commits. */
     r = press(B);
     BW_CHECK_EQ("B exits", r & EIDOS_SUI_EXIT, EIDOS_SUI_EXIT);
     eidos_sui_leave();
@@ -197,13 +178,13 @@ int main(void)
     eidos_settings_load();
     BW_CHECK_EQ("saved volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 95);
 
-    /* The stylus.  A section row opens its section; a choice is set where it
-     * is touched; the arrows act only on the selected row; the grey bar
-     * goes back, then leaves. */
+    /* The screen opens again on the tab it was left on; the stylus sets a
+     * choice where it is touched, and the arrows act only on the selected
+     * row. */
     eidos_sui_enter();
-    r = eidos_sui_touch(2, EIDOS_SUI_ZONE_ROW);
-    BW_CHECK_EQ("touch opens Display", eidos_sui_tab(), 0);
-    BW_CHECK_EQ("touch redraws", r & EIDOS_SUI_REDRAW, EIDOS_SUI_REDRAW);
+    BW_CHECK_EQ("the tab it was left on", eidos_sui_tab(), 6);
+    press(R);
+    BW_CHECK_EQ("display", eidos_sui_tab(), 0);
     eidos_settings_set(EIDOS_OPT_DISPLAY_MODE, 0);
     eidos_sui_touch(1, 2);
     BW_CHECK_EQ("touch sets the third choice", eidos_settings_get(EIDOS_OPT_DISPLAY_MODE), 2);
@@ -220,10 +201,8 @@ int main(void)
     BW_CHECK_EQ("arrow raises", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 3);
     eidos_sui_touch(2, EIDOS_SUI_ZONE_DEC);
     BW_CHECK_EQ("arrow lowers", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 2);
-    r = eidos_sui_touch(eidos_sui_row_count() - 1, EIDOS_SUI_ZONE_ROW);
-    BW_CHECK_EQ("grey bar goes back", eidos_sui_level(), 0);
     r = press(B);
-    BW_CHECK_EQ("B leaves the list", r & EIDOS_SUI_EXIT, EIDOS_SUI_EXIT);
+    BW_CHECK_EQ("B leaves", r & EIDOS_SUI_EXIT, EIDOS_SUI_EXIT);
     eidos_sui_leave();
 
     remove(INI);

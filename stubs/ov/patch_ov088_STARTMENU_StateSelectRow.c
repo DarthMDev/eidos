@@ -50,6 +50,8 @@ extern int bw_mod_title_settings_on(void);
 extern int bw_mod_title_in_settings(void);
 extern int bw_mod_title_set_in_settings(int on);
 extern int bw_mod_title_set_rebuild(void);
+extern int bw_mod_title_take_autostart(void);
+extern int bw_mp_take_started(void);
 extern void eidos_sui_enter(void);
 extern int eidos_sui_input(unsigned pressed, unsigned held);
 extern void STARTMENU_DeleteFrameManager(char *p);
@@ -106,10 +108,48 @@ static int settings_state(char *p)
     return 5;
 }
 
+/* Multiplayer's start: the menu goes into the game as A on Continue (or on
+ * New Game when there is no save) would. */
+static int autostart(char *p)
+{
+    int i, row = -1;
+
+    for (i = 0; i < 8; i++) {
+        if (*(u8 *)(p + 0x120 + i) == 0) {
+            row = i;
+            break;
+        }
+    }
+    if (row < 0) {
+        for (i = 0; i < 8; i++) {
+            if (*(u8 *)(p + 0x120 + i) == 1) {
+                row = i;
+                break;
+            }
+        }
+    }
+    if (row < 0)
+        return -1;
+    *(u8 *)(p + 0x128) = (u8)row;
+    GFL_USE_PlaySeDefaultVolume(0x54c);
+    if (*(u8 *)(p + 0x120 + row) == 0) {
+        *(u8 *)(p + 0x129) = 0;
+        return STARTMENU_BeginSelectAnim(p, 7);
+    }
+    return STARTMENU_BeginSelectAnim(p, 8);
+}
+
 int STARTMENU_StateSelectRow(char *p)
 {
     if (bw_mod_title_settings_on() && bw_mod_title_in_settings())
         return settings_state(p);
+    if (bw_mod_title_settings_on() &&
+        (bw_mod_title_take_autostart() | bw_mp_take_started())) {
+        int r = autostart(p);
+
+        if (r >= 0)
+            return r;
+    }
     BLINK_PALANM_Update(*(void **)(p + 0x11c));
     if (KEY_GetTrg() & 1) {
         GFL_USE_PlaySeDefaultVolume(0x54c);

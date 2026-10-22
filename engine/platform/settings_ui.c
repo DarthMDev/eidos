@@ -76,8 +76,8 @@ static const char *const k_tab_names[] = {
     "Display", "Layout", "Controls", "Sound", "Mods", "Network", "Multiplayer"
 };
 
-/* The order of the sections on the main list: Multiplayer first. */
-static const int k_tab_order[] = { 6, 0, 1, 2, 3, 4, 5 };
+/* The order of the tabs. */
+static const int k_tab_order[] = { 0, 1, 2, 3, 4, 5, 6 };
 
 /* Short button names for the Controls rows (the backend labels are long). */
 static const char *const k_button_short[] = {
@@ -95,13 +95,13 @@ static const char *const k_axis_neg_short[] = { "LS Left", "LS Up", "RS Left", "
 
 /* Help text (bottom screen).  Two lines per option id, then fixed texts. */
 static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
-    { "How the game window is shown:", "windowed, fullscreen or borderless." },
-    { "Size of the 3D and 2D rendering.", "Fit follows the window size." },
+    { "The window mode.", "" },
+    { "The rendering size.", "" },
     { NULL, NULL }, { NULL, NULL },
-    { "Put the two screens above each", "other or side by side." },
-    { "Show the touch screen on top", "and the upper screen below." },
-    { "Space between the two screens,", "in pixels." },
-    { "Master volume, 0 to 100.", "Left and right change it by 5." },
+    { "How the screens are placed.", "" },
+    { "Swap the two screens.", "" },
+    { "Space between the screens.", "" },
+    { "The volume.", "" },
 };
 #define HELP_BIND1     "Bind a key or pad button."
 #define HELP_BIND2     ""
@@ -118,13 +118,13 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_SECTION_SESSION  "Host or join a game."
 #define HELP_KEYS_L0   "A: open"
 #define HELP_KEYS_L0B  "B: back"
-#define HELP_KEYS_L1   "Left/Right: change"
+#define HELP_KEYS_L1   "L/R: tabs"
 #define HELP_KEYS_L1B  "A: select   B: back"
 
 /* The Mods section: the mods, their switches, their own settings, the
  * clear action and the folders no mod claims. */
 #define HELP_MOD_SWITCH1 "Turn the mod on or off."
-#define HELP_MOD_SWITCH2 "L/R: move"
+#define HELP_MOD_SWITCH2 "X/Y: move"
 #define HELP_MOD_OPTION1 "A mod setting."
 #define HELP_MOD_OPTION2 ""
 #define HELP_MOD_CLEAR1  "Delete the mod's saved data."
@@ -242,17 +242,21 @@ static const ValueName k_choice_names[] = {
 #define STR_NET_RELAY   "Relay address"
 #define STR_NET_RPORT   "Relay port"
 #define STR_NET_CPORT   "Control port"
-#define STR_NET_NAME    "Player name"
+#define STR_NET_NAME    "Your name"
 #define STR_NONE        "(none)"
 
 /* The Session section's own labels. */
-#define STR_SESSION_CODE     "Game code"
+#define STR_SESSION_CODE     "Code"
 #define STR_MP_START         "Start game"
 #define STR_MP_READY         "Ready"
 #define STR_MP_RUNNING       "Playing"
 #define STR_MP_MISSING       "missing"
 #define STR_MP_MODS          ", mods differ"
-#define STR_SESSION_JOINCODE "Join code"
+#define STR_SESSION_JOINCODE "Code"
+#define STR_MP_CONNECTING    "Connecting..."
+#define STR_MP_WAIT_HOST     "Waiting for the host"
+#define STR_MP_NOT_FOUND     "Code not found"
+#define STR_MP_DEFAULT_NAME  "Player"
 #define STR_SESSION_HOST     "Host"
 #define STR_SESSION_JOIN     "Join"
 #define STR_SESSION_LEAVE    "Leave"
@@ -339,6 +343,8 @@ enum {
     ROW_SESSION_PEER,     /* a peer of the session: arg is its number    */
     ROW_MP_START,         /* the host starts the game (sdk/mp.h)          */
     ROW_MP_PLAYER,        /* a player of the lobby: arg is its peer       */
+    ROW_MP_STATUS,        /* a line of the Multiplayer tab: arg STATUS_*  */
+    ROW_MP_JOIN_GO,       /* join with the code typed above               */
     ROW_SESSION_REVERT,   /* the codes back to the committed state       */
     ROW_SESSION_DEFAULTS  /* the codes back to nothing                    */
 };
@@ -433,39 +439,53 @@ static void build_net_rows(void)
     add_row(ROW_NET_RELAY, 0, 0);
     add_row(ROW_NET_RELAY_PORT, 0, 0);
     add_row(ROW_NET_CONTROL_PORT, 0, 0);
-    add_row(ROW_NET_NAME, 0, 0);
     add_row(ROW_INJECT_MAX, 0, 0);
     add_row(ROW_NET_DEFAULTS, 0, 0);
 }
 
 /*
- * The Session section: the port's own peer session (sdk/mod_net.h, "The
- * port's own session").  The two codes are settings of the port's own, so
- * they are in the model with the rest of the settings and the file keeps
- * them; the rows in the middle are the player's own actions, and the rows
- * after them are the players of the session.
+ * The Multiplayer tab.  Before a game: Host and Join; Join asks for the
+ * code.  In a game: the code, your name, the players, and Start (the host)
+ * or the wait for the host.
  */
+#define MP_VIEW_CHOOSE 0
+#define MP_VIEW_JOIN   1
+
+#define STATUS_CONNECTING 0
+#define STATUS_WAIT_HOST  1
+#define STATUS_ENDED      2
+
+static int g_mp_view;
+
+/*
+ * What the screen shows of the port's own session.  The state itself is
+ * the port's own (sdk/mod_net.h, "The port's own session"); the screen
+ * keeps the last answer, so it can say what happened.
+ */
+static struct {
+    int busy;        /* the work is running                     */
+    int have;        /* there is an answer                      */
+    int rc;          /* the answer of the last work             */
+    int host;        /* the last work was a host                */
+    u32 stamp;       /* the peer list's stamp: it changes when the list does */
+    int view;        /* the view the rows were built for */
+} g_sess;
+
+static int mp_in_game(void)
+{
+    BwMpState st = bw_mp_state();
+
+    return st != BW_MP_OFF && st != BW_MP_ENDED;
+}
+
 static void build_session_rows(void)
 {
     u32 peers;
     u32 i;
 
-    add_row(ROW_SESSION_CODE, 0, 0);
-    add_row(ROW_SESSION_JOINCODE, 0, 0);
-    add_row(ROW_SESSION_HOST, 0, 0);
-    add_row(ROW_SESSION_JOIN, 0, 0);
-    add_row(ROW_SESSION_LEAVE, 0, 0);
-    /* This player, and the others: the port's own handler collected them
-     * (engine/platform/settings.c). */
-    if (bw_port_session_self_peer() != 0) {
-        add_row(ROW_SESSION_SELF, 0, 0);
-    }
-    if (bw_mp_state() != BW_MP_OFF) {
-        /* A multiplayer session: the host's Start, then the lobby, the
-         * host first (sdk/mp.h). */
-        if (bw_mp_is_host()) {
-            add_row(ROW_MP_START, 0, 0);
-        }
+    if (mp_in_game()) {
+        add_row(ROW_SESSION_CODE, 0, 0);
+        add_row(ROW_NET_NAME, 0, 0);
         peers = bw_mp_player_count();
         for (i = 0; i < peers; i++) {
             BwMpPlayer p;
@@ -475,21 +495,28 @@ static void build_session_rows(void)
             }
             add_row(ROW_MP_PLAYER, (int)p.peer, (int)i);
         }
-    } else {
-        peers = bw_port_session_peer_count();
-        for (i = 0; i < peers; i++) {
-            u32 number = 0;
-
-            if (bw_port_session_peer_at(i, &number, NULL, 0) != 0) {
-                break;
-            }
-            /* The number keeps the cursor on the same player when the list
-             * is built again; the index says which row of the list this is. */
-            add_row(ROW_SESSION_PEER, (int)number, (int)i);
+        if (bw_mp_is_host()) {
+            add_row(ROW_MP_START, 0, 0);
+        } else {
+            add_row(ROW_MP_STATUS, STATUS_WAIT_HOST, 0);
         }
+        add_row(ROW_SESSION_LEAVE, 0, 0);
+        return;
     }
-    add_row(ROW_SESSION_REVERT, 0, 0);
-    add_row(ROW_SESSION_DEFAULTS, 0, 0);
+    if (bw_mp_state() == BW_MP_ENDED) {
+        add_row(ROW_MP_STATUS, STATUS_ENDED, 0);
+    }
+    if (g_sess.busy) {
+        add_row(ROW_MP_STATUS, STATUS_CONNECTING, 0);
+        return;
+    }
+    if (g_mp_view == MP_VIEW_JOIN) {
+        add_row(ROW_SESSION_JOINCODE, 0, 0);
+        add_row(ROW_MP_JOIN_GO, 0, 0);
+        return;
+    }
+    add_row(ROW_SESSION_HOST, 0, 0);
+    add_row(ROW_SESSION_JOIN, 0, 0);
 }
 
 static void build_rows(void)
@@ -649,13 +676,13 @@ static int question_close(int yes)
  */
 static int has_back(void)
 {
-    return g.level != 0;
+    return 0;
 }
 
 /* The rows shown at once. */
 static int visible_rows(void)
 {
-    return has_back() ? EIDOS_SUI_VISIBLE : EIDOS_SUI_VISIBLE + 1;
+    return EIDOS_SUI_VISIBLE + 1;
 }
 
 /* The cursor runs over the rows and then, with the grey bar, one more
@@ -684,6 +711,9 @@ static void clamp_scroll(void)
     }
 }
 
+static int g_last_tab;
+static void enter_section(int t);
+
 void eidos_sui_enter(void)
 {
     Row *rows = g.rows;
@@ -692,7 +722,9 @@ void eidos_sui_enter(void)
     memset(&g, 0, sizeof g);
     g.rows = rows;               /* the list's own storage is kept */
     g.rowcap = rowcap;
-    build_rows();
+    g_mp_view = MP_VIEW_CHOOSE;
+    /* the screen opens on the tab it was left on */
+    enter_section(g_last_tab);
 }
 
 void eidos_sui_leave(void)
@@ -736,10 +768,11 @@ static int reload_mods(void)
 static void enter_section(int t)
 {
     g.tab = t;
+    g_last_tab = t;
     g.level = 1;
     g.cursor = 0;
     g.scroll = 0;
-    if (t == TAB_MODS) {
+    if (t == TAB_MODS && !g.mods_open) {
         /* The Mods section: the model is built again from the port's list
          * and the player's record, the way sdk/mod_menu.h says: the
          * screen calls it once, when the section is entered. */
@@ -855,13 +888,6 @@ static void change_net_port(int type, int d)
  * the port's own (sdk/mod_net.h, "The port's own session"); the screen
  * keeps the last answer, so it can say what happened.
  */
-static struct {
-    int busy;        /* the work is running                     */
-    int have;        /* there is an answer                      */
-    int rc;          /* the answer of the last work             */
-    int host;        /* the last work was a host                */
-    u32 stamp;       /* the peer list's stamp: it changes when the list does */
-} g_sess;
 
 /*
  * Ask the port's own session how it is doing.  The relay takes up to
@@ -885,6 +911,11 @@ static int poll_session(void)
     (void)bw_port_session_poll(&st);
     if (st.busy != g_sess.busy) {
         g_sess.busy = st.busy;
+        if (g.tab == TAB_SESSION) {
+            build_rows();
+            g.cursor = 0;
+            g.scroll = 0;
+        }
         redraw = 1;
     }
     if (st.done) {
@@ -901,7 +932,7 @@ static int poll_session(void)
     }
     if (st.stamp + bw_mp_stamp() != g_sess.stamp) {
         g_sess.stamp = st.stamp + bw_mp_stamp();
-        if (g.level == 1 && g.tab == TAB_SESSION) {
+        if (g.tab == TAB_SESSION) {
             build_rows_keep_cursor();
         }
         redraw = 1;
@@ -935,8 +966,12 @@ static void session_value(int host, char *out, int n)
         put(out, n, STR_SESSION_WAIT);
         return;
     }
-    if (g_sess.have && g_sess.host == host) {
-        put(out, n, session_answer_text(g_sess.rc));
+    if (g_sess.have && g_sess.host == host && g_sess.rc != BW_MOD_NET_OK) {
+        if (strcmp(bw_mod_net_last_error(), "unknown-code") == 0) {
+            put(out, n, STR_MP_NOT_FOUND);
+        } else {
+            put(out, n, session_answer_text(g_sess.rc));
+        }
     }
 }
 
@@ -950,10 +985,25 @@ static int session_action(int type)
     switch (type) {
     case ROW_SESSION_HOST:
         if (bw_port_session_start(1, NULL) == 0) {
+            g_sess.busy = 1;
+            g_sess.have = 0;
+            build_rows();
+            g.cursor = 0;
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
-    case ROW_SESSION_JOIN: {
+    case ROW_SESSION_JOIN:
+        /* Join: the code is asked for, and typed at once */
+        g_mp_view = MP_VIEW_JOIN;
+        g_sess.have = 0;
+        build_rows();
+        g.cursor = 0;
+        g.scroll = 0;
+        eidos_settings_session_join_code_text_begin();
+        g.editing = 1;
+        eidos_settings_capture_begin();
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+    case ROW_MP_JOIN_GO: {
         const char *code = eidos_settings_session_join_code();
 
         if (code == NULL || code[0] == '\0') {
@@ -961,6 +1011,9 @@ static int session_action(int type)
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
         }
         if (bw_port_session_start(0, code) == 0) {
+            g_sess.busy = 1;
+            build_rows();
+            g.cursor = 0;
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
@@ -968,6 +1021,11 @@ static int session_action(int type)
     case ROW_SESSION_LEAVE:
         /* The service's leave does not block. */
         bw_port_session_leave();
+        g_mp_view = MP_VIEW_CHOOSE;
+        g_sess.have = 0;
+        build_rows();
+        g.cursor = 0;
+        g.scroll = 0;
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
     case ROW_MP_START:
         /* The host starts the game when everyone is ready. */
@@ -1113,6 +1171,13 @@ static int poll_text(void)
         eidos_settings_capture_cancel();
         g.editing = 0;
         g.wait_release = 1;
+        if (done == 1 && g.cursor < g.nrows &&
+            g.rows[g.cursor].type == ROW_NET_NAME) {
+            const char *name = eidos_settings_net_name();
+
+            bw_mod_net_set_name(name);
+            bw_mp_rename(name);
+        }
         return EIDOS_SUI_REDRAW |
                (done == 1 ? EIDOS_SUI_SFX_SELECT : EIDOS_SUI_SFX_BACK);
     }
@@ -1192,6 +1257,11 @@ int eidos_sui_input(unsigned pressed, unsigned held)
     if (poll_session()) {
         res |= EIDOS_SUI_REDRAW;
     }
+    /* The game has started: the screen closes and the title menu goes
+     * straight into the game (sdk/mod_title.h). */
+    if (bw_mp_started_pending()) {
+        res |= EIDOS_SUI_EXIT;
+    }
     return res;
 }
 
@@ -1232,11 +1302,21 @@ static int sui_input(unsigned pressed, unsigned held)
 
     act = repeat_dirs(pressed, held);
     if (pressed & 2u) {
-        if (g.level == 0) {
-            return EIDOS_SUI_EXIT | EIDOS_SUI_SFX_BACK;
+        if (g.tab == TAB_SESSION && g_mp_view == MP_VIEW_JOIN &&
+            !mp_in_game()) {
+            g_mp_view = MP_VIEW_CHOOSE;
+            build_rows();
+            g.cursor = 1;           /* back on Join */
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
         }
-        leave_section();
-        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
+        return EIDOS_SUI_EXIT | EIDOS_SUI_SFX_BACK;
+    }
+    if (pressed & 0x300u) {
+        /* L and R: the tab before or after */
+        int d = (pressed & 0x100u) ? 1 : -1;
+
+        enter_section((g.tab + d + TAB_COUNT) % TAB_COUNT);
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
     }
     if (act & 0x40u) {
         move_cursor(-1);
@@ -1297,14 +1377,14 @@ static int sui_input(unsigned pressed, unsigned held)
         if (d != 0 && toggle_mod(r->arg)) {
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
-        /* The player's own order: L moves the mod towards the front of the
-         * list, R towards the back. */
-        if (pressed & 0x200u) {
+        /* The player's own order: Y moves the mod towards the front of the
+         * list, X towards the back. */
+        if (pressed & 0x800u) {
             if (move_mod(r->arg, 1)) {
                 return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
             }
         }
-        if (pressed & 0x100u) {
+        if (pressed & 0x400u) {
             if (move_mod(r->arg, 0)) {
                 return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
             }
@@ -1358,7 +1438,8 @@ static int sui_input(unsigned pressed, unsigned held)
     }
     if (r->type == ROW_SESSION_HOST || r->type == ROW_SESSION_JOIN ||
         r->type == ROW_SESSION_LEAVE || r->type == ROW_SESSION_REVERT ||
-        r->type == ROW_SESSION_DEFAULTS || r->type == ROW_MP_START) {
+        r->type == ROW_SESSION_DEFAULTS || r->type == ROW_MP_START ||
+        r->type == ROW_MP_JOIN_GO) {
         if (pressed & 1u) {
             return session_action(r->type);
         }
@@ -1420,6 +1501,28 @@ int eidos_sui_row_count(void)
     }
     /* the header, the visible rows, and the grey bar inside a section */
     return 1 + n + (has_back() ? 1 : 0);
+}
+
+const char *eidos_sui_tab_name(int i)
+{
+    if (i < 0 || i >= TAB_COUNT) {
+        return "";
+    }
+    return k_tab_names[k_tab_order[i]];
+}
+
+int eidos_sui_scroll(int *first, int *shown, int *total)
+{
+    if (first != NULL) {
+        *first = question_up() ? 0 : g.scroll;
+    }
+    if (shown != NULL) {
+        *shown = visible_rows();
+    }
+    if (total != NULL) {
+        *total = question_up() ? 1 : g.nrows;
+    }
+    return 0;
 }
 
 int eidos_sui_has_back(void)
@@ -1768,10 +1871,9 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         int above = g.scroll > 0;
         int below = g.scroll + visible_rows() < g.nrows;
 
-        put(label, nl, g.level == 0 ? STR_TITLE : k_tab_names[g.tab]);
-        /* the list goes on past the screen: the header says so */
-        put(value, nv, above && below ? STR_MORE_BOTH :
-                       below ? STR_MORE_BELOW : above ? STR_MORE_ABOVE : "");
+        (void)above;
+        (void)below;
+        put(label, nl, k_tab_names[g.tab]);
         return;
     }
     if (has_back() && row == eidos_sui_row_count() - 1) {
@@ -1875,7 +1977,17 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         break;
     case ROW_NET_NAME:
         put(label, nl, STR_NET_NAME);
-        put(value, nv, net_text(eidos_settings_net_name()));
+        put(value, nv, eidos_settings_net_name()[0] != '\0'
+                       ? eidos_settings_net_name() : STR_MP_DEFAULT_NAME);
+        break;
+    case ROW_MP_STATUS:
+        put(label, nl, r->arg == STATUS_CONNECTING ? STR_MP_CONNECTING :
+                       r->arg == STATUS_WAIT_HOST ? STR_MP_WAIT_HOST :
+                       bw_mp_end_reason());
+        break;
+    case ROW_MP_JOIN_GO:
+        put(label, nl, STR_SESSION_JOIN);
+        session_value(0, value, nv);
         break;
     case ROW_INJECT_MAX:
         /* The longest press the injection allows, in frames.  0 is off. */
@@ -1906,11 +2018,9 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         break;
     case ROW_SESSION_JOIN:
         put(label, nl, STR_SESSION_JOIN);
-        session_value(0, value, nv);
         break;
     case ROW_SESSION_LEAVE:
         put(label, nl, STR_SESSION_LEAVE);
-        put(value, nv, bw_port_session_active() ? STR_SESSION_IN : "");
         break;
     case ROW_SESSION_SELF:
         /* This player's own number in the session. */

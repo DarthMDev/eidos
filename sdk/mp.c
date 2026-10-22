@@ -72,6 +72,7 @@ static struct {
     char       blocker[256];
     char       wait[200];
     char       reason[96];
+    int        started;             /* the first start, not yet taken */
 } g_mp;
 
 /* ------------------------------------------------------------------ */
@@ -397,6 +398,11 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         return;
     }
     copy_n(text, sizeof(text), msg, size);
+    if (strncmp(text, "name ", 5) == 0 && text[5] != '\0') {
+        copy_n(p->name, sizeof(p->name), text + 5, strlen(text + 5));
+        host_broadcast_roster();
+        return;
+    }
     if (strncmp(text, "hello ", 6) == 0 &&
         sscanf(text + 6, "%d %7s %512s", &version, game, mods) == 3) {
         p->game = (game[0] == 'W') ? 'W' : 'B';
@@ -485,6 +491,9 @@ static void joiner_on_message(u32 peer, const char *msg, u32 size)
     if (size >= 7 && memcmp(msg, "roster ", 7) == 0) {
         joiner_on_roster(msg, size);
     } else if (size == 5 && memcmp(msg, "start", 5) == 0) {
+        if (g_mp.state == BW_MP_LOBBY) {
+            g_mp.started = 1;
+        }
         g_mp.state = BW_MP_PLAYING;
     } else if (size == 5 && memcmp(msg, "pause", 5) == 0) {
         g_mp.state = BW_MP_PAUSED;
@@ -636,6 +645,39 @@ void bw_mp_leave(void)
     snprintf(g_mp.reason, sizeof(g_mp.reason), "left");
 }
 
+int bw_mp_take_started(void)
+{
+    int s = g_mp.started;
+
+    g_mp.started = 0;
+    return s;
+}
+
+int bw_mp_started_pending(void)
+{
+    return g_mp.started;
+}
+
+void bw_mp_rename(const char *name)
+{
+    char msg[BW_MP_NAME_MAX + 8];
+    int n;
+
+    if (name == NULL || name[0] == '\0' || g_mp.state == BW_MP_OFF) {
+        return;
+    }
+    if (g_mp.host) {
+        copy_n(g_mp.players[0].name, sizeof(g_mp.players[0].name), name,
+               strlen(name));
+        host_broadcast_roster();
+        return;
+    }
+    n = snprintf(msg, sizeof(msg), "name %s", name);
+    if (n > 0) {
+        (void)g_net->send(1, msg, (u32)n);
+    }
+}
+
 const char *bw_mp_code(void)
 {
     return g_mp.code;
@@ -698,6 +740,9 @@ int bw_mp_start(void)
     }
     if (!host_ready()) {
         return -1;
+    }
+    if (g_mp.state == BW_MP_LOBBY) {
+        g_mp.started = 1;
     }
     if (!g_mp.roster_set) {
         /* the first start sets the roster: the players here now */

@@ -140,6 +140,7 @@ extern void func_02045088(u32);
 extern u32 func_020450F0(u32, u32, u32, u32, u32, u32, u32);
 extern void *func_02045770(u32);
 extern void func_02043B5C(void *, u32);
+extern void func_02043AF4(void *, u32, u32, u32, u16, u8);   /* BMP_FillRect */
 extern void func_02045374(u32);
 extern void func_02045334(u32);
 extern u8 func_02045730(u32);
@@ -186,6 +187,10 @@ extern int eidos_sui_row_count(void);
 extern void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv);
 extern int eidos_sui_cursor_row(void);
 extern int eidos_sui_has_back(void);
+extern int eidos_sui_tab(void);
+extern int eidos_sui_tab_count(void);
+extern const char *eidos_sui_tab_name(int i);
+extern int eidos_sui_scroll(int *first, int *shown, int *total);
 extern int eidos_sui_row_choices(int row, int *active, char names[3][20]);
 extern int eidos_sui_row_adjustable(int row);
 extern int eidos_sui_touch(int row, int zone);
@@ -241,7 +246,7 @@ typedef struct OptWork {
     u32 tcb;                    /* task list, run every frame */
     u32 vtask;                  /* the vblank task */
     u32 font, print;
-    u32 win_head, win_row[OPT_ROWS], win_help;
+    u32 win_head, win_row[OPT_ROWS], win_help, win_scroll;
     int built;
     int state_dirty;
     int ending;
@@ -339,14 +344,49 @@ static void draw_rows(void)
 
     eidos_sui_row_text(0, label, sizeof label, value, sizeof value);
     upper(label);
-    upper(value);
     win_clear_and_commit_begin(g_w->win_head);
     put_text(g_w->win_head, label, 4, -1, 16 * 8 - 8, 0, TC_HEAD, TC_SHADOW);
-    if (value[0] != 0) {
-        /* the list goes on past the screen: "MORE BELOW" on the right */
-        put_text(g_w->win_head, value, 15 * 8, -1, 14 * 8, 0, TC_LIVE, TC_SHADOW);
+    {
+        /* the tabs, as the bag shows its pockets: one box each, the one
+         * shown lit, with L and R on either side */
+        int tabs = eidos_sui_tab_count(), cur = eidos_sui_tab(), t;
+        int x = 240 - 12 - tabs * 14 - 12;
+        void *bmp = func_02045770(g_w->win_head);
+
+        put_text(g_w->win_head, "L", x, -1, 12, 0, TC_TEXT, TC_SHADOW);
+        x += 12;
+        for (t = 0; t < tabs; t++) {
+            func_02043AF4(bmp, (u32)(x + 1), 4, 10, 8,
+                          (u8)(t == cur ? TC_LIVE : TC_DIM));
+            x += 14;
+        }
+        put_text(g_w->win_head, "R", x + 2, -1, 12, 0, TC_TEXT, TC_SHADOW);
     }
     win_commit(g_w->win_head);
+
+    {
+        /* the scrollbar: the track, and the part of the list on screen */
+        int first = 0, shown = 1, total = 1;
+        void *bmp = func_02045770(g_w->win_scroll);
+        int h = 24 * OPT_ROWS;
+
+        (void)eidos_sui_scroll(&first, &shown, &total);
+        win_clear_and_commit_begin(g_w->win_scroll);
+        if (total > shown) {
+            int top = h * first / total;
+            int len = h * shown / total;
+
+            if (len < 8) {
+                len = 8;
+            }
+            if (top + len > h) {
+                top = h - len;
+            }
+            func_02043AF4(bmp, 3, 0, 2, (u16)h, (u8)TC_DIM);
+            func_02043AF4(bmp, 1, (u32)top, 6, (u16)len, (u8)TC_TEXT);
+        }
+        win_commit(g_w->win_scroll);
+    }
 
     /* Bars 0..4 are the option rows (model rows 1..); bar 5 is the grey
      * bar (Back) inside a section, and one more row on the main list. */
@@ -608,7 +648,8 @@ static void gfx_build(OptWork *w)
     func_02049238(h);
 
     w->win_help = func_020450F0(4, 1, 0x13, 0x1e, 4, 0xf, 1);
-    w->win_head = func_020450F0(0, 0, 0, 0x1e, 3, 0xf, 1);   /* wide: the "more" hint on the right */
+    w->win_head = func_020450F0(0, 0, 0, 0x1e, 3, 0xf, 1);   /* wide: the tabs on the right */
+    w->win_scroll = func_020450F0(3, 31, 2, 1, 3 * OPT_ROWS, 0xf, 1);
     for (i = 0; i < OPT_ROWS; i++) {
         w->win_row[i] = func_020450F0(3, 1, (u32)(2 + 3 * i), 0x1e, 3, 0xf, 1);
     }
@@ -617,6 +658,7 @@ static void gfx_build(OptWork *w)
     }
     func_02043B5C(func_02045770(w->win_help), 0);
     func_02043B5C(func_02045770(w->win_head), 0);
+    func_02043B5C(func_02045770(w->win_scroll), 0);
 
     w->font = func_0201D7EC(0x17, 0, 0, 0, heap);
     w->print = func_0201C440(heap);
@@ -664,6 +706,7 @@ static void screen_free(OptWork *w)
 
     func_020452E8(w->win_help);
     func_020452E8(w->win_head);
+    func_020452E8(w->win_scroll);
     for (i = 0; i < OPT_ROWS; i++) {
         func_020452E8(w->win_row[i]);
     }

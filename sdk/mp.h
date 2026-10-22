@@ -73,6 +73,15 @@ void bw_mp_leave(void);
  * or joins off the frame thread): `host` says which, `code` is its code. */
 void bw_mp_attach(int host, const char *code);
 
+/* The first start of the game (the lobby's Start, or the host's start
+ * reaching a joiner): 1 once, then 0.  pending only looks. */
+int  bw_mp_take_started(void);
+int  bw_mp_started_pending(void);
+
+/* This player's new name: the host's own roster line, or a message to the
+ * host, which sends the roster again. */
+void bw_mp_rename(const char *name);
+
 /* A number that changes whenever the lobby's rows would. */
 u32  bw_mp_stamp(void);
 

@@ -88,7 +88,8 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 if(EIDOS_SOURCE_TREE STREQUAL "game")
     set(EIDOS_GAMESPELL_H ${CMAKE_BINARY_DIR}/gamespell.h)
     set(_gs_dirs ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/stubs
-                 ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/demo)
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/demo
+                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform)
     execute_process(
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/gamespell.py
                 --stamp ${ALETHEIA_ROOT} -o ${EIDOS_GAMESPELL_H} ${_gs_dirs}

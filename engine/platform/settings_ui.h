@@ -57,6 +57,12 @@ int  eidos_sui_cursor_row(void);
 /* 1 when the screen's last row is the grey bar (Back, or a question's
  * cancel); the main list has none, and its sixth bar is a row. */
 int  eidos_sui_has_back(void);
+/* The tabs: the name of tab i (in screen order); eidos_sui_tab() is the
+ * one shown. */
+const char *eidos_sui_tab_name(int i);
+/* The list's scroll: the first row shown, how many are shown, how many
+ * there are (for the scrollbar). */
+int  eidos_sui_scroll(int *first, int *shown, int *total);
 int  eidos_sui_row_adjustable(int row);     /* left and right change its value */
 
 /* The stylus: see eidos_sui_touch in settings_ui.c. */

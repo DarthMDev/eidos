@@ -44,6 +44,8 @@ extern int bw_mod_title_settings_on(void);
 extern int bw_mod_title_in_settings(void);
 extern int bw_mod_title_set_in_settings(int on);
 extern int bw_mod_title_set_rebuild(void);
+extern int bw_mod_title_take_autostart(void);
+extern int bw_mp_take_started(void);
 extern void eidos_sui_enter(void);
 extern int eidos_sui_input(unsigned pressed, unsigned held);
 extern void func_021BB474(char *p);
@@ -100,10 +102,48 @@ static int settings_state(char *p)
     return 5;
 }
 
+/* Multiplayer's start: the menu goes into the game as A on Continue (or on
+ * New Game when there is no save) would. */
+static int autostart(char *p)
+{
+    int i, row = -1;
+
+    for (i = 0; i < 8; i++) {
+        if (*(u8 *)(p + 0x120 + i) == 0) {
+            row = i;
+            break;
+        }
+    }
+    if (row < 0) {
+        for (i = 0; i < 8; i++) {
+            if (*(u8 *)(p + 0x120 + i) == 1) {
+                row = i;
+                break;
+            }
+        }
+    }
+    if (row < 0)
+        return -1;
+    *(u8 *)(p + 0x128) = (u8)row;
+    func_020061E4(0x54c);
+    if (*(u8 *)(p + 0x120 + row) == 0) {
+        *(u8 *)(p + 0x129) = 0;
+        return func_021BC0AC(p, 7);
+    }
+    return func_021BC0AC(p, 8);
+}
+
 int func_021BA338(char *p)
 {
     if (bw_mod_title_settings_on() && bw_mod_title_in_settings())
         return settings_state(p);
+    if (bw_mod_title_settings_on() &&
+        (bw_mod_title_take_autostart() | bw_mp_take_started())) {
+        int r = autostart(p);
+
+        if (r >= 0)
+            return r;
+    }
     func_0202EA40(*(void **)(p + 0x11c));
     if (func_020362DC() & 1) {
         func_020061E4(0x54c);

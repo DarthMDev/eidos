@@ -36,6 +36,12 @@ int  bw_mod_title_set_in_settings(int on);
 int  bw_mod_title_set_rebuild(void);
 int  bw_mod_title_take_rebuild(void);
 
+/* The title menu goes straight into the game the next time it waits for
+ * input: Continue when there is a save, else New Game.  Multiplayer's start
+ * asks for it (sdk/mp.h); take returns the request and clears it. */
+void bw_mod_title_request_autostart(void);
+int  bw_mod_title_take_autostart(void);
+
 /* Where the settings screen sends the player back to: the title menu process
  * (overlay id and process table), noted when the menu leaves for it. */
 void bw_mod_title_set_return(int overlay, const void *table);
