@@ -634,14 +634,21 @@ states `multiplayer = <n>` (`docs/multiplayer.md`).
   A Pokemon reference in another player's payload names a Pokemon of that
   game, not of this one.
 - **The shared table.** Numbers every player's mods see: Soul Link pairs,
-  shared route records. `shared_set(key, value)` and
-  `shared_get(key, &value)`; the keys are the mod's own (the port puts the
-  mod's namespace in front). The host's copy is the real one and is kept
-  with its game. A joiner's change goes to the host, which applies the
-  changes in the order they come and sends each one to every player, so a
-  joiner reads its own change once the host has sent it back. `get`
-  answers 0 when the key is set, 1 when it is not, -1 outside a
-  multiplayer game.
+  shared route records, counters. `shared_get(key, &value)`,
+  `shared_set(key, value)`, `shared_add(key, delta)` and
+  `shared_cas(key, expected, value)`; the keys are the mod's own (the port
+  puts the mod's namespace in front). The host's copy is the real one and
+  is kept with its game. A joiner's change goes to the host, which makes
+  the changes in the order they come and sends each result to every
+  player, so a joiner reads its own change once the host has sent it back.
+  The host makes `add` and `cas` itself, so two players' changes at the
+  same moment are both kept: a counter uses `add`, not `get` then `set`.
+  `cas` sets the value only when it is `expected` at that moment; the
+  mod reads the key to learn whether it did. `get` answers 0 when the key
+  is set, 1 when it is not (the value is 0), -1 outside a multiplayer
+  game. `set`, `add` and `cas` answer 0 when the change was made (the
+  host) or sent (a joiner), -1 outside a multiplayer game or for a key
+  that cannot be sent (empty, longer than the limit, or with a space).
 
 ## The port's own session
 

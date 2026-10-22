@@ -437,6 +437,38 @@
           "name": "value"
         }
       ]
+    },
+    {
+      "name": "shared_add",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "key"
+        },
+        {
+          "type": "s32",
+          "name": "delta"
+        }
+      ]
+    },
+    {
+      "name": "shared_cas",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "key"
+        },
+        {
+          "type": "s32",
+          "name": "expected"
+        },
+        {
+          "type": "s32",
+          "name": "value"
+        }
+      ]
     }
   ]
 }

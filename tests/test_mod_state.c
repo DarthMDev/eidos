@@ -306,12 +306,12 @@ int main(void)
                 (long)offsetof(BwModServices, event_player)
                 - (long)offsetof(BwModServices, table_get),
                 (long)sizeof(void *));
-    BW_CHECK_EQ("the shared table's two follow",
-                (long)offsetof(BwModServices, shared_set)
+    BW_CHECK_EQ("the shared table's four follow",
+                (long)offsetof(BwModServices, shared_cas)
                 - (long)offsetof(BwModServices, event_player),
-                2 * (long)sizeof(void *));
+                4 * (long)sizeof(void *));
     BW_CHECK_EQ("and nothing follows them",
-                (long)sizeof(BwModServices) - (long)offsetof(BwModServices, shared_set),
+                (long)sizeof(BwModServices) - (long)offsetof(BwModServices, shared_cas),
                 (long)sizeof(void *));
 
     printf("the in-step call\n");

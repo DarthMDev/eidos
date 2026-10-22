@@ -353,10 +353,18 @@ typedef struct BwModServices {
      * copy is the real one; the others send their changes to it, and it
      * sends every change to everyone).  Keys are the mod's own.  get: 0
      * when the key is set, 1 when it is not (*out is 0), -1 outside a
-     * multiplayer game.  set: 0 when the change was made or sent, -1
-     * outside a multiplayer game. */
+     * multiplayer game.  set, add and cas: 0 when the change was made
+     * (the host) or sent to the host (a joiner), -1 outside a multiplayer
+     * game or for a key that cannot be sent.  The host makes add and cas
+     * itself, in the order the changes come, so two players' changes at
+     * the same moment are both kept: add adds `delta` to the value (an
+     * unset key is 0), cas sets `value` only when the value is `expected`
+     * then.  Every change reaches every player; a joiner reads its own
+     * once the host has sent it back. */
     int  (*shared_get)(const char *key, s32 *out);
     int  (*shared_set)(const char *key, s32 value);
+    int  (*shared_add)(const char *key, s32 delta);
+    int  (*shared_cas)(const char *key, s32 expected, s32 value);
 } BwModServices;
 
 /* ------------------------------------------------------------------ */

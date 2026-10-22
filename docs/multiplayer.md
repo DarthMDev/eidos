@@ -188,8 +188,10 @@ use multiplayer for now (SPEC section 17).
   fire every frame. The host runs the multiplayer mods' handlers over
   each one (`bw_mod_event_remote`); `event_player` names the player.
 - A changed place goes out at most ten times a second.
-- The shared table: `tset <key> <value>` from the host to everyone,
-  `treq <key> <value>` from a joiner to the host. A joiner's hello gets the
+- The shared table: `tset <key> <value>` from the host to everyone;
+  `treq <key> <value>`, `tadd <key> <delta>` and
+  `tcas <key> <expected> <value>` from a joiner to the host, which makes
+  each change itself in the order they come. A joiner's hello gets the
   whole table. The host keeps it in its game's folder (`shared.txt`).
 - Both are mod interface version 5 (`docs/mod-services.md`, "Multiplayer").
 

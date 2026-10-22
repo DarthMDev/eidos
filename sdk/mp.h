@@ -121,6 +121,14 @@ int  bw_mp_shared_set(const char *ns, const char *key, s32 value);
 int  bw_mp_shared_get_calling(const char *key, s32 *out);
 int  bw_mp_shared_set_calling(const char *key, s32 value);
 
+/* The host's own changes (no change is lost when two players change a key
+ * at the same moment): add adds delta; cas sets value only when the value
+ * is expected then.  0 made or sent, -1 outside a multiplayer game. */
+int  bw_mp_shared_add(const char *ns, const char *key, s32 delta);
+int  bw_mp_shared_cas(const char *ns, const char *key, s32 expected, s32 value);
+int  bw_mp_shared_add_calling(const char *key, s32 delta);
+int  bw_mp_shared_cas_calling(const char *key, s32 expected, s32 value);
+
 /* The line the "waiting for players" screen shows. */
 const char *bw_mp_wait_text(void);
 

@@ -502,6 +502,17 @@ static void test_shared(void)
     BW_CHECK_EQ("as asked", (int)v, 7);
     BW_CHECK_EQ("and sent to everyone", sent_has("tset soul/pair.2 7"), 1);
     BW_CHECK_EQ("a key with a space is refused", bw_mp_shared_set("soul", "a b", 1), -1);
+    /* two players' additions at the same moment are both kept */
+    say(2, "tadd soul/faints 1");
+    BW_CHECK_EQ("the host adds", bw_mp_shared_add("soul", "faints", 1), 0);
+    (void)bw_mp_shared_get("soul", "faints", &v);
+    BW_CHECK_EQ("both additions count", (int)v, 2);
+    say(2, "tcas soul/faints 1 9");
+    (void)bw_mp_shared_get("soul", "faints", &v);
+    BW_CHECK_EQ("a cas that does not match changes nothing", (int)v, 2);
+    say(2, "tcas soul/faints 2 9");
+    (void)bw_mp_shared_get("soul", "faints", &v);
+    BW_CHECK_EQ("a cas that matches sets it", (int)v, 9);
     sent_reset();
     say(2, "hello 1 B - ffffeeeeddddccccbbbbaaaa99998888 0");
     BW_CHECK_EQ("a hello gets the whole table", sent_has("tset soul/pair.1 42"), 1);
@@ -533,6 +544,8 @@ static void test_shared(void)
     sent_reset();
     BW_CHECK_EQ("a joiner's change", bw_mp_shared_set("soul", "pair.3", 5), 0);
     BW_CHECK_EQ("goes to the host", sent_has("treq soul/pair.3 5"), 1);
+    BW_CHECK_EQ("a joiner's addition", bw_mp_shared_add("soul", "faints", 1), 0);
+    BW_CHECK_EQ("goes to the host to make", sent_has("tadd soul/faints 1"), 1);
     BW_CHECK_EQ("and is not made here", bw_mp_shared_get("soul", "pair.3", &v), 1);
     say(1, "tset soul/pair.3 5");
     BW_CHECK_EQ("the host's word makes it", bw_mp_shared_get("soul", "pair.3", &v), 0);

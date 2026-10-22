@@ -70,7 +70,7 @@ that changes it. Where an item is only partly done, it says which part.
   `sdk/mod_state.h` are the frozen surface a mod compiles against: the
   events and their payloads, the state and service tables, the host table and
   the entry points. The interface version is 4 (version 3 mods still load) and the surface hash is
-  0xF31531E2 at 32 bits and 0x7D165F30 at 64.
+  0x89AE8098 at 32 bits and 0xF096426E at 64.
   `sdk/mod_event.c` is the dispatch (the binding table, the fan-out, the
   refusals and the scope stack) and the five area files hold the
   rows; `sdk/mod_state.c` the state calls over the game's own accessors;

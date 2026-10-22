@@ -121,6 +121,7 @@ static struct {
 
 static int  shared_put(const char *key, s32 value);
 static int  shared_parse(const char *msg, u32 size, char *key, s32 *value);
+static void host_shared_request(const char *msg, u32 size);
 static void host_shared_apply(const char *key, s32 value);
 static void host_shared_send_all(u32 peer);
 static void shared_load(void);
@@ -1220,13 +1221,9 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         host_on_events(peer, (const u8 *)msg + 4, size - 4);
         return;
     }
-    if (size > 5 && memcmp(msg, "treq ", 5) == 0) {
-        char key[BW_MP_SHARED_KEY];
-        s32 value;
-
-        if (shared_parse(msg, size, key, &value) == 0) {
-            host_shared_apply(key, value);
-        }
+    if (size > 5 && (memcmp(msg, "treq ", 5) == 0 || memcmp(msg, "tadd ", 5) == 0 ||
+                     memcmp(msg, "tcas ", 5) == 0)) {
+        host_shared_request(msg, size);
         return;
     }
     copy_n(text, sizeof(text), msg, size);
@@ -1519,6 +1516,37 @@ static void host_shared_send_all(u32 peer)
     }
 }
 
+/* The value of a key on the host, 0 when it is not set. */
+static s32 shared_value(const char *key)
+{
+    int i = shared_find(key);
+
+    return i < 0 ? 0 : g_shared[i].value;
+}
+
+/* A joiner's change, as the host makes it: "treq <key> <value>",
+ * "tadd <key> <delta>", "tcas <key> <expected> <value>". */
+static void host_shared_request(const char *msg, u32 size)
+{
+    char text[BW_MP_SHARED_KEY + 48], key[BW_MP_SHARED_KEY];
+    long a, b;
+
+    copy_n(text, sizeof(text), msg, size);
+    if (strncmp(text, "tadd ", 5) == 0 &&
+        sscanf(text + 5, "%79s %ld", key, &a) == 2 && shared_key_ok(key)) {
+        host_shared_apply(key, (s32)((u32)shared_value(key) + (u32)(s32)a));
+    } else if (strncmp(text, "tcas ", 5) == 0 &&
+               sscanf(text + 5, "%79s %ld %ld", key, &a, &b) == 3 &&
+               shared_key_ok(key)) {
+        if (shared_value(key) == (s32)a) {
+            host_shared_apply(key, (s32)b);
+        }
+    } else if (strncmp(text, "treq ", 5) == 0 &&
+               sscanf(text + 5, "%79s %ld", key, &a) == 2 && shared_key_ok(key)) {
+        host_shared_apply(key, (s32)a);
+    }
+}
+
 /* "treq <key> <value>" (to the host) and "tset <key> <value>" (from it). */
 static int shared_parse(const char *msg, u32 size, char *key, s32 *value)
 {
@@ -1582,6 +1610,52 @@ int bw_mp_shared_set(const char *ns, const char *key, s32 value)
     }
     n = snprintf(msg, sizeof(msg), "treq %s %ld", k, (long)value);
     return g_net->send(1, msg, (u32)n) == 0 ? 0 : -1;
+}
+
+int bw_mp_shared_add(const char *ns, const char *key, s32 delta)
+{
+    char k[BW_MP_SHARED_KEY], msg[BW_MP_SHARED_KEY + 32];
+    int n;
+
+    if (!shared_active() || shared_full_key(ns, key, k, sizeof(k)) != 0) {
+        return -1;
+    }
+    if (g_mp.host) {
+        host_shared_apply(k, (s32)((u32)shared_value(k) + (u32)delta));
+        return 0;
+    }
+    n = snprintf(msg, sizeof(msg), "tadd %s %ld", k, (long)delta);
+    return g_net->send(1, msg, (u32)n) == 0 ? 0 : -1;
+}
+
+int bw_mp_shared_cas(const char *ns, const char *key, s32 expected, s32 value)
+{
+    char k[BW_MP_SHARED_KEY], msg[BW_MP_SHARED_KEY + 48];
+    int n;
+
+    if (!shared_active() || shared_full_key(ns, key, k, sizeof(k)) != 0) {
+        return -1;
+    }
+    if (g_mp.host) {
+        if (shared_value(k) == expected) {
+            host_shared_apply(k, value);
+        }
+        return 0;
+    }
+    n = snprintf(msg, sizeof(msg), "tcas %s %ld %ld", k, (long)expected, (long)value);
+    return g_net->send(1, msg, (u32)n) == 0 ? 0 : -1;
+}
+
+int bw_mp_shared_add_calling(const char *key, s32 delta)
+{
+    return bw_mp_shared_add(bw_mod_savedata_namespace != NULL
+                            ? bw_mod_savedata_namespace() : "", key, delta);
+}
+
+int bw_mp_shared_cas_calling(const char *key, s32 expected, s32 value)
+{
+    return bw_mp_shared_cas(bw_mod_savedata_namespace != NULL
+                            ? bw_mod_savedata_namespace() : "", key, expected, value);
 }
 
 int bw_mp_shared_get_calling(const char *key, s32 *out)

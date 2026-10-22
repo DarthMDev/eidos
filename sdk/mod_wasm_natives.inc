@@ -786,6 +786,26 @@ static int32_t wn_shared_set(wasm_exec_env_t env, const char *key, int32_t value
     return (int32_t)w->host->services->shared_set(key, (s32)value);
 }
 
+static int32_t wn_shared_add(wasm_exec_env_t env, const char *key, int32_t delta)
+{
+    BwWasmMod *w = wasm_mod_of(env);
+    if (w == NULL || w->host == NULL || w->host->services == NULL ||
+        w->host->services->shared_add == NULL) {
+        return -1;
+    }
+    return (int32_t)w->host->services->shared_add(key, (s32)delta);
+}
+
+static int32_t wn_shared_cas(wasm_exec_env_t env, const char *key, int32_t expected, int32_t value)
+{
+    BwWasmMod *w = wasm_mod_of(env);
+    if (w == NULL || w->host == NULL || w->host->services == NULL ||
+        w->host->services->shared_cas == NULL) {
+        return -1;
+    }
+    return (int32_t)w->host->services->shared_cas(key, (s32)expected, (s32)value);
+}
+
 /* The state calls and the services, as imports of module "eidos". */
 static NativeSymbol k_wasm_api_natives[] = {
     { "party_count", (void *)wn_party_count, "()i", NULL },
@@ -864,4 +884,6 @@ static NativeSymbol k_wasm_api_natives[] = {
     { "event_player", (void *)wn_event_player, "()i", NULL },
     { "shared_get", (void *)wn_shared_get, "($*)i", NULL },
     { "shared_set", (void *)wn_shared_set, "($i)i", NULL },
+    { "shared_add", (void *)wn_shared_add, "($i)i", NULL },
+    { "shared_cas", (void *)wn_shared_cas, "($ii)i", NULL },
 };

@@ -1105,6 +1105,8 @@ static int loader_load(u32 index)
     m->services.event_player   = bw_mod_event_player;
     m->services.shared_get     = bw_mp_shared_get_calling;
     m->services.shared_set     = bw_mp_shared_set_calling;
+    m->services.shared_add     = bw_mp_shared_add_calling;
+    m->services.shared_cas     = bw_mp_shared_cas_calling;
     /* The run-status panel: the model's sixteen lines (sdk/mod_panel.h). */
     m->services.panel_set      = bw_mod_panel_set;
     m->services.panel_clear    = bw_mod_panel_clear;

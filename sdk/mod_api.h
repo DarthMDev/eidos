@@ -43,8 +43,8 @@ extern "C" {
  * item_add.  Nothing moved, so a
  * version 3 mod still loads.
  *
- * Version 5 appended the services table's event_player, shared_get and
- * shared_set (multiplayer).  Nothing moved, so version 3 and 4 mods still
+ * Version 5 appended the services table's event_player, shared_get,
+ * shared_set, shared_add and shared_cas (multiplayer).  Nothing moved, so version 3 and 4 mods still
  * load.
  */
 #define BW_MOD_API_VERSION 5
@@ -64,7 +64,7 @@ extern "C" {
  * and the hash follows it; the test carries the other width's number, so a
  * change fails on every width the port is built at.
  */
-#define BW_MOD_API_HASH 0xF31531E2u
+#define BW_MOD_API_HASH 0x89AE8098u
 
 /* ------------------------------------------------------------------ */
 /* The event header                                                    */
