@@ -54,6 +54,8 @@ extern int bw_mod_title_take_autostart(void);
 extern void bw_mod_title_open_multiplayer(void);
 extern int bw_slots_flip(int d);
 extern int bw_slots_new_game(void);
+extern int bw_slots_replacing(void);
+extern void bw_slots_set_replacing(int on);
 extern int bw_mp_take_started(void);
 extern int bw_mp_take_started_peek(void);
 extern void eidos_sui_enter(void);
@@ -113,6 +115,21 @@ static int settings_state(char *p)
     return 5;
 }
 
+/* The menu's rows again (the Continue card's text changed). */
+static int rebuild(char *p)
+{
+    STARTMENU_DeleteFrameManager(p);
+    STARTMENU_DeleteRowWindows(p);
+    STARTMENU_FreeRowBuffers(p);
+    STARTMENU_BuildRowList(p);
+    STARTMENU_LoadRowBuffers(p);
+    STARTMENU_CreateRowWindows(p);
+    STARTMENU_CreateFrameManager(p);
+    STARTMENU_LayoutRows(p);
+    bw_mod_title_set_rebuild();
+    return 4;
+}
+
 /* Multiplayer's start: the menu goes into the game as A on Continue (or on
  * New Game when there is no save) would. */
 static int autostart(char *p)
@@ -147,18 +164,33 @@ int STARTMENU_StateSelectRow(char *p)
         GFL_USE_PlaySeDefaultVolume(0x54c);
         switch (*(u8 *)(p + *(u8 *)(p + 0x128) + 0x120)) {
         case 0:
+            if (bw_mod_title_settings_on() && bw_slots_replacing()) {
+                /* the save to replace is chosen: the game's own warning,
+                 * then the new game in that save's place */
+                bw_slots_set_replacing(0);
+                return STARTMENU_BeginSelectAnim(p, 8);
+            }
             *(u8 *)(p + 0x129) = *(u8 *)(p + *(u8 *)(p + 0x128) + 0x120);
             return STARTMENU_BeginSelectAnim(p, 7);
         case 1:
             /* New Game takes a free slot when there is one, so the
              * game's "this deletes your save" comes only when every slot
              * is used (sdk/save_slots.h) */
-            if (bw_mod_title_settings_on() && !bw_mp_take_started_peek() &&
-                bw_slots_new_game()) {
-                /* the new game goes to a free slot: no warning, as the
-                 * prompt's own path for a menu without Continue */
-                *(u8 *)(p + 0x129) = 1;
-                return STARTMENU_BeginFadeIn(p, 1);
+            if (bw_mod_title_settings_on() && !bw_mp_take_started_peek()) {
+                if (bw_slots_new_game()) {
+                    /* the new game goes to a free slot: no warning, as
+                     * the prompt's own path for a menu without Continue */
+                    *(u8 *)(p + 0x129) = 1;
+                    return STARTMENU_BeginFadeIn(p, 1);
+                }
+                if (!bw_slots_replacing() &&
+                    SAVE_CONTROL_HasFlashSave(*(void **)p) == 1) {
+                    /* every slot is used: the Continue card asks which
+                     * save the new game replaces; A again takes it */
+                    bw_slots_set_replacing(1);
+                    return rebuild(p);
+                }
+                bw_slots_set_replacing(0);
             }
             return STARTMENU_BeginSelectAnim(p, 8);
         case 2:
@@ -197,23 +229,24 @@ int STARTMENU_StateSelectRow(char *p)
             return STARTMENU_BeginSelectAnim(p, 11);
         }
     }
-    /* Left and right on the Continue card: the next save slot */
+    /* Left and right on the Continue card: the next save slot (and on New
+     * Game while it asks which save to replace) */
     if (bw_mod_title_settings_on() &&
-        *(u8 *)(p + *(u8 *)(p + 0x128) + 0x120) == 0 &&
+        (*(u8 *)(p + *(u8 *)(p + 0x128) + 0x120) == 0 || bw_slots_replacing()) &&
         (KEY_GetTrg() & 0x30)) {
         if (bw_slots_flip((KEY_GetTrg() & 0x10) ? 1 : -1)) {
             GFL_USE_PlaySeDefaultVolume(0x548);
-            STARTMENU_DeleteFrameManager(p);
-            STARTMENU_DeleteRowWindows(p);
-            STARTMENU_FreeRowBuffers(p);
-            STARTMENU_BuildRowList(p);
-            STARTMENU_LoadRowBuffers(p);
-            STARTMENU_CreateRowWindows(p);
-            STARTMENU_CreateFrameManager(p);
-            STARTMENU_LayoutRows(p);
-            bw_mod_title_set_rebuild();
-            return 4;
+            return rebuild(p);
         }
+    }
+    if (bw_mod_title_settings_on() && bw_slots_replacing()) {
+        /* B gives the choice up; up and down wait for it */
+        if (KEY_GetTrg() & 2) {
+            GFL_USE_PlaySeDefaultVolume(0x551);
+            bw_slots_set_replacing(0);
+            return rebuild(p);
+        }
+        return 5;
     }
     if (KEY_GetTrg() & 2) {
         GFL_USE_PlaySeDefaultVolume(0x551);

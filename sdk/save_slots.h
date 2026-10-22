@@ -9,8 +9,9 @@
  * in slot.txt, so the game opens on it again.
  *
  * The title menu flips the slots on its Continue card (left and right),
- * and New Game takes a free slot; the game's own "this deletes your save"
- * warning comes only when every slot is used.
+ * and New Game takes a free slot.  With every slot used, New Game asks
+ * which save it replaces, then the game's own "this deletes your save"
+ * warning comes.
  */
 #ifndef BW_PORT_SAVE_SLOTS_H
 #define BW_PORT_SAVE_SLOTS_H
@@ -60,6 +61,12 @@ int  bw_slots_load_file(const char *path);
 /* The Continue card's line: "< 2/3 >" (the slot among the used ones), or
  * "" when there is no save. */
 void bw_slots_label(char *out, u32 size);
+
+/* New Game with every slot used: the Continue card asks which save the
+ * new game replaces ("Replace 3/8?"); left and right choose, A takes it, B
+ * gives up.  Whether that choice is up, and setting it. */
+int  bw_slots_replacing(void);
+void bw_slots_set_replacing(int on);
 
 #ifdef __cplusplus
 }

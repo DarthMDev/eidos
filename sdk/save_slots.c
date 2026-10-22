@@ -213,6 +213,10 @@ int bw_slots_new_game(void)
     return 0;                       /* every slot is used: the game warns */
 }
 
+/* New Game with every slot used: the player chooses the save it replaces
+ * on the Continue card. */
+static int g_replace;
+
 void bw_slots_label(char *out, u32 size)
 {
     int used = 0, at = 0, n;
@@ -229,5 +233,15 @@ void bw_slots_label(char *out, u32 size)
         out[0] = '\0';
         return;
     }
-    snprintf(out, size, "< %d/%d >", at, used);
+    snprintf(out, size, g_replace ? "Replace %d/%d?" : "< %d/%d >", at, used);
+}
+
+int bw_slots_replacing(void)
+{
+    return g_replace;
+}
+
+void bw_slots_set_replacing(int on)
+{
+    g_replace = on != 0;
 }

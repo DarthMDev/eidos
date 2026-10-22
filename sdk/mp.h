@@ -102,6 +102,15 @@ int  bw_mp_is_host(void);
 /* 1 while the game must be held: paused, the host gone, reconnecting. */
 int  bw_mp_paused(void);
 
+/* The host: how many players' saves have not come in since the host last
+ * saved (each joiner's game saves at its next quiet moment).  The window's
+ * close waits for them a little (demo/eidos_boot.c). */
+int  bw_mp_saves_pending(void);
+
+/* The host's game saved: every player's game is asked to save (the frame
+ * calls it when the host's save file changes). */
+void bw_mp_host_saved(void);
+
 /* The line the "waiting for players" screen shows. */
 const char *bw_mp_wait_text(void);
 

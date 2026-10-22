@@ -388,6 +388,12 @@ static void test_saves(void)
     BW_CHECK_EQ("a player the host has no save for: a new game",
                 sent_has("save 0 0 0"), 1);
 
+    /* the host saves: the joiner's save is to come */
+    sent_reset();
+    bw_mp_host_saved();
+    BW_CHECK_EQ("the host asks every game to save", sent_has("savenow"), 1);
+    BW_CHECK_EQ("one save to come", bw_mp_saves_pending(), 1);
+
     /* the joiner's game uploads its save: two pieces, then the host keeps it */
     for (i = 0; i < sizeof data; i++) {
         data[i] = (unsigned char)(i * 7u);
@@ -411,6 +417,7 @@ static void test_saves(void)
     snprintf(msg, sizeof msg, "%s.sav", fp);
     BW_CHECK_EQ("the host keeps the joiner's save", file_size(msg),
                 (int)sizeof data);
+    BW_CHECK_EQ("every save is in", bw_mp_saves_pending(), 0);
     bw_mp_reset();
 
     /* a joiner: an empty save from the host starts a new game */

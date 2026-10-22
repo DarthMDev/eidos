@@ -87,6 +87,7 @@ static struct {
     int        saving;              /* a joiner: the game's save runs */
     void      *save_gd;             /* the game data the save runs on */
     int        save_test;           /* the port's own check */
+    u8         save_pending[BW_MP_PLAYERS_MAX];  /* the host: saves not in yet, by peer - 1 */
 } g_mp;
 
 /* ------------------------------------------------------------------ */
@@ -616,10 +617,32 @@ static void joiner_secret(const char *hid, char out[33])
 }
 
 /* A file to one peer, in pieces, a few per frame (bw_mp_frame). */
+/* Whether a file is on its way to the peer. */
+static int sending_to(u32 peer)
+{
+    u32 i;
+
+    for (i = 0; i < BW_MP_SENDS_MAX; i++) {
+        if (g_sends[i].used && g_sends[i].peer == peer) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* One file at a time per peer: its confirmations ("saveack <got>
+ * <total>") name no file, so a second one would take the first one's.  A
+ * new file for the peer replaces the one on its way. */
 static void send_bytes(u32 peer, const u8 *buf, u32 size)
 {
     u32 i;
 
+    for (i = 0; i < BW_MP_SENDS_MAX; i++) {
+        if (g_sends[i].used && g_sends[i].peer == peer) {
+            free(g_sends[i].buf);
+            memset(&g_sends[i], 0, sizeof(g_sends[i]));
+        }
+    }
     if (size == 0) {
         (void)g_net->send(peer, "save 0 0 0\n", 11);
         return;
@@ -916,6 +939,12 @@ static void host_got_save(u32 peer, const u8 *buf, u32 size)
 
     if (p != NULL && p->peer == peer && size > 0) {
         host_store(p, buf, size);
+        if (g_mp.save_pending[peer - 1]) {
+            g_mp.save_pending[peer - 1] = 0;
+            if (bw_mp_saves_pending() == 0) {
+                fprintf(stderr, "eidos: multiplayer: every player's save is in\n");
+            }
+        }
     }
 }
 
@@ -1123,6 +1152,7 @@ static void host_on_leave(u32 peer)
         return;
     }
     p->connected = 0;
+    g_mp.save_pending[peer - 1] = 0;    /* its save cannot come now */
     fprintf(stderr, "eidos: multiplayer: %s left\n", p->name);
     if (!g_mp.roster_set) {
         /* in the first lobby a player who leaves is forgotten */
@@ -1182,7 +1212,9 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         host_broadcast_roster();
         /* a player who comes back while the game runs is told so */
         if (g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE) {
-            if (!p->in_game) {
+            if (!p->in_game && !sending_to(peer)) {
+                /* a hello said again while its save is on its way does
+                 * not start the save over */
                 host_send_save(p);
             }
             (void)g_net->send(peer, "start", 5);
@@ -1648,6 +1680,16 @@ int bw_mp_is_host(void)
     return g_mp.state != BW_MP_OFF && g_mp.host;
 }
 
+int bw_mp_saves_pending(void)
+{
+    int i, n = 0;
+
+    for (i = 0; i < BW_MP_PLAYERS_MAX; i++) {
+        n += g_mp.save_pending[i] != 0;
+    }
+    return g_mp.host ? n : 0;
+}
+
 int bw_mp_paused(void)
 {
     return g_mp.state == BW_MP_PAUSED || g_mp.state == BW_MP_HOST_GONE ||
@@ -1733,6 +1775,25 @@ int bw_mp_player_at(u32 index, BwMpPlayer *out)
     return -1;
 }
 
+/* The host saved: every player's game saves now. */
+void bw_mp_host_saved(void)
+{
+    u32 i;
+
+    if (!g_mp.host) {
+        return;
+    }
+    for (i = 1; i < BW_MP_PLAYERS_MAX; i++) {
+        const BwMpPlayer *p = &g_mp.players[i];
+
+        g_mp.save_pending[i] = p->peer != 0 && p->connected &&
+                               (p->on_roster || p->in_game);
+    }
+    fprintf(stderr, "eidos: multiplayer: the host saved; every "
+            "player's game saves too (%d to come)\n", bw_mp_saves_pending());
+    host_send_word("savenow");
+}
+
 void bw_mp_frame_at(u64 t)
 {
     g_mp.now_ms = t;
@@ -1742,10 +1803,7 @@ void bw_mp_frame_at(u64 t)
         (bw_arm7_backup_dirty == NULL || !bw_arm7_backup_dirty())) {
         g_mp.last_writes = bw_arm7_backup_writes();
         if (g_mp.host) {
-            /* the host saved: every player's game saves now */
-            fprintf(stderr, "eidos: multiplayer: the host saved; every "
-                    "player's game saves too\n");
-            host_send_word("savenow");
+            bw_mp_host_saved();
         } else {
             fprintf(stderr, "eidos: multiplayer: this game saved; the save "
                     "goes to the host\n");

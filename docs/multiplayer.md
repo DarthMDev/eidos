@@ -144,6 +144,14 @@ use multiplayer for now (SPEC section 17).
   does) and the file goes to the host.
 - The host's own game in a multiplayer game is the game folder's
   `host.sav`, not one of the single-player slots.
+- The host counts the saves to come after it saves; a joiner that leaves
+  is not waited for. Closing the host's window while saves are to come
+  keeps the window, darkened ("Saving everyone's games"), until they are
+  in, for up to 30 seconds.
+- One file at a time goes to a peer (its `saveack` names no file); a new
+  one replaces the one on its way, and a hello said again while a save is
+  on its way does not start it over.
+- The pause screen shows the game's code again.
 - A save belongs to one game: the host keeps `<fingerprint>.sav.game`
   (`B` or `W`), and the lobby will not start while a player plays the
   other game than their save's.
@@ -153,19 +161,18 @@ use multiplayer for now (SPEC section 17).
 - Up to 8 single-player saves: slot 1 is `pokeblack.sav`, slots 2 to 8
   are `slots/save<n>.sav`; `slot.txt` holds the slot in force.
 - The Continue card shows `< 2/3 >`; left and right switch the save.
-- New Game takes a free slot, with no warning; the game's own "this
-  deletes your save" comes only when all 8 are used.
+- New Game takes a free slot, with no warning. With all 8 used, the
+  Continue card asks "Replace 3/8?": left and right choose the save, A
+  takes it (then the game's own warning), B gives up.
 - The title menu's MULTIPLAYER line (in the Mic Test's place, third)
   opens Host / Join.
 
 ## Not built yet
 
-1. With 8 slots used: choosing which save New Game replaces.
-2. The host's "saved" waiting for every player's save to arrive.
-3. Positions and event forwarding.
-4. The shared table for mods.
-5. TLS.
-6. Adding players after the first start.
+1. Positions and event forwarding.
+2. The shared table for mods.
+3. TLS.
+4. Adding players after the first start.
 
 The mods' own session events for the lobby, the start and the pause need
 new event kinds and a `session_start` service: they come with the next mod

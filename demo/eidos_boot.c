@@ -1393,13 +1393,17 @@ static void boot_mp_hold(BootRun *run)
                 (void)bw_mp_start();
             }
             if (top != NULL && bottom != NULL && work != NULL) {
+                /* the code again, in case the players forgot it */
+                char code_line[64];
+
+                snprintf(code_line, sizeof code_line, "Code: %s", bw_mp_code());
                 /* a host whose relay restarted shows its new code */
                 hold_draw(work, top, n, bw_mp_wait_text(),
                           !bw_mp_is_host() ? "The host starts the game." :
                           strncmp(bw_mp_end_reason(), "the relay", 9) == 0
-                          ? bw_mp_end_reason() : "");
+                          ? bw_mp_end_reason() : code_line);
                 memcpy(run->hi_top, work, bytes);
-                hold_draw(work, bottom, n, bw_mp_wait_text(), "");
+                hold_draw(work, bottom, n, bw_mp_wait_text(), code_line);
                 memcpy(run->hi_bottom, work, bytes);
                 eidos_platform_present_nn(run->plat, run->hi_top,
                                           (int)run->hi_sn[0], run->hi_bottom,
@@ -1431,6 +1435,75 @@ static void boot_mp_hold(BootRun *run)
         printf("eidos_boot: the game goes on\n");
         fflush(stdout);
     }
+}
+
+/*
+ * The host closes the window while its players' games are still saving
+ * (they save at their next quiet moment after the host did): the window
+ * stays, darkened, until every save is in, for up to 30 seconds.  The
+ * network and the multiplayer timers go on; the game does not.
+ */
+#define BOOT_SAVE_WAIT_FRAMES (30 * 60)
+
+static void boot_mp_wait_saves(BootRun *run)
+{
+#if EIDOS_BOOT_SDL
+    u32 n = run->hi_n;
+    size_t bytes = (size_t)256 * n * 192 * n * 4;
+    u8 *work = NULL;
+    int f;
+
+    if (bw_mp_saves_pending() == 0) {
+        return;
+    }
+    printf("eidos_boot: the window waits for %d player save(s)\n",
+           bw_mp_saves_pending());
+    fflush(stdout);
+    if (n != 0u && run->hi_top != NULL && run->hi_bottom != NULL) {
+        work = (u8 *)malloc(bytes);
+    }
+    for (f = 0; f < BOOT_SAVE_WAIT_FRAMES && bw_mp_saves_pending() > 0; f++) {
+        char line[64];
+
+        bw_mod_net_frame();
+        bw_mp_frame();
+        if (run->plat == NULL) {
+            bw_mp_hold_wait();
+            continue;
+        }
+        (void)eidos_platform_pump(run->plat);   /* a second close: still waits */
+        snprintf(line, sizeof line, "%d of the players' saves to come",
+                 bw_mp_saves_pending());
+        if (work != NULL) {
+            u8 *top = (u8 *)malloc(bytes);
+            u8 *bottom = (u8 *)malloc(bytes);
+
+            if (top != NULL && bottom != NULL) {
+                memcpy(top, run->hi_top, bytes);
+                memcpy(bottom, run->hi_bottom, bytes);
+                hold_draw(work, top, n, "Saving everyone's games", line);
+                memcpy(run->hi_top, work, bytes);
+                hold_draw(work, bottom, n, "Saving everyone's games", line);
+                memcpy(run->hi_bottom, work, bytes);
+                eidos_platform_present_nn(run->plat, run->hi_top,
+                                          (int)run->hi_sn[0], run->hi_bottom,
+                                          (int)run->hi_sn[1]);
+                memcpy(run->hi_top, top, bytes);
+                memcpy(run->hi_bottom, bottom, bytes);
+            }
+            free(top);
+            free(bottom);
+        }
+        eidos_platform_wait_frame(run->plat);
+    }
+    free(work);
+    printf("eidos_boot: %s\n", bw_mp_saves_pending() == 0
+           ? "every player's save is in"
+           : "closing without every player's save");
+    fflush(stdout);
+#else
+    (void)run;
+#endif
 }
 
 /* The game's save control (weak: declared again below with the boot's
@@ -1617,6 +1690,7 @@ static void boot_frame(void *user)
 #if EIDOS_BOOT_SDL
     if (run->plat != NULL) {
         if (!eidos_platform_pump(run->plat)) {
+            boot_mp_wait_saves(run);
             boot_finish(0, "window closed");
         }
         speed = eidos_platform_fast_forward(run->plat);
