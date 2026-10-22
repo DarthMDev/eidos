@@ -273,7 +273,17 @@ typedef struct OptWork {
     int flash;                  /* frames left of the flash after a change */
     int touch_was;              /* the stylus was down on the frame before */
     struct KbArgs *kb;          /* the game's keyboard, while it is open */
+    int marq;                   /* a value too long for its row: where it starts */
+    int marq_tick;              /* frames to the next step (below 0: the first wait) */
+    int marq_on;                /* the selected row's value moves */
+    int marq_row;               /* the row it belongs to */
 } OptWork;
+
+/* A value too long for the selected row moves along, one letter every
+ * MARQ_STEP frames, after a wait of MARQ_WAIT frames; the others are cut. */
+#define MARQ_STEP 10
+#define MARQ_WAIT 45
+#define MARQ_GAP  "   "
 
 /*
  * The game's keyboard: the name entry screen (overlay 194), the one the
@@ -357,6 +367,36 @@ static int put_text(u32 win, const char *t, int x, int right, int room, int y,
     return w;
 }
 
+/* The width of a text in the screen's font. */
+static int text_width(const char *t)
+{
+    int n = (int)strlen(t), w;
+    void *o;
+
+    if (n == 0) {
+        return 0;
+    }
+    o = ascii_obj(t, n);
+    w = (int)func_0201D304(o, g_w->font, 0);
+    func_02045808(o);
+    return w;
+}
+
+/* The text the selected row shows of a value wider than `room`: the value
+ * from the moving start, then a gap and the value again. */
+static const char *marquee(const char *value, int room, char *out, int n)
+{
+    int len = (int)strlen(value), start;
+
+    if (text_width(value) <= room || len == 0) {
+        return value;
+    }
+    g_w->marq_on = 1;
+    start = g_w->marq % (len + (int)sizeof(MARQ_GAP) - 1);
+    snprintf(out, (size_t)n, "%s" MARQ_GAP "%s", value, value);
+    return out + start;
+}
+
 static void win_clear_and_commit_begin(u32 win)
 {
     func_02043B5C(func_02045770(win), 0);
@@ -382,8 +422,16 @@ static void upper(char *t)
 /* The list screen: bar i holds row i + 1 of the model (row 0 is the header). */
 static void draw_rows(void)
 {
-    char label[48], value[96];
+    char label[48], value[96], moving[200];
     int i, n = eidos_sui_row_count(), cr = eidos_sui_cursor_row();
+
+    if (cr != g_w->marq_row) {
+        /* another row: its value starts at the start */
+        g_w->marq_row = cr;
+        g_w->marq = 0;
+        g_w->marq_tick = -MARQ_WAIT;
+    }
+    g_w->marq_on = 0;
 
     eidos_sui_row_text(0, label, sizeof label, value, sizeof value);
     upper(label);
@@ -467,6 +515,8 @@ no_tabs:
                 }
             } else if (value[0] != 0) {
                 int adj = eidos_sui_row_adjustable(mrow), x = VALUE_X, vw;
+                int room;
+                const char *shown = value;
 
                 upper(value);
                 if (adj && sel) {
@@ -474,7 +524,11 @@ no_tabs:
                     put_text(win, "<", x, -1, 16, 4, TC_LIVE, TC_SHADOW);
                     x += ARROW_W;
                 }
-                vw = put_text(win, value, x, -1, ROW_PX - x - (adj && sel ? 20 : 4), 4,
+                room = ROW_PX - x - (adj && sel ? 20 : 4);
+                if (sel) {
+                    shown = marquee(value, room, moving, (int)sizeof moving);
+                }
+                vw = put_text(win, shown, x, -1, room, 4,
                               adj ? (sel ? TC_LIVE : TC_ACTIVE) : TC_TEXT, TC_SHADOW);
                 if (adj && sel) {
                     put_text(win, ">", x + vw + 8, -1, 16, 4, TC_LIVE, TC_SHADOW);
@@ -975,6 +1029,11 @@ static u32 opt_main(void *proc, u32 *seq, u32 pwork, u32 work)
         if (r & 1) {
             draw_rows();
             draw_help();
+        } else if (w->marq_on && ++w->marq_tick >= MARQ_STEP) {
+            /* the selected row's long value moves on */
+            w->marq_tick = 0;
+            w->marq++;
+            draw_rows();
         }
         highlight(w);
         animate(w);

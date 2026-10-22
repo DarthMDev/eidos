@@ -1001,7 +1001,7 @@ static int host_ready(void)
         someone = 1;
         if (p->game == 0) {
             snprintf(g_mp.blocker, sizeof(g_mp.blocker),
-                     "waiting for %s's game to answer", p->name);
+                     "no answer from %s", p->name);
             return 0;
         }
         if (p->fp[0] != '\0') {
@@ -1018,9 +1018,8 @@ static int host_ready(void)
             }
             if ((c == 'B' || c == 'W') && c != p->game) {
                 snprintf(g_mp.blocker, sizeof(g_mp.blocker),
-                         "%s's save is %s; they play %s", p->name,
-                         c == 'W' ? "White" : "Black",
-                         p->game == 'W' ? "White" : "Black");
+                         "%s's save is %s", p->name,
+                         c == 'W' ? "White" : "Black");
                 return 0;
             }
         }
@@ -1030,7 +1029,7 @@ static int host_ready(void)
         }
     }
     if (!someone) {
-        snprintf(g_mp.blocker, sizeof(g_mp.blocker), "nobody has joined yet");
+        snprintf(g_mp.blocker, sizeof(g_mp.blocker), "nobody has joined");
         return 0;
     }
     return 1;
@@ -1048,6 +1047,16 @@ static void host_refresh_mods_ok(void)
             p->mods_ok = p->game != 0 && mods_match(mine, p->mods, NULL, 0);
         }
     }
+}
+
+/* The host says who it is: when a player joins, and when a player asks
+ * ("who"). */
+static void host_send_id(u32 peer)
+{
+    char msg[48];
+    int n = snprintf(msg, sizeof(msg), "hostid %s", host_id());
+
+    (void)g_net->send(peer, msg, (u32)n);
 }
 
 static void host_on_join(u32 peer)
@@ -1098,12 +1107,7 @@ static void host_on_join(u32 peer)
         p->name[0] == '\0') {
         snprintf(p->name, sizeof(p->name), "player %u", (unsigned)peer);
     }
-    {
-        char msg[48];
-        int n = snprintf(msg, sizeof(msg), "hostid %s", host_id());
-
-        (void)g_net->send(peer, msg, (u32)n);
-    }
+    host_send_id(peer);
     if (g_mp.state == BW_MP_GRACE && host_ready()) {
         /* back within the grace: play goes on */
         g_mp.state = BW_MP_PLAYING;
@@ -1150,6 +1154,10 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         return;
     }
     copy_n(text, sizeof(text), msg, size);
+    if (strcmp(text, "who") == 0) {
+        host_send_id(peer);
+        return;
+    }
     if (strncmp(text, "name ", 5) == 0 && text[5] != '\0') {
         copy_n(p->name, sizeof(p->name), text + 5, strlen(text + 5));
         host_broadcast_roster();
@@ -1193,7 +1201,11 @@ static void joiner_hello(void)
     int n;
 
     if (g_mp.fp[0] == '\0') {
-        return;                     /* the host has not said who it is yet */
+        /* the host has not said who it is yet, or it said so before this
+         * game was listening (the join answers before the screen attaches
+         * the layer): it is asked again */
+        (void)g_net->send(1, "who", 3);
+        return;
     }
     n = snprintf(msg, sizeof(msg), "hello %d %c %s %s %d", BW_MP_PROTO,
                  local_game(), mods[0] != '\0' ? mods : "-", g_mp.fp,

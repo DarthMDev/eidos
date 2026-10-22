@@ -11,6 +11,8 @@
 #include "settings.h"
 #include "settings_ui.h"
 
+void bw_set_save_dir(const char *path);   /* sdk/save.h */
+
 void bw_mod_title_open_multiplayer(void);
 
 #define INI "test_settings_ui_work.ini"
@@ -42,6 +44,8 @@ int main(void)
 {
     int r, i, first, shown, total;
     char help[96];
+    /* the multiplayer games listed are the test's own (none) */
+    bw_set_save_dir("test_settings_ui_tmp");
     remove(INI);
     eidos_settings_set_path(INI);
     eidos_settings_load();

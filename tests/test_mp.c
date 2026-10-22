@@ -127,7 +127,7 @@ static void test_host(void)
     bw_mp_frame_at(1000);
     BW_CHECK_EQ("nobody to start with", bw_mp_start(), -1);
     BW_CHECK_EQ("and it says so",
-                strcmp(bw_mp_start_blocker(), "nobody has joined yet"), 0);
+                strcmp(bw_mp_start_blocker(), "nobody has joined"), 0);
 
     sent_reset();
     bw_mp_on_net(2, (int)BW_SESSION_JOIN, NULL, 0);
@@ -377,6 +377,9 @@ static void test_saves(void)
     sent_reset();
     bw_mp_on_net(2, (int)BW_SESSION_JOIN, NULL, 0);
     BW_CHECK_EQ("the host says who it is", sent_has("hostid "), 1);
+    sent_reset();
+    say(2, "who");
+    BW_CHECK_EQ("and again when asked", sent_has("hostid "), 1);
     snprintf(fp, sizeof fp, "%s", "ffffeeeeddddccccbbbbaaaa99998888");
     snprintf(msg, sizeof msg, "hello 1 W - %s 0", fp);
     say(2, msg);
@@ -413,7 +416,9 @@ static void test_saves(void)
     /* a joiner: an empty save from the host starts a new game */
     bw_mp_set_net(&k_test_net);
     bw_mp_set_boot(t_boot);
+    sent_reset();
     (void)bw_mp_join("ABC234");
+    BW_CHECK_EQ("a joiner that missed the host's id asks", sent_has("who"), 1);
     say(1, "hostid 0123456789abcdef0123456789abcdef");
     g_booted = -1;
     bw_mp_on_net(1, (int)BW_SESSION_MESSAGE, "save 0 0 0\n", 11);

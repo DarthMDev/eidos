@@ -50,6 +50,9 @@ when the host comes back. The host sends the roster after every change, and
 - Host lists the host's games, newest first, and New game. New game asks
   for a name first, then hosts. Join asks for the code at once and joins
   when it is typed.
+- A joiner that missed the host's `hostid` (it came before the screen
+  attached the layer) asks again with `who`.
+- A value too long for its row moves along while the row is selected.
 - In a multiplayer New Game, the professor's name entry opens with the
   player's multiplayer name typed in; the player can still change it.
 
@@ -175,7 +178,9 @@ host at frame 300, write its code to the file and start as soon as the
 lobby is ready; `EIDOS_MP_TEST=join:<file>` makes another join with that
 code. Run both headless against a relay (each with its own `BW_SAVE_DIR`
 and `EIDOS_SETTINGS`, and START pressed to reach the title menu): both
-games go into the game when the host starts. With
+games go into the game when the host starts. A game run with `BW_SAVE_DIR` and no
+`EIDOS_SETTINGS` keeps its settings in that folder (`settings.ini`), so a
+second game on one computer has its own name and window. With
 `EIDOS_SAVE_TEST_AT=<frame>` the host's game saves at its first quiet
 moment after that frame, as if the player had saved, so the joiners' saves
 follow it. The relay's refusals carry a text after the reason word; the

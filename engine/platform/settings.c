@@ -1656,10 +1656,15 @@ const char *eidos_settings_path(void)
     if (!g_have_path) {
         char home[PATH_MAX_LEN];
         const char *env = getenv("EIDOS_SETTINGS");
+        const char *saves = getenv("BW_SAVE_DIR");
 
         g_path[0] = '\0';
         if (env != NULL && env[0] != '\0') {
             snprintf(g_path, sizeof(g_path), "%s", env);
+        } else if (saves != NULL && saves[0] != '\0') {
+            /* a game run on a save folder of its own (a second player on
+             * the same computer) keeps its settings there too */
+            snprintf(g_path, sizeof(g_path), "%s/settings.ini", saves);
         } else if (bw_setup_home(home, sizeof(home)) == 0) {
             snprintf(g_path, sizeof(g_path), "%s/settings.ini", home);
         }
