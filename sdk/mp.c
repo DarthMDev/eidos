@@ -60,6 +60,15 @@
 /* The version of the messages above. */
 #define BW_MP_PROTO 1
 
+#ifndef EIDOS_VERSION
+#define EIDOS_VERSION "0.0.0+unknown"
+#endif
+
+const char *bw_mp_version(void)
+{
+    return EIDOS_VERSION;
+}
+
 /* The longest message the layer sends: the roster of sixteen players. */
 #define BW_MP_MSG_MAX 4096u
 
@@ -516,7 +525,7 @@ int bw_mp_game_create(const char *name, char *out, u32 size)
         if (k == 1) {
             snprintf(cand, sizeof(cand), "%s", clean);
         } else {
-            snprintf(cand, sizeof(cand), "%s %d", clean, k);
+            snprintf(cand, sizeof(cand), "%.19s %d", clean, k);
         }
         snprintf(path, sizeof(path), "%s/%s", dir, cand);
         if (bw_plat_path_kind(path) == BW_PATH_NONE) {
@@ -1072,6 +1081,12 @@ static int host_ready(void)
                      "no answer from %s", p->name);
             return 0;
         }
+        if (strcmp(p->version, EIDOS_VERSION) != 0) {
+            /* every player runs the same eidos (docs/distribution.md) */
+            snprintf(g_mp.blocker, sizeof(g_mp.blocker),
+                     "%s: eidos %s (you %s)", p->name, p->version, EIDOS_VERSION);
+            return 0;
+        }
         if (p->fp[0] != '\0') {
             /* a save belongs to one game: Black or White */
             char name[48], gpath[512];
@@ -1250,10 +1265,18 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         char fp[40];
         int in_game = 0;
 
+        char ver[32];
+
         if (sscanf(text + 6, "%*d %*7s %*512s %39s %d", fp, &in_game) == 2 &&
             strlen(fp) == 32) {
             copy_n(p->fp, sizeof(p->fp), fp, 32);
             p->in_game = in_game;
+        }
+        /* its eidos version; a game too old to say it says "?" */
+        if (sscanf(text + 6, "%*d %*7s %*512s %*39s %*d %31s", ver) == 1) {
+            copy_n(p->version, sizeof(p->version), ver, strlen(ver));
+        } else {
+            copy_n(p->version, sizeof(p->version), "?", 1);
         }
         p->game = (game[0] == 'W') ? 'W' : 'B';
         if (strcmp(mods, "-") == 0) {
@@ -1264,6 +1287,15 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         host_broadcast_roster();
         host_shared_send_all(peer);
         /* a player who comes back while the game runs is told so */
+        if ((g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE) &&
+            strcmp(p->version, EIDOS_VERSION) != 0) {
+            fprintf(stderr, "eidos: multiplayer: %s runs eidos %s, this game "
+                    "%s; removed\n", p->name, p->version, EIDOS_VERSION);
+            (void)g_net->remove(peer);
+            memset(p, 0, sizeof(*p));
+            host_broadcast_roster();
+            return;
+        }
         if ((g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE) &&
             !p->mods_ok) {
             /* a player whose multiplayer mods differ cannot play with
@@ -1304,9 +1336,9 @@ static void joiner_hello(void)
         (void)g_net->send(1, "who", 3);
         return;
     }
-    n = snprintf(msg, sizeof(msg), "hello %d %c %s %s %d", BW_MP_PROTO,
+    n = snprintf(msg, sizeof(msg), "hello %d %c %s %s %d %s", BW_MP_PROTO,
                  local_game(), mods[0] != '\0' ? mods : "-", g_mp.fp,
-                 g_mp.in_game);
+                 g_mp.in_game, EIDOS_VERSION);
     if (n > 0) {
         (void)g_net->send(1, msg, (u32)n);
     }
@@ -2376,7 +2408,8 @@ int bw_mp_is_host(void)
 
 int bw_mp_saves_pending(void)
 {
-    int i, n = 0;
+    u32 i;
+    int n = 0;
 
     for (i = 0; i < BW_MP_PLAYERS_MAX; i++) {
         n += g_mp.save_pending[i] != 0;

@@ -82,6 +82,8 @@
 #include "mod_menu.h"
 #include "mod_net.h"
 #include "save.h"
+#include "mod_title.h"
+#include "plat_save.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1960,7 +1962,7 @@ static int boot_run_start(EidosFrameHooks *hooks, int own_thread)
      * known by.  Without a transport the sessions answer "no relay", and a
      * control port of 0 is the control off (engine/platform/settings.h). */
     bw_mod_net_set_transport(bw_mod_net_tcp_transport());
-    bw_mod_net_set_relay(eidos_settings_net_relay(),
+    bw_mod_net_set_relay(eidos_settings_net_relay_in_use(),
                          (u16)eidos_settings_net_relay_port());
     bw_mod_net_set_name(eidos_settings_net_name());
     {
@@ -2104,9 +2106,70 @@ static void usage(void)
                     "[--gap N] [--volume N] [--mod FOLDER] [--mod-log FILE]\n");
 }
 
+/*
+ * The launcher's arguments (docs/distribution.md), read before anything
+ * else reads the settings or the save folder:
+ *
+ *   --profile-dir DIR   the profile: saves in DIR/saves, mods in DIR/mods,
+ *                       settings in DIR/settings.ini
+ *   --join CODE         the title menu joins that game at once
+ *   eidos://join/CODE   the same, as an invite link hands it over
+ *
+ * They are the player's own run, so they do not stop the window from
+ * opening (a tool's arguments do).  1 when argv[*i] was one of them (*i is
+ * moved past its value).
+ */
+static void boot_setenv(const char *name, const char *value)
+{
+#ifdef _WIN32
+    (void)_putenv_s(name, value);
+#else
+    (void)setenv(name, value, 1);
+#endif
+}
+
+static int boot_launcher_arg(int argc, char **argv, int *i, int apply)
+{
+    const char *a = argv[*i];
+
+    if (strcmp(a, "--profile-dir") == 0 && *i + 1 < argc) {
+        const char *dir = argv[++*i];
+
+        if (apply) {
+            char path[1024];
+
+            snprintf(path, sizeof path, "%s/saves", dir);
+            (void)bw_plat_mkdirs(path);
+            boot_setenv("BW_SAVE_DIR", path);
+            snprintf(path, sizeof path, "%s/mods", dir);
+            (void)bw_plat_mkdirs(path);
+            boot_setenv("EIDOS_MODS_DIR", path);
+            snprintf(path, sizeof path, "%s/settings.ini", dir);
+            boot_setenv("EIDOS_SETTINGS", path);
+        }
+        return 1;
+    }
+    if (strcmp(a, "--join") == 0 && *i + 1 < argc) {
+        const char *code = argv[++*i];
+
+        if (apply) {
+            bw_mod_title_request_join(code);
+        }
+        return 1;
+    }
+    if (strncmp(a, "eidos://join/", 13) == 0) {
+        if (apply) {
+            bw_mod_title_request_join(a + 13);
+        }
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *data_root = NULL;
+    int tool_args = 0;
     unsigned long long frames = BOOT_DEFAULT_FRAMES;
     int frames_given = 0;
     int window = 0;
@@ -2128,10 +2191,18 @@ int main(int argc, char **argv)
 #if EIDOS_BOOT
     bw_plat_crash_code_resolver(boot_resolve_code);
 #endif
+    /* the launcher's arguments first: they say where the settings are */
+    for (i = 1; i < argc; i++) {
+        (void)boot_launcher_arg(argc, argv, &i, 1);
+    }
 #if EIDOS_BOOT_SDL
     eidos_settings_load();      /* settings.ini; the flags below override it */
 #endif
     for (i = 1; i < argc; i++) {
+        if (boot_launcher_arg(argc, argv, &i, 0)) {
+            continue;           /* read above */
+        }
+        tool_args = 1;
 #if EIDOS_BOOT_SDL
         int sr = eidos_settings_parse_arg(argc, argv, &i);
 
@@ -2222,9 +2293,10 @@ int main(int argc, char **argv)
         setvbuf(stderr, NULL, _IONBF, 0);   /* a tool reads it while the game runs */
     }
 
-    /* Started with no arguments (a double click): the player wants to
-     * play, so the window opens.  Tests and tools always pass arguments. */
-    if (argc == 1) {
+    /* Started with no arguments (a double click), or only the launcher's:
+     * the player wants to play, so the window opens.  Tests and tools always
+     * pass arguments of their own. */
+    if (!tool_args) {
         window = 1;
     }
     if (window && !frames_given) {

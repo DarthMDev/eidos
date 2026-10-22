@@ -45,6 +45,14 @@ void bw_mod_title_request_autostart(void);
  * Multiplayer screen alone; take returns the request and clears it. */
 void bw_mod_title_open_multiplayer(void);
 int  bw_mod_title_take_multiplayer(void);
+
+/* A game to join from the start (`--join CODE` or an eidos://join/CODE
+ * link, docs/distribution.md): the title menu opens the Multiplayer screen
+ * at once and the screen joins that code.  pending says whether one waits;
+ * take hands the code over (or NULL) and clears it. */
+void bw_mod_title_request_join(const char *code);
+int  bw_mod_title_join_pending(void);
+const char *bw_mod_title_take_join(void);
 int  bw_mod_title_take_autostart(void);
 
 /* Where the settings screen sends the player back to: the title menu process

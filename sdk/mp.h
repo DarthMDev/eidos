@@ -60,7 +60,12 @@ typedef struct BwMpPlayer {
     char mods[BW_MP_MODS_MAX + 1];   /* "ns=n;ns=n", or "" for none          */
     char fp[33];                     /* who the player is to this host        */
     int  in_game;                    /* its game runs its multiplayer save    */
+    char version[32];                /* its eidos version, "" until it said   */
 } BwMpPlayer;
+
+/* This build's eidos version (CMake's EIDOS_VERSION): every player of a
+ * game runs the same one (docs/distribution.md). */
+const char *bw_mp_version(void);
 
 /* Host a new session (a new code each time); the code goes to `code`. */
 int  bw_mp_host(char *code, u32 size);

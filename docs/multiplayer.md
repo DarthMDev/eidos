@@ -121,6 +121,9 @@ use multiplayer for now (SPEC section 17).
   `<save folder>/multiplayer/games/<name>`: its own save (`host.sav`),
   one save per joiner named by the joiner's fingerprint (the last three
   versions stay as `.1` to `.3`), and its own lasting id.
+- The hello ends with the player's eidos version
+  (`hello <v> <game> <mods> <fingerprint> <in game> <eidos version>`); the
+  lobby will not start while a player runs another version.
 - Who a joiner is: each of the host's games has a lasting id
   (`host_id.txt`) and the host sends it
   (`hostid <id>`) when a player joins. The joiner keeps one random secret

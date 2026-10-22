@@ -62,15 +62,29 @@ starting the launcher later finds the saves where they are.
 
 ## What eidos needs for this
 
-- `--profile <dir>`: saves, settings and mods from that folder (the
-  launcher passes it). Without it, the default profile.
-- `--data <dir>`: the shared extraction.
-- `--join <code>` and the `eidos://join/<code>` link: start straight into
-  that game's lobby.
-- The version in the multiplayer hello, and the lobby's version check.
+Built:
+
+- `--profile-dir <dir>`: saves in `<dir>/saves`, mods in `<dir>/mods`,
+  settings in `<dir>/settings.ini` (the launcher passes it). (`--profile`
+  is the frame profiler's.)
+- `--data-root <dir>`: the shared extraction.
+- `--join <code>` and an `eidos://join/<code>` argument: the title menu
+  opens Multiplayer and joins that code at once. The launcher's arguments
+  do not stop the window from opening.
+- The eidos version: `project(eidos VERSION ...)` in CMakeLists.txt; a
+  release build (`-DEIDOS_RELEASE=ON`) is the plain number, any other build
+  adds its commit. The multiplayer hello carries it; the lobby will not
+  start while a player runs another one, and a player of another version
+  who joins a running game is removed with the reason in the host's log.
+- The public relay: `-DEIDOS_DEFAULT_RELAY=tls://name:port` at configure
+  time; a player's own relay setting wins.
+- The lobby's code row: A copies the code to the clipboard.
+
+Still to build:
+
 - The update check (GitHub Releases API), off when the launcher started
   eidos (the launcher updates it).
-- A default public relay (metaxy over TLS) when no relay is set.
+- Registering `eidos://` links from a plain eidos on first run.
 
 ## The official mods index
 
@@ -124,8 +138,8 @@ At the top of the README and on every release:
 
 ## Order of work
 
-1. eidos: `--profile`, `--data`, `--join` and the invite link; the version
-   check in the lobby; the default relay slot; the copy-code row.
+1. eidos: `--profile-dir`, `--join` and the invite link; the version
+   check in the lobby; the default relay slot; the copy-code row. (Built.)
 2. The release workflow and packaging, tested on the self-hosted runner and
    in Windows Sandbox.
 3. The launcher: profiles, versions, Play, installer, invite links.

@@ -1225,10 +1225,32 @@ static u32 peers_stamp(void)
     return s;
 }
 
+/*
+ * The relay a session uses: the player's own when one is set, else the
+ * public relay this build names (EIDOS_DEFAULT_RELAY, docs/distribution.md),
+ * written as `tls://name:port` or `name:port`.  The port is the setting's
+ * when the address names none.
+ */
+#ifndef EIDOS_DEFAULT_RELAY
+#define EIDOS_DEFAULT_RELAY ""
+#endif
+
+const char *eidos_settings_net_relay_in_use(void)
+{
+    const char *own = eidos_settings_net_relay();
+
+    return (own != NULL && own[0] != '\0') ? own : EIDOS_DEFAULT_RELAY;
+}
+
+int eidos_settings_clipboard_set(const char *text)
+{
+    return SDL_SetClipboardText(text != NULL ? text : "") == 0 ? 0 : -1;
+}
+
 /* The relay and the name the port's own settings hold. */
 static void session_give_relay(void)
 {
-    const char *host = eidos_settings_net_relay();
+    const char *host = eidos_settings_net_relay_in_use();
     const char *name = eidos_settings_net_name();
     int port = eidos_settings_net_relay_port();
 

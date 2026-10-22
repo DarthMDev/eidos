@@ -134,6 +134,11 @@ int         eidos_settings_net_control_port(void);
 void        eidos_settings_net_set_control_port(int port);
 const char *eidos_settings_net_name(void);
 void        eidos_settings_net_set_name(const char *name);
+/* The relay sessions use: the player's own, else the build's public relay
+ * (EIDOS_DEFAULT_RELAY); "" when there is neither. */
+const char *eidos_settings_net_relay_in_use(void);
+/* Text onto the system clipboard (the lobby's code).  0, or -1. */
+int         eidos_settings_clipboard_set(const char *text);
 
 /* The two text settings are edited a character at a time: the screen calls
  * the begin, then a key for every stroke, and either keeps the value

@@ -158,7 +158,8 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 /* The Session section: the port's own peer session (sdk/mod_net.h, "The
  * port's own session"). */
 #define HELP_SESSION_CODE1  "The game code."
-#define HELP_SESSION_CODE2  ""
+#define HELP_SESSION_CODE2  "A: copy"
+#define STR_COPIED          "copied"
 #define HELP_SESSION_JCODE1 "The code to join."
 #define HELP_SESSION_JCODE2 "A: type"
 #define HELP_SESSION_HOST1  "Host a game."
@@ -487,6 +488,7 @@ static struct {
 #define STATUS_ENDED      2
 
 static int g_mp_view;
+static int g_copied;           /* the code was just copied */
 
 /*
  * What the screen shows of the port's own session.  The state itself is
@@ -856,9 +858,18 @@ void eidos_sui_enter(void)
     g_mp_view = MP_VIEW_CHOOSE;
     g_mp_only = bw_mod_title_take_multiplayer();
     if (g_mp_only) {
+        const char *join = bw_mod_title_take_join();
+
         g.tab = TAB_SESSION;
         g.level = 1;
         build_rows();
+        if (join != NULL && !mp_in_game()) {
+            /* --join CODE or an invite link: the code is joined at once */
+            eidos_settings_session_set_join_code(join);
+            g_mp_view = MP_VIEW_JOIN;
+            build_rows();
+            (void)session_action(ROW_MP_JOIN_GO);
+        }
         return;
     }
     /* the screen opens on the tab it was left on */
@@ -941,6 +952,7 @@ static void leave_section(void)
 
 static void move_cursor(int d)
 {
+    g_copied = 0;
     int places = g.nrows + (has_back() ? 1 : 0);
 
     if (places <= 0) {
@@ -1616,6 +1628,15 @@ static int sui_input(unsigned pressed, unsigned held)
         }
         return 0;
     }
+    if (r->type == ROW_SESSION_CODE) {
+        if (pressed & 1u) {
+            /* A: the code onto the clipboard, to paste to the others */
+            g_copied = eidos_settings_clipboard_set(eidos_settings_session_code()) == 0;
+            return EIDOS_SUI_REDRAW |
+                   (g_copied ? EIDOS_SUI_SFX_SELECT : EIDOS_SUI_SFX_BACK);
+        }
+        return 0;
+    }
     if (r->type == ROW_SESSION_HOST || r->type == ROW_SESSION_JOIN ||
         r->type == ROW_SESSION_LEAVE || r->type == ROW_SESSION_REVERT ||
         r->type == ROW_SESSION_DEFAULTS || r->type == ROW_MP_START ||
@@ -2215,7 +2236,13 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
          * hosted a session, or the one the player joined a session with.
          * The code the player types is a row of its own. */
         put(label, nl, STR_SESSION_CODE);
-        put(value, nv, net_text(eidos_settings_session_code()));
+        if (g_copied) {
+            snprintf(buf, sizeof buf, "%s  %s", net_text(eidos_settings_session_code()),
+                     STR_COPIED);
+            put(value, nv, buf);
+        } else {
+            put(value, nv, net_text(eidos_settings_session_code()));
+        }
         break;
     case ROW_SESSION_JOINCODE:
         /* The code being typed: the one the player types to join a

@@ -3,6 +3,8 @@
  */
 #include "mod_title.h"
 
+#include <string.h>
+
 #include "mod_hooks.h"
 
 static int g_in_settings;
@@ -51,6 +53,42 @@ int bw_mod_title_take_multiplayer(void)
 
     g_multiplayer = 0;
     return r;
+}
+
+static char g_join[16];
+
+void bw_mod_title_request_join(const char *code)
+{
+    size_t i, n = 0;
+
+    for (i = 0; code != NULL && code[i] != '\0' && n + 1 < sizeof(g_join); i++) {
+        char c = code[i];
+
+        if (c >= 'a' && c <= 'z') {
+            c = (char)(c - 'a' + 'A');
+        }
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+            g_join[n++] = c;      /* a code is letters and digits */
+        }
+    }
+    g_join[n] = '\0';
+}
+
+int bw_mod_title_join_pending(void)
+{
+    return g_join[0] != '\0';
+}
+
+const char *bw_mod_title_take_join(void)
+{
+    static char taken[sizeof(g_join)];
+
+    if (g_join[0] == '\0') {
+        return NULL;
+    }
+    memcpy(taken, g_join, sizeof(taken));
+    g_join[0] = '\0';
+    return taken;
 }
 
 void bw_mod_title_request_autostart(void)

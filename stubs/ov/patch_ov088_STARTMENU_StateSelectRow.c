@@ -52,6 +52,7 @@ extern int bw_mod_title_set_in_settings(int on);
 extern int bw_mod_title_set_rebuild(void);
 extern int bw_mod_title_take_autostart(void);
 extern void bw_mod_title_open_multiplayer(void);
+extern int bw_mod_title_join_pending(void);
 extern int bw_slots_flip(int d);
 extern int bw_slots_new_game(void);
 extern int bw_slots_replacing(void);
@@ -158,6 +159,12 @@ int STARTMENU_StateSelectRow(char *p)
 
         if (r >= 0)
             return r;
+    }
+    if (bw_mod_title_settings_on() && bw_mod_title_join_pending()) {
+        /* a game to join from the start: the Multiplayer screen joins it */
+        bw_mod_title_open_multiplayer();
+        *(u8 *)(p + 0x129) = BW_TITLE_SEL_SETTINGS;
+        return STARTMENU_BeginFadeIn(p, 1);
     }
     BLINK_PALANM_Update(*(void **)(p + 0x11c));
     if (KEY_GetTrg() & 1) {

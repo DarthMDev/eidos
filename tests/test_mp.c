@@ -119,6 +119,28 @@ static void say(u32 peer, const char *text)
     bw_mp_on_net(peer, (int)BW_SESSION_MESSAGE, text, (u32)strlen(text));
 }
 
+/* A player's hello as this build says it: the game, the mods, who it is
+ * (a made-up fingerprint from its number unless given), whether its game
+ * runs, and this build's eidos version. */
+static void hello_as(u32 peer, const char *game_mods, const char *fp, int in_game,
+                     const char *version)
+{
+    char msg[256], made[33];
+
+    if (fp == NULL) {
+        snprintf(made, sizeof made, "%032x", (unsigned)peer);
+        fp = made;
+    }
+    snprintf(msg, sizeof msg, "hello 1 %s %s %d %s", game_mods, fp, in_game,
+             version != NULL ? version : bw_mp_version());
+    say(peer, msg);
+}
+
+static void hello(u32 peer, const char *game_mods)
+{
+    hello_as(peer, game_mods, NULL, 0, NULL);
+}
+
 static void test_host(void)
 {
     char code[16];
@@ -140,12 +162,16 @@ static void test_host(void)
     BW_CHECK_EQ("a join sends the roster", sent_has("roster lobby"), 1);
     BW_CHECK_EQ("the lobby has two players", (long)bw_mp_player_count(), 2);
     BW_CHECK_EQ("no start before the player's game answers", bw_mp_start(), -1);
-    say(2, "hello 1 W soul=1");
+    hello(2, "W soul=1");
     BW_CHECK_EQ("another multiplayer version blocks the start",
                 bw_mp_start(), -1);
     BW_CHECK_EQ("and the lobby names it",
                 strstr(bw_mp_start_blocker(), "soul") != NULL, 1);
-    say(2, "hello 1 W soul=2");
+    hello_as(2, "W soul=2", NULL, 0, "9.9.9");
+    BW_CHECK_EQ("another eidos version blocks the start", bw_mp_start(), -1);
+    BW_CHECK_EQ("and the lobby names it",
+                strstr(bw_mp_start_blocker(), "eidos 9.9.9") != NULL, 1);
+    hello(2, "W soul=2");
     sent_reset();
     BW_CHECK_EQ("the host starts", bw_mp_start(), 0);
     BW_CHECK_EQ("the game runs", (long)bw_mp_state(), (long)BW_MP_PLAYING);
@@ -163,7 +189,7 @@ static void test_host(void)
     sent_reset();
     bw_mp_on_net(3, (int)BW_SESSION_JOIN, NULL, 0);
     BW_CHECK_EQ("is not removed", (long)g_removed, 0);
-    say(3, "hello 1 B soul=2 0123456789abcdef0123456789abcdef 0");
+    hello_as(3, "B soul=2", "0123456789abcdef0123456789abcdef", 0, NULL);
     BW_CHECK_EQ("gets a new game", sent_has("save 0 0 0"), 1);
     BW_CHECK_EQ("and the start", sent_has("start"), 1);
     {
@@ -172,7 +198,7 @@ static void test_host(void)
         BW_CHECK_EQ("is on the roster", bw_mp_player_at(2, &p) == 0 && p.on_roster, 1);
     }
     bw_mp_on_net(4, (int)BW_SESSION_JOIN, NULL, 0);
-    say(4, "hello 1 B - fedcba9876543210fedcba9876543210 0");
+    hello_as(4, "B -", "fedcba9876543210fedcba9876543210", 0, NULL);
     BW_CHECK_EQ("one whose multiplayer mods differ is removed", (long)g_removed, 4);
     bw_mp_on_net(4, (int)BW_SESSION_LEAVE, NULL, 0);
     bw_mp_on_net(3, (int)BW_SESSION_LEAVE, NULL, 0);
@@ -202,7 +228,7 @@ static void test_host(void)
                 strstr(bw_mp_wait_text(), "Cheren") != NULL, 1);
     BW_CHECK_EQ("no start while a roster player is missing", bw_mp_start(), -1);
     bw_mp_on_net(2, (int)BW_SESSION_JOIN, NULL, 0);
-    say(2, "hello 1 W soul=2");
+    hello(2, "W soul=2");
     BW_CHECK_EQ("still held until the host starts", bw_mp_paused(), 1);
     BW_CHECK_EQ("the screen says the host may start",
                 strstr(bw_mp_wait_text(), "START") != NULL, 1);
@@ -291,7 +317,7 @@ static void test_relay_restart(void)
     (void)bw_mp_host(code, sizeof code);
     bw_mp_frame_at(1000);
     bw_mp_on_net(2, (int)BW_SESSION_JOIN, NULL, 0);
-    say(2, "hello 1 W -");
+    hello(2, "W -");
     BW_CHECK_EQ("the game starts", bw_mp_start(), 0);
     bw_mp_on_net(0, BW_MOD_NET_PORT_ENDED, "lost", 4);
     g_join_fails = 1;
@@ -307,7 +333,7 @@ static void test_relay_restart(void)
     bw_mp_on_net(3, (int)BW_SESSION_JOIN, NULL, 0);
     BW_CHECK_EQ("the player who comes back under a new number is not removed",
                 (long)g_removed, 0);
-    say(3, "hello 1 W -");
+    hello(3, "W -");
     BW_CHECK_EQ("it takes its roster place: the host may start",
                 bw_mp_start(), 0);
     g_peer3 = "Bianca";
@@ -404,8 +430,7 @@ static void test_saves(void)
     say(2, "who");
     BW_CHECK_EQ("and again when asked", sent_has("hostid "), 1);
     snprintf(fp, sizeof fp, "%s", "ffffeeeeddddccccbbbbaaaa99998888");
-    snprintf(msg, sizeof msg, "hello 1 W - %s 0", fp);
-    say(2, msg);
+    hello_as(2, "W -", fp, 0, NULL);
     sent_reset();
     BW_CHECK_EQ("the host starts", bw_mp_start(), 0);
     BW_CHECK_EQ("a player the host has no save for: a new game",
@@ -554,7 +579,7 @@ static void test_shared(void)
     (void)bw_mp_shared_get("soul", "faints", &v);
     BW_CHECK_EQ("a cas that matches sets it", (int)v, 9);
     sent_reset();
-    say(2, "hello 1 B - ffffeeeeddddccccbbbbaaaa99998888 0");
+    hello_as(2, "B -", "ffffeeeeddddccccbbbbaaaa99998888", 0, NULL);
     BW_CHECK_EQ("a hello gets the whole table", sent_has("tset soul/pair.1 42"), 1);
     {
         /* two events of a joiner in one message reach the mod's handler */

@@ -17,7 +17,26 @@
 #
 
 cmake_minimum_required(VERSION 3.16)
-project(eidos C)
+project(eidos VERSION 0.1.0 LANGUAGES C)
+
+# The version players and the lobby see (docs/distribution.md).  A release
+# build (EIDOS_RELEASE=ON, the release workflow) is the plain number; any
+# other build adds the commit it was built from, so two builds of different
+# commits never play together by mistake.
+option(EIDOS_RELEASE "A release build: the version without the commit" OFF)
+set(EIDOS_VERSION_STRING "${PROJECT_VERSION}")
+if(NOT EIDOS_RELEASE)
+    execute_process(COMMAND git rev-parse --short=10 HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE _eidos_commit OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET RESULT_VARIABLE _eidos_commit_rc)
+    if(_eidos_commit_rc EQUAL 0 AND _eidos_commit)
+        set(EIDOS_VERSION_STRING "${PROJECT_VERSION}+${_eidos_commit}")
+    else()
+        set(EIDOS_VERSION_STRING "${PROJECT_VERSION}+dev")
+    endif()
+endif()
+message(STATUS "eidos: version ${EIDOS_VERSION_STRING}")
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -852,6 +871,13 @@ if(EIDOS_TLS AND EXISTS "${EIDOS_MBEDTLS_ROOT}/library/ssl_tls.c")
 else()
     message(STATUS "eidos: TLS for the relay off (run tools/fetch_mbedtls.py)")
 endif()
+
+target_compile_definitions(eidos PUBLIC EIDOS_VERSION="${EIDOS_VERSION_STRING}")
+# The public relay a session uses when the player has set none
+# (docs/distribution.md): `tls://name:port`.  Empty: no default.
+set(EIDOS_DEFAULT_RELAY "" CACHE STRING "The public relay (tls://name:port), empty for none")
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings.c APPEND PROPERTY
+    COMPILE_DEFINITIONS "EIDOS_DEFAULT_RELAY=\"${EIDOS_DEFAULT_RELAY}\"")
 
 if(EIDOS_HEAP_MATCHED)
     target_compile_definitions(eidos PUBLIC EIDOS_HEAP_MATCHED=1)
