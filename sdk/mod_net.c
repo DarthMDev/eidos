@@ -1686,6 +1686,9 @@ static void relay_frame(char type, const u8 *payload, u32 size)
                 g_dropped++;
             }
         }
+        /* the relay closes the connection after an error: the session is
+         * over now, not when the reader notices the close */
+        g_session.running = 0;
         g_net_stop = 1;
         break;
 
@@ -2038,7 +2041,9 @@ int bw_mod_net_session_join(const char *code)
         return rc;
     }
     g_session.running = 1;
-    g_session.hosting = 0;
+    /* a host whose connection dropped joins its own code again as peer 1,
+     * and is the host again */
+    g_session.hosting = (g_session.self == 1u);
     copy_text(g_session.code, sizeof(g_session.code), clean);
     if (g_session.name[0] == '\0') {
         copy_text(g_session.name, sizeof(g_session.name),

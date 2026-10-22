@@ -1349,6 +1349,25 @@ const char *bw_mod_loader_name_at(u32 index)
 }
 
 /* The state namespace of the loaded mod at `index`, or NULL. */
+int bw_mod_loader_multiplayer_at(u32 index)
+{
+    u32 i;
+    u32 seen = 0;
+
+    for (i = 0; i < BW_MOD_LOADER_MAX; i++) {
+        if (!g_mods[i].loaded) {
+            continue;
+        }
+        if (seen == index) {
+            const BwModManifest *mf = (const BwModManifest *)g_mods[i].manifest;
+
+            return mf != NULL ? mf->multiplayer : 0;
+        }
+        seen++;
+    }
+    return 0;
+}
+
 const char *bw_mod_loader_namespace_at(u32 index)
 {
     u32 i;

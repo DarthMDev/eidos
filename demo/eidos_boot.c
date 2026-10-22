@@ -233,9 +233,11 @@ static int parse_shots(const char *list)
 #include "overlay.h"
 
 #if EIDOS_BOOT_SDL
+#include "font.h"
 #include "platform.h"
 #include "settings.h"
 #endif
+#include "mp.h"
 
 #ifndef EIDOS_OVERLAYS
 #define EIDOS_OVERLAYS 0
@@ -1270,6 +1272,163 @@ static int         g_restart_pending;
 static void boot_start_game(BootRunNext next);
 static void boot_run_restart(void);
 
+/* ------------------------------------------------------------------ */
+/* Multiplayer: the held game                                          */
+/* ------------------------------------------------------------------ */
+
+#if EIDOS_BOOT_SDL
+/* One line of the port's bitmap font into an RGBA screen of 256n x 192n,
+ * centred, at row `y` of the DS screen, in white. */
+static void hold_text(u8 *rgba, u32 n, int y, const char *text)
+{
+    const char *s = text;
+    int len = 0;
+    int x0;
+    u32 ch;
+
+    while (eidos_utf8_next(&s) != 0u) {
+        len++;
+    }
+    x0 = (256 - len * EIDOS_FONT_ADVANCE) / 2;
+    if (x0 < 2) {
+        x0 = 2;
+    }
+    s = text;
+    while ((ch = eidos_utf8_next(&s)) != 0u) {
+        const u8 *g = eidos_font_glyph(ch);
+        int r, c;
+
+        for (r = 0; r < EIDOS_FONT_ROWS && g != NULL; r++) {
+            for (c = 0; c < EIDOS_FONT_COLS; c++) {
+                u32 px, py;
+
+                if (!(g[r] & (0x10u >> c))) {
+                    continue;
+                }
+                for (py = 0; py < n; py++) {
+                    for (px = 0; px < n; px++) {
+                        int X = (x0 + c) * (int)n + (int)px;
+                        int Y = (y + r) * (int)n + (int)py;
+                        u8 *d;
+
+                        if (X < 0 || X >= 256 * (int)n || Y < 0 ||
+                            Y >= 192 * (int)n) {
+                            continue;
+                        }
+                        d = rgba + ((size_t)Y * 256u * n + (size_t)X) * 4u;
+                        d[0] = d[1] = d[2] = 255;
+                    }
+                }
+            }
+        }
+        x0 += EIDOS_FONT_ADVANCE;
+        if (x0 > 256 - EIDOS_FONT_ADVANCE) {
+            break;
+        }
+    }
+}
+
+/* The held screen: the last frame, darkened, with the wait's text. */
+static void hold_draw(u8 *dst, const u8 *src, u32 n, const char *line1,
+                      const char *line2)
+{
+    size_t i;
+    size_t bytes = (size_t)256 * n * 192 * n * 4;
+
+    for (i = 0; i < bytes; i += 4) {
+        dst[i] = (u8)(src[i] / 3);
+        dst[i + 1] = (u8)(src[i + 1] / 3);
+        dst[i + 2] = (u8)(src[i + 2] / 3);
+        dst[i + 3] = src[i + 3];
+    }
+    hold_text(dst, n, 84, line1);
+    if (line2 != NULL && line2[0] != '\0') {
+        hold_text(dst, n, 100, line2);
+    }
+}
+#endif
+
+/*
+ * Multiplayer holds the game (sdk/mp.h): a player dropped past the grace,
+ * the host is gone, or this game lost the relay.  The game's own thread is
+ * held here, in its halt hook, so nothing of the game runs; the network,
+ * the multiplayer timers and the window go on.  The host's START starts
+ * the game again when everyone is back.  A session that ends while held
+ * (the host never came back) sends a joiner back to the title.
+ */
+static void boot_mp_hold(BootRun *run)
+{
+#if EIDOS_BOOT_SDL
+    u8 *top = NULL;
+    u8 *bottom = NULL;
+    u8 *work = NULL;
+    u32 n = run->hi_n;
+    size_t bytes = (size_t)256 * n * 192 * n * 4;
+#endif
+
+    printf("eidos_boot: the game is held: %s\n", bw_mp_wait_text());
+    fflush(stdout);
+#if EIDOS_BOOT_SDL
+    if (n != 0u && run->hi_top != NULL && run->hi_bottom != NULL) {
+        top = (u8 *)malloc(bytes);
+        bottom = (u8 *)malloc(bytes);
+        work = (u8 *)malloc(bytes);
+        if (top != NULL && bottom != NULL && work != NULL) {
+            memcpy(top, run->hi_top, bytes);
+            memcpy(bottom, run->hi_bottom, bytes);
+        }
+    }
+#endif
+    while (bw_mp_paused()) {
+        bw_mod_net_frame();
+        bw_mp_frame();
+#if EIDOS_BOOT_SDL
+        if (run->plat != NULL) {
+            if (!eidos_platform_pump(run->plat)) {
+                boot_finish(0, "window closed");
+            }
+            if (bw_mp_is_host() &&
+                (eidos_platform_buttons_pressed(run->plat) & EIDOS_PAD_START)) {
+                (void)bw_mp_start();
+            }
+            if (top != NULL && bottom != NULL && work != NULL) {
+                hold_draw(work, top, n, bw_mp_wait_text(),
+                          bw_mp_is_host() ? "" : "The host starts the game.");
+                memcpy(run->hi_top, work, bytes);
+                hold_draw(work, bottom, n, bw_mp_wait_text(), "");
+                memcpy(run->hi_bottom, work, bytes);
+                eidos_platform_present_nn(run->plat, run->hi_top,
+                                          (int)run->hi_sn[0], run->hi_bottom,
+                                          (int)run->hi_sn[1]);
+            }
+            eidos_platform_wait_frame(run->plat);
+            continue;
+        }
+#endif
+        bw_mp_hold_wait();
+    }
+#if EIDOS_BOOT_SDL
+    if (top != NULL && bottom != NULL) {
+        memcpy(run->hi_top, top, bytes);
+        memcpy(run->hi_bottom, bottom, bytes);
+    }
+    free(top);
+    free(bottom);
+    free(work);
+#endif
+    if (bw_mp_state() == BW_MP_ENDED && !bw_mp_is_host()) {
+        printf("eidos_boot: the session ended (%s); back to the title\n",
+               bw_mp_end_reason());
+        fflush(stdout);
+        bw_mp_leave();
+        g_run_next = BOOT_RUN_TITLE;
+        g_restart_pending = 1;
+    } else {
+        printf("eidos_boot: the game goes on\n");
+        fflush(stdout);
+    }
+}
+
 /* The halt hook: one frame of time passing. */
 static void boot_frame(void *user)
 {
@@ -1298,6 +1457,11 @@ static void boot_frame(void *user)
                          ? BOOT_RUN_NEW_GAME : BOOT_RUN_TITLE;
             boot_run_restart();
         }
+    }
+
+    /* Multiplayer may hold the game here (sdk/mp.h). */
+    if (bw_mp_paused()) {
+        boot_mp_hold(run);
     }
 
     /*

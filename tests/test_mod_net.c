@@ -1266,6 +1266,8 @@ static void test_port(void)
                 frame_until(&g_port_ended, 1), 1);
     BW_CHECK_EQ("with the relay's reason",
                 strcmp(g_port_reason, "removed"), 0);
+    BW_CHECK_EQ("and no session runs any more",
+                bw_mod_net_session_active(), 0);
     bw_mod_net_set_port_handler(NULL);
     bw_mod_net_session_leave();
 }

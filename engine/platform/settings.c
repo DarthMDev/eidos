@@ -24,6 +24,7 @@
 
 #include "input.h"
 #include "mod_net.h"
+#include "mp.h"
 #include "mod_panel_draw.h"
 #include "plat_thread.h"
 #include "setup.h"
@@ -1327,6 +1328,11 @@ int bw_port_session_poll(BwPortSessionState *out)
         /* The work is over: the worker has published its answer and is
          * about to return, so this does not wait. */
         bw_thread_join(t);
+        /* A session the port opened is a multiplayer session: the lobby
+         * takes it over (sdk/mp.h). */
+        if (out != NULL && out->rc == 0) {
+            bw_mp_attach(out->host, out->code);
+        }
     }
     if (out != NULL) {
         out->peers = bw_port_session_peer_count();
@@ -1356,7 +1362,7 @@ int bw_port_session_poll(BwPortSessionState *out)
 /* Leave the session.  The service's leave does not block. */
 void bw_port_session_leave(void)
 {
-    bw_mod_net_session_leave();
+    bw_mp_leave();
     peers_clear();
 }
 

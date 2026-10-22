@@ -10,6 +10,7 @@
 #include "settings.h"
 #include "mod_menu.h"
 #include "mod_net.h"
+#include "mp.h"
 
 /*
  * The port's own network settings (engine/platform/settings.c): the
@@ -164,6 +165,10 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_SESSION_SELF2  "The peers are numbered too."
 #define HELP_SESSION_PEER1  "A player in the session."
 #define HELP_SESSION_PEER2  "The number is the relay's."
+#define HELP_MP_START1      "Start the game for every player."
+#define HELP_MP_START2      "Everyone must be here, with the same mods."
+#define HELP_MP_PLAYER1     "A player in the lobby: here or missing,"
+#define HELP_MP_PLAYER2     "the game, and whether the mods match."
 #define HELP_SESSION_REVERT1 "The codes go back as they were."
 #define HELP_SESSION_REVERT2 "The change applies when you leave."
 
@@ -237,6 +242,11 @@ static const ValueName k_choice_names[] = {
 
 /* The Session section's own labels. */
 #define STR_SESSION_CODE     "Session code"
+#define STR_MP_START         "Start game"
+#define STR_MP_READY         "Ready"
+#define STR_MP_RUNNING       "Playing"
+#define STR_MP_MISSING       "missing"
+#define STR_MP_MODS          ", mods differ"
 #define STR_SESSION_JOINCODE "Join code"
 #define STR_SESSION_HOST     "Host session"
 #define STR_SESSION_JOIN     "Join session"
@@ -322,6 +332,8 @@ enum {
     ROW_SESSION_LEAVE,    /* leave the session                           */
     ROW_SESSION_SELF,     /* this player's own number in the session     */
     ROW_SESSION_PEER,     /* a peer of the session: arg is its number    */
+    ROW_MP_START,         /* the host starts the game (sdk/mp.h)          */
+    ROW_MP_PLAYER,        /* a player of the lobby: arg is its peer       */
     ROW_SESSION_REVERT,   /* the codes back to the committed state       */
     ROW_SESSION_DEFAULTS  /* the codes back to nothing                    */
 };
@@ -443,16 +455,33 @@ static void build_session_rows(void)
     if (bw_port_session_self_peer() != 0) {
         add_row(ROW_SESSION_SELF, 0, 0);
     }
-    peers = bw_port_session_peer_count();
-    for (i = 0; i < peers; i++) {
-        u32 number = 0;
-
-        if (bw_port_session_peer_at(i, &number, NULL, 0) != 0) {
-            break;
+    if (bw_mp_state() != BW_MP_OFF) {
+        /* A multiplayer session: the host's Start, then the lobby, the
+         * host first (sdk/mp.h). */
+        if (bw_mp_is_host()) {
+            add_row(ROW_MP_START, 0, 0);
         }
-        /* The number keeps the cursor on the same player when the list is
-         * built again; the index says which row of the list this is. */
-        add_row(ROW_SESSION_PEER, (int)number, (int)i);
+        peers = bw_mp_player_count();
+        for (i = 0; i < peers; i++) {
+            BwMpPlayer p;
+
+            if (bw_mp_player_at(i, &p) != 0) {
+                break;
+            }
+            add_row(ROW_MP_PLAYER, (int)p.peer, (int)i);
+        }
+    } else {
+        peers = bw_port_session_peer_count();
+        for (i = 0; i < peers; i++) {
+            u32 number = 0;
+
+            if (bw_port_session_peer_at(i, &number, NULL, 0) != 0) {
+                break;
+            }
+            /* The number keeps the cursor on the same player when the list
+             * is built again; the index says which row of the list this is. */
+            add_row(ROW_SESSION_PEER, (int)number, (int)i);
+        }
     }
     add_row(ROW_SESSION_REVERT, 0, 0);
     add_row(ROW_SESSION_DEFAULTS, 0, 0);
@@ -836,8 +865,8 @@ static int poll_session(void)
         }
         redraw = 1;
     }
-    if (st.stamp != g_sess.stamp) {
-        g_sess.stamp = st.stamp;
+    if (st.stamp + bw_mp_stamp() != g_sess.stamp) {
+        g_sess.stamp = st.stamp + bw_mp_stamp();
         if (g.level == 1 && g.tab == TAB_SESSION) {
             build_rows_keep_cursor();
         }
@@ -906,6 +935,13 @@ static int session_action(int type)
         /* The service's leave does not block. */
         bw_port_session_leave();
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+    case ROW_MP_START:
+        /* The host starts the game when everyone is ready. */
+        if (bw_mp_start() == 0) {
+            build_rows_keep_cursor();
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        }
+        return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
     case ROW_SESSION_REVERT:
         /* The code back to the state the last commit left. */
         eidos_settings_session_revert();
@@ -1284,7 +1320,7 @@ static int sui_input(unsigned pressed, unsigned held)
     }
     if (r->type == ROW_SESSION_HOST || r->type == ROW_SESSION_JOIN ||
         r->type == ROW_SESSION_LEAVE || r->type == ROW_SESSION_REVERT ||
-        r->type == ROW_SESSION_DEFAULTS) {
+        r->type == ROW_SESSION_DEFAULTS || r->type == ROW_MP_START) {
         if (pressed & 1u) {
             return session_action(r->type);
         }
@@ -1520,6 +1556,7 @@ int eidos_sui_touch(int row, int zone)
     case ROW_SESSION_LEAVE:
     case ROW_SESSION_REVERT:
     case ROW_SESSION_DEFAULTS:
+    case ROW_MP_START:
         if (was) {
             res = session_action(r->type);
         }
@@ -1839,6 +1876,34 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         put(value, nv, buf);
         break;
     }
+    case ROW_MP_START: {
+        /* The host's Start: ready, or what it waits for. */
+        const char *why = bw_mp_start_blocker();
+        BwMpState st = bw_mp_state();
+
+        put(label, nl, STR_MP_START);
+        if (st == BW_MP_PLAYING || st == BW_MP_GRACE) {
+            put(value, nv, STR_MP_RUNNING);
+        } else {
+            put(value, nv, why[0] != '\0' ? why : STR_MP_READY);
+        }
+        break;
+    }
+    case ROW_MP_PLAYER: {
+        /* A player of the lobby: its name, and whether it is here, its
+         * game, and whether its multiplayer mods match the host's. */
+        BwMpPlayer p;
+
+        memset(&p, 0, sizeof p);
+        (void)bw_mp_player_at((u32)r->arg2, &p);
+        put(label, nl, p.name[0] != '\0' ? p.name : STR_SESSION_PEER);
+        snprintf(buf, sizeof buf, "#%u %s%s", (unsigned int)p.peer,
+                 !p.connected ? STR_MP_MISSING :
+                 p.game == 'W' ? "White" : p.game == 'B' ? "Black" : "...",
+                 p.connected && p.game != 0 && !p.mods_ok ? STR_MP_MODS : "");
+        put(value, nv, buf);
+        break;
+    }
     case ROW_SESSION_REVERT:
         put(label, nl, STR_SESSION_REVERT);
         break;
@@ -2048,6 +2113,14 @@ void eidos_sui_help_line(int i, char *out, int n)
         case ROW_SESSION_PEER:
             l[0] = HELP_SESSION_PEER1;
             l[1] = HELP_SESSION_PEER2;
+            break;
+        case ROW_MP_START:
+            l[0] = HELP_MP_START1;
+            l[1] = HELP_MP_START2;
+            break;
+        case ROW_MP_PLAYER:
+            l[0] = HELP_MP_PLAYER1;
+            l[1] = HELP_MP_PLAYER2;
             break;
         case ROW_SESSION_REVERT:
             l[0] = HELP_SESSION_REVERT1;

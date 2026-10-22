@@ -83,6 +83,7 @@
 extern void        bw_mod_savedata_set_namespace(const char *ns) BW_PORT_WEAK;
 extern const char *bw_mod_savedata_namespace(void) BW_PORT_WEAK;
 extern void        bw_mod_net_frame(void) BW_PORT_WEAK;
+extern void        bw_mp_frame(void) BW_PORT_WEAK;
 extern void        bw_mod_timer_frame(void) BW_PORT_WEAK;
 extern void        bw_mod_avatar_frame(void) BW_PORT_WEAK;
 extern void        bw_mod_handoff_frame(void) BW_PORT_WEAK;
@@ -237,6 +238,10 @@ void bw_mod_frame_tick(void)
      * network's threads queued reach the mods' handlers here, on the
      * game's thread (bw_mod_net_frame). */
     bw_mod_net_frame();
+
+    /* Multiplayer's timers: the grace after a drop, the host's return, the
+     * rejoin attempts (sdk/mp.h). */
+    bw_mp_frame();
 
     /* The timer's frame: the mods' timers advance with the game's frames,
      * so the pause while the port's own menu is open is exact to the

@@ -171,6 +171,7 @@ later versions can add keys (`sdk/vfs.c`, `read_manifest`).
 | `override` | a grammar line, repeatable | none | one raw hook |
 | `rule` | a grammar line, repeatable | none | one rule bound to one event |
 | `settings` | relative path | none | the mod's settings declaration (`docs/mod-services.md`) |
+| `multiplayer` | integer from 1 | none | the mod's multiplayer compatibility number; only it has to match between players (`docs/multiplayer.md`) |
 
 `name` and `order` are read by the data layer, which builds the mod list and
 the load order (`sdk/vfs.c`, `read_manifest`); the whole schema above is read

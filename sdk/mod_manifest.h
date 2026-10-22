@@ -88,6 +88,9 @@ typedef struct BwModManifest {
     BwModRule     *tables;         /* the table lines: event = the name */
     u32            table_count;
     u32            table_cap;
+    int            multiplayer;    /* `multiplayer = <n>`: the mod's multiplayer
+                                    * compatibility number, 0 when it states
+                                    * none (docs/multiplayer.md) */
 } BwModManifest;
 
 #ifdef __cplusplus

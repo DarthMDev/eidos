@@ -464,6 +464,7 @@ set(BW_SDK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_timer.c         # the timer, the splits and the mod's own random source
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_export.c        # a Pokemon's export and import
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_net.c          # the peer sessions and the external control
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mp.c               # multiplayer: the lobby, the start and the pause
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_frame.c        # the mod layer's frame tick
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_avatar.c       # the field avatars
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_restart.c      # the run restart
@@ -1660,6 +1661,14 @@ add_executable(test_mod_wasm ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_wasm.c)
 target_include_directories(test_mod_wasm PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_mod_wasm PRIVATE eidos)
+# test_mp drives multiplayer's lobby, start and pause (sdk/mp.c) with a
+# network of its own, as the host's game and then as a joiner's.
+add_executable(test_mp ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mp.c)
+target_include_directories(test_mp PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_mp PRIVATE eidos)
+add_test(NAME test_mp COMMAND test_mp)
+
 add_test(NAME test_mod_wasm COMMAND test_mod_wasm)
 # With the runtime, the test also registers an import of its own (an event
 # fired from inside a handler).

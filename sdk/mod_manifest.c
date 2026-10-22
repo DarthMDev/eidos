@@ -1553,6 +1553,16 @@ int bw_mod_manifest_parse(void *manifest, const char *text, const char *dir_name
             } else {
                 m->order = (int)v;
             }
+        } else if (key_len == 11 && memcmp(ks, "multiplayer", 11) == 0) {
+            long v;
+
+            if (parse_int(vs, (size_t)(ve - vs), &v) != 0 ||
+                v < 1L || v > 1000000L) {
+                mod_report(m, "bad multiplayer value '%.*s' (a number from 1), "
+                           "ignored", (int)(ve - vs), vs);
+            } else {
+                m->multiplayer = (int)v;
+            }
         } else if (key_len == 3 && memcmp(ks, "api", 3) == 0) {
             long v;
 
