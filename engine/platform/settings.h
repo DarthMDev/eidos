@@ -141,6 +141,10 @@ void        eidos_settings_net_set_name(const char *name);
 void        eidos_settings_net_relay_text_begin(void);
 void        eidos_settings_net_name_text_begin(void);
 int         eidos_settings_net_text_editing(void);
+/* A port typed as digits (control 0: the relay's, 1: the control's); the
+ * digits typed so far, or NULL when that port is not being typed. */
+void        eidos_settings_net_port_text_begin(int control);
+const char *eidos_settings_net_port_text(int control);
 int         eidos_settings_net_text_key(int scancode);
 void        eidos_settings_net_text_cancel(void);
 

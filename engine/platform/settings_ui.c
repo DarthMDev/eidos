@@ -73,8 +73,11 @@ extern void bw_mod_restart(u32 flags);
 
 #define STR_TITLE "Settings"
 static const char *const k_tab_names[] = {
-    "Display", "Layout", "Controls", "Sound", "Mods", "Network", "Session"
+    "Display", "Layout", "Controls", "Sound", "Mods", "Network", "Multiplayer"
 };
+
+/* The order of the sections on the main list: Multiplayer first. */
+static const int k_tab_order[] = { 6, 0, 1, 2, 3, 4, 5 };
 
 /* Short button names for the Controls rows (the backend labels are long). */
 static const char *const k_button_short[] = {
@@ -100,90 +103,90 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
     { "Space between the two screens,", "in pixels." },
     { "Master volume, 0 to 100.", "Left and right change it by 5." },
 };
-#define HELP_BIND1     "Press A, then press the key or pad"
-#define HELP_BIND2     "button to bind. B cancels."
-#define HELP_DEFAULTS1 "Set every option and every control"
-#define HELP_DEFAULTS2 "to its default."
-#define HELP_CAPTURE1  "Waiting for a key or pad button."
-#define HELP_CAPTURE2  "Press B to cancel."
+#define HELP_BIND1     "Bind a key or pad button."
+#define HELP_BIND2     ""
+#define HELP_DEFAULTS1 "Reset this page."
+#define HELP_DEFAULTS2 ""
+#define HELP_CAPTURE1  "Press a key or pad button."
+#define HELP_CAPTURE2  "B: cancel"
 #define HELP_SECTION_DISPLAY  "Window mode and resolution."
-#define HELP_SECTION_LAYOUT   "Screen arrangement, swap and gap."
-#define HELP_SECTION_CONTROLS "Keyboard and gamepad bindings."
-#define HELP_SECTION_SOUND    "Master volume."
-#define HELP_SECTION_MODS     "The mods, their settings and the panel."
-#define HELP_SECTION_NETWORK  "The relay, the control and the press limit."
-#define HELP_SECTION_SESSION  "The peer session: host, join, leave."
-#define HELP_KEYS_L0   "Up/Down: choose   A: open"
-#define HELP_KEYS_L0B  "B: save and go back"
-#define HELP_KEYS_L1   "Up/Down: choose   Left/Right: change"
+#define HELP_SECTION_LAYOUT   "Screen arrangement."
+#define HELP_SECTION_CONTROLS "Keyboard and gamepad."
+#define HELP_SECTION_SOUND    "Volume."
+#define HELP_SECTION_MODS     "Installed mods."
+#define HELP_SECTION_NETWORK  "Relay and name."
+#define HELP_SECTION_SESSION  "Host or join a game."
+#define HELP_KEYS_L0   "A: open"
+#define HELP_KEYS_L0B  "B: back"
+#define HELP_KEYS_L1   "Left/Right: change"
 #define HELP_KEYS_L1B  "A: select   B: back"
 
 /* The Mods section: the mods, their switches, their own settings, the
  * clear action and the folders no mod claims. */
 #define HELP_MOD_SWITCH1 "Turn the mod on or off."
-#define HELP_MOD_SWITCH2 "L and R move it in the list."
-#define HELP_MOD_OPTION1 "The mod's own setting."
-#define HELP_MOD_OPTION2 "The choice is kept with its data."
+#define HELP_MOD_SWITCH2 "L/R: move"
+#define HELP_MOD_OPTION1 "A mod setting."
+#define HELP_MOD_OPTION2 ""
 #define HELP_MOD_CLEAR1  "Delete the mod's saved data."
-#define HELP_MOD_CLEAR2  "The mod's own folder stays."
-#define HELP_MOD_RELOAD1 "Reads the mods folder again and"
-#define HELP_MOD_RELOAD2 "restarts every mod with its changes."
-#define HELP_MOD_FOLDER1 "Put mods here: a folder with an"
-#define HELP_MOD_FOLDER2 "eidos_mod.txt, or a .bw file."
-#define HELP_MOD_REVERT1 "The switches go back as they were."
-#define HELP_MOD_REVERT2 "The change applies when you leave."
-#define HELP_ORPHAN1     "A folder no installed mod claims."
-#define HELP_ORPHAN2     "A removed mod left it behind."
+#define HELP_MOD_CLEAR2  ""
+#define HELP_MOD_RELOAD1 "Reload the mods folder."
+#define HELP_MOD_RELOAD2 ""
+#define HELP_MOD_FOLDER1 "The mods folder."
+#define HELP_MOD_FOLDER2 ""
+#define HELP_MOD_REVERT1 "Undo the changes."
+#define HELP_MOD_REVERT2 ""
+#define HELP_ORPHAN1     "Data of a removed mod."
+#define HELP_ORPHAN2     ""
 
 /* The Network section: the port's own settings for the network service. */
-#define HELP_NET_RELAY1  "The relay the sessions reach."
-#define HELP_NET_RELAY2  "Empty: the port has no relay."
-#define HELP_NET_RPORT1  "The port the relay listens on."
-#define HELP_NET_RPORT2  "0: no relay."
-#define HELP_NET_CPORT1  "The port the control listens on."
-#define HELP_NET_CPORT2  "0: the control is off."
-#define HELP_NET_NAME1   "The name the other players see."
-#define HELP_NET_NAME2   "Empty: the default name."
-#define HELP_NET_DEFAULTS1 "Put the network settings back"
-#define HELP_NET_DEFAULTS2 "to their defaults."
-#define HELP_TEXT_EDIT1  "Type the text on the keyboard."
-#define HELP_TEXT_EDIT2  "Enter keeps it, Esc gives it up."
+#define HELP_NET_RELAY1  "The relay address."
+#define HELP_NET_RELAY2  ""
+#define HELP_NET_RPORT1  "The relay port."
+#define HELP_NET_RPORT2  "A: type"
+#define HELP_NET_CPORT1  "The control port."
+#define HELP_NET_CPORT2  "A: type"
+#define HELP_NET_NAME1   "Your name."
+#define HELP_NET_NAME2   ""
+#define HELP_NET_DEFAULTS1 "Reset this page."
+#define HELP_NET_DEFAULTS2 ""
+#define HELP_TEXT_EDIT1  "Type on the keyboard."
+#define HELP_TEXT_EDIT2  "Enter: done   Esc: cancel"
 
 /* The Session section: the port's own peer session (sdk/mod_net.h, "The
  * port's own session"). */
-#define HELP_SESSION_CODE1  "The code of the session in force."
-#define HELP_SESSION_CODE2  "The other players read it."
-#define HELP_SESSION_JCODE1 "The code to join a session with."
-#define HELP_SESSION_JCODE2 "Type it on the keyboard."
-#define HELP_SESSION_HOST1  "Ask the relay for a session."
-#define HELP_SESSION_HOST2  "The code comes back here."
-#define HELP_SESSION_JOIN1  "Join with the code above."
-#define HELP_SESSION_JOIN2  "The relay is asked at once."
-#define HELP_SESSION_LEAVE1 "Leave the session."
-#define HELP_SESSION_LEAVE2 "The other players are told."
-#define HELP_SESSION_SELF1  "This player's own number."
-#define HELP_SESSION_SELF2  "The peers are numbered too."
-#define HELP_SESSION_PEER1  "A player in the session."
-#define HELP_SESSION_PEER2  "The number is the relay's."
-#define HELP_MP_START1      "Start the game for every player."
-#define HELP_MP_START2      "Everyone must be here, with the same mods."
-#define HELP_MP_PLAYER1     "A player in the lobby: here or missing,"
-#define HELP_MP_PLAYER2     "the game, and whether the mods match."
-#define HELP_SESSION_REVERT1 "The codes go back as they were."
-#define HELP_SESSION_REVERT2 "The change applies when you leave."
+#define HELP_SESSION_CODE1  "The game code."
+#define HELP_SESSION_CODE2  ""
+#define HELP_SESSION_JCODE1 "The code to join."
+#define HELP_SESSION_JCODE2 "A: type"
+#define HELP_SESSION_HOST1  "Host a game."
+#define HELP_SESSION_HOST2  ""
+#define HELP_SESSION_JOIN1  "Join a game."
+#define HELP_SESSION_JOIN2  ""
+#define HELP_SESSION_LEAVE1 "Leave the game."
+#define HELP_SESSION_LEAVE2 ""
+#define HELP_SESSION_SELF1  "You."
+#define HELP_SESSION_SELF2  ""
+#define HELP_SESSION_PEER1  "A player."
+#define HELP_SESSION_PEER2  ""
+#define HELP_MP_START1      "Start the game."
+#define HELP_MP_START2      ""
+#define HELP_MP_PLAYER1     "A player."
+#define HELP_MP_PLAYER2     ""
+#define HELP_SESSION_REVERT1 "Undo the changes."
+#define HELP_SESSION_REVERT2 ""
 
 /* The run restart (the Mods section) and the menu's own question. */
-#define HELP_MOD_RESTART1 "The run ends and starts again."
-#define HELP_MOD_RESTART2 "You are asked before it happens."
-#define HELP_Q_CHOOSE1 "Left and right choose the answer."
-#define HELP_Q_CHOOSE2 "A takes it, B says no."
+#define HELP_MOD_RESTART1 "Back to the title screen."
+#define HELP_MOD_RESTART2 ""
+#define HELP_Q_CHOOSE1 "Left/Right: choose"
+#define HELP_Q_CHOOSE2 "A: confirm   B: cancel"
 
 /* The run-status panel (the Mods section) and the input injection's limit
  * (the Network section). */
-#define HELP_PANEL1   "The run-status panel the mods fill."
-#define HELP_PANEL2   "A hidden panel takes no space."
-#define HELP_INJECT1  "The longest press the injection allows,"
-#define HELP_INJECT2  "in frames. 0 turns it off."
+#define HELP_PANEL1   "Show the mod panel."
+#define HELP_PANEL2   ""
+#define HELP_INJECT1  "Longest input press, in frames."
+#define HELP_INJECT2  ""
 
 /* Row labels by option id (EIDOS_OPT_*); NULL for hidden options. */
 static const char *const k_option_labels[EIDOS_OPT_COUNT] = {
@@ -219,10 +222,12 @@ static const ValueName k_choice_names[] = {
 };
 
 #define STR_FIT         "Fit"
-#define STR_BACK_L0     "Done"
 #define STR_BACK_L1     "Back"
-#define HELP_BACK_L0    "Save the changes and leave"
-#define HELP_BACK_L1    "Go back to the list of sections"
+#define STR_MORE_BELOW  "More below"
+#define STR_MORE_ABOVE  "More above"
+#define STR_MORE_BOTH   "More above and below"
+#define HELP_BACK_L0    "Leave."
+#define HELP_BACK_L1    "Back."
 #define STR_DEFAULTS    "Restore defaults"
 #define STR_PRESS_KEY   "Press a key"
 #define STR_UNBOUND     "None"
@@ -241,18 +246,18 @@ static const ValueName k_choice_names[] = {
 #define STR_NONE        "(none)"
 
 /* The Session section's own labels. */
-#define STR_SESSION_CODE     "Session code"
+#define STR_SESSION_CODE     "Game code"
 #define STR_MP_START         "Start game"
 #define STR_MP_READY         "Ready"
 #define STR_MP_RUNNING       "Playing"
 #define STR_MP_MISSING       "missing"
 #define STR_MP_MODS          ", mods differ"
 #define STR_SESSION_JOINCODE "Join code"
-#define STR_SESSION_HOST     "Host session"
-#define STR_SESSION_JOIN     "Join session"
-#define STR_SESSION_LEAVE    "Leave session"
+#define STR_SESSION_HOST     "Host"
+#define STR_SESSION_JOIN     "Join"
+#define STR_SESSION_LEAVE    "Leave"
 #define STR_SESSION_SELF     "You"
-#define STR_SESSION_PEER     "Peer"
+#define STR_SESSION_PEER     "Player"
 #define STR_SESSION_REVERT   "Revert changes"
 
 /* The run restart (the Mods section) and the menu's own question. */
@@ -265,7 +270,7 @@ static const ValueName k_choice_names[] = {
 /* What the session's rows say about the work: the relay takes up to
  * three seconds to answer, so the row says so while it waits. */
 #define STR_SESSION_WAIT "Waiting..."
-#define STR_SESSION_IN   "In session"
+#define STR_SESSION_IN   "In a game"
 #define STR_SESS_OK      "OK"
 #define STR_SESS_NORELAY "No relay"
 #define STR_SESS_BUSY    "Busy"
@@ -494,7 +499,7 @@ static void build_rows(void)
     g.nrows = 0;
     if (g.level == 0) {
         for (i = 0; i < TAB_COUNT; i++) {
-            add_row(ROW_SECTION, i, 0);
+            add_row(ROW_SECTION, k_tab_order[i], 0);
         }
         return;
     }
@@ -592,7 +597,7 @@ typedef struct QuestionText {
 static const QuestionText k_questions[] = {
     { "", "" },                              /* QUESTION_NONE    */
     { "Restart the run?",                    /* QUESTION_RESTART */
-      "The run ends and starts again." },
+      "Back to the title screen." },
 };
 
 static struct {
@@ -637,11 +642,27 @@ static int question_close(int yes)
     return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_BACK;
 }
 
-/* The cursor runs over the rows and then one more place: the grey bar
- * ("Done" or "Back"), always shown below the visible rows. */
+/*
+ * Whether the screen has the grey bar.  Inside a section it is "Back", one
+ * more place below the visible rows.  The main list has none: B leaves the
+ * menu, and the sixth bar shows one more section instead.
+ */
+static int has_back(void)
+{
+    return g.level != 0;
+}
+
+/* The rows shown at once. */
+static int visible_rows(void)
+{
+    return has_back() ? EIDOS_SUI_VISIBLE : EIDOS_SUI_VISIBLE + 1;
+}
+
+/* The cursor runs over the rows and then, with the grey bar, one more
+ * place: the bar. */
 static int on_back(void)
 {
-    return g.cursor >= g.nrows;
+    return has_back() && g.cursor >= g.nrows;
 }
 
 static void clamp_scroll(void)
@@ -652,11 +673,11 @@ static void clamp_scroll(void)
     if (g.cursor < g.scroll) {
         g.scroll = g.cursor;
     }
-    if (g.cursor >= g.scroll + EIDOS_SUI_VISIBLE) {
-        g.scroll = g.cursor - EIDOS_SUI_VISIBLE + 1;
+    if (g.cursor >= g.scroll + visible_rows()) {
+        g.scroll = g.cursor - visible_rows() + 1;
     }
-    if (g.scroll > g.nrows - EIDOS_SUI_VISIBLE) {
-        g.scroll = g.nrows - EIDOS_SUI_VISIBLE;
+    if (g.scroll > g.nrows - visible_rows()) {
+        g.scroll = g.nrows - visible_rows();
     }
     if (g.scroll < 0) {
         g.scroll = 0;
@@ -730,8 +751,16 @@ static void enter_section(int t)
 
 static void leave_section(void)
 {
+    int i;
+
     g.level = 0;
-    g.cursor = g.tab;
+    /* the cursor goes back to the section's own place on the list */
+    g.cursor = 0;
+    for (i = 0; i < TAB_COUNT; i++) {
+        if (k_tab_order[i] == g.tab) {
+            g.cursor = i;
+        }
+    }
     g.scroll = 0;
     build_rows();
     clamp_scroll();
@@ -739,7 +768,12 @@ static void leave_section(void)
 
 static void move_cursor(int d)
 {
-    g.cursor = (g.cursor + d + g.nrows + 1) % (g.nrows + 1);
+    int places = g.nrows + (has_back() ? 1 : 0);
+
+    if (places <= 0) {
+        return;
+    }
+    g.cursor = (g.cursor + d + places) % places;
     clamp_scroll();
 }
 
@@ -1020,6 +1054,8 @@ static void begin_text_edit(int type)
         eidos_settings_net_name_text_begin();
     } else if (type == ROW_SESSION_JOINCODE) {
         eidos_settings_session_join_code_text_begin();
+    } else if (type == ROW_NET_RELAY_PORT || type == ROW_NET_CONTROL_PORT) {
+        eidos_settings_net_port_text_begin(type == ROW_NET_CONTROL_PORT);
     } else {
         eidos_settings_session_code_text_begin();
     }
@@ -1287,8 +1323,10 @@ static int sui_input(unsigned pressed, unsigned held)
     }
     if (r->type == ROW_NET_RELAY_PORT || r->type == ROW_NET_CONTROL_PORT) {
         int d = (act & 0x10u) ? 1 : (act & 0x20u) ? -1 : 0;
-        if (d == 0 && (pressed & 1u)) {
-            d = 1;
+        if (pressed & 1u) {
+            /* A: type the port on the keyboard, as the address is typed */
+            begin_text_edit(r->type);
+            return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
         if (d != 0) {
             change_net_port(r->type, d);
@@ -1377,10 +1415,16 @@ int eidos_sui_row_count(void)
         return 3;               /* the header, the question, the grey bar */
     }
     n = g.nrows - g.scroll;
-    if (n > EIDOS_SUI_VISIBLE) {
-        n = EIDOS_SUI_VISIBLE;
+    if (n > visible_rows()) {
+        n = visible_rows();
     }
-    return 1 + n + 1;        /* the header, the visible rows, the grey bar */
+    /* the header, the visible rows, and the grey bar inside a section */
+    return 1 + n + (has_back() ? 1 : 0);
+}
+
+int eidos_sui_has_back(void)
+{
+    return question_up() || has_back();
 }
 
 int eidos_sui_cursor_row(void)
@@ -1399,7 +1443,7 @@ int eidos_sui_row_adjustable(int row)
 {
     const Row *r;
 
-    if (row < 1 || row == eidos_sui_row_count() - 1
+    if (row < 1 || (has_back() && row == eidos_sui_row_count() - 1)
         || g.scroll + row - 1 >= g.nrows) {
         return 0;
     }
@@ -1453,10 +1497,7 @@ int eidos_sui_touch(int row, int zone)
         /* The text is being edited: the keyboard is the player's now. */
         return 0;
     }
-    if (row == eidos_sui_row_count() - 1) {
-        if (g.level == 0) {
-            return EIDOS_SUI_EXIT | EIDOS_SUI_SFX_SELECT;
-        }
+    if (has_back() && row == eidos_sui_row_count() - 1) {
         leave_section();
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
     }
@@ -1565,6 +1606,9 @@ int eidos_sui_touch(int row, int zone)
     case ROW_NET_CONTROL_PORT:
         if (was && (zone == EIDOS_SUI_ZONE_DEC || zone == EIDOS_SUI_ZONE_INC)) {
             change_net_port(r->type, zone == EIDOS_SUI_ZONE_INC ? 1 : -1);
+            res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
+        } else if (was) {
+            begin_text_edit(r->type);
             res = EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         }
         break;
@@ -1721,11 +1765,17 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         return;
     }
     if (row == 0) {
+        int above = g.scroll > 0;
+        int below = g.scroll + visible_rows() < g.nrows;
+
         put(label, nl, g.level == 0 ? STR_TITLE : k_tab_names[g.tab]);
+        /* the list goes on past the screen: the header says so */
+        put(value, nv, above && below ? STR_MORE_BOTH :
+                       below ? STR_MORE_BELOW : above ? STR_MORE_ABOVE : "");
         return;
     }
-    if (row == eidos_sui_row_count() - 1) {
-        put(label, nl, g.level == 0 ? STR_BACK_L0 : STR_BACK_L1);
+    if (has_back() && row == eidos_sui_row_count() - 1) {
+        put(label, nl, STR_BACK_L1);
         return;
     }
     if (row < 1 || g.scroll + row - 1 >= g.nrows) {
@@ -1807,12 +1857,20 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv)
         break;
     case ROW_NET_RELAY_PORT:
         put(label, nl, STR_NET_RPORT);
-        snprintf(buf, sizeof buf, "%d", eidos_settings_net_relay_port());
+        if (eidos_settings_net_port_text(0) != NULL) {
+            snprintf(buf, sizeof buf, "%s_", eidos_settings_net_port_text(0));
+        } else {
+            snprintf(buf, sizeof buf, "%d", eidos_settings_net_relay_port());
+        }
         put(value, nv, buf);
         break;
     case ROW_NET_CONTROL_PORT:
         put(label, nl, STR_NET_CPORT);
-        snprintf(buf, sizeof buf, "%d", eidos_settings_net_control_port());
+        if (eidos_settings_net_port_text(1) != NULL) {
+            snprintf(buf, sizeof buf, "%s_", eidos_settings_net_port_text(1));
+        } else {
+            snprintf(buf, sizeof buf, "%d", eidos_settings_net_control_port());
+        }
         put(value, nv, buf);
         break;
     case ROW_NET_NAME:
@@ -1927,7 +1985,7 @@ int eidos_sui_row_choices(int row, int *active, char names[3][20])
          * the drawing paths differ in what they show of a row. */
         return 0;
     }
-    if (row < 1 || row == eidos_sui_row_count() - 1
+    if (row < 1 || (has_back() && row == eidos_sui_row_count() - 1)
         || g.scroll + row - 1 >= g.nrows) {
         return 0;
     }

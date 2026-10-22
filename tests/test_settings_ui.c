@@ -48,20 +48,29 @@ int main(void)
     BW_CHECK_EQ("no section yet", eidos_sui_tab(), -1);
     row(0);
     BW_CHECK_EQ("header", strcmp(g_label, "Settings"), 0);
-    BW_CHECK_EQ("header has no counter", g_value[0], 0);
-    BW_CHECK_EQ("section rows", eidos_sui_row_count(), 1 + 5 + 1);
-    row(6);
-    BW_CHECK_EQ("grey bar on the list", strcmp(g_label, "Done"), 0);
+    BW_CHECK_EQ("the header says the list goes on",
+                strcmp(g_value, "More below"), 0);
+    BW_CHECK_EQ("six sections and no Done bar", eidos_sui_row_count(), 1 + 6);
+    BW_CHECK_EQ("no grey bar on the list", eidos_sui_has_back(), 0);
     row(1);
-    BW_CHECK_EQ("first section", strcmp(g_label, "Display"), 0);
-    row(5);
+    BW_CHECK_EQ("first section", strcmp(g_label, "Multiplayer"), 0);
+    row(2);
+    BW_CHECK_EQ("then Display", strcmp(g_label, "Display"), 0);
+    row(6);
     BW_CHECK_EQ("last section shown", strcmp(g_label, "Mods"), 0);
+    press(UP);                                /* wraps to Network */
+    row(0);
+    BW_CHECK_EQ("scrolled: the header says so",
+                strcmp(g_value, "More above"), 0);
+    press(DOWN);                              /* wraps to Multiplayer */
+    BW_CHECK_EQ("back on the first section", eidos_sui_cursor_row(), 1);
     r = press(L);
     BW_CHECK_EQ("L does nothing", r, 0);
     r = press(RIGHT);
     BW_CHECK_EQ("right does nothing", r, 0);
 
     /* A enters Display; the header is the section name. */
+    press(DOWN);
     r = press(A);
     BW_CHECK_EQ("A redraws", r & EIDOS_SUI_REDRAW, EIDOS_SUI_REDRAW);
     BW_CHECK_EQ("level 1", eidos_sui_level(), 1);
@@ -107,7 +116,7 @@ int main(void)
     BW_CHECK_EQ("B back redraws", r & EIDOS_SUI_REDRAW, EIDOS_SUI_REDRAW);
     BW_CHECK_EQ("B back does not exit", r & EIDOS_SUI_EXIT, 0);
     BW_CHECK_EQ("level 0 again", eidos_sui_level(), 0);
-    BW_CHECK_EQ("cursor on Display", eidos_sui_cursor_row(), 1);
+    BW_CHECK_EQ("cursor on Display", eidos_sui_cursor_row(), 2);
 
     /* Layout: three options. */
     press(DOWN);
@@ -115,7 +124,7 @@ int main(void)
     BW_CHECK_EQ("layout section", eidos_sui_tab(), 1);
     BW_CHECK_EQ("layout rows", eidos_sui_row_count(), 1 + 4 + 1);
     press(B);
-    BW_CHECK_EQ("cursor on Layout", eidos_sui_cursor_row(), 2);
+    BW_CHECK_EQ("cursor on Layout", eidos_sui_cursor_row(), 3);
 
     /* Sound: volume steps of 5. */
     press(DOWN);
@@ -130,7 +139,7 @@ int main(void)
 
     /* Controls scrolls: 12 buttons + 2 actions, 6 visible. */
     press(UP);
-    BW_CHECK_EQ("cursor on Controls", eidos_sui_cursor_row(), 3);
+    BW_CHECK_EQ("cursor on Controls", eidos_sui_cursor_row(), 4);
     press(A);
     BW_CHECK_EQ("controls section", eidos_sui_tab(), 2);
     BW_CHECK_EQ("controls rows", eidos_sui_row_count(), 1 + EIDOS_SUI_VISIBLE + 1);
@@ -192,7 +201,7 @@ int main(void)
      * is touched; the arrows act only on the selected row; the grey bar
      * goes back, then leaves. */
     eidos_sui_enter();
-    r = eidos_sui_touch(1, EIDOS_SUI_ZONE_ROW);
+    r = eidos_sui_touch(2, EIDOS_SUI_ZONE_ROW);
     BW_CHECK_EQ("touch opens Display", eidos_sui_tab(), 0);
     BW_CHECK_EQ("touch redraws", r & EIDOS_SUI_REDRAW, EIDOS_SUI_REDRAW);
     eidos_settings_set(EIDOS_OPT_DISPLAY_MODE, 0);
@@ -213,8 +222,8 @@ int main(void)
     BW_CHECK_EQ("arrow lowers", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 2);
     r = eidos_sui_touch(eidos_sui_row_count() - 1, EIDOS_SUI_ZONE_ROW);
     BW_CHECK_EQ("grey bar goes back", eidos_sui_level(), 0);
-    r = eidos_sui_touch(eidos_sui_row_count() - 1, EIDOS_SUI_ZONE_ROW);
-    BW_CHECK_EQ("grey bar leaves", r & EIDOS_SUI_EXIT, EIDOS_SUI_EXIT);
+    r = press(B);
+    BW_CHECK_EQ("B leaves the list", r & EIDOS_SUI_EXIT, EIDOS_SUI_EXIT);
     eidos_sui_leave();
 
     remove(INI);

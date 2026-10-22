@@ -54,6 +54,9 @@ void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv);
 int  eidos_sui_row_choices(int row, int *active, char names[3][20]);
 /* The highlighted row, 1..eidos_sui_row_count()-1. */
 int  eidos_sui_cursor_row(void);
+/* 1 when the screen's last row is the grey bar (Back, or a question's
+ * cancel); the main list has none, and its sixth bar is a row. */
+int  eidos_sui_has_back(void);
 int  eidos_sui_row_adjustable(int row);     /* left and right change its value */
 
 /* The stylus: see eidos_sui_touch in settings_ui.c. */

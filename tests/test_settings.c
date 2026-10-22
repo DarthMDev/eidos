@@ -592,5 +592,35 @@ int main(void)
     eidos_settings_detach();
     eidos_platform_quit(p);
     test_file();
+    /* The relay's port: 4141 by default, and typed as digits. */
+    eidos_settings_net_defaults();
+    BW_CHECK_EQ("the relay port is the relay's own",
+                eidos_settings_net_relay_port(), 4141);
+    eidos_settings_net_port_text_begin(0);
+    BW_CHECK_EQ("the typing starts empty",
+                strcmp(eidos_settings_net_port_text(0), ""), 0);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_5);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_X);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_0);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_0);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_0);
+    BW_CHECK_EQ("digits only", strcmp(eidos_settings_net_port_text(0), "5000"), 0);
+    BW_CHECK_EQ("Enter keeps it",
+                eidos_settings_net_text_key(SDL_SCANCODE_RETURN), 1);
+    BW_CHECK_EQ("the port is the typed one", eidos_settings_net_relay_port(), 5000);
+    eidos_settings_net_port_text_begin(0);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_RETURN);
+    BW_CHECK_EQ("an empty text keeps the port", eidos_settings_net_relay_port(), 5000);
+    /* The address takes a name and a port after a colon (';' is the key). */
+    eidos_settings_net_relay_text_begin();
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_A);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_PERIOD);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_B);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_SEMICOLON);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_9);
+    (void)eidos_settings_net_text_key(SDL_SCANCODE_RETURN);
+    BW_CHECK_EQ("a domain with a port", strcmp(eidos_settings_net_relay(), "a.b:9"), 0);
+    eidos_settings_net_defaults();
+
     BW_REPORT("test_settings");
 }

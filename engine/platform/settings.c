@@ -105,6 +105,8 @@ typedef struct PadCtl {
 #define EIDOS_NET_RELAY_MAX 64
 #define EIDOS_NET_NAME_MAX 32
 #define EIDOS_NET_PORT_MAX 65535
+/* The relay's own port (metaxy's default, plain TCP). */
+#define EIDOS_NET_RELAY_PORT_DEFAULT 4141
 
 /* The longest session code the port keeps: the relay's short code, and the
  * code the player types to join one (the service's own limit is the same:
@@ -170,10 +172,13 @@ static u32 g_size_ms;        /* when it was first seen pending (idle)  */
 #define EIDOS_TEXT_NAME  1        /* the player's name                  */
 #define EIDOS_TEXT_CODE  2        /* the code in force                  */
 #define EIDOS_TEXT_JOIN  3        /* the code the player types         */
+#define EIDOS_TEXT_RPORT 4        /* the relay's port, typed as digits */
+#define EIDOS_TEXT_CPORT 5        /* the control's port, the same      */
 
 static struct {
     int  which;                   /* EIDOS_TEXT_*, -1: none            */
     char saved[EIDOS_NET_RELAY_MAX];
+    char port[8];                 /* the digits of a port being typed  */
 } g_text;
 
 static void model_defaults(Model *m);
@@ -245,9 +250,10 @@ static void model_defaults(Model *m)
     }
     /* The network settings start empty: the port has no relay of its own
      * (the session calls say "no relay"), the control is off and the
-     * player has no name yet (the service's own default stands). */
+     * player has no name yet (the service's own default stands).  The
+     * relay's port is metaxy's own default. */
     m->net.relay[0] = '\0';
-    m->net.relay_port = 0;
+    m->net.relay_port = EIDOS_NET_RELAY_PORT_DEFAULT;
     m->net.control_port = 0;
     m->net.name[0] = '\0';
     /* The input injection: the port allows a press of up to a minute, and
@@ -495,6 +501,10 @@ static char *net_text_buf(int which, size_t *size)
         *size = sizeof g_cur.session.join;
         return g_cur.session.join;
     }
+    if (which == EIDOS_TEXT_RPORT || which == EIDOS_TEXT_CPORT) {
+        *size = 6;                  /* five digits and the end */
+        return g_text.port;
+    }
     *size = 0;
     return NULL;
 }
@@ -530,7 +540,10 @@ void eidos_settings_net_set_relay(const char *host)
 int eidos_settings_net_relay_port(void)
 {
     ensure_init();
-    return g_cur.net.relay_port;
+    /* 0 is "not set" (a settings.ini written before the default): the
+     * relay's own port stands */
+    return g_cur.net.relay_port != 0 ? g_cur.net.relay_port
+                                     : EIDOS_NET_RELAY_PORT_DEFAULT;
 }
 
 void eidos_settings_net_set_relay_port(int port)
@@ -708,6 +721,23 @@ void eidos_settings_net_name_text_begin(void)
     memcpy(g_text.saved, g_cur.net.name, sizeof g_cur.net.name);
 }
 
+/* A port is typed as digits: the edit starts empty, and Enter sets the
+ * number (an empty text keeps the port as it was). */
+void eidos_settings_net_port_text_begin(int control)
+{
+    ensure_init();
+    g_text.which = control ? EIDOS_TEXT_CPORT : EIDOS_TEXT_RPORT;
+    g_text.port[0] = '\0';
+    g_text.saved[0] = '\0';
+}
+
+const char *eidos_settings_net_port_text(int control)
+{
+    int want = control ? EIDOS_TEXT_CPORT : EIDOS_TEXT_RPORT;
+
+    return g_text.which == want ? g_text.port : NULL;
+}
+
 int eidos_settings_net_text_editing(void)
 {
     return g_text.which >= 0;
@@ -754,6 +784,16 @@ int eidos_settings_net_text_key(int scancode)
         return 2;
     }
     if (scancode == SDL_SCANCODE_RETURN || scancode == SDL_SCANCODE_KP_ENTER) {
+        if ((g_text.which == EIDOS_TEXT_RPORT ||
+             g_text.which == EIDOS_TEXT_CPORT) && g_text.port[0] != '\0') {
+            int v = atoi(g_text.port);
+
+            if (g_text.which == EIDOS_TEXT_RPORT) {
+                eidos_settings_net_set_relay_port(v);
+            } else {
+                eidos_settings_net_set_control_port(v);
+            }
+        }
         g_text.which = -1;
         return 1;                   /* the value is kept */
     }
@@ -764,6 +804,13 @@ int eidos_settings_net_text_key(int scancode)
         return 0;
     }
     c = eidos_settings_scancode_char(scancode);
+    if ((g_text.which == EIDOS_TEXT_RPORT || g_text.which == EIDOS_TEXT_CPORT) &&
+        (c < '0' || c > '9')) {
+        return 0;                   /* a port is digits only */
+    }
+    if (g_text.which == EIDOS_TEXT_RELAY && c == ';') {
+        c = ':';                    /* the key of ':' without Shift: name:port */
+    }
     if (c != 0 && len + 1 < size) {
         buf[len] = (char)c;
         buf[len + 1] = '\0';
@@ -776,7 +823,7 @@ void eidos_settings_net_defaults(void)
 {
     ensure_init();
     g_cur.net.relay[0] = '\0';
-    g_cur.net.relay_port = 0;
+    g_cur.net.relay_port = EIDOS_NET_RELAY_PORT_DEFAULT;
     g_cur.net.control_port = 0;
     g_cur.net.name[0] = '\0';
     g_text.which = -1;

@@ -1215,6 +1215,23 @@ static int frame_until(const int *value, int want)
     return 0;
 }
 
+static void test_relay_address(void)
+{
+    printf("the relay's address\n");
+    bw_mod_net_set_relay("relay.example.org", 4141);
+    BW_CHECK_EQ("a domain is kept as it is",
+                strcmp(bw_mod_net_relay(), "relay.example.org"), 0);
+    BW_CHECK_EQ("with the port given", (long)bw_mod_net_relay_port(), 4141);
+    bw_mod_net_set_relay("relay.example.org:5000", 4141);
+    BW_CHECK_EQ("a port after the name: the name",
+                strcmp(bw_mod_net_relay(), "relay.example.org"), 0);
+    BW_CHECK_EQ("and that port wins", (long)bw_mod_net_relay_port(), 5000);
+    bw_mod_net_set_relay("::1", 4141);
+    BW_CHECK_EQ("an IPv6 address is left alone",
+                strcmp(bw_mod_net_relay(), "::1"), 0);
+    bw_mod_net_set_relay(T_RELAY_HOST, T_RELAY_PORT);
+}
+
 static void test_port(void)
 {
     char code[BW_MOD_NET_CODE_MAX + 1];
@@ -1289,6 +1306,7 @@ int main(void)
     test_limits();
     test_bad_frame();
     test_port();
+    test_relay_address();
     test_control();
 
     bw_mod_net_reset();

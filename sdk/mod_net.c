@@ -2571,10 +2571,23 @@ const BwModNetTransport *bw_mod_net_tcp_transport(void)
 
 void bw_mod_net_set_relay(const char *host, u16 port)
 {
+    const char *colon = host != NULL ? strchr(host, ':') : NULL;
+
     net_init();
     bw_mutex_lock(g_lock);
     copy_text(g_relay, sizeof(g_relay), host);
     g_relay_port = port;
+    /* "relay.example.org:4141": a port written after the name wins (one
+     * colon only, so an IPv6 address is left alone) */
+    if (colon != NULL && strchr(colon + 1, ':') == NULL && colon[1] != '\0') {
+        long v = strtol(colon + 1, NULL, 10);
+
+        if (v > 0 && v <= 65535) {
+            g_relay[colon - host < (ptrdiff_t)sizeof(g_relay)
+                    ? colon - host : (ptrdiff_t)sizeof(g_relay) - 1] = '\0';
+            g_relay_port = (u16)v;
+        }
+    }
     bw_mutex_unlock(g_lock);
 }
 

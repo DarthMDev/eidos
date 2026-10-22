@@ -185,6 +185,7 @@ extern int eidos_sui_input(unsigned pressed, unsigned held);
 extern int eidos_sui_row_count(void);
 extern void eidos_sui_row_text(int row, char *label, int nl, char *value, int nv);
 extern int eidos_sui_cursor_row(void);
+extern int eidos_sui_has_back(void);
 extern int eidos_sui_row_choices(int row, int *active, char names[3][20]);
 extern int eidos_sui_row_adjustable(int row);
 extern int eidos_sui_touch(int row, int zone);
@@ -338,16 +339,22 @@ static void draw_rows(void)
 
     eidos_sui_row_text(0, label, sizeof label, value, sizeof value);
     upper(label);
+    upper(value);
     win_clear_and_commit_begin(g_w->win_head);
     put_text(g_w->win_head, label, 4, -1, 16 * 8 - 8, 0, TC_HEAD, TC_SHADOW);
+    if (value[0] != 0) {
+        /* the list goes on past the screen: "MORE BELOW" on the right */
+        put_text(g_w->win_head, value, 15 * 8, -1, 14 * 8, 0, TC_LIVE, TC_SHADOW);
+    }
     win_commit(g_w->win_head);
 
-    /* Bars 0..4 are the option rows (model rows 1..n-2); bar 5, the grey
-     * one, is the model's last row (Done or Back). */
+    /* Bars 0..4 are the option rows (model rows 1..); bar 5 is the grey
+     * bar (Back) inside a section, and one more row on the main list. */
     for (i = 0; i < OPT_ROWS; i++) {
         u32 win = g_w->win_row[i];
-        int mrow = i == OPT_ROWS - 1 ? n - 1 : i + 1;
-        int have = i == OPT_ROWS - 1 ? 1 : mrow < n - 1;
+        int grey = i == OPT_ROWS - 1 && eidos_sui_has_back();
+        int mrow = grey ? n - 1 : i + 1;
+        int have = grey ? 1 : mrow < n - (eidos_sui_has_back() ? 1 : 0);
         int sel = mrow == cr;
         char names[3][20];
         int active = 0, nch = 0, c;
@@ -357,7 +364,7 @@ static void draw_rows(void)
             eidos_sui_row_text(mrow, label, sizeof label, value, sizeof value);
             upper(label);
             put_text(win, label, 8, -1, 100, 4, TC_TEXT, TC_SHADOW);
-            if (i < OPT_ROWS - 1) {
+            if (!grey) {
                 nch = eidos_sui_row_choices(mrow, &active, names);
             }
             if (nch > 0) {
@@ -536,7 +543,8 @@ static void highlight(OptWork *w)
 {
     int cr = eidos_sui_cursor_row(), bar, i;
 
-    bar = cr == eidos_sui_row_count() - 1 ? OPT_ROWS - 1 : cr - 1;
+    bar = eidos_sui_has_back() && cr == eidos_sui_row_count() - 1
+          ? OPT_ROWS - 1 : cr - 1;
     if (!w->built) {
         make_palettes();
         w->built = 1;
@@ -544,9 +552,11 @@ static void highlight(OptWork *w)
     for (i = 0; i < OPT_ROWS; i++) {
         /* bars 0..4 use palette bank 2, the grey bar bank 0 (the screen map);
          * a bar with no row takes the empty bank 13, so it is not drawn */
-        u32 pal = i == OPT_ROWS - 1 ? 0u : 2u;
+        int grey = i == OPT_ROWS - 1 && eidos_sui_has_back();
+        u32 pal = grey ? 0u : 2u;
+        int rows = eidos_sui_row_count() - 1 - (eidos_sui_has_back() ? 1 : 0);
 
-        if (i < OPT_ROWS - 1 && i >= eidos_sui_row_count() - 2) {
+        if (!grey && i >= rows) {
             pal = 13u;
         }
         if (i == bar) {
@@ -598,7 +608,7 @@ static void gfx_build(OptWork *w)
     func_02049238(h);
 
     w->win_help = func_020450F0(4, 1, 0x13, 0x1e, 4, 0xf, 1);
-    w->win_head = func_020450F0(0, 0, 0, 0x10, 3, 0xf, 1);
+    w->win_head = func_020450F0(0, 0, 0, 0x1e, 3, 0xf, 1);   /* wide: the "more" hint on the right */
     for (i = 0; i < OPT_ROWS; i++) {
         w->win_row[i] = func_020450F0(3, 1, (u32)(2 + 3 * i), 0x1e, 3, 0xf, 1);
     }
@@ -687,11 +697,17 @@ static int touch_input(OptWork *w)
         return 0;
     }
     bar = (y - 16) / 24;
-    mrow = bar == OPT_ROWS - 1 ? n - 1 : bar + 1;
-    if (bar < OPT_ROWS - 1 && mrow >= n - 1) {
-        return 0;       /* a bar with no row */
+    {
+        /* the sixth bar is the grey one inside a section, a row on the
+         * main list */
+        int grey = bar == OPT_ROWS - 1 && eidos_sui_has_back();
+
+        mrow = grey ? n - 1 : bar + 1;
+        if (!grey && mrow >= n - (eidos_sui_has_back() ? 1 : 0)) {
+            return 0;       /* a bar with no row */
+        }
+        nch = !grey ? eidos_sui_row_choices(mrow, &active, names) : 0;
     }
-    nch = bar < OPT_ROWS - 1 ? eidos_sui_row_choices(mrow, &active, names) : 0;
     if (nch == 3) {
         zone = x < k_text3[0] - 6 ? -1 : x < k_text3[1] - 6 ? 0 : x < k_text3[2] - 6 ? 1 : 2;
     } else if (nch == 2) {
