@@ -62,6 +62,26 @@
  * says it should.
  */
 
+/*
+ * The overlay functions this file calls by name, for the overlay
+ * link (tools/ovlink.py): each one gets its plain name, a
+ * trampoline that calls the overlay resident over the address.
+ *
+ * symbols:
+ *   BTL_POKEPARAM_AddHp                  0x021D5FA4  thumb  ov093
+ *   BTL_POKEPARAM_GetItem                0x021D5B40  thumb  ov093
+ *   BTL_POKEPARAM_GetMon                 0x021D5844  thumb  ov093
+ *   BTL_POKEPARAM_GetSpecies             0x021D5444  thumb  ov093
+ *   BTL_POKEPARAM_GetTypes               0x021D57A8  thumb  ov093
+ *   BTL_POKEPARAM_GetValue               0x021D59B4  thumb  ov093
+ *   BTL_POKEPARAM_SetItem                0x021D5B44  thumb  ov093
+ *   BTL_POKEPARAM_SetStat                0x021D5970  thumb  ov093
+ *   BTL_POKEPARAM_SubHp                  0x021D5F90  thumb  ov093
+ *   BTL_POKEPARAM_ZeroHp                 0x021D5FB8  thumb  ov093
+ *   BTL_SIDE_GetPokeAtPos                0x021B98AC  thumb  ov093
+ *   FIELD_PLAYER_GetPos                  0x021A3038  thumb  ov021
+ */
+
 #include "types.h"
 #include "mod_api.h"
 #include "mod_state.h"

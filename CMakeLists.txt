@@ -1424,6 +1424,13 @@ add_executable(test_g2d ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_g2d.c)
 target_include_directories(test_g2d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_g2d PRIVATE eidos)
 add_test(NAME test_g2d COMMAND test_g2d ${BW_DATA_ROOT_ABS} ${BW_G2D_ORACLE_DIR})
+
+# Every overlay function a port file calls by name is in its symbols
+# block, so the overlay link gives it a plain name (tools/check_port_names.py).
+file(GLOB _eidos_port_c ${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/*.c ${CMAKE_CURRENT_SOURCE_DIR}/demo/*.c)
+add_test(NAME check_port_names COMMAND ${Python3_EXECUTABLE}
+         ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_port_names.py ${ALETHEIA_ROOT} ${_eidos_port_c})
 eidos_data_test(test_g2d bw_g2d_oracle)
 
 # The BG test reads its screen list out of the oracle's own manifest, so the

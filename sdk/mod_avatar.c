@@ -94,6 +94,32 @@
  * deleted is never written to.
  */
 
+/*
+ * The overlay functions this file calls by name, for the overlay
+ * link (tools/ovlink.py): each one gets its plain name, a
+ * trampoline that calls the overlay resident over the address.
+ *
+ * symbols:
+ *   FLDMMDL_ACMD_ConvertCodeByDir        0x02197E7C  thumb  ov021
+ *   FLDMMDL_AddMmdl                      0x0216CE60  thumb  ov010
+ *   FLDMMDL_CheckEndAcmd                 0x0216D454  thumb  ov010
+ *   FLDMMDL_DeleteMmdl                   0x0216CF2C  thumb  ov010
+ *   FLDMMDL_GetPos                       0x0216D88C  thumb  ov010
+ *   FLDMMDL_OnMoveBitMovePause           0x0216DAF8  thumb  ov010
+ *   FLDMMDL_SetAcmd                      0x0216D410  thumb  ov010
+ *   FLDMMDL_SetDirAll                    0x0216D60C  thumb  ov010
+ *   FLDMMDL_SetGridNowX                  0x0216D844  thumb  ov010
+ *   FLDMMDL_SetGridNowY                  0x0216D85C  thumb  ov010
+ *   FLDMMDL_SetGridNowZ                  0x0216D874  thumb  ov010
+ *   FLDMMDL_SetPos                       0x0216D89C  thumb  ov010
+ *   FLDMMDL_SetStatusBit                 0x0216D548  thumb  ov010
+ *   FLDMMDL_SetStatusBitZoneDeleteOff    0x0216DB80  thumb  ov010
+ *   FLDMMDL_SysGetFreeMmdl               0x0216DEEC  thumb  ov010
+ *   FLDMMDL_SysGetMmdlMax                0x0216D4F0  thumb  ov010
+ *   FLDMMDL_SysSearchObjId               0x0216DE94  thumb  ov010
+ *   FLDMMDL_SysSearchUseMmdl             0x0216DD1C  thumb  ov010
+ */
+
 #include <stddef.h>
 #include <string.h>
 

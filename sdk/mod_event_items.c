@@ -24,6 +24,15 @@
  * are redirected onto the same names by the build's gamespell header
  * (tools/gamespell.py), so one spelling links against either tree.
  */
+
+/*
+ * The overlay functions this file calls by name, for the overlay
+ * link (tools/ovlink.py): each one gets its plain name, a
+ * trampoline that calls the overlay resident over the address.
+ *
+ * symbols:
+ *   SCRCMD_WORK_GetScriptId              0x0215A5D0  thumb  ov010
+ */
 #include "mod_event.h"
 #include "mod_slot.h"
 #include "mod_state.h"

@@ -33,6 +33,37 @@
  * are redirected onto the same names by the build's gamespell header
  * (tools/gamespell.py), so one spelling links against either tree.
  */
+
+/*
+ * The overlay functions this file calls by name, for the overlay
+ * link (tools/ovlink.py): each one gets its plain name, a
+ * trampoline that calls the overlay resident over the address.
+ *
+ * symbols:
+ *   BTLV_SCU_AppendMessageArg            0x021EAF50  thumb  ov093
+ *   BTLV_SCU_InitMessage                 0x021EAF18  thumb  ov093
+ *   BTL_CALC_GetItemParam                0x021D805C  thumb  ov093
+ *   BTL_MAIN_DecodeMessageCode           0x021B8778  thumb  ov093
+ *   BTL_MAIN_GetCompetitor               0x021B86B8  thumb  ov093
+ *   BTL_MAIN_GetRule                     0x021B8588  thumb  ov093
+ *   BTL_MAIN_GetTrainerSlotOfPoke        0x021B8D8C  thumb  ov093
+ *   BTL_MAIN_IsMultiMode                 0x021B86C8  thumb  ov093
+ *   BTL_MAIN_PokeIdToClientId            0x021B8D08  thumb  ov093
+ *   BTL_POKEPARAM_GetMon                 0x021D5844  thumb  ov093
+ *   BTL_POKEPARAM_GetPokeId              0x021D5440  thumb  ov093
+ *   BTL_POKEPARAM_GetSpecies             0x021D5444  thumb  ov093
+ *   BTL_POKEPARAM_GetValue               0x021D59B4  thumb  ov093
+ *   BTL_POKEPARAM_IsFainted              0x021D5B68  thumb  ov093
+ *   BTL_SERVER_CMD_Push                  0x021CD4B0  thumb  ov093
+ *   BTL_SERVER_FLOW_GetBallCatchRate     0x021CBD48  thumb  ov093
+ *   BTL_SERVER_FLOW_GetEffectiveWeather  0x021C2AB0  thumb  ov093
+ *   BTL_SERVER_FLOW_GetTurnCount         0x021C8138  thumb  ov093
+ *   BTL_SIDE_GetPokeAtPos                0x021B98AC  thumb  ov093
+ *   BTL_SIDE_GetPokeAtPosThunk           0x021B98A4  thumb  ov093
+ *   BTL_SIDE_GetPokeByIdThunk            0x021B9934  thumb  ov093
+ *   BTL_SIDE_GetSlotOfClient             0x021B9AEC  thumb  ov093
+ *   BTL_SLOT_GetPokeParam                0x021B9C00  thumb  ov093
+ */
 #include "mod_event.h"
 #include "mod_context.h"
 #include "mod_export.h"

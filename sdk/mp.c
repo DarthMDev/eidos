@@ -20,6 +20,21 @@
  * (its token is kept per code, so it is the same peer).
  */
 
+/*
+ * The overlay functions this file calls by name, for the overlay
+ * link (tools/ovlink.py): each one gets its plain name, a
+ * trampoline that calls the overlay resident over the address.
+ *
+ * symbols:
+ *   FIELDMAP_GetFieldPlayer              0x02188CB4  thumb  ov021
+ *   FIELDMAP_GetZoneId                   0x02188C9C  thumb  ov021
+ *   FIELD_PLAYER_GetDirDisp              0x021A3050  thumb  ov021
+ *   FIELD_PLAYER_GetFormCode             0x021A3098  thumb  ov021
+ *   FIELD_PLAYER_GetPos                  0x021A3038  thumb  ov021
+ *   FIELD_PLAYER_GetRideEffect           0x021A2F98  thumb  ov021
+ *   FIELD_PLAYER_GetSex                  0x021A30B0  thumb  ov021
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1329,6 +1344,221 @@ static void joiner_on_message(u32 peer, const char *msg, u32 size)
 }
 
 /* ------------------------------------------------------------------ */
+/* Positions (SPEC section 16)                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Every player appears on the others' maps.  Each game sends its player's
+ * place to everyone else ("pos <zone> <x> <y> <z> <dir> <mode> <sprite>")
+ * when it changes, and once in a while when it does not.  Each game shows
+ * the players in its own zone as field avatars (sdk/mod_avatar.h).  A map
+ * change, a battle or a menu that leaves the field empties the game's
+ * entity pool, so the avatars are made again when the field comes back.
+ */
+typedef struct BwMpPos {
+    int  have;
+    u16  zone;
+    s16  x, y, z;
+    u8   dir, mode;
+    u16  sprite;
+    u32  avatar;                /* 0: not shown here */
+} BwMpPos;
+
+static BwMpPos g_pos[BW_MP_PLAYERS_MAX];        /* by peer - 1 */
+
+static struct {
+    int   have;
+    u16   zone;
+    s16   x, y, z;
+    u8    dir, mode;
+    u16   sprite;
+    u64   sent_ms;
+    void *field;                /* the field the avatars were made in */
+} g_me;
+
+/* How often an unchanged place is sent again. */
+#define BW_MP_POS_EVERY_MS 2000u
+
+/* The avatar sprites: the hero and the heroine (FIELD_PLAYER_OBJ_CODE_*). */
+#define BW_MP_SPRITE_HERO    1u
+#define BW_MP_SPRITE_HEROINE 4u
+
+typedef struct BwMpVec { s32 x, y, z; } BwMpVec;
+
+extern void *FIELDMAP_GetFieldPlayer(void *fieldMap) BW_MP_WEAK;
+extern u16   FIELDMAP_GetZoneId(void *fieldMap) BW_MP_WEAK;
+extern void  FIELD_PLAYER_GetPos(void *player, BwMpVec *out) BW_MP_WEAK;
+extern u16   FIELD_PLAYER_GetDirDisp(void *player) BW_MP_WEAK;
+extern u32   FIELD_PLAYER_GetSex(void *player) BW_MP_WEAK;
+extern u32   FIELD_PLAYER_GetFormCode(void *player) BW_MP_WEAK;
+extern u32   FIELD_PLAYER_GetRideEffect(void *player) BW_MP_WEAK;
+
+extern u32  bw_mod_avatar_create(u32 sprite, s16 x, s16 z, u8 dir) BW_MP_WEAK;
+extern void bw_mod_avatar_move(u32 avatar, s16 x, s16 y, s16 z, u8 dir, u8 mode) BW_MP_WEAK;
+extern void bw_mod_avatar_delete(u32 avatar) BW_MP_WEAK;
+extern void bw_mod_avatar_reset(void) BW_MP_WEAK;
+extern void bw_mod_avatar_set_game_data(void *game_data) BW_MP_WEAK;
+
+static void *field_running(void);
+
+static s16 cell_of(s32 v)
+{
+    return (s16)((v >> 4) / 4096);
+}
+
+/* The avatars go; the places stay, so they are shown again. */
+static void pos_hide_all(void)
+{
+    u32 i;
+
+    for (i = 0; i < BW_MP_PLAYERS_MAX; i++) {
+        g_pos[i].avatar = 0;
+    }
+    if (bw_mod_avatar_reset != NULL) {
+        bw_mod_avatar_reset();
+    }
+}
+
+/* A player is gone: its avatar goes with it. */
+static void pos_forget(u32 peer)
+{
+    BwMpPos *p;
+
+    if (peer < 1u || peer > BW_MP_PLAYERS_MAX) {
+        return;
+    }
+    p = &g_pos[peer - 1];
+    if (p->avatar != 0 && bw_mod_avatar_delete != NULL) {
+        bw_mod_avatar_delete(p->avatar);
+    }
+    memset(p, 0, sizeof(*p));
+}
+
+static void pos_clear(void)
+{
+    u32 i;
+
+    for (i = 1; i <= BW_MP_PLAYERS_MAX; i++) {
+        pos_forget(i);
+    }
+    memset(&g_me, 0, sizeof(g_me));
+}
+
+/* Another player's place: "pos <zone> <x> <y> <z> <dir> <mode> <sprite>". */
+static void on_pos(u32 peer, const char *msg, u32 size)
+{
+    char text[96];
+    unsigned zone, dir, mode, sprite;
+    int x, y, z;
+    BwMpPos *p;
+
+    if (peer < 1u || peer > BW_MP_PLAYERS_MAX) {
+        return;
+    }
+    copy_n(text, sizeof(text), msg, size);
+    if (sscanf(text + 4, "%u %d %d %d %u %u %u", &zone, &x, &y, &z, &dir,
+               &mode, &sprite) != 7) {
+        return;
+    }
+    p = &g_pos[peer - 1];
+    if (p->have && p->zone != zone && p->avatar != 0 &&
+        bw_mod_avatar_delete != NULL) {
+        bw_mod_avatar_delete(p->avatar);     /* it left this zone */
+        p->avatar = 0;
+    }
+    p->have = 1;
+    p->zone = (u16)zone;
+    p->x = (s16)x;
+    p->y = (s16)y;
+    p->z = (s16)z;
+    p->dir = (u8)dir;
+    p->mode = (u8)mode;
+    p->sprite = (u16)sprite;
+}
+
+/* This player's own place, read from the field; 0 when there is none. */
+static int read_me(void *fm)
+{
+    void *pl;
+    BwMpVec v;
+    u32 form;
+
+    if (fm == NULL || FIELDMAP_GetFieldPlayer == NULL ||
+        FIELDMAP_GetZoneId == NULL || FIELD_PLAYER_GetPos == NULL) {
+        return 0;
+    }
+    pl = FIELDMAP_GetFieldPlayer(fm);
+    if (pl == NULL) {
+        return 0;
+    }
+    memset(&v, 0, sizeof(v));
+    FIELD_PLAYER_GetPos(pl, &v);
+    g_me.zone = FIELDMAP_GetZoneId(fm);
+    g_me.x = cell_of(v.x);
+    g_me.y = cell_of(v.y);
+    g_me.z = cell_of(v.z);
+    g_me.dir = FIELD_PLAYER_GetDirDisp != NULL ? (u8)FIELD_PLAYER_GetDirDisp(pl) : 0;
+    form = FIELD_PLAYER_GetFormCode != NULL ? FIELD_PLAYER_GetFormCode(pl) : 0;
+    g_me.mode = (form == 2u || form == 3u) ? 3 :           /* surfing, diving */
+                (FIELD_PLAYER_GetRideEffect != NULL &&
+                 FIELD_PLAYER_GetRideEffect(pl) != 0) ? 2 : 0;
+    g_me.sprite = (u16)(FIELD_PLAYER_GetSex != NULL && FIELD_PLAYER_GetSex(pl) != 0
+                        ? BW_MP_SPRITE_HEROINE : BW_MP_SPRITE_HERO);
+    return 1;
+}
+
+/* Once a frame while a multiplayer game runs: this player's place goes
+ * out, and the others in this zone are shown. */
+static void pos_frame(void)
+{
+    void *fm = field_running();
+    u16 zone = g_me.zone;
+    s16 x = g_me.x, y = g_me.y, z = g_me.z;
+    u8 dir = g_me.dir, mode = g_me.mode;
+    u32 i;
+
+    if (fm != g_me.field) {
+        /* the field came, went or was made again: its pool is new */
+        pos_hide_all();
+        g_me.field = fm;
+    }
+    if (fm == NULL || !read_me(fm)) {
+        return;
+    }
+    if (!g_me.have || zone != g_me.zone || x != g_me.x || y != g_me.y ||
+        z != g_me.z || dir != g_me.dir || mode != g_me.mode ||
+        g_mp.now_ms >= g_me.sent_ms + BW_MP_POS_EVERY_MS) {
+        char msg[96];
+        int n;
+
+        if (g_me.have && zone != g_me.zone) {
+            pos_hide_all();          /* another zone: other people */
+        }
+        n = snprintf(msg, sizeof(msg), "pos %u %d %d %d %u %u %u",
+                     (unsigned)g_me.zone, g_me.x, g_me.y, g_me.z,
+                     (unsigned)g_me.dir, (unsigned)g_me.mode,
+                     (unsigned)g_me.sprite);
+        (void)g_net->send(0, msg, (u32)n);
+        g_me.sent_ms = g_mp.now_ms;
+        g_me.have = 1;
+    }
+    for (i = 0; i < BW_MP_PLAYERS_MAX; i++) {
+        BwMpPos *p = &g_pos[i];
+
+        if (!p->have || p->zone != g_me.zone) {
+            continue;
+        }
+        if (p->avatar == 0 && bw_mod_avatar_create != NULL) {
+            p->avatar = bw_mod_avatar_create(p->sprite, p->x, p->z, p->dir);
+            fprintf(stderr, "eidos: multiplayer: player %u shown here (avatar %u)\n", (unsigned)(i + 1), (unsigned)p->avatar);
+        }
+        if (p->avatar != 0 && bw_mod_avatar_move != NULL) {
+            bw_mod_avatar_move(p->avatar, p->x, p->y, p->z, p->dir, p->mode);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* The network's events                                                */
 /* ------------------------------------------------------------------ */
 
@@ -1350,6 +1580,15 @@ void bw_mp_on_net(u32 peer, int kind, const void *buf, u32 size)
         }
         g_mp.state = BW_MP_ENDED;
         copy_n(g_mp.reason, sizeof(g_mp.reason), why, strlen(why));
+        pos_clear();
+        return;
+    }
+    if (kind == (int)BW_SESSION_LEAVE) {
+        pos_forget(peer);
+    }
+    if (kind == (int)BW_SESSION_MESSAGE && size > 4 && memcmp(buf, "pos ", 4) == 0) {
+        /* a player's place, from any player */
+        on_pos(peer, (const char *)buf, size);
         return;
     }
     if (g_mp.host) {
@@ -1390,6 +1629,7 @@ void bw_mp_on_net(u32 peer, int kind, const void *buf, u32 size)
 static void begin(int host, const char *code)
 {
     sends_clear();
+    pos_clear();
     char game = g_mp.game;
     char mods[BW_MP_MODS_MAX + 1];
     int mods_set = g_mp.mods_set;
@@ -1545,6 +1785,24 @@ static void *field_quiet_game_data(void)
         return NULL;
     }
     return GAMESYSTEM_GetGameData(gs);
+}
+
+/* The field, when it runs and no field event does (a warp, a menu, a
+ * script, a battle's start); NULL otherwise.  The avatars' game data is
+ * bound here too. */
+static void *field_running(void)
+{
+    void *gd = field_quiet_game_data();
+    void *gs;
+
+    if (gd == NULL) {
+        return NULL;
+    }
+    if (bw_mod_avatar_set_game_data != NULL) {
+        bw_mod_avatar_set_game_data(gd);
+    }
+    gs = *(void **)bw_dsref__GameSystemGlobal;
+    return GAMESYSTEM_GetFieldMap(gs);
 }
 
 /* A joiner's game saves at the first quiet moment after the host saved. */
@@ -1811,6 +2069,9 @@ void bw_mp_frame_at(u64 t)
         }
     }
     field_quiet_save();
+    if (g_mp.in_game && (g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE)) {
+        pos_frame();
+    }
     if (g_mp.saving && GAME_DATA_SaveMain != NULL) {
         int r = GAME_DATA_SaveMain(g_mp.save_gd);
 

@@ -167,9 +167,20 @@ use multiplayer for now (SPEC section 17).
 - The title menu's MULTIPLAYER line (in the Mic Test's place, third)
   opens Host / Join.
 
+## Positions (built)
+
+- Each game sends its player's place to every other player
+  (`pos <zone> <x> <y> <z> <dir> <mode> <sprite>`) when it changes, and
+  every 2 seconds when it does not.
+- Each game shows the players in its own zone as field avatars
+  (sdk/mod_avatar.h): the hero or the heroine, walking to each new cell.
+- A map change, a battle or a menu that leaves the field empties the
+  game's entity pool; the avatars are made again when the field is back.
+  A player who leaves takes its avatar with it.
+
 ## Not built yet
 
-1. Positions and event forwarding.
+1. Event forwarding.
 2. The shared table for mods.
 3. TLS.
 4. Adding players after the first start.

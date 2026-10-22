@@ -30,6 +30,21 @@
  * call finds the symbol missing and reports nothing instead of calling
  * into nothing.
  */
+
+/*
+ * The overlay functions this file calls by name, for the overlay
+ * link (tools/ovlink.py): each one gets its plain name, a
+ * trampoline that calls the overlay resident over the address.
+ *
+ * symbols:
+ *   EVENT_TRAINER_EYE_FindTrainer        0x021AE1FC  thumb  ov021
+ *   FIELDMAP_GetZoneId                   0x02188C9C  thumb  ov021
+ *   FIELD_ENCOUNT_CreateZoneWildMons     0x021A954C  thumb  ov021
+ *   FIELD_PLAYER_GetFormCode             0x021A3098  thumb  ov021
+ *   FIELD_PLAYER_GetPos                  0x021A3038  thumb  ov021
+ *   FIELD_PLAYER_GetRideEffect           0x021A2F98  thumb  ov021
+ *   SCRIPT_WORK_ReadWorkPointer          0x02159AE8  thumb  ov010
+ */
 #include "mod_event.h"
 #include "mod_avatar.h"
 #include "mod_context.h"
