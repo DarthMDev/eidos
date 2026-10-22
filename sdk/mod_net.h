@@ -268,6 +268,13 @@ const char *bw_mod_net_name(void);
  */
 void bw_mod_net_set_token_file(const char *path);
 
+/* 32 hexadecimal digits from the OS random source. */
+void bw_mod_net_random_hex(char out[33]);
+
+/* The port's reset during a multiplayer game: the mods' handlers go, the
+ * session stays (sdk/port_reset.c). */
+void bw_mod_net_reset_mods(void);
+
 /*
  * The port the external control listens on: the number the port's settings
  * hold.  Zero means the control is off.  Setting it while the control is

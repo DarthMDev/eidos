@@ -16,7 +16,7 @@ game's, as in a Minecraft world opened to LAN.
 | The relay client | `sdk/mod_net.c` | the connection, the frames of `eidos-net/1`, the mods' messages |
 | Multiplayer | `sdk/mp.c` | the lobby, the start, the grace after a drop, the pause |
 | The held game | `demo/eidos_boot.c`, `boot_mp_hold` | holds the game's thread and draws the waiting screen |
-| The lobby screen | `engine/platform/settings_ui.c`, Session page | Host, Join, the players, Start |
+| The lobby screen | `engine/platform/settings_ui.c`, Multiplayer tab | Host, Join, the players, your name, Start |
 
 ## The port's messages
 
@@ -97,20 +97,39 @@ use multiplayer for now (SPEC section 17).
   back to the title, and the player joins the new code.
 - The timers are `#ifndef` in `sdk/mp.h`, so a test build can shorten them.
 
+## The saves (built, first part)
+
+- The host keeps one save per joiner in `<save folder>/multiplayer`, named
+  by the joiner's fingerprint; the last three versions stay as `.1` to
+  `.3`.
+- Who a joiner is: the host has a lasting id (`host_id.txt`) and sends it
+  (`hostid <id>`) when a player joins. The joiner keeps one random secret
+  per host id (`secrets.txt`) and says hello with its fingerprint, never
+  the secret itself: `hello <v> <game> <mods> <fingerprint> <in game>`.
+- The start: the host's game goes into its own save (the title menu's
+  Continue, or New Game without a save). Each joiner gets its save from the
+  host, in pieces (`save <total> <offset> <crc32>` and up to 3840 bytes, six
+  pieces a frame), or `save 0 0 0` when the host has none for it yet; the
+  joiner's game then boots on it (or on a new game). The joiner keeps no
+  save of its own: the file is `multiplayer/session.sav`, and the joiner's
+  own save is the chip's file again when it leaves.
+- When a joiner's game writes its save, the file goes to the host, which
+  keeps it as that player's save.
+- The port's reset keeps the session while a multiplayer game runs.
+
 ## Not built yet
 
-In the order of SPEC section 18:
-
-3. Save slots and the main menu's Multiplayer line. Until then the lobby is
-   the Session page of the port's settings, and the start does not change
-   which save each game runs: each player goes on with its own game.
-4. The host's save as the truth: the joiners' saves in it, the transfer,
-   host-only saving, the joiner's identity secret (keyed by a host id kept
-   in the multiplayer save).
-5. Positions and event forwarding.
-6. The shared table for mods.
-7. TLS.
-8. Adding players after the first start.
+1. Saving by the host only: the host's save makes every joiner's game save
+   at its next safe moment, and the host's "saved" waits for all; the
+   joiners' own Save option goes. Until then a joiner's save reaches the
+   host whenever that joiner saves.
+2. Several save slots, and a multiplayer save as one of them; the title
+   menu's Multiplayer line.
+3. The game check (Black or White) against the player's save.
+4. Positions and event forwarding.
+5. The shared table for mods.
+6. TLS.
+7. Adding players after the first start.
 
 The mods' own session events for the lobby, the start and the pause need
 new event kinds and a `session_start` service: they come with the next mod

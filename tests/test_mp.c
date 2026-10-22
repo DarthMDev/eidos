@@ -11,6 +11,7 @@
 
 #include "mod_net.h"
 #include "mp.h"
+#include "save.h"
 
 #include "port_test.h"
 
@@ -208,7 +209,10 @@ static void test_joiner(void)
     bw_mp_set_local('W', "");
     sent_reset();
     BW_CHECK_EQ("the joiner joins", bw_mp_join("abc234"), 0);
-    BW_CHECK_EQ("and says hello to the host", sent_has("hello 1 W -"), 1);
+    BW_CHECK_EQ("no hello before the host says who it is", sent_has("hello"), 0);
+    say(1, "hostid 0123456789abcdef0123456789abcdef");
+    BW_CHECK_EQ("then hello, with who the player is to this host",
+                sent_has("hello 1 W - "), 1);
     BW_CHECK_EQ("to the host", (long)g_sent_peer[0], 1);
     say(1, "roster lobby\n1\t1\t0\tB\t1\tHilda\n2\t1\t0\tW\t1\tCheren\n");
     BW_CHECK_EQ("the roster is read", (long)bw_mp_player_count(), 2);
@@ -311,10 +315,120 @@ static void test_relay_restart(void)
     bw_mp_reset();
 }
 
+static int g_booted = -1;
+
+static void t_boot(int new_game)
+{
+    g_booted = new_game;
+}
+
+static int file_size(const char *name)
+{
+    char dir[512], path[600];
+    FILE *f;
+    long n;
+
+    if (bw_mp_dir(dir, sizeof dir) != 0) {
+        return -1;
+    }
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return -1;
+    }
+    fseek(f, 0, SEEK_END);
+    n = ftell(f);
+    fclose(f);
+    return (int)n;
+}
+
+/* The saves: the host sends a joiner its save at the start (none: a new
+ * game), and keeps what a joiner's game uploads. */
+static void test_saves(void)
+{
+    char code[16];
+    char fp[33];
+    char msg[256];
+    static unsigned char data[9000];
+    unsigned crc = 0xFFFFFFFFu;
+    unsigned i;
+    int k, n;
+
+    printf("the saves\n");
+    {
+        /* what an earlier run kept is gone first */
+        static const char *const old[] = {
+            "test_mp_tmp/multiplayer/ffffeeeeddddccccbbbbaaaa99998888.sav",
+            "test_mp_tmp/multiplayer/ffffeeeeddddccccbbbbaaaa99998888.sav.1",
+            "test_mp_tmp/multiplayer/ffffeeeeddddccccbbbbaaaa99998888.sav.2",
+            "test_mp_tmp/multiplayer/ffffeeeeddddccccbbbbaaaa99998888.sav.3"
+        };
+
+        for (k = 0; k < 4; k++) {
+            remove(old[k]);
+        }
+    }
+    bw_mp_reset();
+    bw_mp_set_net(&k_test_net);
+    bw_mp_set_local('B', "");
+    bw_mp_set_boot(t_boot);
+    (void)bw_mp_host(code, sizeof code);
+    bw_mp_frame_at(1000);
+    sent_reset();
+    bw_mp_on_net(2, (int)BW_SESSION_JOIN, NULL, 0);
+    BW_CHECK_EQ("the host says who it is", sent_has("hostid "), 1);
+    snprintf(fp, sizeof fp, "%s", "ffffeeeeddddccccbbbbaaaa99998888");
+    snprintf(msg, sizeof msg, "hello 1 W - %s 0", fp);
+    say(2, msg);
+    sent_reset();
+    BW_CHECK_EQ("the host starts", bw_mp_start(), 0);
+    BW_CHECK_EQ("a player the host has no save for: a new game",
+                sent_has("save 0 0 0"), 1);
+
+    /* the joiner's game uploads its save: two pieces, then the host keeps it */
+    for (i = 0; i < sizeof data; i++) {
+        data[i] = (unsigned char)(i * 7u);
+    }
+    for (i = 0; i < sizeof data; i++) {
+        crc ^= data[i];
+        for (k = 0; k < 8; k++) {
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+        }
+    }
+    crc = ~crc;
+    for (i = 0; i < sizeof data; i += 3840u) {
+        static unsigned char piece[4096];
+        unsigned m = sizeof data - i < 3840u ? (unsigned)sizeof data - i : 3840u;
+
+        n = snprintf((char *)piece, 64, "save %u %u %u\n", (unsigned)sizeof data,
+                     i, crc);
+        memcpy(piece + n, data + i, m);
+        bw_mp_on_net(2, (int)BW_SESSION_MESSAGE, piece, (u32)n + m);
+    }
+    snprintf(msg, sizeof msg, "%s.sav", fp);
+    BW_CHECK_EQ("the host keeps the joiner's save", file_size(msg),
+                (int)sizeof data);
+    bw_mp_reset();
+
+    /* a joiner: an empty save from the host starts a new game */
+    bw_mp_set_net(&k_test_net);
+    bw_mp_set_boot(t_boot);
+    (void)bw_mp_join("ABC234");
+    say(1, "hostid 0123456789abcdef0123456789abcdef");
+    g_booted = -1;
+    bw_mp_on_net(1, (int)BW_SESSION_MESSAGE, "save 0 0 0\n", 11);
+    BW_CHECK_EQ("the joiner's game boots on a new game", g_booted, 1);
+    bw_mp_leave();
+    bw_mp_reset();
+}
+
 int main(void)
 {
+    /* every file the layer writes goes to the test's own folder */
+    bw_set_save_dir("test_mp_tmp");
     test_host();
     test_joiner();
     test_relay_restart();
+    test_saves();
     BW_REPORT("test_mp");
 }

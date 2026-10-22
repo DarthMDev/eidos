@@ -52,6 +52,7 @@
 #include "mod_handoff.h"
 #include "mod_message.h"
 #include "mod_net.h"
+#include "mp.h"
 #include "mod_panel.h"
 #include "mod_rule.h"
 #include "mod_table.h"
@@ -110,7 +111,13 @@ void bw_port_reset(void)
     bw_mod_script_reset();
     bw_mod_timer_reset();
     bw_mod_export_reset();
-    bw_mod_net_reset();
+    /* A multiplayer game goes on through the reset: a joiner's game boots
+     * again on the save the host sent (sdk/mp.h). */
+    if (bw_mp_state() != BW_MP_OFF && bw_mp_state() != BW_MP_ENDED) {
+        bw_mod_net_reset_mods();
+    } else {
+        bw_mod_net_reset();
+    }
     bw_mod_frame_reset();
     bw_mod_avatar_reset();
     bw_mod_handoff_reset();

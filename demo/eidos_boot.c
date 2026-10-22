@@ -1432,6 +1432,16 @@ static void boot_mp_hold(BootRun *run)
     }
 }
 
+/* Multiplayer boots a joiner's game on the save the host sent. */
+static void boot_mp_boot(int new_game)
+{
+    printf("eidos_boot: multiplayer: the game starts on %s\n",
+           new_game ? "a new game" : "the host's save");
+    fflush(stdout);
+    g_run_next = new_game ? BOOT_RUN_NEW_GAME : BOOT_RUN_CONTINUE;
+    g_restart_pending = 1;
+}
+
 /* The halt hook: one frame of time passing. */
 static void boot_frame(void *user)
 {
@@ -1800,6 +1810,7 @@ static int boot_run_start(EidosFrameHooks *hooks, int own_thread)
     /* The mod layer's own seams: what a restart means to the port, and what
      * the port does with a save that arrived from a peer. */
     bw_mod_restart_set_handler(boot_restart);
+    bw_mp_set_boot(boot_mp_boot);
     bw_mod_handoff_set_reload(boot_reload);
     /* The port's own confirmation for a save that arrives: the player is
      * asked before anything is installed. */

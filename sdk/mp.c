@@ -27,7 +27,9 @@
 #include "mp.h"
 #include "mod_loader.h"
 #include "mod_net.h"
+#include "plat_save.h"
 #include "plat_thread.h"
+#include "save.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -73,7 +75,54 @@ static struct {
     char       wait[200];
     char       reason[96];
     int        started;             /* the first start, not yet taken */
+    char       host_id[33];         /* the host's lasting id (SPEC 12)  */
+    char       fp[33];              /* a joiner: who it is to this host */
+    int        in_game;             /* a joiner: its game runs the save the host sent */
+    u32        last_writes;         /* a joiner: the save writes uploaded */
 } g_mp;
+
+/* ------------------------------------------------------------------ */
+/* The saves: files, ids, transfers                                    */
+/* ------------------------------------------------------------------ */
+
+#if defined(__GNUC__) || defined(__clang__)
+#define BW_MP_WEAK __attribute__((weak))
+#else
+#define BW_MP_WEAK
+#endif
+
+/* The backup chip (sdk/arm7/fs.c): the joiner's game runs on the file the
+ * host sent; its writes are uploaded. */
+extern void bw_arm7_backup_set_path(const char *path) BW_MP_WEAK;
+extern u32  bw_arm7_backup_writes(void) BW_MP_WEAK;
+extern int  bw_arm7_backup_dirty(void) BW_MP_WEAK;
+
+static void (*g_boot)(int new_game);
+
+/* A transfer's piece: the header line, then up to this many bytes. */
+#define BW_MP_PIECE 3840u
+/* The pieces sent per frame, so the receiver's queue keeps up. */
+#define BW_MP_PIECES_PER_FRAME 6u
+#define BW_MP_SENDS_MAX 16u
+
+typedef struct BwMpSend {
+    u32  peer;
+    u8  *buf;
+    u32  size;
+    u32  off;
+    u32  crc;
+    int  used;
+} BwMpSend;
+
+typedef struct BwMpRecv {
+    u8  *buf;
+    u32  total;
+    u32  got;
+    u32  crc;
+} BwMpRecv;
+
+static BwMpSend g_sends[BW_MP_SENDS_MAX];
+static BwMpRecv g_recv[BW_MP_PLAYERS_MAX + 1];
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -214,6 +263,394 @@ static BwMpState word_state(const char *w, size_t n)
         return BW_MP_PAUSED;
     }
     return BW_MP_LOBBY;
+}
+
+static u32 crc32_of(const u8 *p, u32 n)
+{
+    u32 c = 0xFFFFFFFFu;
+    u32 i;
+    int k;
+
+    for (i = 0; i < n; i++) {
+        c ^= p[i];
+        for (k = 0; k < 8; k++) {
+            c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+        }
+    }
+    return ~c;
+}
+
+int bw_mp_dir(char *out, u32 size)
+{
+    const char *dir = bw_save_dir();
+
+    if (dir == NULL || dir[0] == '\0' ||
+        snprintf(out, size, "%s/multiplayer", dir) >= (int)size) {
+        return -1;
+    }
+    (void)bw_plat_mkdirs(out);
+    return 0;
+}
+
+static int mp_path(char *out, u32 size, const char *name)
+{
+    char dir[400];
+
+    if (bw_mp_dir(dir, sizeof(dir)) != 0 ||
+        snprintf(out, size, "%s/%s", dir, name) >= (int)size) {
+        return -1;
+    }
+    return 0;
+}
+
+static u8 *read_whole(const char *path, u32 *size)
+{
+    FILE *f = fopen(path, "rb");
+    long n;
+    u8 *buf;
+
+    *size = 0;
+    if (f == NULL) {
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_END) != 0 || (n = ftell(f)) <= 0 ||
+        n > (8L << 20) || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    buf = (u8 *)malloc((size_t)n);
+    if (buf != NULL && fread(buf, 1, (size_t)n, f) != (size_t)n) {
+        free(buf);
+        buf = NULL;
+    }
+    fclose(f);
+    if (buf != NULL) {
+        *size = (u32)n;
+    }
+    return buf;
+}
+
+/* 32 hexadecimal digits from the OS random source (the session tokens'). */
+static void random_hex(char out[33])
+{
+    bw_mod_net_random_hex(out);
+}
+
+/* The host's lasting id: made once, kept in the multiplayer folder. */
+static const char *host_id(void)
+{
+    char path[512];
+    FILE *f;
+
+    if (g_mp.host_id[0] != '\0') {
+        return g_mp.host_id;
+    }
+    if (mp_path(path, sizeof(path), "host_id.txt") == 0 &&
+        (f = fopen(path, "rb")) != NULL) {
+        if (fscanf(f, "%32s", g_mp.host_id) != 1) {
+            g_mp.host_id[0] = '\0';
+        }
+        fclose(f);
+    }
+    if (strlen(g_mp.host_id) != 32) {
+        random_hex(g_mp.host_id);
+        if (mp_path(path, sizeof(path), "host_id.txt") == 0) {
+            (void)bw_save_write_atomic(path, g_mp.host_id, 32);
+        }
+    }
+    return g_mp.host_id;
+}
+
+/* What a secret is to the host: a fingerprint, so the host's save never
+ * holds the secret itself. */
+static void fingerprint(const char *secret, char out[33])
+{
+    static const char digits[] = "0123456789abcdef";
+    u64 a = 0xcbf29ce484222325ull, b = 0x84222325cbf29ce4ull;
+    const char *s;
+    int i;
+
+    for (s = secret; *s != '\0'; s++) {
+        a = (a ^ (u8)*s) * 0x100000001b3ull;
+        b = (b ^ (u8)*s) * 0x100000001b3ull;
+        b ^= b >> 29;
+    }
+    for (i = 0; i < 16; i++) {
+        out[i] = digits[(a >> (60 - 4 * i)) & 0xFu];
+        out[16 + i] = digits[(b >> (60 - 4 * i)) & 0xFu];
+    }
+    out[32] = '\0';
+}
+
+/* A joiner's secret for one host: kept in the multiplayer folder, made the
+ * first time that host is met. */
+static void joiner_secret(const char *hid, char out[33])
+{
+    char path[512];
+    char line[128];
+    FILE *f;
+
+    out[0] = '\0';
+    if (mp_path(path, sizeof(path), "secrets.txt") != 0) {
+        random_hex(out);
+        return;
+    }
+    if ((f = fopen(path, "rb")) != NULL) {
+        while (fgets(line, sizeof(line), f) != NULL) {
+            char h[40], s[40];
+
+            if (sscanf(line, "%39s %39s", h, s) == 2 && strcmp(h, hid) == 0 &&
+                strlen(s) == 32) {
+                memcpy(out, s, 33);
+                break;
+            }
+        }
+        fclose(f);
+    }
+    if (out[0] == '\0') {
+        random_hex(out);
+        if ((f = fopen(path, "ab")) != NULL) {
+            fprintf(f, "%s %s\n", hid, out);
+            fclose(f);
+        }
+    }
+}
+
+/* A file to one peer, in pieces, a few per frame (bw_mp_frame). */
+static void send_bytes(u32 peer, const u8 *buf, u32 size)
+{
+    u32 i;
+
+    if (size == 0) {
+        (void)g_net->send(peer, "save 0 0 0\n", 11);
+        return;
+    }
+    for (i = 0; i < BW_MP_SENDS_MAX; i++) {
+        if (!g_sends[i].used) {
+            g_sends[i].buf = (u8 *)malloc(size);
+            if (g_sends[i].buf == NULL) {
+                return;
+            }
+            memcpy(g_sends[i].buf, buf, size);
+            g_sends[i].peer = peer;
+            g_sends[i].size = size;
+            g_sends[i].off = 0;
+            g_sends[i].crc = crc32_of(buf, size);
+            g_sends[i].used = 1;
+            return;
+        }
+    }
+}
+
+static void sends_pump(void)
+{
+    u32 budget = BW_MP_PIECES_PER_FRAME;
+    u32 i;
+
+    for (i = 0; i < BW_MP_SENDS_MAX && budget > 0; i++) {
+        BwMpSend *s = &g_sends[i];
+
+        while (s->used && budget > 0) {
+            u8 msg[BW_MP_PIECE + 64];
+            u32 n = s->size - s->off;
+            int h;
+
+            if (n > BW_MP_PIECE) {
+                n = BW_MP_PIECE;
+            }
+            h = snprintf((char *)msg, 64, "save %u %u %u\n", (unsigned)s->size,
+                         (unsigned)s->off, (unsigned)s->crc);
+            memcpy(msg + h, s->buf + s->off, n);
+            if (g_net->send(s->peer, msg, (u32)h + n) != 0) {
+                break;                  /* tried again next frame */
+            }
+            s->off += n;
+            budget--;
+            if (s->off >= s->size) {
+                free(s->buf);
+                memset(s, 0, sizeof(*s));
+            }
+        }
+    }
+}
+
+static void sends_clear(void)
+{
+    u32 i;
+
+    for (i = 0; i < BW_MP_SENDS_MAX; i++) {
+        free(g_sends[i].buf);
+    }
+    memset(g_sends, 0, sizeof(g_sends));
+    for (i = 0; i <= BW_MP_PLAYERS_MAX; i++) {
+        free(g_recv[i].buf);
+    }
+    memset(g_recv, 0, sizeof(g_recv));
+}
+
+/* The host keeps a joiner's save: the old one goes to .1 (and .1 to .2,
+ * .2 to .3), and the new one is written whole before it replaces it. */
+static void host_store(const BwMpPlayer *p, const u8 *buf, u32 size)
+{
+    char path[512], a[520], b[520];
+    char name[48];
+    int i;
+
+    if (p->fp[0] == '\0') {
+        return;
+    }
+    snprintf(name, sizeof(name), "%s.sav", p->fp);
+    if (mp_path(path, sizeof(path), name) != 0) {
+        return;
+    }
+    for (i = 3; i > 0; i--) {
+        snprintf(a, sizeof(a), "%s.%d", path, i);
+        if (i == 1) {
+            snprintf(b, sizeof(b), "%s", path);
+        } else {
+            snprintf(b, sizeof(b), "%s.%d", path, i - 1);
+        }
+        (void)remove(a);
+        (void)rename(b, a);
+    }
+    if (bw_save_write_atomic(path, buf, size) != 0) {
+        fprintf(stderr, "eidos: multiplayer: %s's save could not be written\n",
+                p->name);
+        return;
+    }
+    fprintf(stderr, "eidos: multiplayer: %s's save is kept (%u bytes)\n",
+            p->name, (unsigned)size);
+}
+
+/* The host sends a joiner its save (or nothing: a new game). */
+static void host_send_save(const BwMpPlayer *p)
+{
+    char path[512], name[48];
+    u8 *buf = NULL;
+    u32 size = 0;
+
+    if (p->fp[0] != '\0') {
+        snprintf(name, sizeof(name), "%s.sav", p->fp);
+        if (mp_path(path, sizeof(path), name) == 0) {
+            buf = read_whole(path, &size);
+        }
+    }
+    send_bytes(p->peer, buf, size);
+    free(buf);
+}
+
+/* A joiner's game starts on the save the host sent: the file is the
+ * backup chip's from now on, and the game boots on it (or on a new game
+ * when the host has none for this player yet). */
+static void joiner_install(const u8 *buf, u32 size)
+{
+    char path[512];
+
+    if (mp_path(path, sizeof(path), "session.sav") != 0) {
+        return;
+    }
+    (void)remove(path);
+    if (size > 0 && bw_save_write_atomic(path, buf, size) != 0) {
+        fprintf(stderr, "eidos: multiplayer: the save could not be written\n");
+        return;
+    }
+    if (bw_arm7_backup_set_path != NULL) {
+        bw_arm7_backup_set_path(path);
+    }
+    g_mp.in_game = 1;
+    g_mp.last_writes = bw_arm7_backup_writes != NULL ? bw_arm7_backup_writes() : 0;
+    if (g_boot != NULL) {
+        g_boot(size == 0);
+    }
+}
+
+/* A joiner's game wrote its save: the host gets it. */
+static void joiner_upload(void)
+{
+    char path[512];
+    u8 *buf;
+    u32 size = 0;
+
+    if (mp_path(path, sizeof(path), "session.sav") != 0) {
+        return;
+    }
+    buf = read_whole(path, &size);
+    if (buf != NULL) {
+        send_bytes(1, buf, size);
+        free(buf);
+    }
+}
+
+/* One piece of a save: "save <total> <offset> <crc>\n<bytes>".  The whole
+ * file goes to `done` when its last piece is in and the sum matches. */
+static void on_save_piece(u32 peer, const u8 *msg, u32 size,
+                          void (*done)(u32 peer, const u8 *buf, u32 size))
+{
+    const u8 *nl = (const u8 *)memchr(msg, '\n', size);
+    unsigned total = 0, off = 0, crc = 0;
+    char head[64];
+    BwMpRecv *r;
+    u32 n;
+
+    if (nl == NULL || peer > BW_MP_PLAYERS_MAX) {
+        return;
+    }
+    copy_n(head, sizeof(head), (const char *)msg, (size_t)(nl - msg));
+    if (sscanf(head, "save %u %u %u", &total, &off, &crc) != 3) {
+        return;
+    }
+    if (total == 0) {
+        done(peer, NULL, 0);
+        return;
+    }
+    r = &g_recv[peer];
+    if (off == 0 || r->buf == NULL || r->total != total || r->crc != crc) {
+        free(r->buf);
+        r->buf = (u8 *)malloc(total);
+        r->total = total;
+        r->got = 0;
+        r->crc = crc;
+        if (r->buf == NULL) {
+            return;
+        }
+    }
+    n = size - (u32)(nl + 1 - msg);
+    if (off != r->got || off + n > total) {
+        return;                         /* a piece out of turn: dropped */
+    }
+    memcpy(r->buf + off, nl + 1, n);
+    r->got += n;
+    if (r->got == total) {
+        if (crc32_of(r->buf, total) == crc) {
+            done(peer, r->buf, total);
+        } else {
+            fprintf(stderr, "eidos: multiplayer: a save arrived damaged\n");
+        }
+        free(r->buf);
+        memset(r, 0, sizeof(*r));
+    }
+}
+
+static void host_got_save(u32 peer, const u8 *buf, u32 size)
+{
+    BwMpPlayer *p = player(peer);
+
+    if (p != NULL && p->peer == peer && size > 0) {
+        host_store(p, buf, size);
+    }
+}
+
+static void joiner_got_save(u32 peer, const u8 *buf, u32 size)
+{
+    (void)peer;
+    if (!g_mp.in_game) {
+        joiner_install(buf, size);
+    }
+}
+
+void bw_mp_set_boot(void (*fn)(int new_game))
+{
+    g_boot = fn;
 }
 
 /* ------------------------------------------------------------------ */
@@ -361,6 +798,12 @@ static void host_on_join(u32 peer)
         p->name[0] == '\0') {
         snprintf(p->name, sizeof(p->name), "player %u", (unsigned)peer);
     }
+    {
+        char msg[48];
+        int n = snprintf(msg, sizeof(msg), "hostid %s", host_id());
+
+        (void)g_net->send(peer, msg, (u32)n);
+    }
     if (g_mp.state == BW_MP_GRACE && host_ready()) {
         /* back within the grace: play goes on */
         g_mp.state = BW_MP_PLAYING;
@@ -397,6 +840,10 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
     if (p == NULL || p->peer != peer) {
         return;
     }
+    if (size >= 5 && memcmp(msg, "save ", 5) == 0) {
+        on_save_piece(peer, (const u8 *)msg, size, host_got_save);
+        return;
+    }
     copy_n(text, sizeof(text), msg, size);
     if (strncmp(text, "name ", 5) == 0 && text[5] != '\0') {
         copy_n(p->name, sizeof(p->name), text + 5, strlen(text + 5));
@@ -405,6 +852,14 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
     }
     if (strncmp(text, "hello ", 6) == 0 &&
         sscanf(text + 6, "%d %7s %512s", &version, game, mods) == 3) {
+        char fp[40];
+        int in_game = 0;
+
+        if (sscanf(text + 6, "%*d %*7s %*512s %39s %d", fp, &in_game) == 2 &&
+            strlen(fp) == 32) {
+            copy_n(p->fp, sizeof(p->fp), fp, 32);
+            p->in_game = in_game;
+        }
         p->game = (game[0] == 'W') ? 'W' : 'B';
         if (strcmp(mods, "-") == 0) {
             mods[0] = '\0';
@@ -414,6 +869,9 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         host_broadcast_roster();
         /* a player who comes back while the game runs is told so */
         if (g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE) {
+            if (!p->in_game) {
+                host_send_save(p);
+            }
             (void)g_net->send(peer, "start", 5);
         }
     }
@@ -429,8 +887,12 @@ static void joiner_hello(void)
     const char *mods = local_mods();
     int n;
 
-    n = snprintf(msg, sizeof(msg), "hello %d %c %s", BW_MP_PROTO, local_game(),
-                 mods[0] != '\0' ? mods : "-");
+    if (g_mp.fp[0] == '\0') {
+        return;                     /* the host has not said who it is yet */
+    }
+    n = snprintf(msg, sizeof(msg), "hello %d %c %s %s %d", BW_MP_PROTO,
+                 local_game(), mods[0] != '\0' ? mods : "-", g_mp.fp,
+                 g_mp.in_game);
     if (n > 0) {
         (void)g_net->send(1, msg, (u32)n);
     }
@@ -488,12 +950,23 @@ static void joiner_on_message(u32 peer, const char *msg, u32 size)
     if (peer != 1u) {
         return;
     }
+    if (size >= 5 && memcmp(msg, "save ", 5) == 0) {
+        on_save_piece(peer, (const u8 *)msg, size, joiner_got_save);
+        return;
+    }
+    if (size > 7 && memcmp(msg, "hostid ", 7) == 0) {
+        char hid[40], secret[33];
+
+        copy_n(hid, sizeof(hid), msg + 7, size - 7);
+        copy_n(g_mp.host_id, sizeof(g_mp.host_id), hid, strlen(hid));
+        joiner_secret(hid, secret);
+        fingerprint(secret, g_mp.fp);
+        joiner_hello();
+        return;
+    }
     if (size >= 7 && memcmp(msg, "roster ", 7) == 0) {
         joiner_on_roster(msg, size);
     } else if (size == 5 && memcmp(msg, "start", 5) == 0) {
-        if (g_mp.state == BW_MP_LOBBY) {
-            g_mp.started = 1;
-        }
         g_mp.state = BW_MP_PLAYING;
     } else if (size == 5 && memcmp(msg, "pause", 5) == 0) {
         g_mp.state = BW_MP_PAUSED;
@@ -561,6 +1034,7 @@ void bw_mp_on_net(u32 peer, int kind, const void *buf, u32 size)
 
 static void begin(int host, const char *code)
 {
+    sends_clear();
     char game = g_mp.game;
     char mods[BW_MP_MODS_MAX + 1];
     int mods_set = g_mp.mods_set;
@@ -640,6 +1114,11 @@ int bw_mp_join(const char *code)
 
 void bw_mp_leave(void)
 {
+    if (!g_mp.host && g_mp.in_game && bw_arm7_backup_set_path != NULL) {
+        /* the player's own save is the chip's file again */
+        bw_arm7_backup_set_path(NULL);
+    }
+    g_mp.in_game = 0;
     g_net->leave();
     g_mp.state = BW_MP_OFF;
     snprintf(g_mp.reason, sizeof(g_mp.reason), "left");
@@ -755,6 +1234,14 @@ int bw_mp_start(void)
     }
     g_mp.state = BW_MP_PLAYING;
     host_broadcast_roster();
+    for (i = 1; i < BW_MP_PLAYERS_MAX; i++) {
+        BwMpPlayer *p = &g_mp.players[i];
+
+        if (p->peer != 0 && p->on_roster && p->connected && !p->in_game) {
+            host_send_save(p);
+            p->in_game = 1;
+        }
+    }
     host_send_word("start");
     return 0;
 }
@@ -865,6 +1352,13 @@ int bw_mp_player_at(u32 index, BwMpPlayer *out)
 void bw_mp_frame_at(u64 t)
 {
     g_mp.now_ms = t;
+    sends_pump();
+    if (!g_mp.host && g_mp.in_game && bw_arm7_backup_writes != NULL &&
+        bw_arm7_backup_writes() != g_mp.last_writes &&
+        (bw_arm7_backup_dirty == NULL || !bw_arm7_backup_dirty())) {
+        g_mp.last_writes = bw_arm7_backup_writes();
+        joiner_upload();
+    }
     switch (g_mp.state) {
     case BW_MP_GRACE:
         if (g_mp.host && t >= g_mp.grace_until) {
@@ -944,6 +1438,7 @@ void bw_mp_set_local(char game, const char *mods)
 
 void bw_mp_reset(void)
 {
+    sends_clear();
     memset(&g_mp, 0, sizeof(g_mp));
     g_net = &k_net;
 }

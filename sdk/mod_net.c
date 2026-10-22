@@ -1577,6 +1577,11 @@ static void token_keep(const char *code, const char *token)
     tokens_write();
 }
 
+void bw_mod_net_random_hex(char out[33])
+{
+    token_make(out);
+}
+
 void bw_mod_net_set_token_file(const char *path)
 {
     net_init();
@@ -2396,6 +2401,22 @@ void bw_mod_net_on_command(BwCommandHandler fn)
     }
     bw_mutex_unlock(g_lock);
     (void)control_start();
+}
+
+/*
+ * The port's reset while a multiplayer game runs: the mods' handlers go (the
+ * mods start again), the session and the port's own handler stay.
+ */
+void bw_mod_net_reset_mods(void)
+{
+    u32 i;
+
+    net_init();
+    bw_mutex_lock(g_lock);
+    for (i = 0; i < BW_MOD_NET_MODS_MAX; i++) {
+        memset(&g_mods[i], 0, sizeof(g_mods[i]));
+    }
+    bw_mutex_unlock(g_lock);
 }
 
 /*

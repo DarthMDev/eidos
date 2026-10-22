@@ -58,6 +58,8 @@ typedef struct BwMpPlayer {
     char game;                       /* 'B' or 'W', 0 until the player said  */
     int  mods_ok;                    /* its multiplayer mods match the host's */
     char mods[BW_MP_MODS_MAX + 1];   /* "ns=n;ns=n", or "" for none          */
+    char fp[33];                     /* who the player is to this host        */
+    int  in_game;                    /* its game runs its multiplayer save    */
 } BwMpPlayer;
 
 /* Host a new session (a new code each time); the code goes to `code`. */
@@ -134,6 +136,16 @@ void bw_mp_on_net(u32 peer, int kind, const void *buf, u32 size);
 
 /* Forget everything (the port's reset). */
 void bw_mp_reset(void);
+
+/*
+ * How a joiner's game is started on the save the host sent: the port boots
+ * the game again, on the save in force (new_game 0) or on a new game.  The
+ * port sets it (demo/eidos_boot.c).
+ */
+void bw_mp_set_boot(void (*fn)(int new_game));
+
+/* The folder of the multiplayer files: <save folder>/multiplayer. */
+int  bw_mp_dir(char *out, u32 size);
 
 /* The network calls the layer makes (sdk/mod_net.h by default); the tests
  * put their own in.  NULL puts the default back. */
