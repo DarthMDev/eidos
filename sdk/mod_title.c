@@ -38,6 +38,20 @@ int bw_mod_title_take_rebuild(void)
 }
 
 static int g_autostart;
+static int g_multiplayer;
+
+void bw_mod_title_open_multiplayer(void)
+{
+    g_multiplayer = 1;
+}
+
+int bw_mod_title_take_multiplayer(void)
+{
+    int r = g_multiplayer;
+
+    g_multiplayer = 0;
+    return r;
+}
 
 void bw_mod_title_request_autostart(void)
 {

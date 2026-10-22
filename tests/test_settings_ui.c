@@ -11,6 +11,8 @@
 #include "settings.h"
 #include "settings_ui.h"
 
+void bw_mod_title_open_multiplayer(void);
+
 #define INI "test_settings_ui_work.ini"
 
 #define A 0x1u
@@ -46,10 +48,10 @@ int main(void)
     eidos_sui_enter();
 
     /* The screen opens on a tab: no list of sections, no grey bar. */
-    BW_CHECK_EQ("seven tabs", eidos_sui_tab_count(), 7);
+    BW_CHECK_EQ("six tabs", eidos_sui_tab_count(), 6);
     BW_CHECK_EQ("the first tab", eidos_sui_tab(), 0);
     BW_CHECK_EQ("its name", strcmp(eidos_sui_tab_name(0), "Display"), 0);
-    BW_CHECK_EQ("the last tab", strcmp(eidos_sui_tab_name(6), "Multiplayer"), 0);
+    BW_CHECK_EQ("the last tab", strcmp(eidos_sui_tab_name(5), "Network"), 0);
     BW_CHECK_EQ("no grey bar", eidos_sui_has_back(), 0);
     row(0);
     BW_CHECK_EQ("the header is the tab", strcmp(g_label, "Display"), 0);
@@ -97,7 +99,7 @@ int main(void)
     press(L);
     BW_CHECK_EQ("L: Display", eidos_sui_tab(), 0);
     press(L);
-    BW_CHECK_EQ("L wraps to Multiplayer", eidos_sui_tab(), 6);
+    BW_CHECK_EQ("L wraps to Network", eidos_sui_tab(), 5);
     press(R);
     BW_CHECK_EQ("R wraps to Display", eidos_sui_tab(), 0);
 
@@ -148,11 +150,17 @@ int main(void)
     eidos_sui_help_line(0, help, sizeof help);
     BW_CHECK_EQ("bind help", help[0] != 0, 1);
 
-    /* Multiplayer: Host and Join; Join asks for the code; B goes back. */
-    press(L);
-    press(L);
-    press(L);
-    BW_CHECK_EQ("multiplayer tab", eidos_sui_tab(), 6);
+    /* B leaves; the title menu's MULTIPLAYER opens its own screen: Host
+     * and Join; Join asks for the code; B goes back. */
+    r = press(B);
+    BW_CHECK_EQ("B leaves the settings", r & EIDOS_SUI_EXIT, EIDOS_SUI_EXIT);
+    eidos_sui_leave();
+    bw_mod_title_open_multiplayer();
+    eidos_sui_enter();
+    BW_CHECK_EQ("the multiplayer screen", eidos_sui_tab(), 6);
+    BW_CHECK_EQ("no tabs on it", eidos_sui_tab_count(), 0);
+    press(R);
+    BW_CHECK_EQ("R does not leave it", eidos_sui_tab(), 6);
     BW_CHECK_EQ("two buttons", eidos_sui_row_count(), 1 + 2);
     row(1);
     BW_CHECK_EQ("Host", strcmp(g_label, "Host"), 0);
@@ -182,8 +190,9 @@ int main(void)
      * choice where it is touched, and the arrows act only on the selected
      * row. */
     eidos_sui_enter();
-    BW_CHECK_EQ("the tab it was left on", eidos_sui_tab(), 6);
-    press(R);
+    BW_CHECK_EQ("the tab it was left on", eidos_sui_tab(), 2);
+    press(L);
+    press(L);
     BW_CHECK_EQ("display", eidos_sui_tab(), 0);
     eidos_settings_set(EIDOS_OPT_DISPLAY_MODE, 0);
     eidos_sui_touch(1, 2);

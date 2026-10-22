@@ -51,6 +51,7 @@ extern int bw_mod_title_in_settings(void);
 extern int bw_mod_title_set_in_settings(int on);
 extern int bw_mod_title_set_rebuild(void);
 extern int bw_mod_title_take_autostart(void);
+extern void bw_mod_title_open_multiplayer(void);
 extern int bw_mp_take_started(void);
 extern void eidos_sui_enter(void);
 extern int eidos_sui_input(unsigned pressed, unsigned held);
@@ -184,6 +185,13 @@ int STARTMENU_StateSelectRow(char *p)
         case 5:
             return STARTMENU_BeginSelectAnim(p, 9);
         case 6:
+            if (bw_mod_title_settings_on()) {
+                /* MULTIPLAYER, in the Mic Test's place: the settings
+                 * process opens on the Multiplayer screen alone */
+                bw_mod_title_open_multiplayer();
+                *(u8 *)(p + 0x129) = BW_TITLE_SEL_SETTINGS;
+                return STARTMENU_BeginFadeIn(p, 1);
+            }
             *(u8 *)(p + 0x129) = *(u8 *)(p + *(u8 *)(p + 0x128) + 0x120);
             return STARTMENU_BeginSelectAnim(p, 11);
         }

@@ -147,6 +147,16 @@ static void *settings_label(void)
     return s;
 }
 
+/* The label of kind 6 (the game's Mic Test): the MULTIPLAYER row. */
+static void *multiplayer_label(void)
+{
+    static const unsigned short text[12] = {'M', 'U', 'L', 'T', 'I', 'P', 'L',
+                                            'A', 'Y', 'E', 'R', 0xFFFF};
+    void *s = STRBUF_Create(12, 0xb);
+    STRBUF_SetStringN(s, text, 12);
+    return s;
+}
+
 /* A string object from ASCII text (code units, then the 0xFFFF end code). */
 static void *ascii_obj(const char *t, int n)
 {
@@ -370,7 +380,10 @@ void STARTMENU_CreateRowWindows(struct Menu *p)
     p->slot[10].on = 1;
     STRBUF_Delete(a);
 
-    a = MSGDATA_AllocString(p->f5c, 7);
+    if (bw_mod_title_settings_on())
+        a = multiplayer_label();
+    else
+        a = MSGDATA_AllocString(p->f5c, 7);
     {
         void *bg = p->f68;
         PRINTSYS_PrintQueColor(bg, BMP_WIN_GetBmp(p->slot[11].obj), 0, 4, a, p->f58, 0x440);

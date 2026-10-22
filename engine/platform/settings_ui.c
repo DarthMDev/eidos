@@ -10,6 +10,7 @@
 #include "settings.h"
 #include "mod_menu.h"
 #include "mod_net.h"
+#include "mod_title.h"
 #include "mp.h"
 
 /*
@@ -76,8 +77,10 @@ static const char *const k_tab_names[] = {
     "Display", "Layout", "Controls", "Sound", "Mods", "Network", "Multiplayer"
 };
 
-/* The order of the tabs. */
-static const int k_tab_order[] = { 0, 1, 2, 3, 4, 5, 6 };
+/* The order of the tabs.  Multiplayer is a screen of its own, opened
+ * from the title menu. */
+static const int k_tab_order[] = { 0, 1, 2, 3, 4, 5 };
+#define TAB_STRIP 6
 
 /* Short button names for the Controls rows (the backend labels are long). */
 static const char *const k_button_short[] = {
@@ -712,6 +715,7 @@ static void clamp_scroll(void)
 }
 
 static int g_last_tab;
+static int g_mp_only;          /* the Multiplayer screen alone (title menu) */
 static void enter_section(int t);
 
 void eidos_sui_enter(void)
@@ -723,6 +727,13 @@ void eidos_sui_enter(void)
     g.rows = rows;               /* the list's own storage is kept */
     g.rowcap = rowcap;
     g_mp_view = MP_VIEW_CHOOSE;
+    g_mp_only = bw_mod_title_take_multiplayer();
+    if (g_mp_only) {
+        g.tab = TAB_SESSION;
+        g.level = 1;
+        build_rows();
+        return;
+    }
     /* the screen opens on the tab it was left on */
     enter_section(g_last_tab);
 }
@@ -768,7 +779,9 @@ static int reload_mods(void)
 static void enter_section(int t)
 {
     g.tab = t;
-    g_last_tab = t;
+    if (t < TAB_STRIP) {
+        g_last_tab = t;
+    }
     g.level = 1;
     g.cursor = 0;
     g.scroll = 0;
@@ -1311,11 +1324,11 @@ static int sui_input(unsigned pressed, unsigned held)
         }
         return EIDOS_SUI_EXIT | EIDOS_SUI_SFX_BACK;
     }
-    if (pressed & 0x300u) {
+    if ((pressed & 0x300u) && !g_mp_only) {
         /* L and R: the tab before or after */
         int d = (pressed & 0x100u) ? 1 : -1;
 
-        enter_section((g.tab + d + TAB_COUNT) % TAB_COUNT);
+        enter_section((g.tab + d + TAB_STRIP) % TAB_STRIP);
         return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_MOVE;
     }
     if (act & 0x40u) {
@@ -1505,7 +1518,7 @@ int eidos_sui_row_count(void)
 
 const char *eidos_sui_tab_name(int i)
 {
-    if (i < 0 || i >= TAB_COUNT) {
+    if (i < 0 || i >= TAB_STRIP) {
         return "";
     }
     return k_tab_names[k_tab_order[i]];
@@ -1766,7 +1779,8 @@ int eidos_sui_level(void)
 
 int eidos_sui_tab_count(void)
 {
-    return TAB_COUNT;
+    /* the Multiplayer screen has no tabs */
+    return g_mp_only ? 0 : TAB_STRIP;
 }
 
 static void option_value_of(int id, int v, char *out, int n)

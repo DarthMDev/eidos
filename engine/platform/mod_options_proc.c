@@ -353,6 +353,9 @@ static void draw_rows(void)
         int x = 240 - 12 - tabs * 14 - 12;
         void *bmp = func_02045770(g_w->win_head);
 
+        if (tabs == 0) {
+            goto no_tabs;               /* the Multiplayer screen */
+        }
         put_text(g_w->win_head, "L", x, -1, 12, 0, TC_TEXT, TC_SHADOW);
         x += 12;
         for (t = 0; t < tabs; t++) {
@@ -362,6 +365,7 @@ static void draw_rows(void)
         }
         put_text(g_w->win_head, "R", x + 2, -1, 12, 0, TC_TEXT, TC_SHADOW);
     }
+no_tabs:
     win_commit(g_w->win_head);
 
     {

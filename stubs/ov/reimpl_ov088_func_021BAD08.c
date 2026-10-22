@@ -141,6 +141,16 @@ static void *settings_label(void)
     return s;
 }
 
+/* The label of kind 6 (the game's Mic Test): the MULTIPLAYER row. */
+static void *multiplayer_label(void)
+{
+    static const unsigned short text[12] = {'M', 'U', 'L', 'T', 'I', 'P', 'L',
+                                            'A', 'Y', 'E', 'R', 0xFFFF};
+    void *s = func_020457B0(12, 0xb);
+    func_02045994(s, text, 12);
+    return s;
+}
+
 /* A string object from ASCII text (code units, then the 0xFFFF end code). */
 static void *ascii_obj(const char *t, int n)
 {
@@ -364,7 +374,10 @@ void func_021BAD08(struct Menu *p)
     p->slot[10].on = 1;
     func_02045808(a);
 
-    a = func_02045EC0(p->f5c, 7);
+    if (bw_mod_title_settings_on())
+        a = multiplayer_label();
+    else
+        a = func_02045EC0(p->f5c, 7);
     {
         void *bg = p->f68;
         func_0201C724(bg, func_02045770(p->slot[11].obj), 0, 4, a, p->f58, 0x440);
