@@ -174,7 +174,8 @@ typedef struct BwMpSend {
     u32  size;
     u32  off;
     u32  acked;                 /* the bytes the receiver confirmed */
-    u32  idle;                  /* frames without a confirmation */
+    u64  last_ms;               /* when the receiver last confirmed more */
+    u32  dups;                  /* confirmations in a row with no progress */
     u32  crc;
     int  used;
 } BwMpSend;
@@ -182,8 +183,14 @@ typedef struct BwMpSend {
 /* The bytes in flight before the receiver's confirmation: a few pieces,
  * so its queue keeps up whatever its frame rate. */
 #define BW_MP_WINDOW (4u * BW_MP_PIECE)
-/* Frames without a confirmation before the unconfirmed pieces go again. */
-#define BW_MP_RESEND_FRAMES 120u
+/* Time without a confirmation before the unconfirmed pieces go again.  It
+ * is time and not frames: the confirmation crosses the internet twice,
+ * whatever the frame rate (a headless run has hundreds a second). */
+#define BW_MP_RESEND_MS 3000u
+/* Confirmations of the same bytes in a row before the sender goes back to
+ * them: the relay keeps the order, so the receiver says the same number
+ * again only when it dropped a piece. */
+#define BW_MP_RESEND_DUPS 3u
 
 typedef struct BwMpRecv {
     u8  *buf;
@@ -717,11 +724,14 @@ static void sends_pump(void)
         if (s->used && s->off - s->acked >= BW_MP_WINDOW) {
             /* the window is full: wait for the receiver; send the
              * unconfirmed pieces again when nothing comes */
-            if (++s->idle >= BW_MP_RESEND_FRAMES) {
+            if (s->last_ms == 0) {
+                s->last_ms = g_mp.now_ms;
+            }
+            if (g_mp.now_ms >= s->last_ms + BW_MP_RESEND_MS) {
                 fprintf(stderr, "eidos: multiplayer: no answer for a save "
                         "piece; sending it again from %u\n", (unsigned)s->acked);
                 s->off = s->acked;
-                s->idle = 0;
+                s->last_ms = g_mp.now_ms;
             }
             continue;
         }
@@ -769,11 +779,15 @@ static void on_save_ack(u32 peer, const char *msg, u32 size)
         }
         if (got > s->acked) {
             s->acked = got;
-            s->idle = 0;
-        } else if (got < s->off && ++s->idle >= 2) {
-            /* the receiver lost a piece: send again from what it has */
+            s->last_ms = g_mp.now_ms;
+            s->dups = 0;
+        } else if (got == s->acked && got < s->off &&
+                   ++s->dups >= BW_MP_RESEND_DUPS) {
+            /* the receiver dropped a piece: send again from what it has.
+             * A confirmation of fewer bytes than were sent is normal: the
+             * other pieces are on their way. */
             s->off = got;
-            s->idle = 0;
+            s->dups = 0;
         }
         if (s->acked >= s->size) {
             free(s->buf);
