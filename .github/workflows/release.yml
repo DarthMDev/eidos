@@ -114,7 +114,10 @@ jobs:
       - name: Test (no ROM; tests that need one skip themselves)
         run: ctest --test-dir build --output-on-failure -j 4
       - name: Package
-        run: python tools/package_release.py windows --build-dir build --version "${{ needs.meta.outputs.version }}" --out dist
+        run: |
+          python tools/package_release.py windows --build-dir build --version "${{ needs.meta.outputs.version }}" --out dist
+          # a name without the version, for .../releases/latest/download/
+          cp "dist/eidos-${{ needs.meta.outputs.version }}-windows.zip" dist/eidos-windows.zip
       - uses: actions/upload-artifact@v4
         with:
           name: package-windows
@@ -259,6 +262,11 @@ jobs:
           mkdir -p out
           cp launcher/src-tauri/target/release/bundle/nsis/*-setup.exe \
              "out/eidos-launcher-${VERSION}-windows-setup.exe"
+          # the same file under a name without the version: the website's
+          # download button points at .../releases/latest/download/<this>,
+          # which always gives the newest release
+          cp "out/eidos-launcher-${VERSION}-windows-setup.exe" \
+             out/eidos-launcher-windows-setup.exe
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-windows
