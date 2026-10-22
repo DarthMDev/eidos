@@ -419,7 +419,8 @@ no_tabs:
         if (have) {
             eidos_sui_row_text(mrow, label, sizeof label, value, sizeof value);
             upper(label);
-            put_text(win, label, 8, -1, 100, 4, TC_TEXT, TC_SHADOW);
+            put_text(win, label, 8, -1, value[0] != 0 ? 100 : ROW_PX - 12, 4,
+                     TC_TEXT, TC_SHADOW);
             if (!grey) {
                 nch = eidos_sui_row_choices(mrow, &active, names);
             }

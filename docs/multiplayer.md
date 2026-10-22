@@ -155,6 +155,14 @@ interface version.
 
 ## Tests
 
+A two-game check without typing: `EIDOS_MP_TEST=host:<file>` makes a game
+host at frame 300, write its code to the file and start as soon as the
+lobby is ready; `EIDOS_MP_TEST=join:<file>` makes another join with that
+code. Run both headless against a relay (each with its own `BW_SAVE_DIR`
+and `EIDOS_SETTINGS`, and START pressed to reach the title menu): both
+games go into the game when the host starts.
+
+
 `tests/test_mp.c` drives the layer as the host's game and as a joiner's,
 with a network of its own: the lobby's checks, the roster, a stranger
 removed, a drop within and past the grace, the pause and the restart, the

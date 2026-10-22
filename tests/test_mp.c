@@ -417,7 +417,9 @@ static void test_saves(void)
     say(1, "hostid 0123456789abcdef0123456789abcdef");
     g_booted = -1;
     bw_mp_on_net(1, (int)BW_SESSION_MESSAGE, "save 0 0 0\n", 11);
-    BW_CHECK_EQ("the joiner's game boots on a new game", g_booted, 1);
+    BW_CHECK_EQ("the joiner's game starts from the title menu",
+                bw_mp_started_pending(), 1);
+    BW_CHECK_EQ("without a restart", g_booted, -1);
     bw_mp_leave();
     bw_mp_reset();
 }

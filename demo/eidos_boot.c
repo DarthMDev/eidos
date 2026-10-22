@@ -1433,6 +1433,14 @@ static void boot_mp_hold(BootRun *run)
     }
 }
 
+/* The game's save control (weak: declared again below with the boot's
+ * other game calls). */
+#if defined(__GNUC__) || defined(__clang__)
+extern void *SAVE_CONTROL_Get(void) __attribute__((weak));
+#else
+extern void *SAVE_CONTROL_Get(void);
+#endif
+
 /* Multiplayer boots a joiner's game on the save the host sent. */
 static void boot_mp_boot(int new_game)
 {
@@ -1473,6 +1481,44 @@ static void boot_frame(void *user)
         }
     }
 
+    /* A scripted multiplayer run for the port's own checks:
+     * EIDOS_MP_TEST=host:<file> hosts at frame 300, writes the code to the
+     * file and starts as soon as the lobby is ready; EIDOS_MP_TEST=join:<file>
+     * joins with the code in the file. */
+    {
+        static int mp_test_done, mp_test_started;
+        const char *t = getenv("EIDOS_MP_TEST");
+        u64 n = eidos_frame_count(&run->loop);
+
+        if (t != NULL && !mp_test_done && n >= 300u) {
+            char code[40];
+            FILE *f;
+
+            if (strncmp(t, "host:", 5) == 0) {
+                if (bw_mp_host(code, sizeof code) == 0 &&
+                    (f = fopen(t + 5, "wb")) != NULL) {
+                    fputs(code, f);
+                    fclose(f);
+                }
+                mp_test_done = 1;
+            } else if (strncmp(t, "join:", 5) == 0 &&
+                       (f = fopen(t + 5, "rb")) != NULL) {
+                if (fgets(code, sizeof code, f) != NULL) {
+                    (void)bw_mp_join(code);
+                }
+                fclose(f);
+                mp_test_done = 1;
+            }
+        }
+        if (t != NULL && mp_test_done && !mp_test_started && bw_mp_is_host() &&
+            bw_mp_state() == BW_MP_LOBBY && bw_mp_start_blocker()[0] == '\0') {
+            mp_test_started = 1;
+            printf("eidos_boot: multiplayer test: the host starts\n");
+            fflush(stdout);
+            (void)bw_mp_start();
+        }
+    }
+
     /* Multiplayer may hold the game here (sdk/mp.h). */
     if (bw_mp_paused()) {
         boot_mp_hold(run);
@@ -1483,7 +1529,10 @@ static void boot_frame(void *user)
      * new game, or loads the save that is in force, the way the title's own
      * rows do it (ov088's startmenu.c).
      */
-    if (g_run_next != BOOT_RUN_TITLE && eidos_frame_count(&run->loop) == 0) {
+    if (g_run_next != BOOT_RUN_TITLE && eidos_frame_count(&run->loop) > 0 &&
+        SAVE_CONTROL_Get != NULL && SAVE_CONTROL_Get() != NULL) {
+        /* the game's own start-up has made its save control: the game
+         * systems are up, and the title's own continue would run now */
         boot_start_game(g_run_next);
         g_run_next = BOOT_RUN_TITLE;
     }

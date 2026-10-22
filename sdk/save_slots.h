@@ -50,6 +50,13 @@ int  bw_slots_flip(int d);
  */
 int  bw_slots_new_game(void);
 
+/*
+ * Another save file for the running game, without a restart: the chip
+ * reads it at once and the game's save control loads it (or starts empty
+ * when the file has no save).  1 when the file holds a save.
+ */
+int  bw_slots_load_file(const char *path);
+
 /* The Continue card's line: "< 2/3 >" (the slot among the used ones), or
  * "" when there is no save. */
 void bw_slots_label(char *out, u32 size);

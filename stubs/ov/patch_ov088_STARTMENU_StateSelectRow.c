@@ -55,6 +55,7 @@ extern void bw_mod_title_open_multiplayer(void);
 extern int bw_slots_flip(int d);
 extern int bw_slots_new_game(void);
 extern int bw_mp_take_started(void);
+extern int bw_mp_take_started_peek(void);
 extern void eidos_sui_enter(void);
 extern int eidos_sui_input(unsigned pressed, unsigned held);
 extern void STARTMENU_DeleteFrameManager(char *p);
@@ -164,7 +165,8 @@ int STARTMENU_StateSelectRow(char *p)
             /* New Game takes a free slot when there is one, so the
              * game's "this deletes your save" comes only when every slot
              * is used (sdk/save_slots.h) */
-            if (bw_mod_title_settings_on() && bw_slots_new_game()) {
+            if (bw_mod_title_settings_on() && !bw_mp_take_started_peek() &&
+                bw_slots_new_game()) {
                 /* the new game goes to a free slot: no warning, as the
                  * prompt's own path for a menu without Continue */
                 *(u8 *)(p + 0x129) = 1;

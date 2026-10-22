@@ -570,14 +570,12 @@ static void host_install(void)
         have = fseek(f, 0, SEEK_END) == 0 && ftell(f) > 0;
         fclose(f);
     }
-    if (bw_arm7_backup_set_path != NULL) {
-        bw_arm7_backup_set_path(path);
-    }
+    (void)have;
+    (void)bw_slots_load_file(path);
     g_mp.in_game = 1;
     g_mp.last_writes = bw_arm7_backup_writes != NULL ? bw_arm7_backup_writes() : 0;
-    if (g_boot != NULL) {
-        g_boot(!have);
-    }
+    /* the title menu goes straight into it: Continue, or New Game */
+    g_mp.started = 1;
 }
 
 /* A joiner's game starts on the save the host sent: the file is the
@@ -595,14 +593,10 @@ static void joiner_install(const u8 *buf, u32 size)
         fprintf(stderr, "eidos: multiplayer: the save could not be written\n");
         return;
     }
-    if (bw_arm7_backup_set_path != NULL) {
-        bw_arm7_backup_set_path(path);
-    }
+    (void)bw_slots_load_file(path);
     g_mp.in_game = 1;
     g_mp.last_writes = bw_arm7_backup_writes != NULL ? bw_arm7_backup_writes() : 0;
-    if (g_boot != NULL) {
-        g_boot(size == 0);
-    }
+    g_mp.started = 1;
 }
 
 /* A joiner's game wrote its save: the host gets it. */
@@ -1178,8 +1172,12 @@ int bw_mp_join(const char *code)
 void bw_mp_leave(void)
 {
     if (g_mp.in_game) {
-        /* the player's own save is the chip's file again */
-        bw_slots_apply();
+        /* the player's own save is the game's again, loaded in place */
+        char own[512];
+
+        if (bw_slots_path(bw_slots_current(), own, sizeof(own)) == 0) {
+            (void)bw_slots_load_file(own);
+        }
     }
     g_mp.in_game = 0;
     g_net->leave();
@@ -1198,6 +1196,12 @@ int bw_mp_take_started(void)
 int bw_mp_started_pending(void)
 {
     return g_mp.started;
+}
+
+/* For the title menu: a multiplayer game runs on its own file. */
+int bw_mp_take_started_peek(void)
+{
+    return g_mp.in_game && g_mp.state != BW_MP_OFF && g_mp.state != BW_MP_ENDED;
 }
 
 void bw_mp_rename(const char *name)

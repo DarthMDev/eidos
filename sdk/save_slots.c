@@ -154,6 +154,22 @@ static void reload(int has_save)
     sc[SAVE_CONTROL_IS_NEW_GAME] = (unsigned char)(has_save ? 0 : 1);
 }
 
+int bw_slots_load_file(const char *path)
+{
+    FILE *f;
+    int have = 0;
+
+    if (path != NULL && (f = fopen(path, "rb")) != NULL) {
+        have = fseek(f, 0, SEEK_END) == 0 && ftell(f) > 0;
+        fclose(f);
+    }
+    if (bw_arm7_backup_switch_path != NULL) {
+        bw_arm7_backup_switch_path(path);
+    }
+    reload(have);
+    return have;
+}
+
 int bw_slots_flip(int d)
 {
     int cur = bw_slots_current();

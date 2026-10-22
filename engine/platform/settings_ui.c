@@ -1465,7 +1465,22 @@ static int sui_input(unsigned pressed, unsigned held)
             g.capturing = r->arg + 1;
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         case ROW_DEFAULTS:
-            eidos_settings_defaults();
+            /* the tab's own settings back to their defaults */
+            if (g.tab == 2) {
+                eidos_settings_reset_bindings();
+            } else {
+                int i;
+
+                for (i = 0; i < g.nrows; i++) {
+                    if (g.rows[i].type == ROW_OPTION) {
+                        const EidosOption *o = eidos_settings_option(g.rows[i].arg);
+
+                        if (o != NULL) {
+                            (void)eidos_settings_set(g.rows[i].arg, o->def);
+                        }
+                    }
+                }
+            }
             return EIDOS_SUI_REDRAW | EIDOS_SUI_SFX_SELECT;
         case ROW_MOD_CLEAR:
             /* The player's "clear saved data" for one mod: the mod's own
