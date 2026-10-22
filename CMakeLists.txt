@@ -1661,6 +1661,11 @@ target_include_directories(test_mod_wasm PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_mod_wasm PRIVATE eidos)
 add_test(NAME test_mod_wasm COMMAND test_mod_wasm)
+# With the runtime, the test also registers an import of its own (an event
+# fired from inside a handler).
+if(TARGET eidos_wamr)
+    target_compile_definitions(test_mod_wasm PRIVATE EIDOS_HAVE_WAMR=1)
+endif()
 
 # The registry's overlap check panics, and a panic aborts the process, so it
 # is exercised in a run of its own that passes only if the panic happened.

@@ -39,6 +39,8 @@
  *   - a file with the wasm magic that is not a valid module is refused;
  *   - a module with an import the port does not provide is refused at load;
  *   - a module with no memory.grow opcode loads and gets the same page;
+ *   - an event fired inside a handler gets its own copy above the
+ *     first, and the first copy is intact when the inner call returns;
  *   - after the stop no handler of the module runs.
  *
  * A build without the runtime refuses the module with a message; the test
@@ -76,6 +78,7 @@
 #define T_BAD  T_ROOT "/bad"
 #define T_IMPORT T_ROOT "/import"
 #define T_NOGROW T_ROOT "/nogrow"
+#define T_NESTED T_ROOT "/nested"
 #define T_FLAG 0x123u
 
 static const unsigned char k_module[] = {
@@ -137,6 +140,68 @@ static const unsigned char k_no_grow[] = {
     0x00, 0x41, 0x10, 0x76, 0x41, 0x01, 0x46, 0x71, 0x0b, 0x03, 0x00, 0x00,
     0x0b
 };
+
+#if defined(EIDOS_HAVE_WAMR)
+/*
+ * The nested-event module.  In the game a state call can run a game
+ * function that fires an event while a handler of the same mod runs; the
+ * test gives the module an import of its own that does the same, so the
+ * nesting does not need the game:
+ *
+ *   (import "eidostest" "fire" (func $fire (param i32) (result i32)))
+ *   ;; menu.open -> $outer, flag.set -> $inner
+ *   ;; $outer: its copy is at 65536 (the port's page), it fires flag.set
+ *   ;;   for flag 0x200 from inside, and it refuses when the inner handler
+ *   ;;   refused and its own copy still holds kind 15 after the inner call
+ *   (func $outer (param $e i32) (result i32)
+ *     (i32.and (i32.eq (call $fire (i32.const 0)) (i32.const 1))
+ *       (i32.and (i32.eq (local.get $e) (i32.const 65536))
+ *                (i32.eq (i32.load offset=4 (local.get $e)) (i32.const 15)))))
+ *   ;; $inner: refuses when it sees flag 0x200 in a copy above the outer one
+ *   (func $inner (param $e i32) (result i32)
+ *     (i32.and (i32.eq (i32.load16_u offset=8 (local.get $e)) (i32.const 0x200))
+ *              (i32.eq (local.get $e) (i32.const 65544))))
+ */
+static const unsigned char k_nested[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x13, 0x04, 0x60,
+    0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x00,
+    0x01, 0x7f, 0x60, 0x00, 0x00, 0x02, 0x1d, 0x02, 0x05, 0x65, 0x69, 0x64,
+    0x6f, 0x73, 0x02, 0x6f, 0x6e, 0x00, 0x00, 0x09, 0x65, 0x69, 0x64, 0x6f,
+    0x73, 0x74, 0x65, 0x73, 0x74, 0x04, 0x66, 0x69, 0x72, 0x65, 0x00, 0x01,
+    0x03, 0x05, 0x04, 0x02, 0x03, 0x01, 0x01, 0x04, 0x04, 0x01, 0x70, 0x00,
+    0x02, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07, 0x2d, 0x03, 0x06, 0x6d, 0x65,
+    0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00, 0x0f, 0x65, 0x69, 0x64, 0x6f, 0x73,
+    0x5f, 0x6d, 0x6f, 0x64, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x00, 0x02,
+    0x0e, 0x65, 0x69, 0x64, 0x6f, 0x73, 0x5f, 0x6d, 0x6f, 0x64, 0x5f, 0x73,
+    0x74, 0x6f, 0x70, 0x00, 0x03, 0x09, 0x08, 0x01, 0x00, 0x41, 0x00, 0x0b,
+    0x02, 0x04, 0x05, 0x0a, 0x47, 0x04, 0x13, 0x00, 0x41, 0xef, 0x00, 0x41,
+    0x00, 0x10, 0x00, 0x1a, 0x41, 0x0f, 0x41, 0x01, 0x10, 0x00, 0x1a, 0x41,
+    0x00, 0x0b, 0x02, 0x00, 0x0b, 0x13, 0x00, 0x20, 0x00, 0x2f, 0x00, 0x08,
+    0x41, 0x80, 0x04, 0x46, 0x20, 0x00, 0x41, 0x88, 0x80, 0x04, 0x46, 0x71,
+    0x0b, 0x1a, 0x00, 0x41, 0x00, 0x10, 0x01, 0x41, 0x01, 0x46, 0x20, 0x00,
+    0x41, 0x80, 0x80, 0x04, 0x46, 0x20, 0x00, 0x28, 0x02, 0x04, 0x41, 0x0f,
+    0x46, 0x71, 0x71, 0x0b
+};
+
+#include "wasm_export.h"
+
+/* eidostest.fire: flag.set for flag 0x200, from inside a handler. */
+static int32_t test_fire(wasm_exec_env_t env, int32_t unused)
+{
+    BwEventPayload p;
+
+    (void)env;
+    (void)unused;
+    memset(&p, 0, sizeof p);
+    p.flag_set.flag = 0x200u;
+    p.flag_set.value = 1u;
+    return bw_mod_event_fire(BW_EVENT_FLAG_SET, &p);
+}
+
+static NativeSymbol k_test_natives[] = {
+    { "fire", (void *)test_fire, "(i)i", NULL },
+};
+#endif
 
 /* The wasm magic and version, then bytes that are no section. */
 static const unsigned char k_broken[] = {
@@ -220,7 +285,7 @@ static int write_mod(const char *dir, const char *title, const char *ns,
 
 static void clean_tree(void)
 {
-    static const char *const dirs[] = { T_GOOD, T_BAD, T_IMPORT, T_NOGROW };
+    static const char *const dirs[] = { T_GOOD, T_BAD, T_IMPORT, T_NOGROW, T_NESTED };
     char path[512];
     size_t i;
 
@@ -235,6 +300,7 @@ static void clean_tree(void)
     BW_RMDIR(T_ROOT "/save/mods/wasmbad");
     BW_RMDIR(T_ROOT "/save/mods/wasmimport");
     BW_RMDIR(T_ROOT "/save/mods/wasmnogrow");
+    BW_RMDIR(T_ROOT "/save/mods/wasmnested");
     BW_RMDIR(T_ROOT "/save/mods");
     BW_RMDIR(T_ROOT "/save");
     BW_RMDIR(T_ROOT);
@@ -364,6 +430,29 @@ int main(void)
     BW_CHECK_EQ("and its handler gets the copy in that page",
                 (long)fire_flag(T_FLAG), 1);
     bw_mod_loader_stop_all();
+
+#if defined(EIDOS_HAVE_WAMR)
+    printf("an event inside a handler\n");
+    BW_MKDIR(T_NESTED);
+    BW_REQUIRE("the nested module is written",
+               write_mod(T_NESTED, "Nested", "wasmnested", k_nested,
+                         sizeof k_nested) == 0);
+    BW_REQUIRE("the test's import is registered",
+               wasm_runtime_register_natives("eidostest", k_test_natives, 1));
+    bw_clear_mods();
+    BW_REQUIRE("the nested module is added", bw_add_mod_root(T_NESTED) == 0);
+    BW_CHECK_EQ("it loads", (long)bw_mod_loader_load_all(), 1);
+    memset(&call, 0, sizeof call);
+    memset(&payload, 0, sizeof payload);
+    BW_CHECK_EQ("the inner copy is above the outer one and the outer copy "
+                "is intact after the inner call",
+                (long)bw_mod_event_enter(menu_row->region, menu_row->addr,
+                                         &call, &payload), 1);
+    BW_CHECK_EQ("the page is given back: the same again",
+                (long)bw_mod_event_enter(menu_row->region, menu_row->addr,
+                                         &call, &payload), 1);
+    bw_mod_loader_stop_all();
+#endif
 
     clean_tree();
     BW_REPORT("test_mod_wasm");
