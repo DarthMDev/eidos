@@ -266,6 +266,30 @@ def functions(text):
     return out
 
 
+def rename_defs(text, renames):
+    """`text` with the definitions of the names in `renames` (old -> new)
+    spelt with the new name: only the name in each definition's head
+    changes, so every other use of the old name stays as it is (the port
+    maps it to the name's slot, tools/ovlink.py)."""
+    pieces = []
+    last = 0
+    for name, hs, bo, _be, _is_asm in functions(text):
+        new = renames.get(name)
+        if new is None:
+            continue
+        head = text[hs:bo]
+        m = None
+        for m in re.finditer(r"\b%s\b(?=\s*\()" % re.escape(name), head):
+            pass
+        if m is None:
+            continue
+        pieces.append(text[last:hs + m.start()])
+        pieces.append(new)
+        last = hs + m.end()
+    pieces.append(text[last:])
+    return "".join(pieces)
+
+
 def cut(text, drop, cut_asm, drop_decls=False):
     """`text` with the chosen definitions replaced by prototypes.
 

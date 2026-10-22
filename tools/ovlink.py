@@ -1403,6 +1403,8 @@ class Unit:
         self.literal_table = False
         self.header = None
         self.cuts = set()          # src/game: functions a port patch defines
+        self.self_calls = set()    # src/game: declared names it defines and
+                                   # calls itself (routed through the slot)
 
 
 class OvState:
@@ -2041,6 +2043,29 @@ class Link:
         ov = st.ov
         for u in st.units:
             sc = u.scan
+            # A src/game unit holds a whole original file, so a declared
+            # function's callers are often in its own file
+            # (FIELD_EVENT_CHECK_CheckStepEvents, the player.step event).
+            # Those calls go through the slot too: the unit's copy renames
+            # the definition to the overlay's own name (tools/gamecut.py,
+            # rename_defs) and every other use of the name is the slot's.
+            if "/src/game/" in u.path.replace("\\", "/") and os.path.exists(u.path):
+                asm_bodies = None
+                for n in sorted(sc.called):
+                    if (st.defs.get(n) is not u or n in u.cuts or
+                            n in sc.statics):
+                        continue        # a patch's, or the unit's own static
+                    addr = self.declared_addr(st, n, sc)
+                    if addr is None:
+                        continue
+                    if asm_bodies is None:
+                        import gamecut
+                        asm_bodies = {f for f, _h, _b, _e, a in
+                                      gamecut.functions(read_text(u.path)) if a}
+                    if n in asm_bodies:
+                        continue        # its body comes from sdk/asm by name
+                    st.slot_names[n] = self.slot_name(st, addr)
+                    u.self_calls.add(n)
             refs, implicit = sc.references(self.universe)
             implicit = set(implicit) | self._game_calls(sc, set(implicit))
             refs = set(refs) | implicit
@@ -2666,6 +2691,11 @@ def write_unit_header(link, u, ov_header, path):
                      "prototype differs from the name it shares */"
                      % (n, u.shares[n][0], n))
     for n in sorted(st.slot_names):
+        if st.defs.get(n) is u and n in u.self_calls:
+            # The unit calls it itself: the name stays the slot's here too,
+            # and the unit's copy names the definition the overlay's own way
+            # (the .cut file's renames).
+            continue
         if st.defs.get(n) is u:
             # The overlay header renames a declared name to its slot for a
             # non-owning caller; the defining unit keeps the overlay's own
@@ -3509,10 +3539,12 @@ def main(argv=None):
             u.header = os.path.join(inc, "tu", flat_name(u.rel) + ".h")
             write_unit_header(link, u, oh, u.header)
             cut = ""
-            if u.cuts:
+            routed = sorted(n for n in u.self_calls if n in st.slot_names)
+            if u.cuts or routed:
                 cut = os.path.join(inc, "tu", flat_name(u.rel) + ".cut")
-                write_if_changed(cut, "%s\t%s\n" % (u.path.replace("\\", "/"),
-                                                     ",".join(sorted(u.cuts))))
+                write_if_changed(cut, "%s\t%s\t%s\n" % (
+                    u.path.replace("\\", "/"), ",".join(sorted(u.cuts)),
+                    ",".join("%s=%s" % (n, link.own(st, n)) for n in routed)))
                 cut = "|" + cut.replace("\\", "/")
             units.append("%d|%s|%s%s" % (oid, u.path.replace("\\", "/"),
                                           u.header.replace("\\", "/"), cut))

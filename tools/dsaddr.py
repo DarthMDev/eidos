@@ -1589,14 +1589,25 @@ def main(argv=None) -> int:
     if a.cut_list or a.cut_asm:
         import gamecut
         drop = set()
+        renames = {}
         if a.cut_list and os.path.exists(a.cut_list):
             key = os.path.normcase(os.path.abspath(src_path)).replace("\\", "/")
             with open(a.cut_list, encoding="utf-8") as fh:
                 for line in fh:
-                    path, _, names = line.rstrip("\n").partition("\t")
+                    cols = line.rstrip("\n").split("\t")
+                    path, names = cols[0], cols[1] if len(cols) > 1 else ""
                     if os.path.normcase(os.path.abspath(path)).replace("\\", "/") == key:
                         drop.update(n for n in names.split(",") if n)
+                        # the third column: definitions renamed, so the
+                        # unit's own calls reach the name's slot
+                        # (tools/ovlink.py, self_calls)
+                        for pair in (cols[2] if len(cols) > 2 else "").split(","):
+                            old, _, new = pair.partition("=")
+                            if old and new:
+                                renames[old] = new
         source, _cut = gamecut.cut(source, drop, a.cut_asm, a.cut_decls)
+        if renames:
+            source = gamecut.rename_defs(source, renames)
         spath = os.path.abspath(src_path).replace("\\", "/")
         if "/src/game/" in spath:
             # declarations that widen an 8/16-bit return (gamecut.fix_returns)
