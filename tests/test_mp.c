@@ -484,6 +484,9 @@ static void test_shared(void)
 
     printf("the shared table\n");
     BW_CHECK_EQ("outside a game: no table", bw_mp_shared_get("soul", "pair", &v), -1);
+    /* a game of its own, with no table kept from an earlier run */
+    (void)bw_mp_game_select("Shared");
+    remove("test_mp_tmp/multiplayer/games/Shared/shared.txt");
     bw_mp_reset();
     bw_mp_set_net(&k_test_net);
     bw_mp_set_local('B', "");
