@@ -620,6 +620,29 @@ where the game's own yes/no window is not available. Left and right choose
 the answer, A takes the answer that is chosen and B says no, and the answer
 starts at "no".
 
+## Multiplayer
+
+Interface version 5. A mod takes part in multiplayer when its manifest
+states `multiplayer = <n>` (`docs/multiplayer.md`).
+
+- **The other players' events.** Every event a joiner's game fires goes to
+  the host, and the host runs the multiplayer mods' handlers over it. The
+  handler is the same one that receives this game's events.
+  `services->event_player()` says whose event it is: 0 for this game's
+  own, else the player's number in the session. Another player's event
+  cannot be refused or changed, because its game has already acted on it.
+  A Pokemon reference in another player's payload names a Pokemon of that
+  game, not of this one.
+- **The shared table.** Numbers every player's mods see: Soul Link pairs,
+  shared route records. `shared_set(key, value)` and
+  `shared_get(key, &value)`; the keys are the mod's own (the port puts the
+  mod's namespace in front). The host's copy is the real one and is kept
+  with its game. A joiner's change goes to the host, which applies the
+  changes in the order they come and sends each one to every player, so a
+  joiner reads its own change once the host has sent it back. `get`
+  answers 0 when the key is set, 1 when it is not, -1 outside a
+  multiplayer game.
+
 ## The port's own session
 
 The settings screen has a Session section beside the Mods one, and it is the

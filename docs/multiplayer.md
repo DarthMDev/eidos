@@ -178,12 +178,25 @@ use multiplayer for now (SPEC section 17).
   game's entity pool; the avatars are made again when the field is back.
   A player who leaves takes its avatar with it.
 
+## Events and the shared table (built)
+
+- Every event a joiner's game fires, after its own handlers and when it
+  was not refused, goes to the host. The events wait and leave together,
+  at most ten times a second, in one `evs ` message: the payloads one
+  after the other, each starting with its size. The relay takes about 60
+  messages a second from a player and drops the rest, and some events
+  fire every frame. The host runs the multiplayer mods' handlers over
+  each one (`bw_mod_event_remote`); `event_player` names the player.
+- A changed place goes out at most ten times a second.
+- The shared table: `tset <key> <value>` from the host to everyone,
+  `treq <key> <value>` from a joiner to the host. A joiner's hello gets the
+  whole table. The host keeps it in its game's folder (`shared.txt`).
+- Both are mod interface version 5 (`docs/mod-services.md`, "Multiplayer").
+
 ## Not built yet
 
-1. Event forwarding.
-2. The shared table for mods.
-3. TLS.
-4. Adding players after the first start.
+1. TLS.
+2. Adding players after the first start.
 
 The mods' own session events for the lobby, the start and the pause need
 new event kinds and a `session_start` service: they come with the next mod

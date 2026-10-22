@@ -137,6 +137,7 @@
 #include "mod_slot.h"
 #include "mod_state.h"
 #include "mod_text.h"
+#include "mp.h"
 #include "mod_timer.h"
 #include "mod_wasm.h"
 #include "overlay_image.h"
@@ -567,6 +568,10 @@ static void loader_register_kind(BwModLoaderMod *m, BwModLoaderKind *k)
         return;
     }
     bw_mod_event_set_registering_state(m->state);
+    /* a multiplayer mod's handlers take the other players' events too */
+    bw_mod_event_set_registering_remote(
+        m->manifest != NULL &&
+        ((const BwModManifest *)m->manifest)->multiplayer > 0);
     if (bw_mod_event_register(k->kind, g_handler_table[m->slot]) != 0) {
         fprintf(stderr,
                 "eidos: mod %s: the handler for event %u was not bound\n",
@@ -575,6 +580,7 @@ static void loader_register_kind(BwModLoaderMod *m, BwModLoaderKind *k)
         k->registered = 1;
     }
     bw_mod_event_set_registering_state(NULL);
+    bw_mod_event_set_registering_remote(0);
 }
 
 /*
@@ -1095,6 +1101,10 @@ static int loader_load(u32 index)
     m->services.setting_get    = bw_mod_menu_setting_get;
     /* The mod's own data tables (sdk/mod_table.h), for the calling mod. */
     m->services.table_get      = bw_mod_table_get_calling;
+    /* Multiplayer (sdk/mp.h): whose event runs, and the shared table. */
+    m->services.event_player   = bw_mod_event_player;
+    m->services.shared_get     = bw_mp_shared_get_calling;
+    m->services.shared_set     = bw_mp_shared_set_calling;
     /* The run-status panel: the model's sixteen lines (sdk/mod_panel.h). */
     m->services.panel_set      = bw_mod_panel_set;
     m->services.panel_clear    = bw_mod_panel_clear;

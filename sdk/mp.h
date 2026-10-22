@@ -111,6 +111,16 @@ int  bw_mp_saves_pending(void);
  * calls it when the host's save file changes). */
 void bw_mp_host_saved(void);
 
+/* The shared table (SPEC section 17): numbers every player's mods see,
+ * the host's copy the real one.  `ns` is the mod's namespace.  get: 0 set,
+ * 1 not set (*out 0), -1 outside a multiplayer game; set: 0 made or sent,
+ * -1 outside one.  The _calling forms are the services table's: the
+ * namespace is the calling mod's. */
+int  bw_mp_shared_get(const char *ns, const char *key, s32 *out);
+int  bw_mp_shared_set(const char *ns, const char *key, s32 value);
+int  bw_mp_shared_get_calling(const char *key, s32 *out);
+int  bw_mp_shared_set_calling(const char *key, s32 value);
+
 /* The line the "waiting for players" screen shows. */
 const char *bw_mp_wait_text(void);
 

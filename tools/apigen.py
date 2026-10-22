@@ -696,8 +696,9 @@ def generate():
     layout_c.append('')
 
     def js(obj):
-        # Version 4 is frozen: its surface does not change any more.
-        obj = dict({'status': 'frozen'}, **obj)
+        # Version 4 is frozen: its surface does not change any more.  The
+        # newest version is open until it is frozen in turn.
+        obj = dict({'status': 'frozen' if api <= 4 else 'open'}, **obj)
         return json.dumps(obj, indent=2) + '\n'
 
     d = 'sdk/api/v%d' % api

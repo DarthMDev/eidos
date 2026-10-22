@@ -179,6 +179,85 @@ static int handler_scoped(void *mod_state, BwEvent *event)
     return BW_EVENT_CONTINUE;
 }
 
+/* Multiplayer: the player each handler saw, and the events forwarded. */
+static u32 g_seen_player[2];
+static int g_seen_count[2];
+static u32 g_forwarded;
+static s32 g_forwarded_delta;
+
+static int handler_local(void *mod_state, BwEvent *event)
+{
+    (void)mod_state;
+    (void)event;
+    g_seen_player[0] = bw_mod_event_player();
+    g_seen_count[0]++;
+    return BW_EVENT_CONTINUE;
+}
+
+static int handler_remote(void *mod_state, BwEvent *event)
+{
+    (void)mod_state;
+    (void)event;
+    g_seen_player[1] = bw_mod_event_player();
+    g_seen_count[1]++;
+    return BW_EVENT_REFUSE;     /* goes nowhere for another player's event */
+}
+
+static void forward(const void *payload, u32 size)
+{
+    const BwMoneyChange *p = (const BwMoneyChange *)payload;
+
+    g_forwarded = size;
+    g_forwarded_delta = p->delta;
+}
+
+/* The other players' events reach the multiplayer mods' handlers only,
+ * with the player's number; this game's own events go out after its own
+ * handlers, as they left them. */
+static void test_multiplayer(void)
+{
+    BwEventPayload payload;
+
+    printf("multiplayer\n");
+    bw_mod_event_reset();
+    BW_CHECK_EQ("a mod that is not multiplayer",
+                bw_mod_event_register(BW_EVENT_MONEY_CHANGE, handler_local), 0);
+    bw_mod_event_set_registering_remote(1);
+    BW_CHECK_EQ("a multiplayer mod",
+                bw_mod_event_register(BW_EVENT_MONEY_CHANGE, handler_remote), 0);
+    bw_mod_event_set_registering_remote(0);
+
+    memset(&payload, 0, sizeof(payload));
+    payload.money_change.h.kind = BW_EVENT_MONEY_CHANGE;
+    payload.money_change.h.size = (u32)sizeof(BwMoneyChange);
+    payload.money_change.delta = 50;
+    BW_CHECK_EQ("another player's event is taken",
+                bw_mod_event_remote(3, &payload, (u32)sizeof(BwMoneyChange)), 0);
+    BW_CHECK_EQ("the multiplayer mod sees it", g_seen_count[1], 1);
+    BW_CHECK_EQ("with the player's number", (int)g_seen_player[1], 3);
+    BW_CHECK_EQ("the other mod does not", g_seen_count[0], 0);
+    BW_CHECK_EQ("and the number goes back to 0", (int)bw_mod_event_player(), 0);
+    BW_CHECK_EQ("a payload of the wrong size is refused",
+                bw_mod_event_remote(3, &payload, 6), -1);
+
+    bw_mod_event_set_forward(forward);
+    memset(&payload, 0, sizeof(payload));
+    payload.money_change.delta = 7;
+    g_seen_count[0] = g_seen_count[1] = 0;
+    (void)bw_mod_event_fire(BW_EVENT_MONEY_CHANGE, &payload);
+    BW_CHECK_EQ("this game's event: every handler", g_seen_count[0] + g_seen_count[1], 2);
+    BW_CHECK_EQ("as this game's", (int)g_seen_player[0], 0);
+    BW_CHECK_EQ("a refused event does not go out", (int)g_forwarded, 0);
+    bw_mod_event_reset();
+    (void)bw_mod_event_register(BW_EVENT_MONEY_CHANGE, handler_local);
+    (void)bw_mod_event_fire(BW_EVENT_MONEY_CHANGE, &payload);
+    BW_CHECK_EQ("an event that happened goes out whole",
+                (int)g_forwarded, (int)sizeof(BwMoneyChange));
+    BW_CHECK_EQ("as the handlers left it", (int)g_forwarded_delta, 7);
+    bw_mod_event_set_forward(NULL);
+    bw_mod_event_reset();
+}
+
 /* ------------------------------------------------------------------ */
 /* The test                                                            */
 /* ------------------------------------------------------------------ */
@@ -363,5 +442,6 @@ int main(void)
                 bw_mod_event_enter(T_REGION, T_ADDR, &call, &payload), 0);
     BW_CHECK_EQ("no handler ran", g_ran_count, 0);
 
+    test_multiplayer();
     BW_REPORT("test_mod_event");
 }

@@ -115,6 +115,23 @@ static struct {
 #define BW_MP_WEAK
 #endif
 
+/* The shared table's size (below, "The shared table and the events"). */
+#define BW_MP_SHARED_MAX 512u
+#define BW_MP_SHARED_KEY 80u
+
+static int  shared_put(const char *key, s32 value);
+static int  shared_parse(const char *msg, u32 size, char *key, s32 *value);
+static void host_shared_apply(const char *key, s32 value);
+static void host_shared_send_all(u32 peer);
+static void shared_load(void);
+static void forward_event(const void *payload, u32 size);
+static void host_on_events(u32 peer, const u8 *buf, u32 size);
+
+/* The event layer (sdk/mod_event.h): this game's events go out, the
+ * players' events come in. */
+extern void bw_mod_event_set_forward(void (*fn)(const void *payload, u32 size)) BW_MP_WEAK;
+extern int  bw_mod_event_remote(u32 player, const void *buf, u32 size) BW_MP_WEAK;
+
 /* The backup chip (sdk/arm7/fs.c): the joiner's game runs on the file the
  * host sent; its writes are uploaded. */
 extern void bw_arm7_backup_set_path(const char *path) BW_MP_WEAK;
@@ -1198,6 +1215,20 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         on_save_piece(peer, (const u8 *)msg, size, host_got_save);
         return;
     }
+    if (size > 4 && memcmp(msg, "evs ", 4) == 0) {
+        /* a player's events, for the multiplayer mods */
+        host_on_events(peer, (const u8 *)msg + 4, size - 4);
+        return;
+    }
+    if (size > 5 && memcmp(msg, "treq ", 5) == 0) {
+        char key[BW_MP_SHARED_KEY];
+        s32 value;
+
+        if (shared_parse(msg, size, key, &value) == 0) {
+            host_shared_apply(key, value);
+        }
+        return;
+    }
     copy_n(text, sizeof(text), msg, size);
     if (strcmp(text, "who") == 0) {
         host_send_id(peer);
@@ -1225,6 +1256,7 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         copy_n(p->mods, sizeof(p->mods), mods, strlen(mods));
         host_refresh_mods_ok();
         host_broadcast_roster();
+        host_shared_send_all(peer);
         /* a player who comes back while the game runs is told so */
         if (g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE) {
             if (!p->in_game && !sending_to(peer)) {
@@ -1338,8 +1370,300 @@ static void joiner_on_message(u32 peer, const char *msg, u32 size)
         g_mp.state = BW_MP_PLAYING;
     } else if (size == 5 && memcmp(msg, "pause", 5) == 0) {
         g_mp.state = BW_MP_PAUSED;
+    } else if (size > 5 && memcmp(msg, "tset ", 5) == 0) {
+        char key[BW_MP_SHARED_KEY];
+        s32 value;
+
+        if (shared_parse(msg, size, key, &value) == 0) {
+            (void)shared_put(key, value);
+        }
     } else if (size == 7 && memcmp(msg, "savenow", 7) == 0) {
         g_mp.save_wanted = 1;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* The shared table and the events (SPEC sections 16 and 17)          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The shared table: numbers every player's mods see, keyed by the mod's
+ * namespace and its own key ("<namespace>/<key>").  The host's copy is the
+ * real one and is kept with its game (shared.txt in the game's folder).  A
+ * joiner's change goes to the host as "treq <key> <value>"; the host
+ * applies the changes in the order they come and sends every one to
+ * everyone as "tset <key> <value>", and a joiner that says hello gets the
+ * whole table that way.
+ */
+typedef struct BwMpShared {
+    char key[BW_MP_SHARED_KEY];
+    s32  value;
+} BwMpShared;
+
+static BwMpShared g_shared[BW_MP_SHARED_MAX];
+static u32        g_nshared;
+
+extern const char *bw_mod_savedata_namespace(void) BW_MP_WEAK;
+
+static int shared_find(const char *key)
+{
+    u32 i;
+
+    for (i = 0; i < g_nshared; i++) {
+        if (strcmp(g_shared[i].key, key) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int shared_put(const char *key, s32 value)
+{
+    int i = shared_find(key);
+
+    if (i < 0) {
+        if (g_nshared >= BW_MP_SHARED_MAX) {
+            fprintf(stderr, "eidos: multiplayer: the shared table is full "
+                    "(%u keys); %s is dropped\n", (unsigned)BW_MP_SHARED_MAX, key);
+            return -1;
+        }
+        i = (int)g_nshared++;
+        copy_n(g_shared[i].key, sizeof(g_shared[i].key), key, strlen(key));
+    }
+    g_shared[i].value = value;
+    return 0;
+}
+
+/* A key a message can carry: printable, no space, not empty. */
+static int shared_key_ok(const char *key)
+{
+    size_t i, n = strlen(key);
+
+    if (n == 0 || n >= BW_MP_SHARED_KEY) {
+        return 0;
+    }
+    for (i = 0; i < n; i++) {
+        if ((unsigned char)key[i] <= ' ' || (unsigned char)key[i] >= 0x7F) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void shared_save(void)
+{
+    char path[512];
+    char *buf;
+    size_t at = 0, cap = (size_t)g_nshared * (BW_MP_SHARED_KEY + 16u) + 1u;
+    u32 i;
+
+    if (!g_mp.host || game_path(path, sizeof(path), "shared.txt") != 0) {
+        return;
+    }
+    buf = (char *)malloc(cap);
+    if (buf == NULL) {
+        return;
+    }
+    for (i = 0; i < g_nshared; i++) {
+        at += (size_t)snprintf(buf + at, cap - at, "%s\t%ld\n", g_shared[i].key,
+                               (long)g_shared[i].value);
+    }
+    (void)bw_save_write_atomic(path, buf, (u32)at);
+    free(buf);
+}
+
+static void shared_load(void)
+{
+    char path[512], line[160], key[BW_MP_SHARED_KEY];
+    long v;
+    FILE *f;
+
+    g_nshared = 0;
+    if (game_path(path, sizeof(path), "shared.txt") != 0 ||
+        (f = fopen(path, "rb")) == NULL) {
+        return;
+    }
+    while (fgets(line, sizeof(line), f) != NULL) {
+        if (sscanf(line, "%79s %ld", key, &v) == 2 && shared_key_ok(key)) {
+            (void)shared_put(key, (s32)v);
+        }
+    }
+    fclose(f);
+}
+
+/* The host applies a change and sends it to everyone. */
+static void host_shared_apply(const char *key, s32 value)
+{
+    char msg[BW_MP_SHARED_KEY + 32];
+    int n;
+
+    if (shared_put(key, value) != 0) {
+        return;
+    }
+    shared_save();
+    n = snprintf(msg, sizeof(msg), "tset %s %ld", key, (long)value);
+    (void)g_net->send(0, msg, (u32)n);
+}
+
+/* The whole table, to a player that said hello. */
+static void host_shared_send_all(u32 peer)
+{
+    char msg[BW_MP_SHARED_KEY + 32];
+    u32 i;
+
+    for (i = 0; i < g_nshared; i++) {
+        int n = snprintf(msg, sizeof(msg), "tset %s %ld", g_shared[i].key,
+                         (long)g_shared[i].value);
+
+        (void)g_net->send(peer, msg, (u32)n);
+    }
+}
+
+/* "treq <key> <value>" (to the host) and "tset <key> <value>" (from it). */
+static int shared_parse(const char *msg, u32 size, char *key, s32 *value)
+{
+    char text[BW_MP_SHARED_KEY + 32];
+    long v;
+
+    copy_n(text, sizeof(text), msg, size);
+    if (sscanf(text + 5, "%79s %ld", key, &v) != 2 || !shared_key_ok(key)) {
+        return -1;
+    }
+    *value = (s32)v;
+    return 0;
+}
+
+static int shared_active(void)
+{
+    return g_mp.state != BW_MP_OFF && g_mp.state != BW_MP_ENDED;
+}
+
+static int shared_full_key(const char *ns, const char *key, char *out, u32 size)
+{
+    if (key == NULL || snprintf(out, size, "%s/%s", ns != NULL ? ns : "",
+                                key) >= (int)size) {
+        return -1;
+    }
+    return shared_key_ok(out) ? 0 : -1;
+}
+
+int bw_mp_shared_get(const char *ns, const char *key, s32 *out)
+{
+    char k[BW_MP_SHARED_KEY];
+    int i;
+
+    if (out != NULL) {
+        *out = 0;
+    }
+    if (!shared_active() || shared_full_key(ns, key, k, sizeof(k)) != 0) {
+        return -1;
+    }
+    i = shared_find(k);
+    if (i < 0) {
+        return 1;
+    }
+    if (out != NULL) {
+        *out = g_shared[i].value;
+    }
+    return 0;
+}
+
+int bw_mp_shared_set(const char *ns, const char *key, s32 value)
+{
+    char k[BW_MP_SHARED_KEY], msg[BW_MP_SHARED_KEY + 32];
+    int n;
+
+    if (!shared_active() || shared_full_key(ns, key, k, sizeof(k)) != 0) {
+        return -1;
+    }
+    if (g_mp.host) {
+        host_shared_apply(k, value);
+        return 0;
+    }
+    n = snprintf(msg, sizeof(msg), "treq %s %ld", k, (long)value);
+    return g_net->send(1, msg, (u32)n) == 0 ? 0 : -1;
+}
+
+int bw_mp_shared_get_calling(const char *key, s32 *out)
+{
+    return bw_mp_shared_get(bw_mod_savedata_namespace != NULL
+                            ? bw_mod_savedata_namespace() : "", key, out);
+}
+
+int bw_mp_shared_set_calling(const char *key, s32 value)
+{
+    return bw_mp_shared_set(bw_mod_savedata_namespace != NULL
+                            ? bw_mod_savedata_namespace() : "", key, value);
+}
+
+/*
+ * The events: every event a joiner's game fires goes to the host ("ev "
+ * and the payload's bytes), where the multiplayer mods' handlers run over
+ * it (sdk/mod_event.h, bw_mod_event_remote).
+ */
+/*
+ * The relay takes about 60 messages a second from a player (metaxy
+ * SPEC section 6) and drops the rest without a word, and some events fire
+ * every frame.  So the events go out together: they wait in one message
+ * ("evs " and the payloads one after the other, each starting with its own
+ * size) that leaves every BW_MP_EVENTS_EVERY_MS, or when it is full.
+ */
+#define BW_MP_EVENTS_EVERY_MS 100u
+#define BW_MP_EVENTS_BYTES    3800u
+
+static u8  g_evs[BW_MP_EVENTS_BYTES];
+static u32 g_evs_len;
+static u64 g_evs_sent_ms;
+
+static void events_flush(void)
+{
+    if (g_evs_len > 4u) {
+        (void)g_net->send(1, g_evs, g_evs_len);
+    }
+    g_evs_len = 0;
+    g_evs_sent_ms = g_mp.now_ms;
+}
+
+static void forward_event(const void *payload, u32 size)
+{
+    if (g_mp.host || !g_mp.in_game ||
+        (g_mp.state != BW_MP_PLAYING && g_mp.state != BW_MP_GRACE) ||
+        size < 8u || size > BW_MP_EVENTS_BYTES - 4u) {
+        return;
+    }
+    if (g_evs_len + size > BW_MP_EVENTS_BYTES) {
+        events_flush();
+    }
+    if (g_evs_len == 0) {
+        memcpy(g_evs, "evs ", 4);
+        g_evs_len = 4;
+    }
+    memcpy(g_evs + g_evs_len, payload, size);
+    g_evs_len += size;
+}
+
+/* The events that waited, at most every BW_MP_EVENTS_EVERY_MS. */
+static void events_frame(void)
+{
+    if (g_evs_len > 0 && g_mp.now_ms >= g_evs_sent_ms + BW_MP_EVENTS_EVERY_MS) {
+        events_flush();
+    }
+}
+
+/* The host: the payloads of one "evs " message, each to the mods. */
+static void host_on_events(u32 peer, const u8 *buf, u32 size)
+{
+    u32 at = 0;
+
+    while (bw_mod_event_remote != NULL && at + 8u <= size) {
+        u32 n;
+
+        memcpy(&n, buf + at, sizeof(n));          /* the payload's own size */
+        if (n < 8u || at + n > size) {
+            break;
+        }
+        (void)bw_mod_event_remote(peer, buf + at, n);
+        at += n;
     }
 }
 
@@ -1373,11 +1697,14 @@ static struct {
     u8    dir, mode;
     u16   sprite;
     u64   sent_ms;
+    int   changed;              /* moved since the place last went out */
     void *field;                /* the field the avatars were made in */
 } g_me;
 
-/* How often an unchanged place is sent again. */
+/* How often an unchanged place is sent again, and how soon a changed one
+ * may go after the last (the relay takes about 60 messages a second). */
 #define BW_MP_POS_EVERY_MS 2000u
+#define BW_MP_POS_MIN_MS   100u
 
 /* The avatar sprites: the hero and the heroine (FIELD_PLAYER_OBJ_CODE_*). */
 #define BW_MP_SPRITE_HERO    1u
@@ -1525,15 +1852,19 @@ static void pos_frame(void)
     if (fm == NULL || !read_me(fm)) {
         return;
     }
+    if (g_me.have && zone != g_me.zone) {
+        pos_hide_all();              /* another zone: other people */
+    }
     if (!g_me.have || zone != g_me.zone || x != g_me.x || y != g_me.y ||
-        z != g_me.z || dir != g_me.dir || mode != g_me.mode ||
+        z != g_me.z || dir != g_me.dir || mode != g_me.mode) {
+        g_me.changed = 1;
+    }
+    if (!g_me.have ||
+        (g_me.changed && g_mp.now_ms >= g_me.sent_ms + BW_MP_POS_MIN_MS) ||
         g_mp.now_ms >= g_me.sent_ms + BW_MP_POS_EVERY_MS) {
         char msg[96];
         int n;
 
-        if (g_me.have && zone != g_me.zone) {
-            pos_hide_all();          /* another zone: other people */
-        }
         n = snprintf(msg, sizeof(msg), "pos %u %d %d %d %u %u %u",
                      (unsigned)g_me.zone, g_me.x, g_me.y, g_me.z,
                      (unsigned)g_me.dir, (unsigned)g_me.mode,
@@ -1541,6 +1872,7 @@ static void pos_frame(void)
         (void)g_net->send(0, msg, (u32)n);
         g_me.sent_ms = g_mp.now_ms;
         g_me.have = 1;
+        g_me.changed = 0;
     }
     for (i = 0; i < BW_MP_PLAYERS_MAX; i++) {
         BwMpPos *p = &g_pos[i];
@@ -1643,6 +1975,15 @@ static void begin(int host, const char *code)
     g_mp.state = BW_MP_LOBBY;
     g_mp.now_ms = now_ms();
     copy_n(g_mp.code, sizeof(g_mp.code), code, strlen(code));
+    /* the host's table is its game's; a joiner gets the host's */
+    if (host) {
+        shared_load();
+    } else {
+        g_nshared = 0;
+    }
+    if (bw_mod_event_set_forward != NULL) {
+        bw_mod_event_set_forward(forward_event);
+    }
 }
 
 void bw_mp_attach(int host, const char *code)
@@ -2071,6 +2412,7 @@ void bw_mp_frame_at(u64 t)
     field_quiet_save();
     if (g_mp.in_game && (g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE)) {
         pos_frame();
+        events_frame();
     }
     if (g_mp.saving && GAME_DATA_SaveMain != NULL) {
         int r = GAME_DATA_SaveMain(g_mp.save_gd);

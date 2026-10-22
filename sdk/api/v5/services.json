@@ -1,0 +1,442 @@
+{
+  "status": "open",
+  "api": 5,
+  "table": "BwModServices",
+  "calls": [
+    {
+      "name": "message",
+      "ret": "void",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "text"
+        }
+      ]
+    },
+    {
+      "name": "confirm",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "text"
+        }
+      ]
+    },
+    {
+      "name": "session_host",
+      "ret": "int",
+      "params": [
+        {
+          "type": "char *",
+          "name": "code_out"
+        },
+        {
+          "type": "u32",
+          "name": "size"
+        }
+      ]
+    },
+    {
+      "name": "session_join",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "code"
+        }
+      ]
+    },
+    {
+      "name": "session_leave",
+      "ret": "void",
+      "params": []
+    },
+    {
+      "name": "session_send",
+      "ret": "int",
+      "params": [
+        {
+          "type": "u32",
+          "name": "peer"
+        },
+        {
+          "type": "const void *",
+          "name": "buf"
+        },
+        {
+          "type": "u32",
+          "name": "size"
+        }
+      ]
+    },
+    {
+      "name": "on_session",
+      "ret": "void",
+      "params": [
+        {
+          "type": "BwSessionHandler",
+          "name": "fn"
+        }
+      ]
+    },
+    {
+      "name": "avatar_create",
+      "ret": "u32",
+      "params": [
+        {
+          "type": "u32",
+          "name": "sprite"
+        },
+        {
+          "type": "s16",
+          "name": "x"
+        },
+        {
+          "type": "s16",
+          "name": "z"
+        },
+        {
+          "type": "u8",
+          "name": "dir"
+        }
+      ]
+    },
+    {
+      "name": "avatar_move",
+      "ret": "void",
+      "params": [
+        {
+          "type": "u32",
+          "name": "avatar"
+        },
+        {
+          "type": "s16",
+          "name": "x"
+        },
+        {
+          "type": "s16",
+          "name": "y"
+        },
+        {
+          "type": "s16",
+          "name": "z"
+        },
+        {
+          "type": "u8",
+          "name": "dir"
+        },
+        {
+          "type": "u8",
+          "name": "mode"
+        }
+      ]
+    },
+    {
+      "name": "avatar_delete",
+      "ret": "void",
+      "params": [
+        {
+          "type": "u32",
+          "name": "avatar"
+        }
+      ]
+    },
+    {
+      "name": "mon_export",
+      "ret": "int",
+      "params": [
+        {
+          "type": "BwMonRef",
+          "name": "mon"
+        },
+        {
+          "type": "void *",
+          "name": "buf"
+        },
+        {
+          "type": "u32",
+          "name": "size"
+        }
+      ]
+    },
+    {
+      "name": "mon_import",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const void *",
+          "name": "buf"
+        },
+        {
+          "type": "u32",
+          "name": "size"
+        },
+        {
+          "type": "BwMonRef *",
+          "name": "out"
+        }
+      ]
+    },
+    {
+      "name": "panel_set",
+      "ret": "void",
+      "params": [
+        {
+          "type": "u32",
+          "name": "line"
+        },
+        {
+          "type": "const char *",
+          "name": "text"
+        }
+      ]
+    },
+    {
+      "name": "panel_clear",
+      "ret": "void",
+      "params": []
+    },
+    {
+      "name": "timer_start",
+      "ret": "void",
+      "params": []
+    },
+    {
+      "name": "timer_stop",
+      "ret": "void",
+      "params": []
+    },
+    {
+      "name": "timer_ms",
+      "ret": "u64",
+      "params": []
+    },
+    {
+      "name": "split",
+      "ret": "void",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "name"
+        }
+      ]
+    },
+    {
+      "name": "run_restart",
+      "ret": "void",
+      "params": [
+        {
+          "type": "u32",
+          "name": "flags"
+        }
+      ]
+    },
+    {
+      "name": "rand_seed",
+      "ret": "void",
+      "params": [
+        {
+          "type": "u64",
+          "name": "seed"
+        }
+      ]
+    },
+    {
+      "name": "rand_next",
+      "ret": "u32",
+      "params": []
+    },
+    {
+      "name": "on_command",
+      "ret": "void",
+      "params": [
+        {
+          "type": "BwCommandHandler",
+          "name": "fn"
+        }
+      ]
+    },
+    {
+      "name": "publish",
+      "ret": "void",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "topic"
+        },
+        {
+          "type": "const char *",
+          "name": "json"
+        }
+      ]
+    },
+    {
+      "name": "input_press",
+      "ret": "void",
+      "params": [
+        {
+          "type": "u32",
+          "name": "buttons"
+        },
+        {
+          "type": "u32",
+          "name": "frames"
+        }
+      ]
+    },
+    {
+      "name": "on_frame",
+      "ret": "void",
+      "params": [
+        {
+          "type": "BwFrameHandler",
+          "name": "fn"
+        }
+      ]
+    },
+    {
+      "name": "save_send",
+      "ret": "int",
+      "params": [
+        {
+          "type": "u32",
+          "name": "peer"
+        }
+      ]
+    },
+    {
+      "name": "on_save_received",
+      "ret": "void",
+      "params": [
+        {
+          "type": "BwSaveHandler",
+          "name": "fn"
+        }
+      ]
+    },
+    {
+      "name": "setting_get",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "key"
+        }
+      ]
+    },
+    {
+      "name": "state_load",
+      "ret": "s32",
+      "params": [
+        {
+          "type": "void *",
+          "name": "buf"
+        },
+        {
+          "type": "u32",
+          "name": "size"
+        }
+      ]
+    },
+    {
+      "name": "state_store",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const void *",
+          "name": "buf"
+        },
+        {
+          "type": "u32",
+          "name": "size"
+        }
+      ]
+    },
+    {
+      "name": "state_clear",
+      "ret": "int",
+      "params": []
+    },
+    {
+      "name": "state_info",
+      "ret": "int",
+      "params": [
+        {
+          "type": "BwModStateHeader *",
+          "name": "out"
+        }
+      ]
+    },
+    {
+      "name": "state_dir",
+      "ret": "int",
+      "params": [
+        {
+          "type": "char *",
+          "name": "out"
+        },
+        {
+          "type": "u32",
+          "name": "out_size"
+        }
+      ]
+    },
+    {
+      "name": "state_in_step",
+      "ret": "int",
+      "params": []
+    },
+    {
+      "name": "table_get",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "name"
+        },
+        {
+          "type": "s32",
+          "name": "key"
+        },
+        {
+          "type": "s32 *",
+          "name": "out"
+        }
+      ]
+    },
+    {
+      "name": "event_player",
+      "ret": "u32",
+      "params": []
+    },
+    {
+      "name": "shared_get",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "key"
+        },
+        {
+          "type": "s32 *",
+          "name": "out"
+        }
+      ]
+    },
+    {
+      "name": "shared_set",
+      "ret": "int",
+      "params": [
+        {
+          "type": "const char *",
+          "name": "key"
+        },
+        {
+          "type": "s32",
+          "name": "value"
+        }
+      ]
+    }
+  ]
+}

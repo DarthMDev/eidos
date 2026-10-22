@@ -302,8 +302,16 @@ int main(void)
                 (long)offsetof(BwModServices, table_get)
                 - (long)offsetof(BwModServices, state_in_step),
                 (long)sizeof(void *));
-    BW_CHECK_EQ("and nothing follows it",
-                (long)sizeof(BwModServices) - (long)offsetof(BwModServices, table_get),
+    BW_CHECK_EQ("version 5's multiplayer calls follow it",
+                (long)offsetof(BwModServices, event_player)
+                - (long)offsetof(BwModServices, table_get),
+                (long)sizeof(void *));
+    BW_CHECK_EQ("the shared table's two follow",
+                (long)offsetof(BwModServices, shared_set)
+                - (long)offsetof(BwModServices, event_player),
+                2 * (long)sizeof(void *));
+    BW_CHECK_EQ("and nothing follows them",
+                (long)sizeof(BwModServices) - (long)offsetof(BwModServices, shared_set),
                 (long)sizeof(void *));
 
     printf("the in-step call\n");

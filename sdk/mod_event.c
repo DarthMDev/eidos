@@ -87,7 +87,14 @@ typedef struct BwEventHandlerRec {
     BwEventHandler fn;
     void         *state;   /* the mod's own state, the value it returned */
     u32           next;    /* the next handler of the kind, index + 1 */
+    int           remote;  /* it takes the other players' events too */
 } BwEventHandlerRec;
+
+/* Multiplayer: the registering mod takes the other players' events; the
+ * player whose event runs (0: this game's); where this game's events go. */
+static int g_registering_remote;
+static u32 g_event_player;
+static void (*g_forward)(const void *payload, u32 size);
 
 static BwEventHandlerRec g_handlers[BW_MOD_EVENT_HANDLERS_MAX];
 static u32               g_handler_count;
@@ -366,6 +373,7 @@ int bw_mod_event_register(u32 kind, BwEventHandler fn)
     rec = &g_handlers[g_handler_count];
     rec->fn = fn;
     rec->state = g_registering_state;
+    rec->remote = g_registering_remote;
     rec->next = 0;
     g_handler_count++;
     if (g_kind_tail[kind] != 0) {
@@ -394,6 +402,21 @@ u32 bw_mod_event_handler_count(u32 kind)
 void bw_mod_event_set_registering_state(void *state)
 {
     g_registering_state = state;
+}
+
+void bw_mod_event_set_registering_remote(int remote)
+{
+    g_registering_remote = remote != 0;
+}
+
+u32 bw_mod_event_player(void)
+{
+    return g_event_player;
+}
+
+void bw_mod_event_set_forward(void (*fn)(const void *payload, u32 size))
+{
+    g_forward = fn;
 }
 
 /* ------------------------------------------------------------------ */
@@ -463,7 +486,38 @@ static int run_handlers(u32 kind, BwEventPayload *payload)
             refused = 1;
         }
     }
+    /* the event as this game's handlers left it goes to the other
+     * players (multiplayer); a refused one did not happen */
+    if (g_forward != NULL && !refused) {
+        g_forward(payload, payload->h.size);
+    }
     return refused;
+}
+
+int bw_mod_event_remote(u32 player, const void *buf, u32 size)
+{
+    BwEventPayload payload;
+    u32 kind, i;
+
+    if (buf == NULL || size < sizeof(BwEvent) || size > sizeof(payload)) {
+        return -1;
+    }
+    memset(&payload, 0, sizeof(payload));
+    memcpy(&payload, buf, size);
+    kind = payload.h.kind;
+    if (kind == 0 || kind >= BW_MOD_EVENT_KINDS_MAX ||
+        payload_size(kind) == 0 || payload.h.size != size ||
+        size != payload_size(kind)) {
+        return -1;
+    }
+    g_event_player = player;
+    for (i = g_kind_head[kind]; i != 0; i = g_handlers[i - 1].next) {
+        if (g_handlers[i - 1].remote) {
+            (void)g_handlers[i - 1].fn(g_handlers[i - 1].state, &payload.h);
+        }
+    }
+    g_event_player = 0;
+    return 0;
 }
 
 /*
@@ -580,6 +634,8 @@ void bw_mod_event_reset(void)
     g_scope_overflow = 0;
 
     g_registering_state = NULL;
+    g_registering_remote = 0;
+    g_event_player = 0;
 }
 
 /* ------------------------------------------------------------------ */

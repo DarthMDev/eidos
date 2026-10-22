@@ -1,0 +1,22 @@
+{
+  "status": "open",
+  "api": 5,
+  "line": "option <key> <kind> \"<label>\" <value>",
+  "kinds": [
+    {
+      "kind": "bool",
+      "value": "on | off",
+      "setting_get": "1 or 0"
+    },
+    {
+      "kind": "choice",
+      "value": "name|name|...",
+      "setting_get": "the chosen index; the first is the default"
+    },
+    {
+      "kind": "int",
+      "value": "<min> <max> <default>",
+      "setting_get": "the number"
+    }
+  ]
+}

@@ -341,6 +341,22 @@ typedef struct BwModServices {
      * not and *out holds the table's default, -1 when the mod has no such
      * table. */
     int  (*table_get)(const char *name, s32 key, s32 *out);
+
+    /* Interface version 5: multiplayer (docs/multiplayer.md).  A mod with
+     * `multiplayer = <n>` in its manifest receives the other players'
+     * events too, through its own handlers; event_player says whose game
+     * fired the event the handler runs for: 0 for this game, else the
+     * player's number in the session.  Another player's event cannot be
+     * refused or changed: its game has already acted on it. */
+    u32  (*event_player)(void);
+    /* The shared table: numbers every player sees, kept by the host (its
+     * copy is the real one; the others send their changes to it, and it
+     * sends every change to everyone).  Keys are the mod's own.  get: 0
+     * when the key is set, 1 when it is not (*out is 0), -1 outside a
+     * multiplayer game.  set: 0 when the change was made or sent, -1
+     * outside a multiplayer game. */
+    int  (*shared_get)(const char *key, s32 *out);
+    int  (*shared_set)(const char *key, s32 value);
 } BwModServices;
 
 /* ------------------------------------------------------------------ */

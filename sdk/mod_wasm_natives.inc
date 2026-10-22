@@ -755,6 +755,37 @@ static int32_t wn_table_get(wasm_exec_env_t env, const char *name, int32_t key, 
     return (int32_t)w->host->services->table_get(name, (s32)key, (s32 *)out);
 }
 
+static int32_t wn_event_player(wasm_exec_env_t env)
+{
+    BwWasmMod *w = wasm_mod_of(env);
+    if (w == NULL || w->host == NULL || w->host->services == NULL ||
+        w->host->services->event_player == NULL) {
+        return -1;
+    }
+    return (int32_t)w->host->services->event_player();
+}
+
+static int32_t wn_shared_get(wasm_exec_env_t env, const char *key, void *out)
+{
+    BwWasmMod *w = wasm_mod_of(env);
+    if (w == NULL || w->host == NULL || w->host->services == NULL ||
+        w->host->services->shared_get == NULL ||
+        !wasm_object_ok(env, out, sizeof(s32))) {
+        return -1;
+    }
+    return (int32_t)w->host->services->shared_get(key, (s32 *)out);
+}
+
+static int32_t wn_shared_set(wasm_exec_env_t env, const char *key, int32_t value)
+{
+    BwWasmMod *w = wasm_mod_of(env);
+    if (w == NULL || w->host == NULL || w->host->services == NULL ||
+        w->host->services->shared_set == NULL) {
+        return -1;
+    }
+    return (int32_t)w->host->services->shared_set(key, (s32)value);
+}
+
 /* The state calls and the services, as imports of module "eidos". */
 static NativeSymbol k_wasm_api_natives[] = {
     { "party_count", (void *)wn_party_count, "()i", NULL },
@@ -830,4 +861,7 @@ static NativeSymbol k_wasm_api_natives[] = {
     { "state_dir", (void *)wn_state_dir, "(*~)i", NULL },
     { "state_in_step", (void *)wn_state_in_step, "()i", NULL },
     { "table_get", (void *)wn_table_get, "($i*)i", NULL },
+    { "event_player", (void *)wn_event_player, "()i", NULL },
+    { "shared_get", (void *)wn_shared_get, "($*)i", NULL },
+    { "shared_set", (void *)wn_shared_set, "($i)i", NULL },
 };

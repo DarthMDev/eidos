@@ -250,6 +250,29 @@ int bw_mod_event_register(u32 kind, BwEventHandler fn);
 void bw_mod_event_set_registering_state(void *state);
 
 /*
+ * Multiplayer (docs/multiplayer.md): whether the mod that is registering
+ * takes the other players' events too (its manifest's `multiplayer`).
+ */
+void bw_mod_event_set_registering_remote(int remote);
+
+/*
+ * Another player's event, as its game fired it (the payload's bytes, its
+ * header first).  The handlers of the mods that take the other players'
+ * events run over it; a refusal and a change go nowhere.  0, or -1 when
+ * the bytes are not a payload of an event the port has.
+ */
+int  bw_mod_event_remote(u32 player, const void *buf, u32 size);
+
+/* The player whose event the handlers run for: 0 for this game's own. */
+u32  bw_mod_event_player(void);
+
+/*
+ * The port's own hook: every event this game fires, after its handlers,
+ * goes here (multiplayer forwards it to the host).  NULL for none.
+ */
+void bw_mod_event_set_forward(void (*fn)(const void *payload, u32 size));
+
+/*
  * The port's own bindings: one row per stable-event binding of
  * docs/mod-events.md, section 1.  The layer reads them from the tables the
  * area files publish.

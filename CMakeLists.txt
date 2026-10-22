@@ -1742,7 +1742,7 @@ add_executable(test_mod_table ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_table.c
 target_include_directories(test_mod_table PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 target_link_libraries(test_mod_table PRIVATE eidos)
 add_test(NAME test_mod_table COMMAND test_mod_table WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-# The language-neutral API description (sdk/api/v4, tools/apigen.py): its
+# The language-neutral API description (sdk/api/v5, tools/apigen.py): its
 # payload offsets compile against the headers, and the committed files are
 # the generator's current output.
 add_executable(test_api_layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_api_layout.c)

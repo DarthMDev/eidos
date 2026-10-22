@@ -4,7 +4,7 @@
  * A mod's `code` file is a native library or a wasm module; the loader
  * (sdk/mod_loader.c) tells them apart by the module's magic and hands a
  * module to this layer.  The module runs in WAMR's interpreter.  It reaches
- * the port through the imports of module "eidos" (sdk/api/v4/core.json and
+ * the port through the imports of module "eidos" (sdk/api/v5/core.json and
  * eidos_wasm.h): the core calls (log, on, script, memory access) and one
  * import per state call and service, the same table a native mod is
  * handed.

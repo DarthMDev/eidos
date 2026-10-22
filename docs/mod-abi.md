@@ -208,13 +208,13 @@ frozen within a version.
 
 ## 3. The version
 
-`api` is one integer, the major version of the surface. It is 4. A mod states
+`api` is one integer, the major version of the surface. It is 5. A mod states
 the version it was built against in its manifest, and the port checks that
 number against its own before it loads the mod. A mod may also compare the
 `api` in the host table with the number it was built against and refuse to
 start by returning a non-zero value from its start entry. The port loads the
 mod when its number is between `BW_MOD_API_MIN` and `BW_MOD_API_VERSION`
-(3 and 4) and refuses it otherwise, with a message naming both. An older
+(3 and 5) and refuses it otherwise, with a message naming both. An older
 number is accepted only when the newer version appended to the surface and
 moved nothing, so the old mod reads every struct at the layout it was built
 for. Any other mismatch means the mod reads a struct at a layout the port
@@ -241,7 +241,13 @@ The version moves when the surface moves.
   `encounter.wild`, `mon.exp`, `mon.levelup`, `catch.attempt`, `item.add`
   and `money.change` gain fields at their ends; `heal` gains `script_id`.
   Version 4 is frozen: the surface in `sdk/api/v4` does not change any
-  more, and what comes next is version 5 (`docs/mod-backlog.md`).
+  more.
+- **Version 5** appends and moves nothing, so version 3 and 4 mods still
+  load. The services table gains `event_player`, `shared_get` and
+  `shared_set` (multiplayer, `docs/mod-services.md`, "Multiplayer"). A mod
+  with `multiplayer = <n>` in its manifest receives the other players'
+  events through its own handlers. Version 5 is open: `sdk/api/v5` is
+  the current description.
 
 The number cannot be forgotten. A test recomputes the hash of the surface out
 of the headers themselves and compares it with the number the header carries,
@@ -274,8 +280,8 @@ width and the hash follows it: the number beside the version number is the
 
 | Pointers | Hash |
 |---|---|
-| 32-bit | 0x34B59816 (the number in `sdk/mod_api.h`) |
-| 64-bit | 0xECA08949 |
+| 32-bit | 0xF31531E2 (the number in `sdk/mod_api.h`) |
+| 64-bit | 0x7D165F30 |
 
 The payload structs, the ids and the enums hold no pointer and hash the
 same everywhere.

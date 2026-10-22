@@ -430,7 +430,7 @@ static void wasm_bind_on_save_received(BwWasmMod *w, int32_t index)
 }
 
 /* ------------------------------------------------------------------ */
-/* The core imports (sdk/api/v4/core.json)                              */
+/* The core imports (sdk/api/v5/core.json)                              */
 /* ------------------------------------------------------------------ */
 
 static void wc_log(wasm_exec_env_t env, const char *text, int32_t len)

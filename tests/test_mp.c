@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "mod_event.h"
 #include "mod_net.h"
 #include "mp.h"
 #include "save.h"
@@ -461,6 +462,85 @@ static void test_games(void)
     BW_CHECK_EQ("chosen again", bw_mp_game_select("Tour1"), 0);
 }
 
+/* A multiplayer mod's handler on the host: the players' events. */
+static int g_remote_seen;
+static u32 g_remote_player;
+
+static int remote_handler(void *state, BwEvent *event)
+{
+    (void)state;
+    (void)event;
+    g_remote_seen++;
+    g_remote_player = bw_mod_event_player();
+    return BW_EVENT_CONTINUE;
+}
+
+/* The shared table: the host's copy is the real one; a joiner's change
+ * goes to the host, which sends every change to everyone. */
+static void test_shared(void)
+{
+    char code[16];
+    s32 v = -1;
+
+    printf("the shared table\n");
+    BW_CHECK_EQ("outside a game: no table", bw_mp_shared_get("soul", "pair", &v), -1);
+    bw_mp_reset();
+    bw_mp_set_net(&k_test_net);
+    bw_mp_set_local('B', "");
+    (void)bw_mp_host(code, sizeof code);
+    bw_mp_on_net(2, (int)BW_SESSION_JOIN, NULL, 0);
+    sent_reset();
+    BW_CHECK_EQ("the host sets a key", bw_mp_shared_set("soul", "pair.1", 42), 0);
+    BW_CHECK_EQ("and sends it to everyone", sent_has("tset soul/pair.1 42"), 1);
+    BW_CHECK_EQ("the host reads it", bw_mp_shared_get("soul", "pair.1", &v), 0);
+    BW_CHECK_EQ("its value", (int)v, 42);
+    BW_CHECK_EQ("a key not set", bw_mp_shared_get("soul", "nothing", &v), 1);
+    BW_CHECK_EQ("another mod's key is its own", bw_mp_shared_get("other", "pair.1", &v), 1);
+    sent_reset();
+    say(2, "treq soul/pair.2 7");
+    BW_CHECK_EQ("a joiner's change is applied", bw_mp_shared_get("soul", "pair.2", &v), 0);
+    BW_CHECK_EQ("as asked", (int)v, 7);
+    BW_CHECK_EQ("and sent to everyone", sent_has("tset soul/pair.2 7"), 1);
+    BW_CHECK_EQ("a key with a space is refused", bw_mp_shared_set("soul", "a b", 1), -1);
+    sent_reset();
+    say(2, "hello 1 B - ffffeeeeddddccccbbbbaaaa99998888 0");
+    BW_CHECK_EQ("a hello gets the whole table", sent_has("tset soul/pair.1 42"), 1);
+    {
+        /* two events of a joiner in one message reach the mod's handler */
+        u8 msg[4 + 2 * sizeof(BwMoneyChange)];
+        BwMoneyChange e;
+
+        bw_mod_event_reset();
+        bw_mod_event_set_registering_remote(1);
+        (void)bw_mod_event_register(BW_EVENT_MONEY_CHANGE, remote_handler);
+        bw_mod_event_set_registering_remote(0);
+        memset(&e, 0, sizeof e);
+        e.h.kind = BW_EVENT_MONEY_CHANGE;
+        e.h.size = (u32)sizeof e;
+        memcpy(msg, "evs ", 4);
+        memcpy(msg + 4, &e, sizeof e);
+        memcpy(msg + 4 + sizeof e, &e, sizeof e);
+        bw_mp_on_net(2, (int)BW_SESSION_MESSAGE, msg, (u32)sizeof msg);
+        BW_CHECK_EQ("a joiner's events reach the mods", g_remote_seen, 2);
+        BW_CHECK_EQ("as that player's", (int)g_remote_player, 2);
+        bw_mod_event_reset();
+    }
+    bw_mp_reset();
+
+    /* a joiner asks the host and keeps what the host sends */
+    bw_mp_set_net(&k_test_net);
+    (void)bw_mp_join("ABC234");
+    sent_reset();
+    BW_CHECK_EQ("a joiner's change", bw_mp_shared_set("soul", "pair.3", 5), 0);
+    BW_CHECK_EQ("goes to the host", sent_has("treq soul/pair.3 5"), 1);
+    BW_CHECK_EQ("and is not made here", bw_mp_shared_get("soul", "pair.3", &v), 1);
+    say(1, "tset soul/pair.3 5");
+    BW_CHECK_EQ("the host's word makes it", bw_mp_shared_get("soul", "pair.3", &v), 0);
+    BW_CHECK_EQ("its value", (int)v, 5);
+    bw_mp_leave();
+    bw_mp_reset();
+}
+
 int main(void)
 {
     /* every file the layer writes goes to the test's own folder */
@@ -470,5 +550,6 @@ int main(void)
     test_relay_restart();
     test_saves();
     test_games();
+    test_shared();
     BW_REPORT("test_mp");
 }
