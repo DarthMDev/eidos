@@ -655,7 +655,7 @@ static void build_rows(void)
 
     g.nrows = 0;
     if (g.level == 0) {
-        for (i = 0; i < TAB_COUNT; i++) {
+        for (i = 0; i < TAB_STRIP; i++) {
             add_row(ROW_SECTION, k_tab_order[i], 0);
         }
         return;
@@ -929,7 +929,7 @@ static void leave_section(void)
     g.level = 0;
     /* the cursor goes back to the section's own place on the list */
     g.cursor = 0;
-    for (i = 0; i < TAB_COUNT; i++) {
+    for (i = 0; i < TAB_STRIP; i++) {
         if (k_tab_order[i] == g.tab) {
             g.cursor = i;
         }
