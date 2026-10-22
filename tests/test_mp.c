@@ -8,6 +8,11 @@
 
 #include <stdio.h>
 #include <string.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "mod_event.h"
 #include "mod_net.h"
@@ -154,9 +159,26 @@ static void test_host(void)
         BW_CHECK_EQ("with its game", p.game, 'W');
     }
 
-    printf("a stranger after the start\n");
+    printf("a new player after the start\n");
+    sent_reset();
     bw_mp_on_net(3, (int)BW_SESSION_JOIN, NULL, 0);
-    BW_CHECK_EQ("is removed", (long)g_removed, 3);
+    BW_CHECK_EQ("is not removed", (long)g_removed, 0);
+    say(3, "hello 1 B soul=2 0123456789abcdef0123456789abcdef 0");
+    BW_CHECK_EQ("gets a new game", sent_has("save 0 0 0"), 1);
+    BW_CHECK_EQ("and the start", sent_has("start"), 1);
+    {
+        BwMpPlayer p;
+
+        BW_CHECK_EQ("is on the roster", bw_mp_player_at(2, &p) == 0 && p.on_roster, 1);
+    }
+    bw_mp_on_net(4, (int)BW_SESSION_JOIN, NULL, 0);
+    say(4, "hello 1 B - fedcba9876543210fedcba9876543210 0");
+    BW_CHECK_EQ("one whose multiplayer mods differ is removed", (long)g_removed, 4);
+    bw_mp_on_net(4, (int)BW_SESSION_LEAVE, NULL, 0);
+    bw_mp_on_net(3, (int)BW_SESSION_LEAVE, NULL, 0);
+    bw_mp_on_net(3, (int)BW_SESSION_JOIN, NULL, 0);
+    BW_CHECK_EQ("the new player's drop and return change nothing",
+                (long)bw_mp_state(), (long)BW_MP_PLAYING);
 
     printf("a drop and a return within the grace\n");
     bw_mp_on_net(2, (int)BW_SESSION_LEAVE, NULL, 0);
@@ -446,6 +468,21 @@ static void test_games(void)
     int n, i, a = 0, b = 0;
 
     printf("the host's games\n");
+    for (i = 1; i < 100; i++) {
+        /* the games an earlier run made go first */
+        char path[96], file[128];
+
+        if (i == 1) {
+            snprintf(path, sizeof path, "test_mp_tmp/multiplayer/games/Tour1");
+        } else {
+            snprintf(path, sizeof path, "test_mp_tmp/multiplayer/games/Tour1 %d", i);
+        }
+        snprintf(file, sizeof file, "%s/host_id.txt", path);
+        remove(file);
+        snprintf(file, sizeof file, "%s/shared.txt", path);
+        remove(file);
+        (void)rmdir(path);
+    }
     BW_CHECK_EQ("a new game", bw_mp_game_create("Tour/1", made, sizeof made), 0);
     BW_CHECK_EQ("a folder name", strcmp(made, "Tour1") == 0 ||
                 strncmp(made, "Tour1 ", 6) == 0, 1);

@@ -64,9 +64,11 @@ when the host comes back. The host sends the roster after every change, and
   has said hello, and every player's multiplayer mods match the host's.
   The lobby says what it waits for ("waiting for Cheren", "Cheren: mod soul
   is another multiplayer version").
-- The first start sets the roster: the players here then. A player who is
-  not on the roster and joins later is removed (`Q`). Adding players after
-  the first start is SPEC step 8.
+- The first start sets the roster: the players here then. A player who
+  joins later is added to it: at its hello it gets its save (or a new
+  game) and the start, as a player who comes back does. A newcomer whose
+  multiplayer mods differ from the host's is removed (`Q`), with the
+  reason in the host's log.
 
 ## Multiplayer mods
 
@@ -148,9 +150,12 @@ use multiplayer for now (SPEC section 17).
   is not waited for. Closing the host's window while saves are to come
   keeps the window, darkened ("Saving everyone's games"), until they are
   in, for up to 30 seconds.
-- One file at a time goes to a peer (its `saveack` names no file); a new
-  one replaces the one on its way, and a hello said again while a save is
-  on its way does not start it over.
+- One file at a time goes to a peer; a new one replaces the one on its
+  way, and a hello said again while a save is on its way does not start
+  it over. The confirmation names the file by its checksum
+  (`saveack <got> <total> <crc32>`), and the receiver drops a late piece
+  of a file the sender gave up, so a replaced file never mixes with the
+  new one.
 - The pause screen shows the game's code again.
 - A save belongs to one game: the host keeps `<fingerprint>.sav.game`
   (`B` or `W`), and the lobby will not start while a player plays the
@@ -215,7 +220,8 @@ use multiplayer for now (SPEC section 17).
 
 ## Not built yet
 
-1. Adding players after the first start.
+Nothing of SPEC section 18 is left. Later: mod downloads from the host,
+spectators, and rules mods in multiplayer.
 
 The mods' own session events for the lobby, the start and the pause need
 new event kinds and a `session_start` service: they come with the next mod

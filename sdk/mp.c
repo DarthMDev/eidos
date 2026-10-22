@@ -742,18 +742,21 @@ static void sends_pump(void)
 static void on_save_ack(u32 peer, const char *msg, u32 size)
 {
     char text[64];
-    unsigned got = 0, total = 0;
+    unsigned got = 0, total = 0, crc = 0;
+    int have_crc;
     u32 i;
 
     copy_n(text, sizeof(text), msg, size);
-    if (sscanf(text, "saveack %u %u", &got, &total) != 2) {
+    have_crc = sscanf(text, "saveack %u %u %u", &got, &total, &crc);
+    if (have_crc < 2) {
         return;
     }
     for (i = 0; i < BW_MP_SENDS_MAX; i++) {
         BwMpSend *s = &g_sends[i];
 
-        if (!s->used || s->peer != peer || s->size != total) {
-            continue;
+        if (!s->used || s->peer != peer || s->size != total ||
+            (have_crc == 3 && s->crc != crc)) {
+            continue;           /* another file's confirmation */
         }
         if (got > s->acked) {
             s->acked = got;
@@ -932,6 +935,9 @@ static void on_save_piece(u32 peer, const u8 *msg, u32 size,
         return;
     }
     r = &g_recv[peer];
+    if (off != 0 && r->buf != NULL && r->crc != crc) {
+        return;     /* a late piece of a file the sender has given up */
+    }
     if (off == 0 || r->buf == NULL || r->total != total || r->crc != crc) {
         free(r->buf);
         r->buf = (u8 *)malloc(total);
@@ -950,8 +956,8 @@ static void on_save_piece(u32 peer, const u8 *msg, u32 size,
     {
         /* what has arrived, so the sender sends on (or again) */
         char ack[48];
-        int a = snprintf(ack, sizeof(ack), "saveack %u %u", (unsigned)r->got,
-                         total);
+        int a = snprintf(ack, sizeof(ack), "saveack %u %u %u", (unsigned)r->got,
+                         total, crc);
 
         (void)g_net->send(peer, ack, (u32)a);
     }
@@ -1132,7 +1138,8 @@ static void host_on_join(u32 peer)
         /* After a relay restart the numbers are new: a missing roster
          * player with the same name takes its place under the new number
          * (SPEC section 12's identity replaces the name).  Anyone else is
-         * not on the roster and is removed. */
+         * a new player, added to the roster: the game runs, so it gets
+         * its save (or a new game) and starts at its hello. */
         char name[BW_MP_NAME_MAX + 1];
         u32 i;
 
@@ -1157,8 +1164,10 @@ static void host_on_join(u32 peer)
             }
         }
         if (!(p->peer != 0 && p->on_roster)) {
-            (void)g_net->remove(peer);
-            return;
+            memset(p, 0, sizeof(*p));
+            p->on_roster = 1;
+            fprintf(stderr, "eidos: multiplayer: a new player joins the "
+                    "running game as player %u\n", (unsigned)peer);
         }
     }
     p->peer = peer;
@@ -1255,6 +1264,18 @@ static void host_on_message(u32 peer, const char *msg, u32 size)
         host_broadcast_roster();
         host_shared_send_all(peer);
         /* a player who comes back while the game runs is told so */
+        if ((g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE) &&
+            !p->mods_ok) {
+            /* a player whose multiplayer mods differ cannot play with
+             * this game; the lobby says so before a start, and here the
+             * player is removed with the reason in the log */
+            fprintf(stderr, "eidos: multiplayer: %s's multiplayer mods "
+                    "differ from this game's; removed\n", p->name);
+            (void)g_net->remove(peer);
+            memset(p, 0, sizeof(*p));          /* off the roster */
+            host_broadcast_roster();
+            return;
+        }
         if (g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE) {
             if (!p->in_game && !sending_to(peer)) {
                 /* a hello said again while its save is on its way does
