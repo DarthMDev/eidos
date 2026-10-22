@@ -741,6 +741,9 @@ typedef struct BwModNetRx {
     u32 acc;                                     /* the length so far        */
     u32 digits;                                  /* the length's digits      */
     int state;                                   /* the parser's state       */
+    char type;                                   /* the frame's type: kept
+                                                    while its bytes come in
+                                                    over several reads      */
 } BwModNetRx;
 
 /* The queue: the network threads write into it, the frame drains it.  Two
@@ -1588,7 +1591,7 @@ static int rx_parse(char *type, u8 **payload, u32 *size)
             if (g_rx.pos >= g_rx.len) {
                 return 0;
             }
-            *type = (char)g_rx.buf[g_rx.pos++];
+            g_rx.type = (char)g_rx.buf[g_rx.pos++];
             g_rx.acc = 0;
             g_rx.digits = 0;
             g_rx.state = 1;
@@ -1628,6 +1631,10 @@ static int rx_parse(char *type, u8 **payload, u32 *size)
             if (g_rx.len - g_rx.pos < g_rx.want) {
                 return 0;
             }
+            /* the type comes from the state, not the caller: a frame whose
+             * bytes came in over two reads was started by an earlier call,
+             * and the caller's own `type` is a fresh variable each time */
+            *type = g_rx.type;
             *payload = g_rx.buf + g_rx.pos;
             *size = g_rx.want;
             g_rx.pos += g_rx.want;

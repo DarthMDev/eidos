@@ -1006,6 +1006,45 @@ static void test_frame(void)
                 strcmp(g_alpha_session.msg_text, "hello"), 0);
 }
 
+/*
+ * A frame whose bytes come in over two reads, with a read between them
+ * that finds nothing: the internet splits a 4 KB frame into packets.  The
+ * frame's type is read in the first part and the frame ends in the last
+ * one, so the type must outlive the read in between.  (A relay over the
+ * internet lost exactly such frames: their type was forgotten.)
+ */
+static void test_split_frame(void)
+{
+    char code[BW_MOD_NET_CODE_MAX + 1];
+    const char *body = "2\n" T_NS_A "\nsplit";
+    char rest[64];
+
+    printf("a frame split over reads\n");
+    bw_mod_net_reset();
+    relay_reset();
+    log_reset(&g_alpha_session);
+    bw_mod_net_set_transport(&g_fake_transport);
+    bw_mod_net_set_relay(T_RELAY_HOST, T_RELAY_PORT);
+    bw_mod_net_set_name(T_NAME);
+    bw_mod_savedata_set_namespace(T_NS_A);
+    bw_mod_net_on_session(on_alpha_session);
+
+    relay_say('C', T_CODE);
+    BW_STEP("the host call succeeds",
+            bw_mod_net_session_host(code, sizeof code) == (int)BW_MOD_NET_OK);
+
+    /* the type byte alone, then a read that finds nothing, then the rest */
+    relay_write_raw("D");
+    t_sleep_ms(50);
+    snprintf(rest, sizeof rest, " %u\n%s", (unsigned)strlen(body), body);
+    relay_write_raw(rest);
+    relay_say('P', "2 guest");          /* the marker: the reader is past it */
+    BW_CHECK_EQ("the reader reads on", wait_peers(1), 1);
+    bw_mod_net_frame();
+    BW_CHECK_EQ("the split frame arrives", g_alpha_session.messages, 1);
+    BW_CHECK_EQ("whole", strcmp(g_alpha_session.msg_text, "split"), 0);
+}
+
 /* ------------------------------------------------------------------ */
 /* The limits                                                          */
 /* ------------------------------------------------------------------ */
@@ -1303,6 +1342,7 @@ int main(void)
     test_protocol();
     test_answers();
     test_frame();
+    test_split_frame();
     test_limits();
     test_bad_frame();
     test_port();
