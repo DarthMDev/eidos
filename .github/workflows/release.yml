@@ -83,15 +83,30 @@ jobs:
           msystem: MINGW32
           update: false
           install: >-
-            mingw-w64-i686-gcc
             mingw-w64-i686-cmake
             mingw-w64-i686-ninja
             mingw-w64-i686-python
             zip
+            unzip
       - uses: actions/cache@v4
         with:
           path: .cache
           key: deps-windows-${{ hashFiles('tools/fetch_sdl.py', 'tools/fetch_wamr.py', 'tools/fetch_mbedtls.py') }}
+      # The compiler the release is tested with, not MSYS2's newest: the
+      # same xPack GCC 14.2 build the port is developed and played on.
+      # MSYS2's GCC 16 builds a test_mod_wasm that crashes (2026-10-23).
+      - name: Compiler (xPack MinGW-w64 GCC 14.2.0-1, checked against its SHA-256)
+        run: |
+          zip=xpack-mingw-w64-gcc-14.2.0-1-win32-x64.zip
+          mkdir -p .cache/gcc
+          if [ ! -d .cache/gcc/xpack-mingw-w64-gcc-14.2.0-1 ]; then
+            curl -sSfL -o "$zip" \
+              "https://github.com/xpack-dev-tools/mingw-w64-gcc-xpack/releases/download/v14.2.0-1/$zip"
+            echo "d9f73bb51ada5ae0ac49277c91815ee0334c8096614d6ced1828fd864712ce73  $zip" | sha256sum -c -
+            unzip -q "$zip" -d .cache/gcc
+            rm "$zip"
+          fi
+          .cache/gcc/xpack-mingw-w64-gcc-14.2.0-1/bin/i686-w64-mingw32-gcc --version | head -1
       - name: Fetch SDL2, WAMR, Mbed TLS (each is checked against a recorded SHA-256)
         run: |
           python tools/fetch_sdl.py --flavor mingw
@@ -103,8 +118,11 @@ jobs:
       # wrapping arithmetic and loose aliasing, as the DS compiler gave it.
       - name: Configure
         run: |
+          gcc_bin="$(cygpath -m "$PWD/.cache/gcc/xpack-mingw-w64-gcc-14.2.0-1/bin")"
           cmake -S . -B build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake \
+            -DCMAKE_C_COMPILER="$gcc_bin/i686-w64-mingw32-gcc.exe" \
+            -DCMAKE_RC_COMPILER="$gcc_bin/i686-w64-mingw32-windres.exe" \
             -DCMAKE_C_FLAGS="-O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
             -DALETHEIA_ROOT="$(cygpath -m "$PWD/aletheia")" \
             -DBW_DATA_ROOT="$(cygpath -m "$PWD/no-game-data/extract/data")" \
