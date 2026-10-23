@@ -9,10 +9,13 @@
  * The Options screen (overlay 68) lists the game's five settings on the
  * bottom screen: a row label, then two or three choices, each with a
  * marker sprite, the chosen one bright and the others dim.  The port adds
- * pages to it.  The sixth bar under the list, empty in the game, holds the
- * page names: GAME, DISPLAY and SOUND.  L and R change the page, and so
- * does a touch on a name.  GAME is the game's own page, unchanged.  The
- * other pages are drawn the way the game draws its rows:
+ * pages to it.  The sixth bar under the list, empty in the game, is the
+ * page bar: the page's name in the middle (GAME, DISPLAY, SOUND) and a
+ * double arrow at each end, the bag's pocket arrows drawn in this screen's
+ * colours.  A touch on an arrow, or L and R, changes the page (it wraps),
+ * and the arrow lights up for a moment as the bag's does.  GAME is the
+ * game's own page, unchanged.  The other pages are drawn the way the game
+ * draws its rows:
  *
  *   - the same row bars, the same label column and the same choice
  *     columns (three at 112/160/208, two at 112/184, in pixels);
@@ -37,6 +40,7 @@
  * (copied below), apart from the page names.
  *
  * symbols:
+ *   BMP_FillRect  0x02043AF4  arm
  *   BG_SYS_GetScrollY  0x02040804  arm
  *   BG_SYS_FillTileMap  0x020413B0  arm
  *   BG_SYS_MarkTileDirty  0x02041B6C  arm
@@ -247,6 +251,7 @@ extern void BMP_WIN_MakeScreen(struct BmpWin *win);
 extern void BMP_WIN_ClearScreen(struct BmpWin *win);
 extern u8 BMP_WIN_GetBgLayer(struct BmpWin *win);
 extern void BMP_Clear(struct Bmp *bmp, u8 value);
+extern void BMP_FillRect(struct Bmp *bmp, u32 x, u32 y, u32 w, u16 h, u8 value);
 extern void PRINTSYS_Print(struct Bmp *bmp, s16 x, s16 y, struct Strbuf *str, struct GfFont *font);
 extern void PRINTSYS_PrintQue(void *queue, struct Bmp *bmp, u32 x, s16 y, void *str, struct GfFont *font);
 extern void PRINTSYS_PrintStreamDelete(struct PrintStream *stream);
@@ -333,9 +338,36 @@ static const int k_col2_rect[2]  = { 112, 184 };
 #define LABEL_TILE_W    12
 #define CHOICE3_TILE_W  6
 #define CHOICE2_TILE_W  8
-#define TAB_ROW         5               /* the sixth bar */
-#define TAB_TILE_W      9
-static const u8 k_tab_tile[PAGE_COUNT] = { 1, 11, 21 };
+#define TAB_ROW         5               /* the sixth bar: the page bar */
+#define ARROW_TILE_W    2
+#define NAME_TILE_X     4
+#define NAME_TILE_W     24
+#define FLASH_FRAMES    8
+
+enum { BAR_LEFT = 0, BAR_NAME, BAR_RIGHT, BAR_COUNT };
+static const u8 k_bar_tile[BAR_COUNT] = { 2, NAME_TILE_X, 28 };
+
+/*
+ * The bag's pocket arrows (its touch bar, overlay 91), 16 x 12 pixels:
+ * '#' is the arrow, '+' its outline.  They are drawn with the colour numbers
+ * this screen's text shows in (15 the letter, 14 the shadow, read off a
+ * render of every number under palettes 0 and 3), so the row colours tint
+ * them as they tint the text.
+ */
+static const char *const k_arrow_left[12] = {
+    ".....++.....++..",
+    "....+##+...+##+.",
+    "...+###+..+###+.",
+    "..+###+..+###+..",
+    ".+###+..+###+...",
+    "+###+..+###+....",
+    "+###+..+###+....",
+    ".+###+..+###+...",
+    "..+###+..+###+..",
+    "...+###+..+###+.",
+    "....+##+...+##+.",
+    ".....++.....++..",
+};
 
 typedef struct PortWin {
     struct BmpWin *win;
@@ -348,7 +380,8 @@ static struct {
     struct OptionMenuScreen *screen;
     PortWin label[OPTION_COUNT];
     PortWin choice[OPTION_COUNT][3];
-    PortWin tab[PAGE_COUNT];
+    PortWin bar[BAR_COUNT];     /* the page bar: arrow, name, arrow */
+    int flash[2];               /* frames an arrow stays lit */
     int built;                  /* the page's windows exist */
     struct GfFont *font;        /* the screen's own font (OPTION_MENU_Init's) */
 } g;
@@ -452,27 +485,63 @@ static void color_win(const OptionMenuList *list, const PortWin *pw, int pal)
     }
 }
 
-/* The page names in the sixth bar: made once, kept on every page. */
-static void build_tabs(void)
+/* An arrow window: the bag's arrow, mirrored for the right one. */
+static void make_arrow(PortWin *pw, int x, int right)
 {
-    int i;
+    struct Bmp *bmp;
+    int r, c;
 
-    if (g.tab[0].win != 0) {
-        return;
+    pw->x = (u8)x;
+    pw->y = (u8)ROW_TILE_Y(TAB_ROW);
+    pw->w = ARROW_TILE_W;
+    pw->h = 2;
+    pw->win = BMP_WIN_Create(1, pw->x, pw->y, pw->w, pw->h, 0, 1);
+    bmp = BMP_WIN_GetBmp(pw->win);
+    BMP_Clear(bmp, 0);
+    for (r = 0; r < 12; r++) {
+        for (c = 0; c < 16; c++) {
+            char ch = k_arrow_left[r][right ? 15 - c : c];
+
+            if (ch != '.') {
+                BMP_FillRect(bmp, (u32)c, (u32)(r + 2), 1, 1, ch == '#' ? 15 : 14);
+            }
+        }
     }
-    for (i = 0; i < PAGE_COUNT; i++) {
-        make_win(&g.tab[i], k_tab_tile[i], ROW_TILE_Y(TAB_ROW), TAB_TILE_W, 2,
-                 k_page_names[i], 4, g.font);
-    }
+    BMP_WIN_TransferChars(pw->win);
+    BMP_WIN_MakeScreen(pw->win);
+    BG_SYS_MarkTileDirty(BMP_WIN_GetBgLayer(pw->win));
 }
 
+/* The page's name, centred in the bar. */
+static void make_name(void)
+{
+    struct Strbuf *str = make_text(k_page_names[g.page]);
+    int pad = (NAME_TILE_W * 8 - (int)PRINTSYS_MeasureWidestLine(str, g.font, 0)) / 2;
+
+    STRBUF_Delete(str);
+    drop_win(&g.bar[BAR_NAME]);
+    make_win(&g.bar[BAR_NAME], NAME_TILE_X, ROW_TILE_Y(TAB_ROW), NAME_TILE_W, 2,
+             k_page_names[g.page], pad < 0 ? 0 : pad, g.font);
+}
+
+/* The page bar: made with the screen's first frame, kept on every page. */
+static void build_tabs(void)
+{
+    if (g.bar[BAR_NAME].win != 0) {
+        return;
+    }
+    make_arrow(&g.bar[BAR_LEFT], k_bar_tile[BAR_LEFT], 0);
+    make_name();
+    make_arrow(&g.bar[BAR_RIGHT], k_bar_tile[BAR_RIGHT], 1);
+    g.flash[0] = g.flash[1] = 0;
+}
+
+/* The name bright, as a chosen value is; the arrows dim, lit while pressed. */
 static void color_tabs(const OptionMenuList *list)
 {
-    int i;
-
-    for (i = 0; i < PAGE_COUNT; i++) {
-        color_win(list, &g.tab[i], i == g.page ? 0 : 3);
-    }
+    color_win(list, &g.bar[BAR_NAME], 0);
+    color_win(list, &g.bar[BAR_LEFT], g.flash[0] > 0 ? 0 : 3);
+    color_win(list, &g.bar[BAR_RIGHT], g.flash[1] > 0 ? 0 : 3);
 }
 
 /* The port page's windows: the value of a stepper is written into its
@@ -730,20 +799,24 @@ static int port_touch(OptionMenuList *list, const OptionMenuPoint *t, int *col)
     return -1;
 }
 
-static int tab_at(const OptionMenuList *list, const OptionMenuPoint *t)
+/* -1 or +1 for a touch on an arrow of the page bar (the left or the
+ * right quarter of it, so the arrows are easy to hit), else 0.  The bar
+ * moves with the list (OPTION_MENU_ScrollList), so its place is the list's
+ * scroll plus its row. */
+static int arrow_at(const OptionMenuList *list, const OptionMenuPoint *t)
 {
     int y = list->scrollY + 24 * TAB_ROW;
-    int i;
 
     if (t->y < y || t->y >= y + 24) {
+        return 0;
+    }
+    if (t->x < 64) {
         return -1;
     }
-    for (i = PAGE_COUNT - 1; i >= 0; i--) {
-        if (t->x >= k_tab_tile[i] * 8) {
-            return i;
-        }
+    if (t->x >= 192) {
+        return 1;
     }
-    return -1;
+    return 0;
 }
 
 static void port_update(OptionMenuList *list, const OptionMenuInput *input,
@@ -864,6 +937,7 @@ static void set_page(OptionMenuList *list, OptionMenuTextBox *help, int page)
         drop_page();
     }
     g.page = page;
+    make_name();
     if (page == PAGE_GAME) {
         game_windows(1);
         /* the markers back where the game's rows have them */
@@ -881,27 +955,46 @@ static void set_page(OptionMenuList *list, OptionMenuTextBox *help, int page)
     port_show_help(list, help);
 }
 
-/* L and R, and a touch on a page name.  1 when the page changed. */
+/* L and R, and a touch on an arrow.  1 when the page changed. */
 static int page_input(OptionMenuList *list, const OptionMenuInput *input,
                       OptionMenuTextBox *help)
 {
     u32 trg = KEY_GetTrg();
     OptionMenuPoint touch;
-    int to = -1;
+    int d = 0;
 
     if (trg & KEY_R) {
-        to = (g.page + 1) % PAGE_COUNT;
+        d = 1;
     } else if (trg & KEY_L) {
-        to = (g.page + PAGE_COUNT - 1) % PAGE_COUNT;
+        d = -1;
     } else if (OPTION_MENU_GetInputCommand(input) == OPTION_INPUT_TOUCH) {
         OPTION_MENU_GetInputPoint(input, 0, &touch);
-        to = tab_at(list, &touch);
+        d = arrow_at(list, &touch);
     }
-    if (to < 0 || to == g.page) {
+    if (d == 0) {
         return 0;
     }
-    set_page(list, help, to);
+    g.flash[d < 0 ? 0 : 1] = FLASH_FRAMES;
+    set_page(list, help, (g.page + PAGE_COUNT + d) % PAGE_COUNT);
+    color_tabs(list);
+    BG_SYS_MarkTileDirty(list->mainLayer);
     return 1;
+}
+
+/* An arrow goes dim again when its flash is over. */
+static void flash_tick(OptionMenuList *list)
+{
+    int i, done = 0;
+
+    for (i = 0; i < 2; i++) {
+        if (g.flash[i] > 0 && --g.flash[i] == 0) {
+            done = 1;
+        }
+    }
+    if (done) {
+        color_tabs(list);
+        BG_SYS_MarkTileDirty(list->mainLayer);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1030,11 +1123,12 @@ void OPTION_MENU_UpdateList(OptionMenuList *list, const OptionMenuInput *input,
     (void)buttons;
     g.screen = screen;
     g.font = helpText->font;
-    if (g.tab[0].win == 0) {
+    if (g.bar[BAR_NAME].win == 0) {
         build_tabs();
         color_tabs(list);
         BG_SYS_MarkTileDirty(list->mainLayer);
     }
+    flash_tick(list);
     if (page_input(list, input, helpText)) {
         OPTION_MENU_IsTextDone(helpText);
         OPTION_MENU_ShiftInputTrail(list);
@@ -1104,7 +1198,7 @@ void OPTION_MENU_DrawList(OptionMenuList *list, int highlight)
 {
     if (g.page == PAGE_GAME) {
         game_draw_list(list, highlight);
-        if (g.tab[0].win != 0) {
+        if (g.bar[BAR_NAME].win != 0) {
             color_tabs(list);
         }
     } else {
@@ -1119,8 +1213,8 @@ void OPTION_MENU_ExitList(OptionMenuList *list)
     int i;
 
     drop_page();
-    for (i = 0; i < PAGE_COUNT; i++) {
-        drop_win(&g.tab[i]);
+    for (i = 0; i < BAR_COUNT; i++) {
+        drop_win(&g.bar[i]);
     }
     g.page = PAGE_GAME;
     g.screen = 0;

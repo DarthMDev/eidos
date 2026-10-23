@@ -125,8 +125,10 @@ the section list scrolls for the ones that do not fit.
 ### The port's pages in the game's Options screen
 
 `stubs/ov/patch_ov068_option_menu.c` adds pages to the screen itself, in its
-own look. The sixth (grey) bar holds the page names GAME, DISPLAY and SOUND;
-L and R change the page, and so does a touch on a name. GAME is the game's
+own look. The sixth (grey) bar is the page bar: the page's name in the
+middle and a double arrow at each end (the bag's pocket arrows, in this
+screen's text colours). A touch on an arrow, or L and R, changes the page
+and lights the arrow for a moment. GAME is the game's
 own page, unchanged. DISPLAY has the window mode, the pixel scale, the 3D
 resolution, the screen layout and the screen swap; SOUND has the volume.
 A port page uses the game's label column, the game's choice columns (three
