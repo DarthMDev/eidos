@@ -341,29 +341,18 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Checksums and notes
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
           cd dist
           sha256sum eidos-* > SHA256SUMS
           cat SHA256SUMS
           cd ..
           python3 tools/package_release.py --self-test
-          {
-            echo "> eidos is an unofficial fan project. It is not affiliated with or"
-            echo "> endorsed by Nintendo, Game Freak, Creatures Inc. or The Pokemon Company."
-            echo "> It contains no game data: you need your own legally obtained copy of"
-            echo "> Pokemon Black or White. Pokemon and Nintendo DS are trademarks of their"
-            echo "> respective owners."
-            echo
-            echo "Install the launcher (eidos-launcher-...-setup.exe) and press Play, or"
-            echo "unzip the game (eidos-...-windows.zip) anywhere and run \`eidos\`. On the"
-            echo "first start, pick your own Pokemon Black ROM."
-            echo
-            echo "The macOS build is not signed. If macOS refuses to open it, run"
-            echo "\`xattr -dr com.apple.quarantine .\` in the unzipped folder, or right-click"
-            echo "the file and choose Open."
-            echo
-            echo "SHA-256 of every file is in \`SHA256SUMS\`."
-          } > notes.md
+          # the version's changelog (CHANGELOG.md), the downloads this
+          # release has, and the notice
+          python3 tools/release_notes.py "$VERSION" --assets dist > notes.md
+          cat notes.md
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
