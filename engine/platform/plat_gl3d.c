@@ -13,9 +13,25 @@
  * Edge marking is a second pass: the draw writes each opaque pixel's
  * polygon ID beside its colour, and the pass outlines every opaque pixel
  * that is nearer than a neighbour of another ID, in the EDGE_COLOR entry of
- * its ID, as engine/g3d/raster.c g3d_target_edge_mark does.  The neighbour
- * is one DS pixel away (the scale, in framebuffer pixels), so the outline
- * keeps the DS's width at any resolution.
+ * its ID, as engine/g3d/raster.c g3d_target_edge_mark does, at any
+ * resolution:
+ *
+ *   - where: a pixel is in the outline when the first pixel of another ID
+ *     in one of the four directions is at most one DS pixel away (the
+ *     scale, in framebuffer pixels), so the outline is one DS pixel wide
+ *     and follows the polygon's own edge at the higher resolution;
+ *   - whether: that boundary is an edge when the hardware's test passes
+ *     for two points one DS pixel apart across it, half a DS pixel inside
+ *     and half a DS pixel outside, as the DS compares the centres of two
+ *     neighbouring pixels.
+ *
+ * The two points are placed from the boundary, not from a fixed grid, so
+ * the answer moves with the object.  Tested per framebuffer pixel, one DS
+ * pixel away, the outline left a gap under an object standing on the floor
+ * and drew a thin line below it; tested at the nearest framebuffer
+ * boundary, it drew a comb of thin lines where two surfaces meet at nearly
+ * the same depth; tested at the centres of a screen-fixed grid of DS
+ * pixels, its dashes flickered as the scene moved under that grid.
  *
  * Not done on the GPU (the snapshot says so in `unsupported` and the caller
  * shows the CPU frame instead): fog, the rear-plane bitmap, shadow polygons.
@@ -150,15 +166,30 @@ static const char *k_fse =
     "    o = c;\n"
     "    if ((id & 0x80u) == 0u) { return; }\n"
     "    id &= 0x3Fu;\n"
-    "    float d = texelFetch(u_dep, p, 0).r;\n"
+    "    int half_ = u_step / 2;\n"
     "    ivec2 k[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));\n"
     "    for (int i = 0; i < 4; i++) {\n"
-    "        ivec2 q = p + k[i] * u_step;\n"
+    "        int j = 1;\n"
+    "        bool found = false;\n"
+    "        for (; j <= u_step; j++) {\n"
+    "            ivec2 q = p + k[i] * j;\n"
+    "            uint qid = u_cid;\n"
+    "            if (q.x >= 0 && q.y >= 0 && q.x < sz.x && q.y < sz.y) {\n"
+    "                qid = texelFetch(u_id, q, 0).r & 0x3Fu;\n"
+    "            }\n"
+    "            if (qid != id) { found = true; break; }\n"
+    "        }\n"
+    "        if (!found) { continue; }\n"
+    "        ivec2 bi = p + k[i] * (j - 1);\n"
+    "        ivec2 a = clamp(bi - k[i] * half_, ivec2(0), sz - 1);\n"
+    "        if ((texelFetch(u_id, a, 0).r & 0x3Fu) != id) { a = bi; }\n"
+    "        float d = texelFetch(u_dep, a, 0).r;\n"
+    "        ivec2 b = bi + k[i] * (u_step - half_);\n"
     "        uint nid = u_cid;\n"
     "        float nd = u_cdep;\n"
-    "        if (q.x >= 0 && q.y >= 0 && q.x < sz.x && q.y < sz.y) {\n"
-    "            nid = texelFetch(u_id, q, 0).r & 0x3Fu;\n"
-    "            nd = texelFetch(u_dep, q, 0).r;\n"
+    "        if (b.x >= 0 && b.y >= 0 && b.x < sz.x && b.y < sz.y) {\n"
+    "            nid = texelFetch(u_id, b, 0).r & 0x3Fu;\n"
+    "            nd = texelFetch(u_dep, b, 0).r;\n"
     "        }\n"
     "        if (nid != id && d < nd) {\n"
     "            o = vec4(u_edge[id >> 3], 1.0);\n"
