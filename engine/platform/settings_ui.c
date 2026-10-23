@@ -74,13 +74,14 @@ extern void bw_mod_restart(u32 flags);
 
 #define STR_TITLE "Settings"
 static const char *const k_tab_names[] = {
-    "Display", "Layout", "Controls", "Sound", "Mods", "Network", "Multiplayer"
+    "Display", "Layout", "Controls", "Sound", "Mods", "Network", "Extras",
+    "Multiplayer"
 };
 
 /* The order of the tabs.  Multiplayer is a screen of its own, opened
  * from the title menu. */
-static const int k_tab_order[] = { 0, 1, 2, 3, 4, 5 };
-#define TAB_STRIP 6
+static const int k_tab_order[] = { 0, 1, 2, 3, 4, 5, 6 };
+#define TAB_STRIP 7
 
 /* Short button names for the Controls rows (the backend labels are long). */
 static const char *const k_button_short[] = {
@@ -107,6 +108,8 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
     [EIDOS_OPT_LAYOUT_SWAP]         = { "Swap the two screens.", "" },
     [EIDOS_OPT_LAYOUT_GAP]          = { "Space between the screens.", "" },
     [EIDOS_OPT_SOUND_VOLUME]        = { "The volume.", "" },
+    [EIDOS_OPT_EXTRAS_INSTANT_TEXT] = { "Show each page of a message",
+                                        "at once." },
 };
 #define HELP_BIND1     "Bind a key or pad button."
 #define HELP_BIND2     ""
@@ -121,6 +124,7 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_SECTION_MODS     "Installed mods."
 #define HELP_SECTION_NETWORK  "Relay and name."
 #define HELP_SECTION_SESSION  "Host or join a game."
+#define HELP_SECTION_EXTRAS   "Extra options."
 #define HELP_KEYS_L0   "A: open"
 #define HELP_KEYS_L0B  "B: back"
 #define HELP_KEYS_L1   "L/R: tabs"
@@ -208,6 +212,7 @@ static const char *const k_option_labels[EIDOS_OPT_COUNT] = {
     [EIDOS_OPT_LAYOUT_SWAP]         = "Swap screens",
     [EIDOS_OPT_LAYOUT_GAP]          = "Screen gap",
     [EIDOS_OPT_SOUND_VOLUME]        = "Master volume",
+    [EIDOS_OPT_EXTRAS_INSTANT_TEXT] = "Instant text",
 };
 
 /* Value names that differ from the backend's lowercase choice names:
@@ -221,6 +226,8 @@ static const ValueName k_value_names[] = {
     { EIDOS_OPT_LAYOUT_ARRANGEMENT,  1, "Side by side" },
     { EIDOS_OPT_LAYOUT_SWAP,         0, "Off" },
     { EIDOS_OPT_LAYOUT_SWAP,         1, "On" },
+    { EIDOS_OPT_EXTRAS_INSTANT_TEXT, 0, "Off" },
+    { EIDOS_OPT_EXTRAS_INSTANT_TEXT, 1, "On" },
 };
 
 /* Short names for the side-by-side choices (a choice has about 48 pixels). */
@@ -367,10 +374,11 @@ enum {
 
 typedef struct Row { int type; int arg; int arg2; } Row;
 
-#define TAB_COUNT 7
+#define TAB_COUNT 8
 #define TAB_MODS 4
 #define TAB_NETWORK 5
-#define TAB_SESSION 6
+#define TAB_EXTRAS 6
+#define TAB_SESSION 7
 
 static struct {
     int level;        /* 0 section list, 1 inside a section      */
@@ -683,6 +691,9 @@ static void build_rows(void)
         break;
     case 3:
         add_row(ROW_OPTION, EIDOS_OPT_SOUND_VOLUME, 0);
+        break;
+    case TAB_EXTRAS:
+        add_row(ROW_OPTION, EIDOS_OPT_EXTRAS_INSTANT_TEXT, 0);
         break;
     case TAB_MODS:
         build_mods_rows();
@@ -2426,7 +2437,7 @@ void eidos_sui_help_line(int i, char *out, int n)
         static const char *const sec[] = {
             HELP_SECTION_DISPLAY, HELP_SECTION_LAYOUT, HELP_SECTION_CONTROLS,
             HELP_SECTION_SOUND, HELP_SECTION_MODS, HELP_SECTION_NETWORK,
-            HELP_SECTION_SESSION };
+            HELP_SECTION_EXTRAS, HELP_SECTION_SESSION };
         l[0] = sec[r->arg];
         l[2] = HELP_KEYS_L0;
         l[3] = HELP_KEYS_L0B;

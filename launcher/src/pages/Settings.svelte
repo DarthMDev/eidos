@@ -79,7 +79,7 @@
     </label>
     <div class="row">
       <button class="primary" onclick={save}>Save</button>
-      <button class="quiet" onclick={() => openFolder("root")}>Open the eidos folder</button>
+      <button class="quiet outlined" onclick={() => openFolder("root")}>Open the eidos folder</button>
     </div>
   </div>
   <p class="muted small">The token is stored as plain text in the launcher's settings file.</p>

@@ -1,0 +1,18 @@
+/* The launcher's own additions to morphe's theme. */
+
+/* A quiet button that still shows its edge: the secondary actions in a
+ * list row (open a folder, copy, remove), so they read as buttons. */
+button.quiet.outlined {
+  border-color: var(--outline);
+}
+
+button.quiet.outlined:hover {
+  border-color: var(--accent);
+}
+
+/* Text boxes and selects light their edge on hover, as buttons do. */
+input:hover:not(:disabled),
+textarea:hover:not(:disabled),
+select:hover:not(:disabled) {
+  border-color: var(--accent);
+}

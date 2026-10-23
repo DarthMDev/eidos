@@ -64,6 +64,8 @@ static const EidosOption k_options[EIDOS_OPT_COUNT] = {
       NULL, "px", 0, NULL },
     { "Sound", "volume", "Master volume", EIDOS_OPTKIND_INT, 0, 100, 5, 100,
       NULL, "%", 0, NULL },
+    { "Extras", "instant_text", "Instant text", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
+      0, k_offon, "", 0, NULL },
 };
 
 static const EidosButtonInfo k_buttons[NBTN] = {

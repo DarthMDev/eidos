@@ -52,10 +52,10 @@ int main(void)
     eidos_sui_enter();
 
     /* The screen opens on a tab: no list of sections, no grey bar. */
-    BW_CHECK_EQ("six tabs", eidos_sui_tab_count(), 6);
+    BW_CHECK_EQ("seven tabs", eidos_sui_tab_count(), 7);
     BW_CHECK_EQ("the first tab", eidos_sui_tab(), 0);
     BW_CHECK_EQ("its name", strcmp(eidos_sui_tab_name(0), "Display"), 0);
-    BW_CHECK_EQ("the last tab", strcmp(eidos_sui_tab_name(5), "Network"), 0);
+    BW_CHECK_EQ("the last tab", strcmp(eidos_sui_tab_name(6), "Extras"), 0);
     BW_CHECK_EQ("no grey bar", eidos_sui_has_back(), 0);
     row(0);
     BW_CHECK_EQ("the header is the tab", strcmp(g_label, "Display"), 0);
@@ -112,7 +112,7 @@ int main(void)
     press(L);
     BW_CHECK_EQ("L: Display", eidos_sui_tab(), 0);
     press(L);
-    BW_CHECK_EQ("L wraps to Network", eidos_sui_tab(), 5);
+    BW_CHECK_EQ("L wraps to Extras", eidos_sui_tab(), 6);
     press(R);
     BW_CHECK_EQ("R wraps to Display", eidos_sui_tab(), 0);
 
@@ -171,10 +171,10 @@ int main(void)
     eidos_sui_leave();
     bw_mod_title_open_multiplayer();
     eidos_sui_enter();
-    BW_CHECK_EQ("the multiplayer screen", eidos_sui_tab(), 6);
+    BW_CHECK_EQ("the multiplayer screen", eidos_sui_tab(), 7);
     BW_CHECK_EQ("no tabs on it", eidos_sui_tab_count(), 0);
     press(R);
-    BW_CHECK_EQ("R does not leave it", eidos_sui_tab(), 6);
+    BW_CHECK_EQ("R does not leave it", eidos_sui_tab(), 7);
     BW_CHECK_EQ("name and two buttons", eidos_sui_row_count(), 1 + 3);
     row(1);
     BW_CHECK_EQ("Your name", strcmp(g_label, "Your name"), 0);

@@ -75,7 +75,7 @@
     {#each ov.installed as id (id)}
       <li>
         <span class="label">{id}</span>
-        <button class="quiet" onclick={() => remove(id)}>Remove</button>
+        <button class="quiet outlined" onclick={() => remove(id)}>Remove</button>
       </li>
     {/each}
     {#if !ov.localBuild && !ov.installed.length}<li class="muted">None.</li>{/if}

@@ -10,7 +10,7 @@
  * bottom screen: a row label, then two or three choices, each with a
  * marker sprite, the chosen one bright and the others dim.  The port adds
  * pages to it.  The sixth bar under the list, empty in the game, is the
- * page bar: the page's name in the middle (GAME, DISPLAY, SOUND) and a
+ * page bar: the page's name in the middle (GAME, DISPLAY, SOUND, EXTRAS) and a
  * double arrow at each end, the bag's pocket arrows drawn in this screen's
  * colours.  A touch on an arrow, or L and R, changes the page (it wraps),
  * and the arrow lights up for a moment as the bag's does.  GAME is the
@@ -270,6 +270,7 @@ extern int eidos_settings_commit(void);
 #define OPT_LAYOUT_ARRANGEMENT  6
 #define OPT_LAYOUT_SWAP         7
 #define OPT_SOUND_VOLUME        9
+#define OPT_EXTRAS_INSTANT_TEXT 10
 
 /* ------------------------------------------------------------------ */
 /* The pages                                                           */
@@ -281,7 +282,7 @@ extern int eidos_settings_commit(void);
 #define HEAP_ID   0x1c        /* the screen's heap (OPTION_MENU_Init) */
 #define TEXT_MAX  96
 
-enum { PAGE_GAME = 0, PAGE_DISPLAY, PAGE_SOUND, PAGE_COUNT };
+enum { PAGE_GAME = 0, PAGE_DISPLAY, PAGE_SOUND, PAGE_EXTRAS, PAGE_COUNT };
 
 enum { ROW_CHOICE = 0, ROW_STEP };
 
@@ -321,7 +322,15 @@ static const PortRow k_sound_rows[] = {
       0, 100, 5, 0, "%" },
 };
 
-static const char *const k_page_names[PAGE_COUNT] = { "GAME", "DISPLAY", "SOUND" };
+static const PortRow k_extras_rows[] = {
+    { "INSTANT TEXT", "Show each page of a message at\nonce, whatever the text speed.",
+      OPT_EXTRAS_INSTANT_TEXT, ROW_CHOICE, 2, { "ON", "OFF", 0 }, { 1, 0, 0 },
+      0, 0, 0, 0, 0 },
+};
+
+static const char *const k_page_names[PAGE_COUNT] = {
+    "GAME", "DISPLAY", "SOUND", "EXTRAS"
+};
 
 /* The game's columns, in tiles and pixels (gOptionMenuLabels and
  * gOptionMenuChoices): three choices or two. */
@@ -395,6 +404,9 @@ static const PortRow *page_rows(int page, int *n)
     case PAGE_SOUND:
         *n = (int)(sizeof k_sound_rows / sizeof k_sound_rows[0]);
         return k_sound_rows;
+    case PAGE_EXTRAS:
+        *n = (int)(sizeof k_extras_rows / sizeof k_extras_rows[0]);
+        return k_extras_rows;
     }
     *n = 0;
     return 0;

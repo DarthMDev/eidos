@@ -130,7 +130,11 @@ middle and a double arrow at each end (the bag's pocket arrows, in this
 screen's text colours). A touch on an arrow, or L and R, changes the page
 and lights the arrow for a moment. GAME is the game's
 own page, unchanged. DISPLAY has the window mode, the pixel scale, the 3D
-resolution, the screen layout and the screen swap; SOUND has the volume.
+resolution, the screen layout and the screen swap; SOUND has the volume;
+EXTRAS has Instant text (engine/platform/text_instant.c: the game's text
+streams start with the wait -255, a whole page a frame; the page's own stop
+for a button is the game's). The title screen's settings have the same
+option on an Extras tab.
 A port page uses the game's label column, the game's choice columns (three
 at 112/160/208 px, two at 112/184 px), the game's marker sprites and the
 game's colours (palettes 0, 3, 7 and 12). A setting with many values is a

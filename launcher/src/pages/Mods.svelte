@@ -98,7 +98,7 @@
     </label>
     <button disabled={running} onclick={pickPackage}>Add from .bw file</button>
     <button disabled={running} onclick={pickFolder}>Add from folder</button>
-    <button class="quiet" onclick={() => openFolder("mods", selected)}>Open folder</button>
+    <button class="quiet outlined" onclick={() => openFolder("mods", selected)}>Open folder</button>
   </div>
   {#if running}<p class="muted">The game is running. Close it to change mods.</p>{/if}
 

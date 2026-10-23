@@ -100,8 +100,8 @@
             {#each choices as c}<option value={c}>{versionLabel(c)}</option>{/each}
             {#if !choices.includes(p.version)}<option value={p.version}>{p.version} (not installed)</option>{/if}
           </select>
-          <button class="quiet" onclick={() => openFolder("profile", p.name)}>Folder</button>
-          <button class="quiet" onclick={() => duplicate(p.name)}>Copy</button>
+          <button class="quiet outlined" onclick={() => openFolder("profile", p.name)}>Folder</button>
+          <button class="quiet outlined" onclick={() => duplicate(p.name)}>Copy</button>
           {#if p.name !== "Default"}
             <button class="quiet" onclick={() => ((renaming = p.name), (renameTo = p.name))}>Rename</button>
             <button class="quiet" onclick={() => askDelete(p.name)}>Delete</button>

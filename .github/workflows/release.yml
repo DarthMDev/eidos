@@ -282,6 +282,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: launcher/src-tauri
+      # The launcher carries the release's version (its page shows it and
+      # the installer is named with it): set in the three files that hold it.
+      - name: The release's version
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            for (const f of ["launcher/package.json", "launcher/src-tauri/tauri.conf.json"]) {
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = process.env.VERSION;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+            }'
+          sed -i "0,/^version = \".*\"/s//version = \"${VERSION}\"/" launcher/src-tauri/Cargo.toml
+          grep -m1 '^version' launcher/src-tauri/Cargo.toml
       - name: Build the installer
         working-directory: launcher
         env:

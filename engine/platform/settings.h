@@ -38,6 +38,9 @@
  * whose frame covers the destination rectangle, re-evaluated on resize.
  *     Layout    arrangement (vertical / horizontal), swap_screens, gap
  *     Sound     volume (0..100 percent)
+ *     Extras    instant_text (off / on): every page of a message shows at
+ *               once, whatever the game's text speed; the wait for a
+ *               button at the end of a page is the game's, unchanged
  *
  * Key bindings.  Every DS button has EIDOS_BIND_SLOTS keyboard slots and as
  * many gamepad slots.  A slot is empty (0 / kind -1) or one control.
@@ -82,6 +85,8 @@ enum {
     EIDOS_OPT_LAYOUT_SWAP,
     EIDOS_OPT_LAYOUT_GAP,
     EIDOS_OPT_SOUND_VOLUME,
+    EIDOS_OPT_EXTRAS_INSTANT_TEXT,  /* 0 off, 1 on: a message page shows
+                                       at once (engine/platform/text_instant.c) */
     EIDOS_OPT_COUNT
 };
 

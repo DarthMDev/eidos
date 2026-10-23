@@ -17,7 +17,7 @@
 #
 
 cmake_minimum_required(VERSION 3.16)
-project(eidos VERSION 0.1.3 LANGUAGES C)
+project(eidos VERSION 0.1.4 LANGUAGES C)
 
 # The version players and the lobby see (docs/distribution.md).  A release
 # build (EIDOS_RELEASE=ON, the release workflow) is the plain number; any
@@ -2586,6 +2586,20 @@ endif()
 if(NOT MSVC)
     target_link_options(eidos_boot PRIVATE "-Wl,--wrap=MSGDATA_ReadString")
     target_compile_definitions(eidos_platform PRIVATE EIDOS_WRAP_MSGDATA=1)
+endif()
+
+# Instant text (Extras): the game's text streams start, and change speed,
+# through the port first (engine/platform/text_instant.c).  GNU ld only, and
+# only with the game's boot and the settings in the link.
+if(NOT MSVC AND EIDOS_BOOT AND TARGET eidos_platform)
+    target_sources(eidos_boot PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/text_instant.c)
+    target_include_directories(eidos_boot PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform)
+    target_link_options(eidos_boot PRIVATE
+        "-Wl,--wrap=PRINTSYS_PrintStream"
+        "-Wl,--wrap=PRINTSYS_PrintStreamCallBack"
+        "-Wl,--wrap=PRINTSYS_PrintStreamSetSpeed")
 endif()
 
 # A fixed image base on Windows.  The DS address space sits at its own
