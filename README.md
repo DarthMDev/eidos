@@ -28,7 +28,9 @@ game data.
 The game plays from the title screen into the opening hours: new game,
 the first battles, the field menu, saving and
 continuing. Crashes past that point are still expected. Each one is fixed
-in aletheia or here.
+in aletheia or here. Graphical issues and inconsistencies are to be
+expected, and multiplayer beyond syncing positions along with hosting and
+lobbies is still experimental.
 
 - 3D drawn on the GPU at a higher internal resolution, with fog, edge
   marking and anti-aliasing
