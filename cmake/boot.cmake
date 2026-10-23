@@ -786,7 +786,8 @@ target_sources(eidos_boot PRIVATE $<TARGET_OBJECTS:eidos_boot_game>)
 target_compile_definitions(eidos_boot PRIVATE EIDOS_BOOT=1)
 # A window for `eidos_boot --window` where the SDL platform layer is built.
 if(TARGET eidos_platform)
-    target_link_libraries(eidos_boot PRIVATE eidos_platform)
+    # eidos_wizard: the first-run window that asks for the player's ROM.
+    target_link_libraries(eidos_boot PRIVATE eidos_platform eidos_wizard)
     target_compile_definitions(eidos_boot PRIVATE EIDOS_BOOT_SDL=1)
 endif()
 

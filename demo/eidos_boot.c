@@ -238,6 +238,8 @@ static int parse_shots(const char *list)
 #include "font.h"
 #include "platform.h"
 #include "settings.h"
+#include "setup.h"
+#include "wizard.h"
 #endif
 #include "mp.h"
 #include "save_slots.h"
@@ -2104,6 +2106,9 @@ static void usage(void)
                     "[--resolution N|fit] "
                     "[--layout vertical|horizontal] [--swap-screens] "
                     "[--gap N] [--volume N] [--mod FOLDER] [--mod-log FILE]\n");
+#if EIDOS_BOOT_SDL
+    fputs(bw_setup_usage(), stderr);
+#endif
 }
 
 /*
@@ -2175,6 +2180,12 @@ int main(int argc, char **argv)
     int window = 0;
     unsigned long watchdog = 0;
     int i;
+#if EIDOS_BOOT_SDL
+    BwSetupRequest setup;
+    static char setup_data[BW_SETUP_PATH_MAX];
+
+    memset(&setup, 0, sizeof setup);
+#endif
 
 #if EIDOS_BOOT
     {
@@ -2206,6 +2217,15 @@ int main(int argc, char **argv)
 #if EIDOS_BOOT_SDL
         int sr = eidos_settings_parse_arg(argc, argv, &i);
 
+        if (sr < 0) {
+            usage();
+            return 2;
+        }
+        if (sr > 0) {
+            continue;
+        }
+        /* --data-root, --rom, --move-data, --reset-data (install/setup.h) */
+        sr = bw_setup_parse_arg(&setup, argc, argv, &i);
         if (sr < 0) {
             usage();
             return 2;
@@ -2302,12 +2322,34 @@ int main(int argc, char **argv)
     if (window && !frames_given) {
         frames = ~0ull; /* a window runs until it is closed */
     }
+#if EIDOS_BOOT_SDL
+    if (setup.data_root != NULL) {
+        data_root = setup.data_root;
+    }
+#endif
     if (data_root == NULL) {
         data_root = getenv("BW_DATA_ROOT");
     }
     if (data_root == NULL || data_root[0] == '\0') {
         data_root = EIDOS_DEFAULT_DATA_ROOT;
     }
+#if EIDOS_BOOT_SDL
+    /* The data the way every front end finds it (engine/platform/wizard.h):
+     * the folder given, else the saved setting or the platform default, and
+     * the first-run window that asks for the player's ROM when none of them
+     * holds playable data.  A release build compiles in no data root, so a
+     * player's first start always comes here. */
+    {
+        int status = 0;
+
+        setup.data_root = data_root[0] != '\0' ? data_root : NULL;
+        setup.no_window = !window;
+        if (!eidos_firstrun(&setup, setup_data, sizeof setup_data, &status)) {
+            return status;
+        }
+        data_root = setup_data;
+    }
+#endif
     if (data_root[0] != '\0') {
         bw_set_data_root(data_root);
     }
