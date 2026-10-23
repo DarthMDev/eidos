@@ -17,7 +17,7 @@
 #
 
 cmake_minimum_required(VERSION 3.16)
-project(eidos VERSION 0.1.2 LANGUAGES C)
+project(eidos VERSION 0.1.3 LANGUAGES C)
 
 # The version players and the lobby see (docs/distribution.md).  A release
 # build (EIDOS_RELEASE=ON, the release workflow) is the plain number; any
@@ -2553,6 +2553,12 @@ else()
 endif()
 target_compile_definitions(eidos_boot PRIVATE
     EIDOS_DEFAULT_DATA_ROOT="${_eidos_default_data_root}")
+# A release build on Windows is a windowed program: no console opens beside
+# the game.  `eidos --console` opens one for a report (sdk/plat_crash.h).
+# Development builds keep theirs.
+if(WIN32 AND EIDOS_RELEASE)
+    target_link_options(eidos_boot PRIVATE -mwindows)
+endif()
 # The executable's icon on Windows (assets/eidos.rc; tools/mkicon.py makes
 # assets/icon.ico from assets/icon.png).
 if(WIN32)
@@ -2670,12 +2676,13 @@ endif()
 if(NOT _eidos_ovls STREQUAL "")
     set(_ovl_link ${BW_OVL_LIBRARY_SOURCES})
     if(EIDOS_BOOT)
-        # engine/platform/settings_ui.c lives in eidos_platform, not in a
-        # port source list: named here so the overlays' eidos_sui_* calls
-        # resolve to it (docs/settings-design.md).
+        # engine/platform/settings_ui.c and settings.c live in eidos_platform,
+        # not in a port source list: named here so the overlays' eidos_sui_*
+        # and eidos_settings_* calls resolve to them (docs/settings-design.md).
         list(APPEND _ovl_link ${EIDOS_BOOT_MATCHED} ${EIDOS_BOOT_PORT_SOURCES}
             ${EIDOS_BOOT_ASM_SUBST}
             ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings_ui.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/settings.c
             ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_options_proc.c)
     endif()
     set(_ovl_stub_opt)

@@ -17,6 +17,12 @@ shared Rust code come from morphe (tag `v0.1.0`).
 - Versions: lists the releases of the eidos repository, installs the file for
   this system, checks its SHA-256 against the release's `SHA256SUMS`, and
   unpacks it. Installed versions can be removed when no profile uses them.
+  The list is kept in `launcher/releases-cache.json` with its ETag, so a
+  refresh asks GitHub "changed since?" and a "not modified" answer does not
+  count against GitHub's 60 requests an hour. When the API refuses (403) or
+  cannot be reached, the releases feed (`releases.atom`, not rate limited)
+  gives the tags, and the saved list fills in what it knows
+  (`src-tauri/src/remote.rs`).
 - Mods: the mods of one profile. A mod can be switched off, added from a
   `.bw` file or a folder, and removed. The index address is set in Settings;
   with none set the page says "No index yet."

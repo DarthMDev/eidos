@@ -28,6 +28,12 @@ extern "C" {
 
 void bw_plat_crash_install(void);
 
+/* A console for stdout and stderr when the program has none: a release
+ * build on Windows is a windowed program (no console opens beside the
+ * game), and `--console` gives it one back for a report.  Nothing where
+ * the program always has its terminal. */
+void bw_plat_console_open(void);
+
 /* Whether a program installed the reporter, and the calling code's return
  * addresses in the same form (Win32; nothing elsewhere).  sdk/panic.c adds
  * them to a panic's message when the reporter is installed. */

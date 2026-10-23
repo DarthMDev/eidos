@@ -2119,6 +2119,8 @@ static void usage(void)
  *                       settings in DIR/settings.ini
  *   --join CODE         the title menu joins that game at once
  *   eidos://join/CODE   the same, as an invite link hands it over
+ *   --console           a console window for the program's messages (a
+ *                       release build on Windows opens none)
  *
  * They are the player's own run, so they do not stop the window from
  * opening (a tool's arguments do).  1 when argv[*i] was one of them (*i is
@@ -2165,6 +2167,12 @@ static int boot_launcher_arg(int argc, char **argv, int *i, int apply)
     if (strncmp(a, "eidos://join/", 13) == 0) {
         if (apply) {
             bw_mod_title_request_join(a + 13);
+        }
+        return 1;
+    }
+    if (strcmp(a, "--console") == 0) {
+        if (apply) {
+            bw_plat_console_open();
         }
         return 1;
     }

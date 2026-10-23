@@ -202,6 +202,18 @@ void bw_plat_crash_code_resolver(BwCodeResolver resolve)
     }
 }
 
+void bw_plat_console_open(void)
+{
+    if (GetConsoleWindow() != NULL) {
+        return;                         /* started from a terminal */
+    }
+    if (!AttachConsole(ATTACH_PARENT_PROCESS) && !AllocConsole()) {
+        return;
+    }
+    (void)freopen("CONOUT$", "w", stdout);
+    (void)freopen("CONOUT$", "w", stderr);
+}
+
 void bw_plat_crash_install(void)
 {
     /* Room for the report on a stack overflow, which otherwise kills the
@@ -499,6 +511,10 @@ void bw_plat_watchdog(unsigned seconds, unsigned long long (*progress)(void))
 }
 
 void bw_plat_sampler_start(void)
+{
+}
+
+void bw_plat_console_open(void)
 {
 }
 

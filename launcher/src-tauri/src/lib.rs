@@ -11,6 +11,7 @@ mod launch;
 mod layout;
 mod mods;
 mod profile;
+mod remote;
 mod settings;
 mod versions;
 
@@ -144,8 +145,9 @@ async fn list_remote(app: State<'_, App>) -> R<Vec<Remote>> {
     let s = app.settings();
     let installed = versions::installed(&app.layout);
     let pattern = versions::asset_pattern(std::env::consts::OS);
+    let layout = app.layout.clone();
     let list = tauri::async_runtime::spawn_blocking(move || {
-        releases::list_releases(&s.repo, s.token()).map_err(|e| e.to_string())
+        remote::list(&layout, &s.repo, s.token())
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -163,7 +165,8 @@ async fn list_remote(app: State<'_, App>) -> R<Vec<Remote>> {
                 name: r.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| r.tag_name.clone()),
                 prerelease: r.prerelease,
                 published: r.published_at.clone(),
-                size: asset.map(|a| a.size),
+                // 0: a release known from the feed only, size unknown
+                size: asset.map(|a| a.size).filter(|&n| n > 0),
             }
         })
         .collect())
@@ -181,7 +184,7 @@ fn install_blocking(
         return Err(format!("Version {id} is already installed."));
     }
     stage("Looking up the release");
-    let list = releases::list_releases(&s.repo, s.token()).map_err(|e| e.to_string())?;
+    let list = remote::list(layout, &s.repo, s.token())?;
     let release = list
         .iter()
         .find(|r| r.tag_name == tag)

@@ -122,6 +122,21 @@ a bar; four tabs fit in one 256 px row as 64 px bars cut from the bar tiles
 (left cap, middle, right cap). The port's own screen has seven sections, and
 the section list scrolls for the ones that do not fit.
 
+### The port's pages in the game's Options screen
+
+`stubs/ov/patch_ov068_option_menu.c` adds pages to the screen itself, in its
+own look. The sixth (grey) bar holds the page names GAME, DISPLAY and SOUND;
+L and R change the page, and so does a touch on a name. GAME is the game's
+own page, unchanged. DISPLAY has the window mode, the pixel scale, the 3D
+resolution, the screen layout and the screen swap; SOUND has the volume.
+A port page uses the game's label column, the game's choice columns (three
+at 112/160/208 px, two at 112/184 px), the game's marker sprites and the
+game's colours (palettes 0, 3, 7 and 12). A setting with many values is a
+stepper: "<", the value, ">". The port's settings apply and are saved at
+once; the game's are saved on CONFIRM, as before, and the discard prompt is
+about the game's settings only. The windows of a page use the screen's own
+font and heap, and are deleted before the screen's heap is (OPTION_MENU_ExitList).
+
 ## (c) Design
 
 1. **Through the DS hardware state (recommended).** A port-side GFL proc
