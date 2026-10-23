@@ -8,6 +8,17 @@ A native PC port of Pokémon Black, built from the
 > no game data: you need your own legally obtained copy of Pokémon Black or
 > White. Pokémon and Nintendo DS are trademarks of their respective owners.
 
+## Download
+
+[![Windows](https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge&logo=windows11&logoColor=white)](https://github.com/Project-Holon/eidos/releases/latest/download/eidos-launcher-windows-setup.exe)
+[![Windows zip](https://img.shields.io/badge/Windows-.zip%20(no%20installer)-0078D6?style=for-the-badge&logo=windows11&logoColor=white)](https://github.com/Project-Holon/eidos/releases/latest/download/eidos-windows.zip)
+![macOS](https://img.shields.io/badge/macOS-not%20available%20yet-lightgrey?style=for-the-badge&logo=apple&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-not%20available%20yet-lightgrey?style=for-the-badge&logo=linux&logoColor=white)
+
+Click your system to download. You need your own copy of Pokémon Black or
+White. The builds are not signed: on Windows, choose "More info" then "Run
+anyway".
+
 ## Status
 
 eidos compiles the game's own decompiled C and runs it natively. It does
