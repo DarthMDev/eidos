@@ -107,7 +107,7 @@ extracts it. Saves go to `%APPDATA%\eidos\saves` on Windows.
 | L | Q | R | E |
 | SELECT | Right Shift | Touch | Left mouse button |
 
-Tab: fast forward. Alt+Return: fullscreen. F12: screenshot. Escape: quit.
+Tab: fast forward. Alt+Return: fullscreen. F12: screenshot.
 
 ## Documentation
 

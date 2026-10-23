@@ -382,9 +382,9 @@ static void test_bindings(EidosPlatform *p)
     BW_CHECK_EQ("captured axis", eidos_settings_capture_poll(&cap),
                 EIDOS_CAPTURE_PAD);
     BW_CHECK_EQ("axis neg", cap.pad_kind, EIDOS_PADBIND_AXIS_NEG);
-    /* Not armed: Escape quits again. */
+    /* Not armed: Escape does not quit either (a stray press closed the game). */
     push_key(SDL_SCANCODE_ESCAPE, 1);
-    BW_CHECK_EQ("escape quits when not capturing", eidos_platform_pump(p), 0);
+    BW_CHECK_EQ("escape does not quit", eidos_platform_pump(p), 1);
 }
 
 static void snapshot(int *o, int *k, int *pk, int *pi)

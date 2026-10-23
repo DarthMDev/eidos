@@ -1534,9 +1534,9 @@ int eidos_platform_pump(EidosPlatform *p)
                     p->cap.scancode = (int)ev.key.keysym.scancode;
                     p->cap_state = EIDOS_CAPTURE_KEY;
                 }
-            } else if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
-                p->quit = 1;
             } else if (ev.key.keysym.scancode == SDL_SCANCODE_F12) {
+                /* Escape does nothing here: a stray press closed the game.
+                 * The window's close button quits. */
                 p->shot_request = 1;
             }
             break;
