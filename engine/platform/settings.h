@@ -23,15 +23,18 @@
  * walking the table and a new option is one more row.  Values are ints: a
  * CHOICE is an index into its names, an INT is a number in [min, max].
  *
- *     Display   mode (windowed / fullscreen / borderless), resolution
- *               (fit, 1x..6x; the internal frame is 256N x 192N per
- *               screen).  Hidden rows width/height remember the window size.
+ *     Display   mode (windowed / fullscreen / borderless), pixel scale
+ *               (auto: the picture fills the window with sharp pixels; or
+ *               exactly 1x..10x), 3D resolution (auto: as many 3D pixels as
+ *               the window shows; or 1x..6x, the 3D frame being 256N x 192N
+ *               per screen).  Hidden rows width/height remember the window
+ *               size.
  *
  * The picture always fills the window (or the screen), aspect preserved; the
  * window is freely resizable and its size is remembered (settings.ini is
  * written at exit when only the size changed).  The renderer asks
  * eidos_settings_internal_scale() each frame for N, produces 256N x 192N
- * frames and gives N to eidos_platform_present_n; "fit" is the smallest N
+ * frames and gives N to eidos_platform_present_n; "auto" is the smallest N
  * whose frame covers the destination rectangle, re-evaluated on resize.
  *     Layout    arrangement (vertical / horizontal), swap_screens, gap
  *     Sound     volume (0..100 percent)
@@ -69,7 +72,9 @@ extern "C" {
 
 enum {
     EIDOS_OPT_DISPLAY_MODE = 0,
-    EIDOS_OPT_DISPLAY_RESOLUTION,   /* 0 = fit, else 1..EIDOS_RESOLUTION_MAX */
+    EIDOS_OPT_DISPLAY_PIXEL_SCALE,  /* 0 = auto, else 1..EIDOS_PIXEL_SCALE_MAX */
+    EIDOS_OPT_DISPLAY_RESOLUTION,   /* the 3D: 0 = auto, else
+                                       1..EIDOS_RESOLUTION_MAX              */
     EIDOS_OPT_DISPLAY_WIDTH,        /* hidden: remembered window size     */
     EIDOS_OPT_DISPLAY_HEIGHT,       /* hidden; 0 = 1x the layout          */
     EIDOS_OPT_DISPLAY_MAXIMIZED,    /* hidden: the window was maximized   */

@@ -2103,7 +2103,7 @@ static void usage(void)
                     "[--watchdog SECONDS] [--screenshot N[,N...]] "
                     "[--screenshot-dir DIR] [--g3d-trace N] [--keep-going] [--press BUTTONS@FRAME[:HOLD]] "
                     "[--input SCRIPT] [--fullscreen|--borderless|--windowed] "
-                    "[--resolution N|fit] "
+                    "[--resolution N|auto] [--pixel-scale N|auto] "
                     "[--layout vertical|horizontal] [--swap-screens] "
                     "[--gap N] [--volume N] [--mod FOLDER] [--mod-log FILE]\n");
 #if EIDOS_BOOT_SDL

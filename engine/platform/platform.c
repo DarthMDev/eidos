@@ -30,7 +30,6 @@
 #define SCREEN_H EIDOS_DS_SCREEN_HEIGHT
 #define SCREEN_PIXELS (SCREEN_W * SCREEN_H)
 
-#define DEFAULT_WINDOW_SCALE 1
 
 /*
  * The presenter's third image: the run-status panel (engine/platform/
@@ -67,6 +66,7 @@ struct EidosPlatform {
     int layout;
     int gap;
     int swap;
+    int pixel_scale;            /* 0 auto, else exactly N (settings)    */
     int display_mode;
     int win_x, win_y;               /* windowed position, kept across fullscreen */
     int presented;                  /* a frame has been drawn at least once  */
@@ -334,6 +334,27 @@ static void place(const EidosPlatform *p, EidosScreenPlacement *pl)
     eidos_layout_place(p->layout, p->swap, p->gap, pl);
 }
 
+/* Where the screens land in an output of w x h, at the pixel scale set. */
+static void viewport(const EidosPlatform *p, const EidosScreenPlacement *pl,
+                     int w, int h, EidosViewport *vp)
+{
+    eidos_display_viewport_n(pl, w, h, p->pixel_scale, vp);
+}
+
+/* The window size for the arrangement when there is no saved one. */
+static void default_window_size(const EidosPlatform *p, int *w, int *h)
+{
+    EidosScreenPlacement pl;
+    SDL_Rect area;
+    int idx = p->window != NULL ? SDL_GetWindowDisplayIndex(p->window) : 0;
+
+    place(p, &pl);
+    if (idx < 0 || SDL_GetDisplayUsableBounds(idx, &area) != 0) {
+        area.w = area.h = 0;
+    }
+    eidos_first_window_size(&pl, area.w, area.h, EIDOS_FIRST_WINDOW_PERCENT, w, h);
+}
+
 static void out_size(const EidosPlatform *p, int *w, int *h)
 {
     *w = *h = 0;
@@ -354,7 +375,7 @@ void eidos_platform_viewport(const EidosPlatform *p, EidosViewport *vp)
 
     place(p, &pl);
     out_size(p, &w, &h);
-    eidos_display_viewport(&pl, w, h, vp);
+    viewport(p, &pl, w, h, vp);
 }
 
 int eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
@@ -367,7 +388,7 @@ int eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
         return 0;
     }
     place(p, &pl);
-    eidos_display_viewport(&pl, win_w, win_h, &vp);
+    viewport(p, &pl, win_w, win_h, &vp);
     return eidos_viewport_to_touch(&pl, &vp, wx, wy, x, y);
 }
 
@@ -570,6 +591,19 @@ s16 eidos_audio_gain(s16 v, int percent)
     int r = ((int)v * percent + (v < 0 ? -50 : 50)) / 100;
 
     return (s16)(r > 32767 ? 32767 : r < -32768 ? -32768 : r);
+}
+
+static void render(EidosPlatform *p);
+
+void eidos_platform_set_pixel_scale(EidosPlatform *p, int scale)
+{
+    if (p == NULL) {
+        return;
+    }
+    p->pixel_scale = scale < 0 ? 0 : scale;
+    if (p->presented && (p->owner == 0 || SDL_ThreadID() == p->owner)) {
+        render(p);
+    }
 }
 
 void eidos_platform_set_volume(EidosPlatform *p, int percent)
@@ -958,7 +992,7 @@ static void render(EidosPlatform *p)
 
     place(p, &pl);
     out_size(p, &ow, &oh);
-    eidos_display_viewport(&pl, ow, oh, &vp);
+    viewport(p, &pl, ow, oh, &vp);
     have_panel = panel_view(&vp, &pl, &view) == 0;
     if (have_panel) {
         upload_panel(p, &view);
@@ -1117,8 +1151,10 @@ static int set_display_now(EidosPlatform *p, int mode, int win_w,
                 SDL_SetWindowSize(p->window, win_w, win_h);
             }
         } else if (was_full) {
-            SDL_SetWindowSize(p->window, (int)w * DEFAULT_WINDOW_SCALE,
-                              (int)h * DEFAULT_WINDOW_SCALE);
+            int dw, dh;
+
+            default_window_size(p, &dw, &dh);
+            SDL_SetWindowSize(p->window, dw, dh);
         }
         if (was_full) {
             SDL_SetWindowPosition(p->window, p->win_x, p->win_y);
@@ -1301,8 +1337,7 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
      * the desktop; otherwise at the default for the layout.  A maximized
      * size is never stored (the maximized state is, cfg->maximized), and a
      * size from another arrangement or a larger screen is not reused. */
-    init_w = (int)w * DEFAULT_WINDOW_SCALE;
-    init_h = (int)h * DEFAULT_WINDOW_SCALE;
+    default_window_size(p, &init_w, &init_h);
     if (cfg->win_w >= (int)w && cfg->win_h >= (int)h) {
         SDL_Rect area;
 

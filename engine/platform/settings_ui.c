@@ -98,13 +98,15 @@ static const char *const k_axis_neg_short[] = { "LS Left", "LS Up", "RS Left", "
 
 /* Help text (bottom screen).  Two lines per option id, then fixed texts. */
 static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
-    { "The window mode.", "" },
-    { "The rendering size.", "" },
-    { NULL, NULL }, { NULL, NULL },
-    { "How the screens are placed.", "" },
-    { "Swap the two screens.", "" },
-    { "Space between the screens.", "" },
-    { "The volume.", "" },
+    [EIDOS_OPT_DISPLAY_MODE]        = { "The window mode.", "" },
+    [EIDOS_OPT_DISPLAY_PIXEL_SCALE] = { "Size of each DS pixel.",
+                                        "Auto fills the window." },
+    [EIDOS_OPT_DISPLAY_RESOLUTION]  = { "Detail of the 3D.",
+                                        "Auto matches the window." },
+    [EIDOS_OPT_LAYOUT_ARRANGEMENT]  = { "How the screens are placed.", "" },
+    [EIDOS_OPT_LAYOUT_SWAP]         = { "Swap the two screens.", "" },
+    [EIDOS_OPT_LAYOUT_GAP]          = { "Space between the screens.", "" },
+    [EIDOS_OPT_SOUND_VOLUME]        = { "The volume.", "" },
 };
 #define HELP_BIND1     "Bind a key or pad button."
 #define HELP_BIND2     ""
@@ -112,7 +114,7 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 #define HELP_DEFAULTS2 ""
 #define HELP_CAPTURE1  "Press a key or pad button."
 #define HELP_CAPTURE2  "B: cancel"
-#define HELP_SECTION_DISPLAY  "Window mode and resolution."
+#define HELP_SECTION_DISPLAY  "Window mode and sharpness."
 #define HELP_SECTION_LAYOUT   "Screen arrangement."
 #define HELP_SECTION_CONTROLS "Keyboard and gamepad."
 #define HELP_SECTION_SOUND    "Volume."
@@ -198,13 +200,14 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
 
 /* Row labels by option id (EIDOS_OPT_*); NULL for hidden options. */
 static const char *const k_option_labels[EIDOS_OPT_COUNT] = {
-    "Window mode",     /* DISPLAY_MODE        */
-    "Resolution",      /* DISPLAY_RESOLUTION  */
-    NULL, NULL, NULL,  /* width, height, maximized: hidden */
-    "Screen layout",   /* LAYOUT_ARRANGEMENT  */
-    "Swap screens",    /* LAYOUT_SWAP         */
-    "Screen gap",      /* LAYOUT_GAP          */
-    "Master volume",   /* SOUND_VOLUME        */
+    [EIDOS_OPT_DISPLAY_MODE]        = "Window mode",
+    [EIDOS_OPT_DISPLAY_PIXEL_SCALE] = "Pixel scale",
+    [EIDOS_OPT_DISPLAY_RESOLUTION]  = "3D resolution",
+    /* width, height, maximized: hidden, NULL */
+    [EIDOS_OPT_LAYOUT_ARRANGEMENT]  = "Screen layout",
+    [EIDOS_OPT_LAYOUT_SWAP]         = "Swap screens",
+    [EIDOS_OPT_LAYOUT_GAP]          = "Screen gap",
+    [EIDOS_OPT_SOUND_VOLUME]        = "Master volume",
 };
 
 /* Value names that differ from the backend's lowercase choice names:
@@ -229,7 +232,7 @@ static const ValueName k_choice_names[] = {
     { EIDOS_OPT_LAYOUT_ARRANGEMENT,  1, "Wide" },
 };
 
-#define STR_FIT         "Fit"
+#define STR_AUTO         "Auto"
 #define STR_BACK_L1     "Back"
 #define STR_MORE_BELOW  "More below"
 #define STR_MORE_ABOVE  "More above"
@@ -665,6 +668,7 @@ static void build_rows(void)
     switch (g.tab) {
     case 0:
         add_row(ROW_OPTION, EIDOS_OPT_DISPLAY_MODE, 0);
+        add_row(ROW_OPTION, EIDOS_OPT_DISPLAY_PIXEL_SCALE, 0);
         add_row(ROW_OPTION, EIDOS_OPT_DISPLAY_RESOLUTION, 0);
         break;
     case 1:
@@ -2002,7 +2006,7 @@ static void option_value_of(int id, int v, char *out, int n)
         }
     }
     if (o != NULL && o->zero_name != NULL && v == 0) {
-        put(out, n, STR_FIT);
+        put(out, n, STR_AUTO);
         return;
     }
     eidos_settings_value_text(id, out, (size_t)n);

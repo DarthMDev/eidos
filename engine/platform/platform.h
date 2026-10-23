@@ -146,10 +146,15 @@ const EidosPadBinding *eidos_default_padmap(u32 *count);
 #define EIDOS_DISPLAY_BORDERLESS   2
 
 /* The largest internal resolution multiple the port offers (a data value:
- * the Resolution option's range follows it).  A frame is 256N x 192N per
+ * the 3D resolution option's range follows it).  A frame is 256N x 192N per
  * screen. */
 #define EIDOS_RESOLUTION_MAX       6
-/* "Fit" never picks more than this: the per-frame cost grows with N^2, and
+/* The largest whole-number pixel scale the Pixel scale option offers. */
+#define EIDOS_PIXEL_SCALE_MAX      10
+/* The window on a first start: the largest whole multiple of the layout
+ * whose height fits this percentage of the desktop's work area. */
+#define EIDOS_FIRST_WINDOW_PERCENT 85
+/* Auto never picks more than this: the per-frame cost grows with N^2, and
  * a maximized window would otherwise render at 6x.  A user who wants more
  * sets the explicit N. */
 #define EIDOS_RESOLUTION_FIT_CAP   2
@@ -179,7 +184,18 @@ void eidos_layout_place(int layout, int swap, int gap,
  * by what the aspect ratio forces.  No integer-multiple rule. */
 void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
                             int out_h, EidosViewport *vp);
-/* The "Fit" internal resolution: the smallest N whose 256N x 192N frame is
+/* As eidos_display_viewport at a whole-number pixel scale: every DS pixel
+ * is exactly `scale` output pixels, the picture centred.  When the output
+ * cannot hold that scale, the largest one it holds; 0 (auto) or an output
+ * smaller than 1x fills it as eidos_display_viewport does. */
+void eidos_display_viewport_n(const EidosScreenPlacement *pl, int out_w,
+                              int out_h, int scale, EidosViewport *vp);
+/* The window size for a first start: the largest whole multiple of the
+ * arrangement whose height fits `percent` of work_h and whose width fits
+ * work_w, at least 1x.  work_w/work_h 0 (unknown) gives 1x. */
+void eidos_first_window_size(const EidosScreenPlacement *pl, int work_w,
+                             int work_h, int percent, int *out_w, int *out_h);
+/* The auto internal resolution: the smallest N whose 256N x 192N frame is
  * at least as large as each screen's destination rectangle, in [1, max]. */
 int  eidos_resolution_fit(const EidosViewport *vp, int max);
 /* As eidos_resolution_fit with the cap given: the CPU renderer's cost grows
@@ -279,6 +295,9 @@ int  eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap);
 /* Master volume, percent, applied to the final mixed samples with
  * saturation, in both the callback and the push path.  Default 100. */
 void eidos_platform_set_volume(EidosPlatform *p, int percent);
+/* The 2D pixel scale: 0 (auto) fills the window with sharp pixels, N shows
+ * every DS pixel as exactly N x N output pixels (eidos_display_viewport_n). */
+void eidos_platform_set_pixel_scale(EidosPlatform *p, int scale);
 /* The gain itself, exposed for tests: v * percent / 100, rounded, saturated. */
 s16  eidos_audio_gain(s16 v, int percent);
 /* Replace both binding tables; the tables are copied. */

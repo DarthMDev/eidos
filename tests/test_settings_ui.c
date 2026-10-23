@@ -59,7 +59,7 @@ int main(void)
     BW_CHECK_EQ("no grey bar", eidos_sui_has_back(), 0);
     row(0);
     BW_CHECK_EQ("the header is the tab", strcmp(g_label, "Display"), 0);
-    BW_CHECK_EQ("display rows", eidos_sui_row_count(), 1 + 3);
+    BW_CHECK_EQ("display rows", eidos_sui_row_count(), 1 + 4);
     row(1);
     BW_CHECK_EQ("mode label", strcmp(g_label, "Window mode"), 0);
     BW_CHECK_EQ("mode value", strcmp(g_value, "Windowed"), 0);
@@ -76,22 +76,31 @@ int main(void)
     press(LEFT);
     BW_CHECK_EQ("mode back", eidos_settings_get(EIDOS_OPT_DISPLAY_MODE), 0);
 
-    /* Down moves, resolution steps. */
+    /* Down moves; the pixel scale and the 3D resolution step from auto. */
     press(DOWN);
     BW_CHECK_EQ("cursor moved", eidos_sui_cursor_row(), 2);
     row(2);
-    BW_CHECK_EQ("resolution label", strcmp(g_label, "Resolution"), 0);
-    BW_CHECK_EQ("resolution 1x default", strcmp(g_value, "1x"), 0);
+    BW_CHECK_EQ("pixel scale label", strcmp(g_label, "Pixel scale"), 0);
+    BW_CHECK_EQ("pixel scale auto default", strcmp(g_value, "Auto"), 0);
     press(RIGHT);
     row(2);
-    BW_CHECK_EQ("resolution 2x", strcmp(g_value, "2x"), 0);
+    BW_CHECK_EQ("pixel scale 1x", strcmp(g_value, "1x"), 0);
+    press(DOWN);
+    row(3);
+    BW_CHECK_EQ("resolution label", strcmp(g_label, "3D resolution"), 0);
+    BW_CHECK_EQ("resolution auto default", strcmp(g_value, "Auto"), 0);
+    press(RIGHT);
+    row(3);
+    BW_CHECK_EQ("resolution 1x", strcmp(g_value, "1x"), 0);
 
     /* The action row puts the defaults back. */
     press(DOWN);
     row(eidos_sui_cursor_row());
     BW_CHECK_EQ("defaults row", strcmp(g_label, "Restore defaults"), 0);
     press(A);
-    BW_CHECK_EQ("defaults restored", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
+    BW_CHECK_EQ("defaults restored", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
+    BW_CHECK_EQ("defaults restored: pixel scale",
+                eidos_settings_get(EIDOS_OPT_DISPLAY_PIXEL_SCALE), 0);
     press(DOWN);
     BW_CHECK_EQ("the cursor wraps to the top", eidos_sui_cursor_row(), 1);
 
@@ -242,14 +251,15 @@ int main(void)
     eidos_sui_touch(1, 0);
     BW_CHECK_EQ("touch sets the first choice", eidos_settings_get(EIDOS_OPT_DISPLAY_MODE), 0);
     BW_CHECK_EQ("row 2 is adjustable", eidos_sui_row_adjustable(2), 1);
-    BW_CHECK_EQ("row 3 is not", eidos_sui_row_adjustable(3), 0);
+    BW_CHECK_EQ("row 3 is adjustable", eidos_sui_row_adjustable(3), 1);
+    BW_CHECK_EQ("row 4 is not", eidos_sui_row_adjustable(4), 0);
     eidos_settings_set(EIDOS_OPT_DISPLAY_RESOLUTION, 2);
-    eidos_sui_touch(2, EIDOS_SUI_ZONE_INC);
+    eidos_sui_touch(3, EIDOS_SUI_ZONE_INC);
     BW_CHECK_EQ("first touch only selects", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 2);
-    BW_CHECK_EQ("selected", eidos_sui_cursor_row(), 2);
-    eidos_sui_touch(2, EIDOS_SUI_ZONE_INC);
+    BW_CHECK_EQ("selected", eidos_sui_cursor_row(), 3);
+    eidos_sui_touch(3, EIDOS_SUI_ZONE_INC);
     BW_CHECK_EQ("arrow raises", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 3);
-    eidos_sui_touch(2, EIDOS_SUI_ZONE_DEC);
+    eidos_sui_touch(3, EIDOS_SUI_ZONE_DEC);
     BW_CHECK_EQ("arrow lowers", eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 2);
     r = press(B);
     BW_CHECK_EQ("B leaves", r & EIDOS_SUI_EXIT, EIDOS_SUI_EXIT);

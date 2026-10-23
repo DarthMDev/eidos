@@ -127,6 +127,31 @@ static void test_geometry(void)
         BW_CHECK_EQ("fit N: max 1", eidos_resolution_fit(&vp, 0), 1);
         BW_CHECK_EQ("fit N with a larger cap", eidos_resolution_fit_cap(&vp, 6, 6), 6);
     }
+
+    /* A whole-number pixel scale: exact multiples, centred. */
+    eidos_display_viewport_n(&pl, 1920, 1080, 2, &vp);
+    BW_CHECK_EQ("2x w", vp.content.w, 512);
+    BW_CHECK_EQ("2x h", vp.content.h, 768);
+    BW_CHECK_EQ("2x centred x", vp.content.x, (1920 - 512) / 2);
+    BW_CHECK_EQ("2x bottom screen y", vp.screen[1].y, (1080 - 768) / 2 + 384);
+    BW_CHECK_EQ("2x screen h", vp.screen[1].h, 384);
+    eidos_display_viewport_n(&pl, 1920, 1080, 9, &vp);
+    BW_CHECK_EQ("too large: the largest that fits", vp.content.h, 384 * 2);
+    eidos_display_viewport_n(&pl, 1920, 1080, 0, &vp);
+    BW_CHECK_EQ("auto fills", vp.content.h, 1080);
+    eidos_display_viewport_n(&pl, 200, 300, 3, &vp);
+    BW_CHECK_EQ("below 1x fills", vp.content.w, 200);
+
+    /* The first window: the largest multiple whose height fits 85%. */
+    eidos_first_window_size(&pl, 1920, 1040, 85, &x, &y);
+    BW_CHECK_EQ("1080p: 2x stacked", y, 768);
+    eidos_first_window_size(&pl, 2560, 1400, 85, &x, &y);
+    BW_CHECK_EQ("1440p: 3x stacked", y, 1152);
+    eidos_layout_place(EIDOS_LAYOUT_SIDE_BY_SIDE, 0, 0, &pl);
+    eidos_first_window_size(&pl, 1920, 1040, 85, &x, &y);
+    BW_CHECK_EQ("1080p side by side: 3x", x, 1536);
+    eidos_first_window_size(&pl, 0, 0, 85, &x, &y);
+    BW_CHECK_EQ("unknown desktop: 1x", x, 512);
 }
 
 static void test_reshape(void)
@@ -417,8 +442,10 @@ static void test_file(void)
     eidos_settings_set_path(INI);
     remove(INI);
     BW_CHECK_EQ("no file -> defaults", eidos_settings_load(), 1);
-    BW_CHECK_EQ("default resolution is 1x",
-                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
+    BW_CHECK_EQ("default 3D resolution is auto",
+                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
+    BW_CHECK_EQ("default pixel scale is auto",
+                eidos_settings_get(EIDOS_OPT_DISPLAY_PIXEL_SCALE), 0);
     BW_CHECK_EQ("default volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 100);
     BW_CHECK_EQ("default gap", eidos_settings_get(EIDOS_OPT_LAYOUT_GAP), 0);
     BW_CHECK_EQ("clean at start", eidos_settings_dirty(), 0);
@@ -460,15 +487,16 @@ static void test_file(void)
         BW_CHECK_EQ("write ini", 0, 1);
         return;
     }
-    fputs("# hi\n[Display]\nmode = Fullscreen\nresolution = 99\nbogus = 1\n"
+    fputs("# hi\n[Display]\nmode = Fullscreen\nresolution_3d = 99\n"
+          "resolution = 4\nbogus = 1\n"
           "[sound]\nvolume=70\n[keys]\na = Space\nb = Nonsense Key\n"
           "[mystery]\nx=1\n[pad]\nup = dpup | lefty-\n", fp);
     fclose(fp);
     BW_CHECK_EQ("load edited", eidos_settings_load(), 0);
     BW_CHECK_EQ("mode", eidos_settings_get(EIDOS_OPT_DISPLAY_MODE),
                 EIDOS_DISPLAY_FULLSCREEN);
-    BW_CHECK_EQ("bad resolution keeps default",
-                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
+    BW_CHECK_EQ("bad resolution keeps default (and the old key is dropped)",
+                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
     BW_CHECK_EQ("volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 70);
     BW_CHECK_EQ("a is Space", eidos_settings_get_key(0, 0), SDL_SCANCODE_SPACE);
     BW_CHECK_EQ("b emptied", eidos_settings_get_key(1, 0), 0);
@@ -500,7 +528,7 @@ static void test_file(void)
     BW_CHECK_EQ("override not saved: volume",
                 eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 70);
     BW_CHECK_EQ("override not saved: resolution",
-                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 1);
+                eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
     BW_CHECK_EQ("real change saved", eidos_settings_get(EIDOS_OPT_LAYOUT_GAP), 6);
     i = 1;
     BW_CHECK_EQ("bad value", eidos_settings_parse_arg(3, argv_bad, &i), -1);
@@ -558,8 +586,8 @@ int main(void)
         int v = 0;
 
         eidos_settings_set(EIDOS_OPT_DISPLAY_RESOLUTION, 0);
-        BW_CHECK_EQ("res text fit", strcmp(eidos_settings_value_text(
-            EIDOS_OPT_DISPLAY_RESOLUTION, buf, sizeof buf), "fit"), 0);
+        BW_CHECK_EQ("res text auto", strcmp(eidos_settings_value_text(
+            EIDOS_OPT_DISPLAY_RESOLUTION, buf, sizeof buf), "auto"), 0);
         eidos_settings_set(EIDOS_OPT_DISPLAY_RESOLUTION, 5);
         BW_CHECK_EQ("res text 5x", strcmp(eidos_settings_value_text(
             EIDOS_OPT_DISPLAY_RESOLUTION, buf, sizeof buf), "5x"), 0);

@@ -44,8 +44,12 @@ static const char *const k_offon[] = { "off", "on" };
 static const EidosOption k_options[EIDOS_OPT_COUNT] = {
     { "Display", "mode", "Display mode", EIDOS_OPTKIND_CHOICE, 0, 2, 1,
       EIDOS_DISPLAY_WINDOWED, k_modes, "", 0, NULL },
-    { "Display", "resolution", "Resolution", EIDOS_OPTKIND_INT, 0,
-      EIDOS_RESOLUTION_MAX, 1, 1, NULL, "x", 0, "fit" },
+    { "Display", "pixel_scale", "Pixel scale", EIDOS_OPTKIND_INT, 0,
+      EIDOS_PIXEL_SCALE_MAX, 1, 0, NULL, "x", 0, "auto" },
+    /* "resolution_3d", not the old "resolution" (1x by default then): a file
+     * from 0.1.x gets the new default, auto */
+    { "Display", "resolution_3d", "3D resolution", EIDOS_OPTKIND_INT, 0,
+      EIDOS_RESOLUTION_MAX, 1, 0, NULL, "x", 0, "auto" },
     { "Display", "width", "Window width", EIDOS_OPTKIND_INT, 0, 16384, 1, 0,
       NULL, "px", 1, NULL },
     { "Display", "height", "Window height", EIDOS_OPTKIND_INT, 0, 16384, 1, 0,
@@ -319,6 +323,11 @@ static void apply_volume(void)
     eidos_platform_set_volume(g_plat, g_cur.v[EIDOS_OPT_SOUND_VOLUME]);
 }
 
+static void apply_pixel_scale(void)
+{
+    eidos_platform_set_pixel_scale(g_plat, g_cur.v[EIDOS_OPT_DISPLAY_PIXEL_SCALE]);
+}
+
 /*
  * The run-status panel: the port's own text panel beside the two screens,
  * which the mods fill (docs/mod-services.md, "Run-status panel").  The
@@ -381,6 +390,9 @@ static int apply_option_group(int id)
         return apply_display();
     case EIDOS_OPT_DISPLAY_MAXIMIZED:
         return 0;               /* read when the window opens */
+    case EIDOS_OPT_DISPLAY_PIXEL_SCALE:
+        apply_pixel_scale();
+        return 0;
     case EIDOS_OPT_DISPLAY_RESOLUTION:
         return 0;               /* the renderer polls internal_scale() */
     case EIDOS_OPT_LAYOUT_ARRANGEMENT:
@@ -406,6 +418,7 @@ static void apply_all(void)
         g_cur.v[EIDOS_OPT_DISPLAY_MODE] = eidos_platform_display_mode(g_plat);
     }
     apply_volume();
+    apply_pixel_scale();
     (void)apply_bindings();
 }
 
@@ -1864,8 +1877,9 @@ static int parse_value(int id, const char *text, int *out)
         }
         return -1;
     }
-    if (o->zero_name != NULL && strcmp(low, o->zero_name) == 0) {
-        *out = 0;
+    if (o->zero_name != NULL && (strcmp(low, o->zero_name) == 0 ||
+                                 strcmp(low, "fit") == 0)) {
+        *out = 0;               /* "fit": the 3D's auto before 0.1.2 */
         return 0;
     }
     n = strtol(text, &end, 10);
@@ -2133,7 +2147,9 @@ static void parse_file(FILE *fp, Model *m)
                 break;
             }
         }
-        if (!found) {
+        /* the 3D resolution's key before 0.1.2: dropped without a word */
+        if (!found && !(strcmp(section, "display") == 0 &&
+                        strcmp(key, "resolution") == 0)) {
             fprintf(stderr, "eidos: settings.ini:%d: unknown key '%s' in "
                     "[%s], ignored\n", lineno, key, section);
         }
@@ -2394,6 +2410,8 @@ int eidos_settings_parse_arg(int argc, char **argv, int *i)
     }
     if (strcmp(a, "--resolution") == 0) {
         id = EIDOS_OPT_DISPLAY_RESOLUTION;
+    } else if (strcmp(a, "--pixel-scale") == 0) {
+        id = EIDOS_OPT_DISPLAY_PIXEL_SCALE;
     } else if (strcmp(a, "--layout") == 0) {
         id = EIDOS_OPT_LAYOUT_ARRANGEMENT;
     } else if (strcmp(a, "--gap") == 0) {

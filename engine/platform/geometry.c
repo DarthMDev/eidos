@@ -121,6 +121,55 @@ void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
     }
 }
 
+void eidos_display_viewport_n(const EidosScreenPlacement *pl, int out_w,
+                              int out_h, int scale, EidosViewport *vp)
+{
+    int lw = pl->width, lh = pl->height;
+    int k, i;
+
+    if (scale <= 0 || lw <= 0 || lh <= 0 || out_w < lw || out_h < lh) {
+        eidos_display_viewport(pl, out_w, out_h, vp);
+        return;
+    }
+    k = scale;
+    if (k > out_w / lw) {
+        k = out_w / lw;
+    }
+    if (k > out_h / lh) {
+        k = out_h / lh;
+    }
+    vp->content.w = lw * k;
+    vp->content.h = lh * k;
+    vp->content.x = (out_w - vp->content.w) / 2;
+    vp->content.y = (out_h - vp->content.h) / 2;
+    for (i = 0; i < 2; i++) {
+        vp->screen[i].x = vp->content.x + pl->screen[i].x * k;
+        vp->screen[i].y = vp->content.y + pl->screen[i].y * k;
+        vp->screen[i].w = pl->screen[i].w * k;
+        vp->screen[i].h = pl->screen[i].h * k;
+    }
+}
+
+void eidos_first_window_size(const EidosScreenPlacement *pl, int work_w,
+                             int work_h, int percent, int *out_w, int *out_h)
+{
+    int lw = pl->width > 0 ? pl->width : 1;
+    int lh = pl->height > 0 ? pl->height : 1;
+    int k = 1;
+
+    if (work_w > 0 && work_h > 0) {
+        int kh = (int)((s64)work_h * percent / 100) / lh;
+        int kw = work_w / lw;
+
+        k = kh < kw ? kh : kw;
+        if (k < 1) {
+            k = 1;
+        }
+    }
+    *out_w = lw * k;
+    *out_h = lh * k;
+}
+
 /* Newton's square root: this file stays free of libm. */
 static double root(double v)
 {
