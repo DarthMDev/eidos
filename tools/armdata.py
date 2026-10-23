@@ -1472,11 +1472,13 @@ def write_c(m: Model, path: str):
               % (tname, imm))
             w("}")
         w("")
+    import closure  # noqa: E402  (tools/closure.py: HOST_RESERVED)
+    csym = lambda n: closure.HOST_RESERVED.get(n, n)  # noqa: E731
     if defined:
         w("/* Functions the build defines that initialised data points at.  The")
         w(" * real prototypes differ; only the address is taken here. */")
         for n in defined:
-            w("extern void %s(void);" % n)
+            w("extern void %s(void);" % csym(n))
         w("")
     if traps:
         w("/* Code the data points at that the build does not define: calling it")
@@ -1548,7 +1550,7 @@ def write_c(m: Model, path: str):
         if n and n.startswith("bw_adj_"):
             w('    { 0x%08Xu, (BwDataFn)%s, "%s" },' % (t, n, n))
         elif n:
-            w('    { 0x%08Xu, %s, "%s" },' % (t, n, n))
+            w('    { 0x%08Xu, %s, "%s" },' % (t, csym(n), n))
         else:
             w('    { 0x%08Xu, bw_trap_%08X, NULL },' % (t, t & ~1))
     if not m.funcs:

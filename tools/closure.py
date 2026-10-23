@@ -108,6 +108,18 @@ C_RESERVED = {
 }
 
 
+# Names the game's MSL defines that the host C runtime also defines as its
+# own internals.  The game's definition must not take the host's place, and
+# the host's must not clash with the game's: mingw-w64's libmingwex has
+# __strtold in the same object as strtold, so a host call to strtold pulls
+# it in beside the game's (a multiple-definition link error with newer
+# mingw-w64).  tools/bootlink.py spells each one under the port name in
+# every unit that names it; tools/armdata.py points the data at that name.
+HOST_RESERVED = {
+    "__strtold": "bw_game___strtold",
+}
+
+
 def read_symbol_table(path):
     """address -> name for the two-column layout/*.txt symbol files."""
     by_addr = {}

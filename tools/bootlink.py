@@ -1452,6 +1452,10 @@ def generate(args):
                 lines.append(data_lines[name])
         for name in sorted(unit.renames):
             lines.append("#define %s %s" % (name, unit.renames[name]))
+        for name in sorted(closure.HOST_RESERVED):
+            if name in idents and name not in unit.renames:
+                lines.append("#define %s %s   /* the host C runtime's own name */"
+                             % (name, closure.HOST_RESERVED[name]))
         for name in sorted(unit.private):
             lines.append("#define %s %s   /* another boot file owns %s */"
                          % (name, unit.private[name], name))
