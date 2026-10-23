@@ -36,6 +36,7 @@ jobs:
   meta:
     name: version and pin
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.m.outputs.version }}
       pin: ${{ steps.m.outputs.pin }}
@@ -60,6 +61,7 @@ jobs:
     name: windows
     needs: meta
     runs-on: ${{ fromJSON(vars.EIDOS_RUNNER_WINDOWS || '["windows-2022"]') }}
+    timeout-minutes: 60
     defaults:
       run:
         shell: msys2 {0}
@@ -133,6 +135,7 @@ jobs:
     # EIDOS_BUILD_64BIT to true to try it.
     if: vars.EIDOS_BUILD_64BIT == 'true'
     runs-on: ubuntu-22.04     # the oldest glibc we ship against
+    timeout-minutes: 60
     env:
       EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
       EIDOS_MBEDTLS_CACHE: ${{ github.workspace }}/.cache/mbedtls
@@ -144,8 +147,14 @@ jobs:
           ref: ${{ needs.meta.outputs.pin }}
           token: ${{ secrets.ALETHEIA_TOKEN || github.token }}
           path: aletheia
+      # Cached after the first good run, so a slow package mirror does not
+      # hold the job; the cache keys on the package list and version.
       - name: Packages
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libsdl2-dev libgl1-mesa-dev libfuse2 file
+        timeout-minutes: 15
+        uses: awalsh128/cache-apt-pkgs-action@v1.4.3
+        with:
+          packages: ninja-build libsdl2-dev libgl1-mesa-dev libfuse2 file
+          version: "1"
       - uses: actions/cache@v4
         with:
           path: .cache
@@ -189,6 +198,7 @@ jobs:
     # macOS has no 32-bit programs: it waits on the 64-bit build, as Linux.
     if: vars.EIDOS_BUILD_64BIT == 'true'
     runs-on: macos-14
+    timeout-minutes: 60
     env:
       EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
       EIDOS_MBEDTLS_CACHE: ${{ github.workspace }}/.cache/mbedtls
@@ -201,6 +211,9 @@ jobs:
           token: ${{ secrets.ALETHEIA_TOKEN || github.token }}
           path: aletheia
       - name: Packages
+        timeout-minutes: 15
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: brew install ninja sdl2
       - uses: actions/cache@v4
         with:
@@ -239,6 +252,7 @@ jobs:
     name: launcher (windows)
     needs: meta
     runs-on: windows-2022
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -247,6 +261,9 @@ jobs:
           cache: npm
           cache-dependency-path: launcher/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher/src-tauri
       - name: Build the installer
         working-directory: launcher
         env:
@@ -282,6 +299,7 @@ jobs:
       needs.launcher.result == 'success' &&
       (github.ref_type == 'tag' || inputs.draft)
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
