@@ -124,6 +124,9 @@ Tab: fast forward. Alt+Return: fullscreen. F12: screenshot.
 | `docs/building.md` | Every build option, compiler and platform |
 | `docs/milestones-detail.md` | The milestones item by item, with evidence |
 | `docs/status.md` | What is done and what is left |
+| `docs/unified-view.md` | One-screen composition rules: layers, canvas, input, placeholders |
+| `docs/unified-view-inventory.md` | Every screen and element, with its one-screen composition strategy |
+| `docs/unified-view-plan.md` | Implementation order and tests for the one-screen view |
 | `docs/modding.md` | Mods |
 
 ## Legal
