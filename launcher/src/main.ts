@@ -8,6 +8,10 @@ import { installMenuFallback } from "morphe/menu.svelte";
 
 themeStorageKey("eidos-launcher.theme");
 initTheme();
+if (import.meta.env.DEV) {
+  const t = new URLSearchParams(location.search).get("theme");
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+}
 installMenuFallback();
 
 const target = document.getElementById("app");

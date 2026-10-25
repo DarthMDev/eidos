@@ -1,5 +1,6 @@
 /* The launcher's look, over morphe's theme: the eidos colours (Zekrom's
-   blacks and electric blue by night, Reshiram's whites by day), the
+   blacks and electric blue by night; by day Reshiram's whites, lavenders
+   and flame red, the light theme kenon uses), the
    inscription font of the eidos banner for titles, soft panels and one
    accent for what can be pressed. */
 
@@ -34,29 +35,29 @@
 }
 
 :root[data-theme="light"] {
-  --bg: #eef0f6;
-  --bg-glow: rgba(31, 127, 192, 0.08);
+  --bg: #eeeef5;
+  --bg-glow: rgba(240, 138, 36, 0.08);
   --panel: #ffffff;
-  --panel-2: #f6f7fb;
-  --panel-3: #eceef5;
-  --line: #dde0ea;
-  --line-strong: #c9cddb;
-  --outline: #dde0ea;
-  --ink: #1d2030;
-  --muted: #5f6680;
-  --faint: #9298ad;
-  --accent: #1f7fc0;
-  --accent-hover: #2a93db;
-  --accent-dark: #16639a;
+  --panel-2: #f6f6fb;
+  --panel-3: #ececf4;
+  --line: #dcdcea;
+  --line-strong: #c6c6da;
+  --outline: #dcdcea;
+  --ink: #23233a;
+  --muted: #5d6282;
+  --faint: #8a8fab;
+  --accent: #e0442c;
+  --accent-hover: #ec5a40;
+  --accent-dark: #b8321e;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(31, 127, 192, 0.1);
-  --ok: #24935a;
-  --ok-soft: rgba(36, 147, 90, 0.1);
-  --bad: #c83a3a;
-  --bad-soft: rgba(200, 58, 58, 0.1);
+  --accent-soft: rgba(224, 68, 44, 0.1);
+  --ok: #2b8f4e;
+  --ok-soft: rgba(43, 143, 78, 0.1);
+  --bad: #c42f2f;
+  --bad-soft: rgba(196, 47, 47, 0.1);
   --hero-a: #ffffff;
-  --hero-b: #dcdcea;
-  --shadow: 0 1px 2px rgba(20, 24, 40, 0.06), 0 8px 24px rgba(20, 24, 40, 0.06);
+  --hero-b: #e2e2ee;
+  --shadow: 0 1px 2px rgba(35, 35, 58, 0.06), 0 8px 24px rgba(35, 35, 58, 0.07);
 }
 
 body {

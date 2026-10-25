@@ -3,6 +3,7 @@
   import { LATEST, LOCAL, message, play, versionLabel, type Overview, type Profile } from "../lib/backend";
   import Icon from "../lib/Icon.svelte";
   import dragon from "../assets/dragon.png";
+  import dragonDay from "../assets/dragon-day.png";
 
   let {
     ov,
@@ -49,7 +50,9 @@
 
 <section class="home">
   <div class="hero card">
-    <div class="art" style:background-image="url({dragon})"></div>
+    <!-- the eidos dragon by night, in Reshiram's colours by day -->
+    <div class="art night" style:background-image="url({dragon})"></div>
+    <div class="art day" style:background-image="url({dragonDay})"></div>
     <div class="intro">
       <span class="display title">EIDOS</span>
       <span class="tagline">A native PC port of Pokémon Black and White</span>
@@ -129,6 +132,16 @@
     background-repeat: no-repeat;
     background-size: 290px 238px;
     image-rendering: pixelated;
+  }
+  .day,
+  :global(:root[data-theme="light"]) .night {
+    display: none;
+  }
+  :global(:root[data-theme="light"]) .day {
+    display: block;
+  }
+  :global(:root[data-theme="light"]) .launch {
+    background: rgba(35, 35, 58, 0.04);
   }
   .intro {
     position: relative;
