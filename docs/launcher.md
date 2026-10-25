@@ -85,6 +85,38 @@ TODO: "Get and join". It would read the host's version and mods from the
 invite and install what is missing. It needs that data in the invite and the
 mods index. Until then the launcher joins with the profile as it is.
 
+## Updates
+
+The launcher updates itself (`src/lib/updater.svelte.ts`, the Tauri updater
+plugin). On each start it reads
+`https://github.com/Project-Holon/eidos/releases/latest/download/latest.json`,
+which every release carries (`tools/launcher_update_json.py`, written by the
+release workflow). When that version is newer it downloads the installer the
+file names, checks its signature against the public key in
+`src-tauri/tauri.conf.json`, installs it and starts again.
+
+Every step can fail; a failure is one line on the screen and the launcher
+goes on as it is:
+
+- the check gives up after 10 seconds (no network, GitHub down);
+- a download or an installer that fails leaves the installed launcher as it
+  was, and a version that failed twice is not tried on start for a day
+  (Settings, Check now, still tries it);
+- Settings can switch the update on start off.
+
+The release workflow signs the installer with the `TAURI_SIGNING_PRIVATE_KEY`
+repository secret (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, empty for a key
+without a password). Without it the installer is built unsigned and the
+release has no `latest.json`, so launchers stay on their version. The
+private key is not in the repository; a release signed with another key is
+refused by every installed launcher, so the key must be kept.
+
+## Design preview
+
+`npm run dev` outside Tauri draws the pages over sample data
+(`src/lib/mock.ts`); open `http://localhost:1430/?page=versions` (or `home`,
+`profiles`, `mods`, `settings`). The built app does not contain the sample.
+
 ## Build and run
 
 ```

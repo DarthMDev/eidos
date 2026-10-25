@@ -298,17 +298,31 @@ jobs:
             }'
           sed -i "0,/^version = \".*\"/s//version = \"${VERSION}\"/" launcher/src-tauri/Cargo.toml
           grep -m1 '^version' launcher/src-tauri/Cargo.toml
+      # The installer is signed for the launcher's own updates
+      # (docs/launcher.md, "Updates") with the TAURI_SIGNING_PRIVATE_KEY
+      # secret.  Without the secret the installer is built unsigned and the
+      # release has no latest.json: launchers then stay on their version.
       - name: Build the installer
+        shell: bash
         working-directory: launcher
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           npm ci
-          npx tauri build --bundles nsis
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            npx tauri build --bundles nsis
+          else
+            echo "::warning::no TAURI_SIGNING_PRIVATE_KEY secret: the launcher is not signed for updates"
+            npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
       - name: Name it
         shell: bash
         env:
           VERSION: ${{ needs.meta.outputs.version }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-test', needs.meta.outputs.version) }}
+          REPO: ${{ github.repository }}
         run: |
           mkdir -p out
           cp launcher/src-tauri/target/release/bundle/nsis/*-setup.exe \
@@ -318,6 +332,16 @@ jobs:
           # which always gives the newest release
           cp "out/eidos-launcher-${VERSION}-windows-setup.exe" \
              out/eidos-launcher-windows-setup.exe
+          # latest.json: what a running launcher reads to update itself
+          # (.../releases/latest/download/latest.json)
+          sig=$(ls launcher/src-tauri/target/release/bundle/nsis/*-setup.exe.sig 2>/dev/null | head -1)
+          if [ -n "$sig" ]; then
+            python tools/launcher_update_json.py --version "$VERSION" \
+              --signature "$sig" \
+              --url "https://github.com/${REPO}/releases/download/${TAG}/eidos-launcher-${VERSION}-windows-setup.exe" \
+              --notes "eidos launcher ${VERSION}" > out/latest.json
+            cat out/latest.json
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-windows

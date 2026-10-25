@@ -13,6 +13,7 @@
     type ModInfo,
     type Overview,
   } from "../lib/backend";
+  import Icon from "../lib/Icon.svelte";
 
   let { ov, selected, onSelect }: { ov: Overview; selected: string; onSelect: (name: string) => void } = $props();
 
@@ -24,6 +25,7 @@
   let addDialog = $state<HTMLDialogElement>();
 
   const running = $derived(ov.running.includes(selected));
+  const enabled = $derived(mods.filter((m) => m.enabled).length);
 
   async function load() {
     try {
@@ -88,126 +90,134 @@
 </script>
 
 <section class="page">
-  <h2>Mods</h2>
-  <div class="row">
-    <label class="inline">
-      <span class="muted small">Profile</span>
+  <header class="page-head">
+    <h1>Mods</h1>
+    <p>Mods load when the profile starts. Switch one off to keep it without loading it.</p>
+  </header>
+
+  <div class="card bar">
+    <label class="field">
+      <span>Profile</span>
       <select value={selected} onchange={(e) => onSelect(e.currentTarget.value)}>
         {#each ov.profiles as p}<option value={p.name}>{p.name}</option>{/each}
       </select>
     </label>
-    <button disabled={running} onclick={pickPackage}>Add from .bw file</button>
-    <button disabled={running} onclick={pickFolder}>Add from folder</button>
-    <button class="quiet outlined" onclick={() => openFolder("mods", selected)}>Open folder</button>
+    <div class="grow"></div>
+    <button class="primary" disabled={running} onclick={pickPackage}><Icon name="upload" size={15} />Add .bw file</button>
+    <button disabled={running} onclick={pickFolder}><Icon name="plus" size={15} />Add folder</button>
+    <button class="quiet outlined" onclick={() => openFolder("mods", selected)}><Icon name="folder" size={15} />Open folder</button>
   </div>
   {#if running}<p class="muted">The game is running. Close it to change mods.</p>{/if}
 
-  <ul class="window list">
-    {#each mods as m (m.folder)}
-      <li>
-        <label class="check">
-          <input
-            type="checkbox"
-            checked={m.enabled}
-            disabled={running}
-            onchange={(e) => run(() => modsSetEnabled(selected, m.folder, e.currentTarget.checked))} />
-          <span class="label">{m.name}</span>
-        </label>
-        {#if m.name !== m.folder}<span class="muted small">{m.folder}</span>{/if}
-        {#if !m.hasManifest}<span class="muted small">no manifest</span>{/if}
-        <button class="quiet" disabled={running} onclick={() => askRemove(m)}>Remove</button>
-      </li>
-    {:else}
-      <li class="muted">No mods in this profile.</li>
-    {/each}
-  </ul>
+  <div>
+    <h2 class="section-label">{mods.length} {mods.length === 1 ? "mod" : "mods"} · {enabled} on</h2>
+    <ul class="rows card">
+      {#each mods as m (m.folder)}
+        <li class:off={!m.enabled}>
+          <label class="switch" title={m.enabled ? "On" : "Off"}>
+            <input
+              type="checkbox"
+              checked={m.enabled}
+              disabled={running}
+              onchange={(e) => run(() => modsSetEnabled(selected, m.folder, e.currentTarget.checked))} />
+            <span class="track" aria-hidden="true"></span>
+          </label>
+          <div class="main">
+            <span class="title">{m.name}</span>
+            {#if m.name !== m.folder}<span class="sub">{m.folder}</span>{/if}
+          </div>
+          {#if !m.hasManifest}<span class="badge">No manifest</span>{/if}
+          <div class="actions">
+            <button class="quiet danger" disabled={running} title="Remove" onclick={() => askRemove(m)}><Icon name="trash" size={15} /></button>
+          </div>
+        </li>
+      {:else}
+        <li class="empty">No mods in this profile yet.</li>
+      {/each}
+    </ul>
+  </div>
 
-  <h3>Index</h3>
-  <p class="muted">{indexUrl ? indexUrl : "No index yet."}</p>
+  <div>
+    <h2 class="section-label">Mods index</h2>
+    <p class="muted">{indexUrl ? indexUrl : "No index yet. A list of mods to browse comes here."}</p>
+  </div>
 </section>
 
-<dialog bind:this={addDialog} class="window confirm">
+<dialog bind:this={addDialog} class="modal">
   <h2>Add this mod?</h2>
   <p class="muted">{adding?.label}</p>
-  <div class="row">
-    <button class="primary" onclick={confirmAdd}>Add</button>
+  <div class="buttons">
     <button class="quiet" onclick={() => addDialog?.close()}>Cancel</button>
+    <button class="primary" onclick={confirmAdd}>Add</button>
   </div>
 </dialog>
 
-<dialog bind:this={removeDialog} class="window confirm">
+<dialog bind:this={removeDialog} class="modal">
   <h2>Remove {removing?.name}?</h2>
   <p class="muted">The mod's folder is deleted from this profile.</p>
-  <div class="row">
-    <button class="primary" onclick={confirmRemove}>Remove</button>
+  <div class="buttons">
     <button class="quiet" onclick={() => removeDialog?.close()}>Cancel</button>
+    <button class="primary danger" onclick={confirmRemove}>Remove</button>
   </div>
 </dialog>
 
 <style>
-  .page {
+  .bar {
     display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  h2,
-  h3,
-  p {
-    margin: 0;
-  }
-  h3 {
-    font-size: 1rem;
-  }
-  .row {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
     align-items: flex-end;
-  }
-  .inline {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-  .list {
-    list-style: none;
-    margin: 0;
-    padding: 0.5rem 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .list li {
-    display: flex;
-    align-items: center;
     gap: 0.6rem;
+    padding: 1rem;
     flex-wrap: wrap;
   }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex: 1;
-    min-width: 8rem;
+  .bar select {
+    width: 12rem;
   }
-  .label {
-    font-weight: 600;
+  .off .title {
+    color: var(--muted);
   }
-  .small {
-    font-size: 0.85em;
+  .switch {
+    position: relative;
+    display: inline-flex;
+    flex: none;
   }
-  .confirm {
-    color: var(--ink);
-    padding: 1.25rem;
-    max-width: 26rem;
+  .switch input {
+    position: absolute;
+    opacity: 0;
+    inset: 0;
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
   }
-  .confirm::backdrop {
-    background: rgba(0, 0, 0, 0.5);
+  .track {
+    width: 2.3rem;
+    height: 1.3rem;
+    border-radius: 999px;
+    background: var(--panel-3);
+    border: 1px solid var(--line-strong);
+    position: relative;
+    transition: background-color 0.15s;
   }
-  .confirm h2 {
-    margin-bottom: 0.5rem;
+  .track::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: calc(1.3rem - 6px);
+    height: calc(1.3rem - 6px);
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform 0.15s, background-color 0.15s;
   }
-  .confirm .row {
-    margin-top: 0.75rem;
+  .switch input:checked + .track {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .switch input:checked + .track::after {
+    transform: translateX(1rem);
+    background: var(--accent-ink);
+  }
+  .switch input:disabled + .track {
+    opacity: 0.5;
   }
 </style>

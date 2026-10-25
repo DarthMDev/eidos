@@ -3,6 +3,13 @@
 Each release's notes on GitHub start with its section here
 (tools/release_notes.py). Newest first.
 
+## 0.1.6
+
+- The launcher updates itself when it starts. If an update fails, the
+  launcher keeps running on the version it has. Install this version once by
+  hand; later ones arrive by themselves.
+- A new look for the launcher.
+
 ## 0.1.5
 
 - 3D outlines at high resolution match the DS: no more gap and thin line

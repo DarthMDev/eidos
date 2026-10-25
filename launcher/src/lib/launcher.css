@@ -1,13 +1,170 @@
-/* The launcher's own additions to morphe's theme. */
+/* The launcher's look, over morphe's theme: the eidos colours (Zekrom's
+   blacks and electric blue by night, Reshiram's whites by day), the
+   inscription font of the eidos banner for titles, soft panels and one
+   accent for what can be pressed. */
+
+:root,
+:root[data-theme="dark"] {
+  --bg: #0c0d11;
+  --bg-glow: rgba(0, 197, 255, 0.07);
+  --panel: #14161c;
+  --panel-2: #191c23;
+  --panel-3: #22262f;
+  --line: #262a34;
+  --line-strong: #343947;
+  --outline: #262a34;
+  --rim: transparent;
+  --ink: #e9ebf1;
+  --muted: #8d93a3;
+  --faint: #5b6172;
+  --accent: #00c5ff;
+  --accent-hover: #4dd8ff;
+  --accent-dark: #0083b8;
+  --accent-ink: #001620;
+  --accent-soft: rgba(0, 197, 255, 0.12);
+  --ok: #3ddc84;
+  --ok-soft: rgba(61, 220, 132, 0.12);
+  --bad: #ff6464;
+  --bad-soft: rgba(255, 100, 100, 0.12);
+  --hero-a: #1f2029;
+  --hero-b: #0f1014;
+  --radius: 14px;
+  --radius-s: 9px;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="light"] {
+  --bg: #eef0f6;
+  --bg-glow: rgba(31, 127, 192, 0.08);
+  --panel: #ffffff;
+  --panel-2: #f6f7fb;
+  --panel-3: #eceef5;
+  --line: #dde0ea;
+  --line-strong: #c9cddb;
+  --outline: #dde0ea;
+  --ink: #1d2030;
+  --muted: #5f6680;
+  --faint: #9298ad;
+  --accent: #1f7fc0;
+  --accent-hover: #2a93db;
+  --accent-dark: #16639a;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(31, 127, 192, 0.1);
+  --ok: #24935a;
+  --ok-soft: rgba(36, 147, 90, 0.1);
+  --bad: #c83a3a;
+  --bad-soft: rgba(200, 58, 58, 0.1);
+  --hero-a: #ffffff;
+  --hero-b: #dcdcea;
+  --shadow: 0 1px 2px rgba(20, 24, 40, 0.06), 0 8px 24px rgba(20, 24, 40, 0.06);
+}
+
+body {
+  background: radial-gradient(1200px 600px at 0% 0%, var(--bg-glow), transparent 60%), var(--bg);
+  font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+.display {
+  font-family: "Marcellus SC", "Segoe UI", serif;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+/* Panels */
+.window,
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* Buttons */
+button,
+.btn {
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--panel-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  box-shadow: none;
+  padding: 0.45rem 0.95rem;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+button.quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+button.quiet:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--panel-3);
+  border-color: transparent;
+}
 
 /* A quiet button that still shows its edge: the secondary actions in a
  * list row (open a folder, copy, remove), so they read as buttons. */
 button.quiet.outlined {
-  border-color: var(--outline);
+  border-color: var(--line-strong);
+  color: var(--ink);
 }
 
-button.quiet.outlined:hover {
+button.quiet.outlined:hover:not(:disabled) {
   border-color: var(--accent);
+  background: transparent;
+}
+
+button.danger:hover:not(:disabled) {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+button.primary.danger {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Fields */
+input,
+textarea,
+select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  padding: 0.45rem 0.65rem;
+  min-width: 0;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 
 /* Text boxes and selects light their edge on hover, as buttons do. */
@@ -15,4 +172,230 @@ input:hover:not(:disabled),
 textarea:hover:not(:disabled),
 select:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+}
+
+/* Text */
+.muted {
+  color: var(--muted);
+}
+
+.faint {
+  color: var(--faint);
+}
+
+.small {
+  font-size: 0.85em;
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.bad {
+  color: var(--bad);
+}
+
+/* A page: its title, a line under it, then sections */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 52rem;
+}
+
+.page-head h1 {
+  font-size: 1.7rem;
+  margin: 0;
+}
+
+.page-head p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+}
+
+.section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 0 0 0.5rem 0.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* A list of rows in a card */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.rows > li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: calc(var(--radius) - 4px);
+  min-height: 3rem;
+}
+
+.rows > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.rows > li:hover {
+  background: var(--panel-2);
+}
+
+.rows > li.empty {
+  color: var(--muted);
+  justify-content: center;
+}
+
+.rows .main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rows .title {
+  font-weight: 600;
+}
+
+.rows .sub {
+  color: var(--muted);
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rows .actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Small labels */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  background: var(--panel-3);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.badge.accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge.bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+/* Dialogs */
+dialog.modal {
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  padding: 1.5rem;
+  width: min(28rem, calc(100vw - 2rem));
+}
+
+dialog.modal::backdrop {
+  background: rgba(5, 6, 9, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+dialog.modal h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+dialog.modal .buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+/* Forms */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.field > span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.field .hint {
+  font-size: 0.8rem;
+  color: var(--faint);
+}
+
+.inline {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }

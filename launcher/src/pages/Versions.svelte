@@ -3,6 +3,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { toast } from "morphe/menu.svelte";
   import { installVersion, listRemote, message, removeVersion, type Overview, type Remote } from "../lib/backend";
+  import Icon from "../lib/Icon.svelte";
 
   let { ov, onRefresh }: { ov: Overview; onRefresh: () => Promise<void> | void } = $props();
 
@@ -50,6 +51,9 @@
   }
 
   const size = (n: number | null) => (n == null ? "" : `${(n / 1048576).toFixed(1)} MB`);
+  const date = (s: string | null) =>
+    s ? new Date(s).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
+  const newest = $derived(remote?.find((r) => !r.prerelease)?.tag);
 
   onMount(() => {
     load();
@@ -61,99 +65,84 @@
 </script>
 
 <section class="page">
-  <h2>Versions</h2>
+  <header class="page-head">
+    <h1>Versions</h1>
+    <p>Install eidos releases. Each profile runs the version you pick for it.</p>
+  </header>
 
-  <h3>Installed</h3>
-  <ul class="window list">
-    {#if ov.localBuild}
-      <li>
-        <span class="label">Local build</span>
-        <span class="muted path">{ov.localBuild}</span>
-        {#if !ov.localOk}<span class="bad">no eidos program in this folder</span>{/if}
-      </li>
-    {/if}
-    {#each ov.installed as id (id)}
-      <li>
-        <span class="label">{id}</span>
-        <button class="quiet outlined" onclick={() => remove(id)}>Remove</button>
-      </li>
-    {/each}
-    {#if !ov.localBuild && !ov.installed.length}<li class="muted">None.</li>{/if}
-  </ul>
-
-  <h3>
-    Releases
-    <button class="quiet" disabled={loading} onclick={load}>{loading ? "Loading..." : "Refresh"}</button>
-  </h3>
-  {#if error}
-    <p class="bad" role="alert">{error}</p>
-  {:else if remote && !remote.length}
-    <p class="muted">The repository has no releases.</p>
-  {:else if remote}
-    <ul class="window list">
-      {#each remote as r (r.tag)}
+  <div>
+    <h2 class="section-label">Installed</h2>
+    <ul class="rows card">
+      {#if ov.localBuild}
         <li>
-          <span class="label">{r.name}</span>
-          {#if r.prerelease}<span class="muted small">pre-release</span>{/if}
-          <span class="muted small">{size(r.size)}</span>
-          {#if r.installed}
-            <span class="ok small">installed</span>
-          {:else if !r.available}
-            <span class="muted small">no file for this system</span>
-          {:else}
-            <button disabled={busy !== null} onclick={() => install(r.tag)}>
-              {busy === r.tag ? stage || "Working..." : "Install"}
-            </button>
-          {/if}
+          <div class="main">
+            <span class="title">Local build</span>
+            <span class="sub">{ov.localBuild}</span>
+          </div>
+          {#if ov.localOk}<span class="badge">Folder</span>{:else}<span class="badge bad">No eidos program here</span>{/if}
+        </li>
+      {/if}
+      {#each ov.installed as id, i (id)}
+        <li>
+          <div class="main">
+            <span class="title">eidos {id}</span>
+          </div>
+          {#if i === 0}<span class="badge accent">Newest installed</span>{/if}
+          <div class="actions">
+            <button class="quiet outlined danger" onclick={() => remove(id)}><Icon name="trash" size={15} />Remove</button>
+          </div>
         </li>
       {/each}
+      {#if !ov.localBuild && !ov.installed.length}<li class="empty">Nothing installed yet. Install a release below.</li>{/if}
     </ul>
-  {/if}
+  </div>
+
+  <div>
+    <h2 class="section-label">
+      Releases
+      <button class="quiet small refresh" disabled={loading} onclick={load} title="Refresh the list">
+        <Icon name="refresh" size={14} />{loading ? "Loading" : "Refresh"}
+      </button>
+    </h2>
+    {#if error}
+      <p class="bad" role="alert">{error}</p>
+    {:else if remote && !remote.length}
+      <p class="muted">The repository has no releases.</p>
+    {:else if remote}
+      <ul class="rows card">
+        {#each remote as r (r.tag)}
+          <li>
+            <div class="main">
+              <span class="title">{r.name}</span>
+              <span class="sub">{[date(r.published), size(r.size)].filter(Boolean).join(" · ")}</span>
+            </div>
+            {#if r.tag === newest}<span class="badge accent">Latest</span>{/if}
+            {#if r.prerelease}<span class="badge">Pre-release</span>{/if}
+            <div class="actions">
+              {#if r.installed}
+                <span class="badge ok"><Icon name="check" size={13} />Installed</span>
+              {:else if !r.available}
+                <span class="badge">Not for this system</span>
+              {:else}
+                <button class={r.tag === newest && busy !== r.tag ? "primary" : ""} disabled={busy !== null} onclick={() => install(r.tag)}>
+                  <Icon name="download" size={15} />{busy === r.tag ? stage || "Working" : "Install"}
+                </button>
+              {/if}
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="muted">Loading</p>
+    {/if}
+  </div>
 </section>
 
 <style>
-  .page {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  h2,
-  h3,
-  p {
-    margin: 0;
-  }
-  h3 {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 1rem;
-  }
-  .list {
-    list-style: none;
-    margin: 0;
-    padding: 0.5rem 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .list li {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-  }
-  .label {
-    flex: 1;
-    min-width: 6rem;
-    font-weight: 600;
-  }
-  .path {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 24rem;
-  }
-  .small {
-    font-size: 0.85em;
+  .refresh {
+    padding: 0.15rem 0.5rem;
+    font-size: 0.75rem;
+    letter-spacing: normal;
+    text-transform: none;
   }
 </style>

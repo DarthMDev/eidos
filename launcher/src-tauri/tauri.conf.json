@@ -27,12 +27,29 @@
   },
   "plugins": {
     "deep-link": {
-      "desktop": { "schemes": ["eidos"] }
+      "desktop": {
+        "schemes": [
+          "eidos"
+        ]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERERjM4MjM2Q0Q1QzQ4MUQKUldRZFNGek5Ob0x6M2FFTUJTcTd6VFpYR2ZxVGtTYksxQ2pxUDUwcDIyYU9TNDVZaEFMRXNzOFcK",
+      "endpoints": [
+        "https://github.com/Project-Holon/eidos/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "appimage", "app"],
+    "targets": [
+      "nsis",
+      "appimage",
+      "app"
+    ],
     "category": "Game",
     "shortDescription": "Profiles, versions and mods for eidos",
     "icon": [
@@ -46,6 +63,7 @@
       "nsis": {
         "installMode": "currentUser"
       }
-    }
+    },
+    "createUpdaterArtifacts": true
   }
 }

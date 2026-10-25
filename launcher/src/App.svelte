@@ -10,6 +10,8 @@
     versionLabel,
     type Overview,
   } from "./lib/backend";
+  import Icon from "./lib/Icon.svelte";
+  import { checkForUpdate, updates } from "./lib/updater.svelte";
   import Home from "./pages/Home.svelte";
   import Profiles from "./pages/Profiles.svelte";
   import Versions from "./pages/Versions.svelte";
@@ -17,22 +19,28 @@
   import Settings from "./pages/Settings.svelte";
 
   type Page = "home" | "profiles" | "versions" | "mods" | "settings";
-  const PAGES: [Page, string][] = [
-    ["home", "Play"],
-    ["profiles", "Profiles"],
-    ["versions", "Versions"],
-    ["mods", "Mods"],
-    ["settings", "Settings"],
+  const PAGES: [Page, string, string][] = [
+    ["home", "Play", "play"],
+    ["profiles", "Profiles", "profiles"],
+    ["versions", "Versions", "versions"],
+    ["mods", "Mods", "mods"],
+    ["settings", "Settings", "settings"],
   ];
   const KEY = "eidos-launcher.profile";
 
   let ov = $state<Overview | null>(null);
   let failure = $state<string | null>(null);
-  let page = $state<Page>("home");
+  let page = $state<Page>(firstPage());
   let selected = $state(read());
   let inviteCode = $state<string | null>(null);
   let inviteProfile = $state("");
   let inviteDialog = $state<HTMLDialogElement>();
+
+  // The development preview opens a page from the address (?page=mods).
+  function firstPage(): Page {
+    const p = new URLSearchParams(location.search).get("page");
+    return PAGES.some(([id]) => id === p) ? (p as Page) : "home";
+  }
 
   function read(): string {
     try {
@@ -79,6 +87,10 @@
 
   onMount(() => {
     refresh();
+    // The launcher's own update, once per launch; a failure only reports.
+    checkForUpdate().then(() => {
+      if (updates.state.kind === "failed") toast(updates.state.message, true);
+    });
     const stops: Promise<() => void>[] = [
       listen("running-changed", refresh),
       listen<string>("invite", async (e) => {
@@ -92,23 +104,39 @@
   });
 
   const current = $derived(ov?.profiles.find((p) => p.name === selected));
+  const percent = $derived.by(() => {
+    const s = updates.state;
+    return s.kind === "downloading" && s.total ? Math.min(100, Math.round((s.done / s.total) * 100)) : null;
+  });
 </script>
 
 {#if failure}
-  <div class="state bad" role="alert">{failure}</div>
+  <div class="state"><p class="bad" role="alert">{failure}</p></div>
 {:else if !ov}
-  <div class="state muted">Loading...</div>
+  <div class="state muted">Loading</div>
 {:else}
   <div class="shell">
-    <nav class="window" aria-label="Pages">
-      <h1>eidos</h1>
-      {#each PAGES as [id, label]}
-        <button
-          class="row-item"
-          aria-current={page === id}
-          onclick={() => (page = id)}>{label}</button>
-      {/each}
-      <p class="muted small ver">Launcher {ov.launcherVersion}</p>
+    <nav aria-label="Pages">
+      <div class="brand">
+        <span class="display word">EIDOS</span>
+        <span class="greek">εἶδος</span>
+      </div>
+      <div class="links">
+        {#each PAGES as [id, label, icon]}
+          <button class="link" aria-current={page === id} onclick={() => (page = id)}>
+            <Icon name={icon} />
+            <span>{label}</span>
+          </button>
+        {/each}
+      </div>
+      <div class="foot">
+        <span class="faint small">Launcher {ov.launcherVersion}</span>
+        {#if updates.state.kind === "checking"}
+          <span class="faint small">Checking for updates</span>
+        {:else if updates.state.kind === "current"}
+          <span class="faint small">Up to date</span>
+        {/if}
+      </div>
     </nav>
     <main>
       {#if page === "home"}
@@ -126,21 +154,35 @@
   </div>
 {/if}
 
-<dialog bind:this={inviteDialog} class="window invite">
+{#if updates.overlay}
+  <div class="updating" role="status">
+    <div class="card box">
+      {#if updates.state.kind === "downloading"}
+        <h2>Updating the launcher</h2>
+        <p class="muted">Downloading version {updates.state.version}</p>
+        <div class="bar"><div class="fill" style:width="{percent ?? 30}%" class:moving={percent === null}></div></div>
+      {:else if updates.state.kind === "installing"}
+        <h2>Updating the launcher</h2>
+        <p class="muted">Installing version {updates.state.version}. The launcher starts again by itself.</p>
+        <div class="bar"><div class="fill moving" style:width="30%"></div></div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<dialog bind:this={inviteDialog} class="modal">
   {#if ov && inviteCode}
-    <h2>Join {inviteCode}</h2>
-    <label>
-      <span class="muted small">Profile</span>
+    <h2>Join game {inviteCode}</h2>
+    <p class="muted">Starts eidos with this profile and joins the game. Both players must run the same version.</p>
+    <label class="field" style="margin-top: 1rem">
+      <span>Profile</span>
       <select bind:value={inviteProfile}>
         {#each ov.profiles as p}<option value={p.name}>{p.name} ({versionLabel(p.version)})</option>{/each}
       </select>
     </label>
-    <p class="muted small">
-      Starts eidos with this profile and joins the game. The game and the profile must run the same version.
-    </p>
-    <div class="actions">
-      <button class="primary" disabled={ov.running.includes(inviteProfile)} onclick={join}>Join</button>
+    <div class="buttons">
       <button class="quiet" onclick={() => inviteDialog?.close()}>Cancel</button>
+      <button class="primary" disabled={ov.running.includes(inviteProfile)} onclick={join}>Join</button>
     </div>
   {/if}
 </dialog>
@@ -153,51 +195,128 @@
   }
   .shell {
     display: grid;
-    grid-template-columns: 11rem 1fr;
-    gap: 1rem;
+    grid-template-columns: 13.5rem 1fr;
     height: 100%;
-    padding: 1rem;
   }
   nav {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    padding: 1rem 0.75rem;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding: 1.4rem 0.75rem 1rem;
   }
-  nav h1 {
-    font-size: 1.4rem;
-    margin: 0 0 0.75rem 0.4rem;
+  .brand {
+    display: flex;
+    flex-direction: column;
+    padding: 0 0.75rem 1.4rem;
   }
-  .ver {
-    margin: auto 0 0 0.4rem;
+  .word {
+    font-size: 1.6rem;
+    letter-spacing: 0.32em;
+    line-height: 1.1;
+  }
+  .greek {
+    font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    font-style: italic;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .greek::before {
+    content: "";
+    width: 1.4rem;
+    height: 2px;
+    background: var(--accent);
+  }
+  .links {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .link {
+    justify-content: flex-start;
+    gap: 0.75rem;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-s);
+    padding: 0.6rem 0.75rem;
+    color: var(--muted);
+    font-weight: 600;
+    position: relative;
+  }
+  .link:hover:not(:disabled) {
+    background: var(--panel-3);
+    color: var(--ink);
+  }
+  .link[aria-current="true"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .link[aria-current="true"]::before {
+    content: "";
+    position: absolute;
+    left: -0.75rem;
+    top: 0.5rem;
+    bottom: 0.5rem;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--accent);
+  }
+  .foot {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 0 0.75rem;
   }
   main {
     min-width: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 0.25rem 0.5rem;
+    padding: 2rem 2.25rem;
   }
-  .invite {
-    color: var(--ink);
-    padding: 1.25rem;
-    max-width: 26rem;
+  .updating {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(5, 6, 9, 0.65);
+    backdrop-filter: blur(3px);
+    z-index: 50;
   }
-  .invite::backdrop {
-    background: rgba(0, 0, 0, 0.5);
-  }
-  .invite h2 {
-    margin-top: 0;
-  }
-  .invite label {
+  .box {
+    width: min(26rem, calc(100vw - 2rem));
+    padding: 1.5rem;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-  }
-  .actions {
-    display: flex;
     gap: 0.5rem;
   }
-  .small {
-    font-size: 0.85em;
+  .box h2 {
+    margin: 0;
+    font-size: 1.15rem;
+  }
+  .bar {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--panel-3);
+    overflow: hidden;
+    margin-top: 0.5rem;
+  }
+  .fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+    transition: width 0.2s;
+  }
+  .fill.moving {
+    animation: slide 1.2s ease-in-out infinite;
+  }
+  @keyframes slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(340%);
+    }
   }
 </style>
