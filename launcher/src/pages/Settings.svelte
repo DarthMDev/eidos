@@ -59,19 +59,18 @@
 <section class="page">
   <header class="page-head">
     <h1>Settings</h1>
-    <p>The launcher's own settings. The game's settings are inside the game.</p>
   </header>
 
   <div>
     <h2 class="section-label">Appearance</h2>
-    <div class="card block">
+    <div class="window block">
       <ThemePicker />
     </div>
   </div>
 
   <div>
-    <h2 class="section-label">Launcher updates</h2>
-    <div class="card block">
+    <h2 class="section-label">Updates</h2>
+    <div class="window block">
       <div class="inline">
         <div class="grow">
           <div class="title">Launcher {ov.launcherVersion}</div>
@@ -79,25 +78,24 @@
             {#if updates.state.kind === "checking"}Checking for updates
             {:else if updates.state.kind === "current"}Up to date
             {:else if updates.state.kind === "failed"}{updates.state.message}
-            {:else}Updates are checked each time the launcher starts{/if}
+{/if}
           </div>
         </div>
         <button disabled={updates.state.kind === "checking"} onclick={checkNow}><Icon name="refresh" size={15} />Check now</button>
       </div>
       <label class="inline check">
         <input type="checkbox" bind:checked={auto} onchange={() => setAutoUpdate(auto)} />
-        Update the launcher by itself when it starts
+        Update on start
       </label>
     </div>
   </div>
 
   <div>
-    <h2 class="section-label">Game files</h2>
-    <div class="card block">
+    <h2 class="section-label">Downloads</h2>
+    <div class="window block">
       <label class="field">
         <span>Releases repository</span>
         <input bind:value={repo} placeholder="owner/name" />
-        <span class="hint">Where versions are downloaded from.</span>
       </label>
       <label class="field">
         <span>GitHub token {tokenSet ? "(saved)" : ""}</span>

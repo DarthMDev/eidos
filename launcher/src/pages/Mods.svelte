@@ -92,10 +92,9 @@
 <section class="page">
   <header class="page-head">
     <h1>Mods</h1>
-    <p>Mods load when the profile starts. Switch one off to keep it without loading it.</p>
   </header>
 
-  <div class="card bar">
+  <div class="window bar">
     <label class="field">
       <span>Profile</span>
       <select value={selected} onchange={(e) => onSelect(e.currentTarget.value)}>
@@ -107,11 +106,11 @@
     <button disabled={running} onclick={pickFolder}><Icon name="plus" size={15} />Add folder</button>
     <button class="quiet outlined" onclick={() => openFolder("mods", selected)}><Icon name="folder" size={15} />Open folder</button>
   </div>
-  {#if running}<p class="muted">The game is running. Close it to change mods.</p>{/if}
+  {#if running}<p class="muted">Close the game to change mods.</p>{/if}
 
   <div>
     <h2 class="section-label">{mods.length} {mods.length === 1 ? "mod" : "mods"} · {enabled} on</h2>
-    <ul class="rows card">
+    <ul class="rows window">
       {#each mods as m (m.folder)}
         <li class:off={!m.enabled}>
           <label class="switch" title={m.enabled ? "On" : "Off"}>
@@ -132,14 +131,14 @@
           </div>
         </li>
       {:else}
-        <li class="empty">No mods in this profile yet.</li>
+        <li class="empty">No mods</li>
       {/each}
     </ul>
   </div>
 
   <div>
-    <h2 class="section-label">Mods index</h2>
-    <p class="muted">{indexUrl ? indexUrl : "No index yet. A list of mods to browse comes here."}</p>
+    <h2 class="section-label">Index</h2>
+    <p class="muted">{indexUrl ? indexUrl : "No index."}</p>
   </div>
 </section>
 

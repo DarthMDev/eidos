@@ -67,19 +67,18 @@
 <section class="page">
   <header class="page-head">
     <h1>Versions</h1>
-    <p>Install eidos releases. Each profile runs the version you pick for it.</p>
   </header>
 
   <div>
     <h2 class="section-label">Installed</h2>
-    <ul class="rows card">
+    <ul class="rows window">
       {#if ov.localBuild}
         <li>
           <div class="main">
             <span class="title">Local build</span>
             <span class="sub">{ov.localBuild}</span>
           </div>
-          {#if ov.localOk}<span class="badge">Folder</span>{:else}<span class="badge bad">No eidos program here</span>{/if}
+          {#if !ov.localOk}<span class="badge bad">No eidos program</span>{/if}
         </li>
       {/if}
       {#each ov.installed as id, i (id)}
@@ -87,13 +86,13 @@
           <div class="main">
             <span class="title">eidos {id}</span>
           </div>
-          {#if i === 0}<span class="badge accent">Newest installed</span>{/if}
+          {#if i === 0}<span class="badge">Newest</span>{/if}
           <div class="actions">
             <button class="quiet outlined danger" onclick={() => remove(id)}><Icon name="trash" size={15} />Remove</button>
           </div>
         </li>
       {/each}
-      {#if !ov.localBuild && !ov.installed.length}<li class="empty">Nothing installed yet. Install a release below.</li>{/if}
+      {#if !ov.localBuild && !ov.installed.length}<li class="empty">None</li>{/if}
     </ul>
   </div>
 
@@ -107,9 +106,9 @@
     {#if error}
       <p class="bad" role="alert">{error}</p>
     {:else if remote && !remote.length}
-      <p class="muted">The repository has no releases.</p>
+      <p class="muted">No releases.</p>
     {:else if remote}
-      <ul class="rows card">
+      <ul class="rows window">
         {#each remote as r (r.tag)}
           <li>
             <div class="main">

@@ -79,12 +79,11 @@
 <section class="page">
   <header class="page-head">
     <h1>Profiles</h1>
-    <p>A profile has its own eidos version, mods, saves and settings.</p>
   </header>
 
   <div>
-    <h2 class="section-label">Your profiles</h2>
-    <ul class="rows card">
+    <h2 class="section-label">Profiles</h2>
+    <ul class="rows window">
       {#each ov.profiles as p (p.name)}
         <li class:chosen={selected === p.name}>
           {#if renaming === p.name}
@@ -98,7 +97,6 @@
               <span class="dot" aria-hidden="true"></span>
               <span class="main">
                 <span class="title">{p.name}</span>
-                <span class="sub">{selected === p.name ? "Selected for Play" : "Select for Play"}</span>
               </span>
             </button>
             {#if ov.running.includes(p.name)}<span class="badge ok">Running</span>{/if}
@@ -125,10 +123,10 @@
 
   <div>
     <h2 class="section-label">New profile</h2>
-    <div class="card create">
+    <div class="window create">
       <label class="field grow">
         <span>Name</span>
-        <input placeholder="For example: Nuzlocke" bind:value={newName} onkeydown={(e) => e.key === "Enter" && create()} />
+        <input placeholder="Name" bind:value={newName} onkeydown={(e) => e.key === "Enter" && create()} />
       </label>
       <label class="field">
         <span>Version</span>
@@ -176,9 +174,6 @@
     border-color: var(--accent);
     background: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
-  }
-  .chosen .sub {
-    color: var(--accent);
   }
   select {
     width: 9rem;

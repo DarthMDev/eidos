@@ -117,13 +117,10 @@
 {:else}
   <div class="shell">
     <nav aria-label="Pages">
-      <div class="brand">
-        <span class="display word">EIDOS</span>
-        <span class="greek">εἶδος</span>
-      </div>
+      <h1 class="brand">eidos</h1>
       <div class="links">
         {#each PAGES as [id, label, icon]}
-          <button class="link" aria-current={page === id} onclick={() => (page = id)}>
+          <button class="row-item" aria-current={page === id} onclick={() => (page = id)}>
             <Icon name={icon} />
             <span>{label}</span>
           </button>
@@ -156,14 +153,14 @@
 
 {#if updates.overlay}
   <div class="updating" role="status">
-    <div class="card box">
+    <div class="window box">
       {#if updates.state.kind === "downloading"}
         <h2>Updating the launcher</h2>
         <p class="muted">Downloading version {updates.state.version}</p>
         <div class="bar"><div class="fill" style:width="{percent ?? 30}%" class:moving={percent === null}></div></div>
       {:else if updates.state.kind === "installing"}
         <h2>Updating the launcher</h2>
-        <p class="muted">Installing version {updates.state.version}. The launcher starts again by itself.</p>
+        <p class="muted">Installing version {updates.state.version}</p>
         <div class="bar"><div class="fill moving" style:width="30%"></div></div>
       {/if}
     </div>
@@ -173,7 +170,7 @@
 <dialog bind:this={inviteDialog} class="modal">
   {#if ov && inviteCode}
     <h2>Join game {inviteCode}</h2>
-    <p class="muted">Starts eidos with this profile and joins the game. Both players must run the same version.</p>
+    <p class="muted">Both players need the same version.</p>
     <label class="field" style="margin-top: 1rem">
       <span>Profile</span>
       <select bind:value={inviteProfile}>
@@ -202,86 +199,36 @@
     display: flex;
     flex-direction: column;
     background: var(--panel);
-    border-right: 1px solid var(--line);
-    padding: 1.4rem 0.75rem 1rem;
+    border-right: 2px solid var(--outline);
+    padding: 1rem 0.6rem;
   }
   .brand {
-    display: flex;
-    flex-direction: column;
-    padding: 0 0.75rem 1.4rem;
-  }
-  .word {
-    font-size: 1.6rem;
-    letter-spacing: 0.32em;
-    line-height: 1.1;
-  }
-  .greek {
-    font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif;
-    font-style: italic;
-    color: var(--muted);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .greek::before {
-    content: "";
-    width: 1.4rem;
-    height: 2px;
-    background: var(--accent);
+    font-size: 1.15rem;
+    padding: 0 0.6rem 1rem;
   }
   .links {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
-  }
-  .link {
-    justify-content: flex-start;
-    gap: 0.75rem;
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-s);
-    padding: 0.6rem 0.75rem;
-    color: var(--muted);
-    font-weight: 600;
-    position: relative;
-  }
-  .link:hover:not(:disabled) {
-    background: var(--panel-3);
-    color: var(--ink);
-  }
-  .link[aria-current="true"] {
-    background: var(--accent-soft);
-    color: var(--accent);
-  }
-  .link[aria-current="true"]::before {
-    content: "";
-    position: absolute;
-    left: -0.75rem;
-    top: 0.5rem;
-    bottom: 0.5rem;
-    width: 3px;
-    border-radius: 0 3px 3px 0;
-    background: var(--accent);
+    gap: 0.15rem;
   }
   .foot {
     margin-top: auto;
     display: flex;
     flex-direction: column;
-    padding: 0 0.75rem;
+    padding: 0 0.6rem;
   }
   main {
     min-width: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 2rem 2.25rem;
+    padding: 1.5rem 1.75rem;
   }
   .updating {
     position: fixed;
     inset: 0;
     display: grid;
     place-items: center;
-    background: rgba(5, 6, 9, 0.65);
-    backdrop-filter: blur(3px);
+    background: rgba(0, 0, 0, 0.5);
     z-index: 50;
   }
   .box {

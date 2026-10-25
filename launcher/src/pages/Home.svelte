@@ -49,13 +49,12 @@
 </script>
 
 <section class="home">
-  <div class="hero card">
+  <div class="hero window">
     <!-- the eidos dragon by night, in Reshiram's colours by day -->
     <div class="art night" style:background-image="url({dragon})"></div>
     <div class="art day" style:background-image="url({dragonDay})"></div>
     <div class="intro">
       <span class="display title">EIDOS</span>
-      <span class="tagline">A native PC port of Pokémon Black and White</span>
     </div>
 
     <div class="launch">
@@ -68,7 +67,6 @@
       <div class="which">
         {#if version}
           <span class="badge accent">eidos {versionLabel(version)}</span>
-          {#if current?.version === LATEST}<span class="faint small">follows the newest version</span>{/if}
         {:else}
           <span class="badge bad">No version</span>
         {/if}
@@ -81,13 +79,13 @@
   </div>
 
   {#if running}
-    <p class="note">{selected} is running. Close the game to play another profile or change its mods.</p>
+    <p class="note">{selected} is running.</p>
   {:else if !version}
     <p class="note">
       {#if current && current.version !== LATEST && current.version !== LOCAL}
         Version {current.version} is not installed.
       {:else}
-        No eidos version is installed yet.
+        No version installed.
       {/if}
       <button class="quiet outlined" onclick={() => onGoto("versions")}><Icon name="download" size={16} />Install one</button>
     </p>
@@ -95,15 +93,14 @@
   {#if error}<p class="note bad" role="alert">{error}</p>{/if}
 
   <div class="tiles">
-    <button class="tile card" onclick={() => onGoto("profiles")}>
+    <button class="tile window" onclick={() => onGoto("profiles")}>
       <span class="section-label">Profiles</span>
       <span class="big">{ov.profiles.length}</span>
-      <span class="faint small">Each has its own saves, mods and version</span>
     </button>
-    <button class="tile card" onclick={() => onGoto("versions")}>
-      <span class="section-label">Installed versions</span>
+    <button class="tile window" onclick={() => onGoto("versions")}>
+      <span class="section-label">Versions</span>
       <span class="big">{ov.installed.length}</span>
-      <span class="faint small">{ov.installed[0] ? `Newest: ${ov.installed[0]}` : "None yet"}</span>
+      {#if ov.installed[0]}<span class="faint small">Newest: {ov.installed[0]}</span>{/if}
     </button>
   </div>
 </section>
@@ -140,9 +137,6 @@
   :global(:root[data-theme="light"]) .day {
     display: block;
   }
-  :global(:root[data-theme="light"]) .launch {
-    background: rgba(35, 35, 58, 0.04);
-  }
   .intro {
     position: relative;
     padding: 2.25rem 2rem 0;
@@ -155,20 +149,14 @@
     letter-spacing: 0.35em;
     line-height: 1;
   }
-  .tagline {
-    color: var(--muted);
-    letter-spacing: 0.08em;
-    font-size: 0.85rem;
-    text-transform: uppercase;
-  }
   .launch {
     position: relative;
     display: flex;
     align-items: flex-end;
     gap: 1rem;
     padding: 1.25rem 1.5rem;
-    background: rgba(0, 0, 0, 0.22);
-    border-top: 1px solid var(--line);
+    background: var(--panel-2);
+    border-top: 2px solid var(--outline);
   }
   .profile {
     width: 13rem;
@@ -183,9 +171,7 @@
   }
   .play {
     font-size: 1.15rem;
-    padding: 0.85rem 2.6rem;
-    letter-spacing: 0.06em;
-    border-radius: 11px;
+    padding: 0.75rem 2.4rem;
   }
   .note {
     display: flex;
@@ -206,8 +192,6 @@
     padding: 1rem 1.2rem;
     text-align: left;
     font-weight: 400;
-    background: var(--panel);
-    border: 1px solid var(--line);
   }
   .tile .section-label {
     margin: 0;
