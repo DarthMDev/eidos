@@ -219,3 +219,27 @@ Port must unlock:
    not searched beyond names.
 8. Whether `factor->work` size constrains new handlers (hand_common_types.h
    `BTL_FACTOR_WORK_KEEP 6`).
+
+## 7. Data tables that hold generic effect ids
+
+aletheia names every literal effect id at or above 0x231 as
+`BTLV_EFFECT_MOVE_END + n` (n = id - 0x231) in the battle server, the
+handlers and the client (ov093, ov095). These tables stay data in aletheia;
+moving the boundary in eidos means rebasing their entries at load. Offsets
+are bytes from the symbol.
+
+| symbol | address | region | element | entry offsets: id (n) |
+|---|---|---|---|---|
+| gWeatherEffects | 0x021EFFAE | ov093 | Pair16[5] {a = message id, b = effect id}; b is read by BTL_CLIENT (weather start) | +2: 0x26B (58); +6: 0x26B (58); +10: 0x268 (55); +14: 0x269 (56); +18: 0x26A (57) |
+| d_0220A3E4 | 0x0220A3E4 | ov094 | int[][2], read by btlv_input.c as d_0220A3E4[k][screen - 5]; 6 ints seen | +0: 0x247 (22); +4: 0x246 (21); +8: 0x245 (20); +12: 0; +16: 0; +20: 0x245 (20) |
+| gBtlvIntroPickTableA | 0x0220AC70 | ov094 | u32[2], intro effect pick | +0: 0x24A (25); +4: 0x24B (26) |
+| gBtlvIntroPickTableB | 0x0220AC78 | ov094 | u32[6], intro effect pick | +0: 0x235 (4); +4: 0x24C (27); +8: 0x24D (28); +12: 0x24E (29); +16: 0x24F (30); +20: 0x250 (31) |
+| gSimpleEffectIds | 0x0689E35C | ov095 | u16[12], used by BTL_ID_IsSimpleEffectId | +0: 0x256 (37); +2: 0x25A (41); +4: 0x257 (38); +6: 0x258 (39); +8: 0x259 (40); +10: 0x25B (42); +12: 0x25C (43); +14: 0x273 (66); +16: 0x274 (67); +18: 0x282 (81); +20: 0x25E (45); +22: 0x263 (50) |
+
+gSimpleEffectIds is located by symbol: the address row in aletheia's source
+is wrong (0x0689E35C) until aletheia fixes it.
+
+Not traced: BTL_CLIENT_StepPlayRecallAnim (btl_client.c) passes args[1]
+(u16) to BTLV_SCU_StartMonWithdraw as an effect id (0 selects
+BTLV_SCU_EFFECT_WITHDRAW); the server command that carries it was not found
+in a literal form.
