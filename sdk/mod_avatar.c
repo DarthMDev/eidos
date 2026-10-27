@@ -103,7 +103,11 @@
  *   FLDMMDL_ACMD_ConvertCodeByDir        0x02197E7C  thumb  ov021
  *   FLDMMDL_AddMmdl                      0x0216CE60  thumb  ov010
  *   FLDMMDL_CheckEndAcmd                 0x0216D454  thumb  ov010
+ *   FLDMMDL_CheckStatusBit               0x0216D55C  thumb  ov010
  *   FLDMMDL_DeleteMmdl                   0x0216CF2C  thumb  ov010
+ *   FLDMMDL_GetEventId                   0x0216D5B8  thumb  ov010
+ *   FLDMMDL_GetObjCode                   0x0216D598  thumb  ov010
+ *   FLDMMDL_GetObjId                     0x0216D588  thumb  ov010
  *   FLDMMDL_GetPos                       0x0216D88C  thumb  ov010
  *   FLDMMDL_OnMoveBitMovePause           0x0216DAF8  thumb  ov010
  *   FLDMMDL_SetAcmd                      0x0216D410  thumb  ov010
@@ -194,6 +198,14 @@ extern u16 FLDMMDL_SysGetMmdlMax(const struct MmdlSys *sys)
     BW_PORT_WEAK;                                        /* 0x0216D4F0 */
 
 /* One record. */
+extern int FLDMMDL_CheckStatusBit(const struct Mmdl *mmdl, u32 bit)
+    BW_PORT_WEAK;                                        /* 0x0216D55C */
+extern u32 FLDMMDL_GetObjId(const struct Mmdl *mmdl)
+    BW_PORT_WEAK;                                        /* 0x0216D588 */
+extern u32 FLDMMDL_GetObjCode(const struct Mmdl *mmdl)
+    BW_PORT_WEAK;                                        /* 0x0216D598 */
+extern u32 FLDMMDL_GetEventId(const struct Mmdl *mmdl)
+    BW_PORT_WEAK;                                        /* 0x0216D5B8 */
 extern void FLDMMDL_GetPos(const struct Mmdl *mmdl,
                             struct BwPortVecFx32 *out)
     BW_PORT_WEAK;                                        /* 0x0216D88C */
@@ -359,16 +371,39 @@ BW_PORT_STATIC_ASSERT(header_pos_y,
 #define BW_MOD_AVATAR_ACMD_RUN   0x10u
 
 /*
- * How the avatar walks: a sixteenth of a cell a frame, the speed of the
+ * How the avatar moves: a sixteenth of a cell a frame is the speed of the
  * game's own walk (the player's walk acmd is 16 frames a cell).  The run
- * is twice that.  A cell is 0x10000 in the game's fixed point.
+ * is twice that, the bicycle a little more, and surfing a little more than
+ * a walk.  A cell is 0x10000 in the game's fixed point.  These are the
+ * speed the other player is expected to have; the catch-up below makes up
+ * for any error in them.
  */
-#define BW_MOD_AVATAR_STEP_WALK 0x1000
-#define BW_MOD_AVATAR_STEP_RUN  0x2000
+#define BW_MOD_AVATAR_STEP_WALK  0x1000
+#define BW_MOD_AVATAR_STEP_RUN   0x2000
+#define BW_MOD_AVATAR_STEP_CYCLE 0x2800
+#define BW_MOD_AVATAR_STEP_SURF  0x1800
+
+/*
+ * The other player's real place runs ahead of the avatar by a step or two
+ * (a place arrives at most ten times a second).  Further behind than one
+ * cell, the avatar speeds up in proportion to the lag (a sixth of it a
+ * frame); more than two cells behind (the other player teleported, or
+ * this game lagged) it does not walk the way at all: it is put on the
+ * real place.
+ */
+#define BW_MOD_AVATAR_LAG_CATCH_UP 0x10000
+#define BW_MOD_AVATAR_LAG_SNAP     0x20000
 
 /* The modes the mod sends (the player.step payload's mode). */
 #define BW_MOD_AVATAR_MODE_WALKING 0u
 #define BW_MOD_AVATAR_MODE_RUNNING 1u
+#define BW_MOD_AVATAR_MODE_CYCLING 2u
+#define BW_MOD_AVATAR_MODE_SURFING 3u
+
+/* The sprites of the player, and the player's object id. */
+#define BW_MOD_AVATAR_OBJ_CODE_HERO    1u
+#define BW_MOD_AVATAR_OBJ_CODE_HEROINE 4u
+#define BW_MOD_AVATAR_OBJ_ID_PLAYER    0xFFu
 
 /* The directions (the game's own: 0 up, 1 down, 2 left, 3 right). */
 #define BW_MOD_AVATAR_DIR_COUNT 4u
@@ -594,13 +629,47 @@ static fx32 step_towards(fx32 value, fx32 target, fx32 step)
     return target;
 }
 
-/* How far the avatar walks a frame. */
+static fx32 fx_abs(fx32 v)
+{
+    return v < 0 ? -v : v;
+}
+
+/* How far the avatar is from the cell the mod named, in the larger of the
+ * two axes. */
+static fx32 lag_of(const BwModAvatar *a)
+{
+    fx32 dx = fx_abs(cell_fx32(a->target_x) - a->pos_x);
+    fx32 dz = fx_abs(cell_fx32(a->target_z) - a->pos_z);
+
+    return dx > dz ? dx : dz;
+}
+
+/* How far the avatar moves a frame: the speed of the other player's mode,
+ * more when the avatar is a cell or more behind. */
 static fx32 step_size(const BwModAvatar *a)
 {
-    if (a->mode == BW_MOD_AVATAR_MODE_RUNNING) {
-        return (fx32)BW_MOD_AVATAR_STEP_RUN;
+    fx32 step;
+    fx32 lag;
+
+    switch (a->mode) {
+    case BW_MOD_AVATAR_MODE_RUNNING:
+        step = (fx32)BW_MOD_AVATAR_STEP_RUN;
+        break;
+    case BW_MOD_AVATAR_MODE_CYCLING:
+        step = (fx32)BW_MOD_AVATAR_STEP_CYCLE;
+        break;
+    case BW_MOD_AVATAR_MODE_SURFING:
+        step = (fx32)BW_MOD_AVATAR_STEP_SURF;
+        break;
+    default:
+        step = (fx32)BW_MOD_AVATAR_STEP_WALK;
+        break;
     }
-    return (fx32)BW_MOD_AVATAR_STEP_WALK;
+    lag = lag_of(a);
+    if (lag > (fx32)BW_MOD_AVATAR_LAG_CATCH_UP && lag / 6 > step) {
+        step = lag / 6;
+    }
+    return step;
 }
 
 /*
@@ -621,7 +690,8 @@ static void update_animation(BwModAvatar *a, struct Mmdl *mmdl, int moved)
         return;
     }
     if (moved) {
-        base = (a->mode == BW_MOD_AVATAR_MODE_RUNNING)
+        base = (a->mode == BW_MOD_AVATAR_MODE_RUNNING ||
+                a->mode == BW_MOD_AVATAR_MODE_CYCLING)
                    ? (u32)BW_MOD_AVATAR_ACMD_RUN
                    : (u32)BW_MOD_AVATAR_ACMD_WALK;
         if (FLDMMDL_CheckEndAcmd != NULL &&
@@ -658,6 +728,10 @@ static void step_avatar(BwModAvatar *a, struct Mmdl *mmdl)
 
     target_x = cell_fx32(a->target_x);
     target_z = cell_fx32(a->target_z);
+    if (lag_of(a) > (fx32)BW_MOD_AVATAR_LAG_SNAP) {
+        a->pos_x = target_x;         /* too far behind: do not replay it */
+        a->pos_z = target_z;
+    }
     step = step_size(a);
 
     if (a->pos_x != target_x) {
@@ -896,6 +970,52 @@ void bw_mod_avatar_reset(void)
         }
         forget(a);
     }
+}
+
+/*
+ * The game saves its whole entity pool (GAME_DATA_WriteToSave stores it
+ * through FLDMMDL_StoreSaveTable, block 0x29) and brings it back at a load
+ * (FLDMMDL_LoadSaveTable), so a save made while an avatar stood in the
+ * field holds the avatar, with its object id cut to a byte.  The port does
+ * not know such a record: nobody moves it or deletes it, and it stands in
+ * the field at the place of a player who may be gone.  This deletes them.
+ * A stale avatar is a record that looks like one the port makes (the
+ * hero's or heroine's sprite, no event, no hit checks) but has an object id
+ * outside the port's range and is not the player (object id 0xFF).
+ */
+u32 bw_mod_avatar_sweep(void)
+{
+    struct MmdlSys *sys = pool();
+    struct Mmdl *found[BW_MOD_AVATAR_MAX];
+    struct Mmdl *mmdl = NULL;
+    u32 iter = 0;
+    u32 n = 0;
+    u32 i;
+
+    if (sys == NULL || FLDMMDL_SysSearchUseMmdl == NULL ||
+        FLDMMDL_DeleteMmdl == NULL || FLDMMDL_GetObjId == NULL ||
+        FLDMMDL_GetObjCode == NULL || FLDMMDL_GetEventId == NULL ||
+        FLDMMDL_CheckStatusBit == NULL) {
+        return 0u;
+    }
+    while (n < (u32)BW_MOD_AVATAR_MAX &&
+           FLDMMDL_SysSearchUseMmdl(sys, &mmdl, &iter) == 1) {
+        u32 code = FLDMMDL_GetObjCode(mmdl);
+        u32 id = FLDMMDL_GetObjId(mmdl);
+
+        if ((code == BW_MOD_AVATAR_OBJ_CODE_HERO ||
+             code == BW_MOD_AVATAR_OBJ_CODE_HEROINE) &&
+            id != BW_MOD_AVATAR_OBJ_ID_PLAYER &&
+            id < BW_MOD_AVATAR_OBJ_ID_BASE &&
+            (FLDMMDL_GetEventId(mmdl) & 0xFFFFu) == BW_MOD_AVATAR_EVENT_ID_NONE &&
+            FLDMMDL_CheckStatusBit(mmdl, BW_MOD_AVATAR_STABIT_FELLOW_HIT_OFF) != 0) {
+            found[n++] = mmdl;
+        }
+    }
+    for (i = 0; i < n; i++) {
+        FLDMMDL_DeleteMmdl(found[i]);
+    }
+    return n;
 }
 
 /*

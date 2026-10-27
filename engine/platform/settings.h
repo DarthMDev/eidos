@@ -36,8 +36,8 @@
  * eidos_settings_internal_scale() each frame for N, produces 256N x 192N
  * frames and gives N to eidos_platform_present_n; "auto" is the smallest N
  * whose frame covers the destination rectangle, re-evaluated on resize.
- *     Layout    arrangement (vertical / horizontal), swap_screens, gap
- *     Sound     volume (0..100 percent)
+ *     Layout    arrangement (vertical / horizontal / one), swap_screens, gap
+ *     Sound     volume (0..100 percent, 50 by default: the game is loud)
  *     Extras    instant_text (off / on): every page of a message shows at
  *               once, whatever the game's text speed; the wait for a
  *               button at the end of a page is the game's, unchanged
@@ -87,6 +87,9 @@ enum {
     EIDOS_OPT_SOUND_VOLUME,
     EIDOS_OPT_EXTRAS_INSTANT_TEXT,  /* 0 off, 1 on: a message page shows
                                        at once (engine/platform/text_instant.c) */
+    EIDOS_OPT_BATTLE_BACKDROP,      /* 0 real map, 1 original: the one-screen
+                                       battle scenery (sdk/battle_view.c)  */
+    EIDOS_OPT_BATTLE_PLATFORMS,     /* 0 off, 1 on: the game's two stages  */
     EIDOS_OPT_COUNT
 };
 
@@ -280,7 +283,7 @@ int  eidos_settings_load(void);
  * 1 when consumed (*i advanced past a value), -1 for a bad value (reported):
  *   --windowed --fullscreen --borderless  --resolution N|fit   (the old
  *   --scale and --scaling are gone)
- *   --layout vertical|horizontal  --swap-screens  --gap N  --volume N     */
+ *   --layout vertical|horizontal|one  --swap-screens  --gap N  --volume N     */
 int  eidos_settings_parse_arg(int argc, char **argv, int *i);
 
 /* The multiple N the renderer should produce this frame: the Resolution
@@ -313,6 +316,16 @@ void eidos_settings_idle(EidosPlatform *p, u32 now_ms);
 
 /* Atomically replace `to` with `from` (plat_replace.c). */
 int  eidos_replace_file(const char *from, const char *to);
+
+/*
+ * Whether the one-screen interface runs: the interface marks every frame it
+ * runs (eidos_ui_mark_active), and game-side patches that exist for that
+ * layout only ask eidos_ui_active, so the two-screen layout stays the game
+ * as it is.  It lives here, in a file the overlay link scans, so a patch
+ * can call it.
+ */
+void eidos_ui_mark_active(void);
+int  eidos_ui_active(void);
 
 #ifdef __cplusplus
 }

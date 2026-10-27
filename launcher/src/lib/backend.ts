@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Profile = { name: string; version: string };
+export type Profile = { name: string; version: string; dataRoot: string };
 
 export type Overview = {
   profiles: Profile[];
@@ -50,10 +50,39 @@ export const duplicateProfile = (name: string) => invoke<Profile>("duplicate_pro
 export const deleteProfile = (name: string) => invoke<void>("delete_profile", { name });
 export const setProfileVersion = (name: string, version: string) =>
   invoke<void>("set_profile_version", { name, version });
+export const moveProfileData = (name: string, to: string) => invoke<string>("move_profile_data", { name, to });
+export const setProfileDataRoot = (name: string, path: string) =>
+  invoke<void>("set_profile_data_root", { name, path });
 export const listRemote = () => invoke<Remote[]>("list_remote");
 export const installVersion = (tag: string) => invoke<void>("install_version", { tag });
 export const removeVersion = (id: string) => invoke<void>("remove_version", { id });
-export const play = (name: string, join?: string) => invoke<{ version: string }>("play", { name, join: join ?? null });
+export type Layout = "classic" | "one";
+
+// The first released version that has the one-screen layout; null while no
+// version does. Versions are numbers like 0.1.4 (or a tag with a leading v).
+export const ONE_SCREEN_MIN_VERSION: string | null = "0.1.6";
+
+const parts = (v: string) => v.replace(/^v/i, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+
+// Whether a resolved version (an id, or LOCAL for the local build) can start
+// in the one-screen layout. A local build always can, so it can be tried.
+export function supportsOneScreen(version: string | null): boolean {
+  if (!version) return false;
+  if (version === LOCAL) return true;
+  // the browser preview (lib/mock.ts) has no real versions
+  if (import.meta.env.DEV && "__EIDOS_MOCK__" in window) return true;
+  if (ONE_SCREEN_MIN_VERSION === null) return false;
+  const a = parts(version);
+  const b = parts(ONE_SCREEN_MIN_VERSION);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return true;
+}
+
+export const play = (name: string, join?: string, layout: Layout = "classic") =>
+  invoke<{ version: string }>("play", { name, join: join ?? null, layout });
 export const modsList = (profile: string) => invoke<ModInfo[]>("mods_list", { profile });
 export const modsSetEnabled = (profile: string, folder: string, enabled: boolean) =>
   invoke<void>("mods_set_enabled", { profile, folder, enabled });

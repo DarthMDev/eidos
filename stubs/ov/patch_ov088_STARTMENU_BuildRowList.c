@@ -78,8 +78,10 @@ void STARTMENU_BuildRowList(char *p)
         (p + i)[0x120] = 4;
         i++;
     }
-    (p + i)[0x120] = 5;
-    i++;
+    /* NINTENDO WFC SETTINGS (kind 5) is never listed: the service closed in
+     * 2014, and its screen mounts a memory archive (ov016 DWCi_ARClInit,
+     * FS_ChangeDir into "utility:/") that the port's file system does not
+     * carry */
     if (!hook) {
         (p + i)[0x120] = 6;
         i++;

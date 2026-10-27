@@ -239,6 +239,8 @@ static int parse_shots(const char *list)
 #include "platform.h"
 #include "settings.h"
 #include "setup.h"
+#include "ui.h"
+#include "kit.h"
 #include "wizard.h"
 #endif
 #include "mp.h"
@@ -335,6 +337,7 @@ typedef struct BootRun {
     u8 *hi_bottom;
     u32 hi_n;          /* the n those buffers are sized for              */
     u8 *behind;        /* the 3D screen with its 3D layer off, 256x192   */
+    u8 *ui_px[2];      /* the screens at 1x for the interface layer (ONE) */
     int gpu3d_ok;      /* the last frame could use the GPU rasteriser    */
     u8 *frame1x;       /* the GPU's 3D frame at DS size (read back)      */
     int frame1x_valid; /* the GPU drew this frame's 3D (frame1x or sentinel) */
@@ -838,6 +841,21 @@ static void boot_gpu3d(BootRun *run, int behind_done)
         if (f > 16u) {
             f = 16u;
         }
+        if (bmode == 0u || f == 0u) {
+            /* A fade the game makes with the 2D brightness effect (BLDCNT
+             * brighten or darken, BLDY) on the 3D layer, not the master
+             * brightness: the GPU's 3D takes it the same way, so the 3D
+             * fades with the 2D (in the one-screen world, all of it). */
+            u32 bld = bw_io_read16(0x04000050u), fx = (bld >> 6) & 3u;
+
+            if ((fx == 2u || fx == 3u) && (bld & 1u) != 0u) {
+                bmode = fx == 2u ? 1u : 2u;
+                f = bw_io_read16(0x04000054u) & 0x1Fu;
+                if (f > 16u) {
+                    f = 16u;
+                }
+            }
+        }
         /* What 2D the game blends over the 3D (the battle's message box):
          * the screen with an opaque black 3D layer, beside the one with the
          * sentinel.  Only when the screen was composed with the sentinel,
@@ -988,6 +1006,35 @@ static void boot_capture_run(BootRun *run, const BootCapture *c)
     if (run->plat == NULL || !eidos_platform_gpu3d(run->plat)) {
         return;
     }
+    if (f > 16u) {
+        f = 16u;
+    }
+    if (c->plan && eidos_ui_enabled() && eidos_platform_world_active(run->plat)) {
+        /*
+         * The one-screen world: the screen that shows the capture (the
+         * title's motion trail) is shown as its live 3D instead, drawn at
+         * the window's shape like any other 3D screen, so the scene fills
+         * the window; the trail is the price.  cap_a is the screen's
+         * graphics with the sentinel 3D layer and cap_behind the same with
+         * the 3D off: what eidos_platform_set_3d composes with.
+         */
+        int scr = main_on_top ? 0 : 1;
+        u8 *dst = scr == 0 ? run->hi_top : run->hi_bottom;
+
+        if (run->hi_n == 1u && dst != NULL) {
+            memcpy(dst, run->cap_a, (size_t)256 * 192 * 4);
+        }
+        if (eidos_platform_set_3d(run->plat, scr, run->cap_behind,
+                                  g3d_hw_snapshot(),
+                                  eidos_settings_internal_scale(),
+                                  bmode == 1u || bmode == 2u ? (int)bmode : 0,
+                                  (float)f / 16.f, 0) == 0) {
+            run->gpu3d_ok = 1;
+        }
+        run->cap_ok = 0;
+        eidos_platform_show_capture(run->plat, -1, 0, 0.f);
+        return;
+    }
     if (c->plan) {
         if (eidos_platform_capture_hires(run->plat, run->cap_a, run->cap_behind,
                                          g3d_hw_snapshot(),
@@ -1017,6 +1064,116 @@ static void boot_capture_run(BootRun *run, const BootCapture *c)
                                 (float)f / 16.f);
 }
 
+#if EIDOS_BOOT_SDL
+/*
+ * The one-screen layout, once per frame before the frame is rendered: tell
+ * the interface layer when the layout changes, and in layout ONE ask it
+ * what to show (eidos_ui_frame), hand the view and the canvas to the
+ * presenter, and give the geometry engine the widening for the next frame
+ * so the game's own culling sees the wider view.  The widening applies only
+ * while the GPU draws this scene's 3D (gpu3d_ok): the CPU rasteriser draws
+ * at the DS shape and must not be fed a widened projection.  Outside layout
+ * ONE everything is as before: a fallback view, no canvas, scale 1:1.
+ */
+static void boot_ui_frame(BootRun *run)
+{
+    static int was_one = -1;
+    int one;
+    EidosUiFrame in;
+    EidosUiView view;
+    const EidosUiCanvas *canvas = NULL;
+    s32 kx = 4096, ky = 4096;
+
+    if (run->plat == NULL) {
+        return;
+    }
+    one = eidos_platform_layout(run->plat) == EIDOS_LAYOUT_ONE;
+    if (one != was_one) {
+        was_one = one;
+        eidos_ui_set_enabled(one);
+        if (!one) {
+            eidos_platform_text_mode(run->plat, 0);
+            eidos_platform_set_view(run->plat, NULL);
+            eidos_platform_set_ui_canvas(run->plat, NULL);
+            g3d_hw_set_view_scale(4096, 4096);
+        }
+    }
+    if (!one) {
+        return;
+    }
+    memset(&in, 0, sizeof(in));
+    memset(&view, 0, sizeof(view));
+    view.zoom = 1.0f;
+    eidos_platform_window_size(run->plat, &in.win_w, &in.win_h);
+    (void)eidos_platform_mouse(run->plat, &in.mouse);
+    in.buttons = eidos_platform_buttons(run->plat);
+    in.frame = bw_input_frame_number();
+    /* The two screens as the game composed them last frame, at 1x (a
+     * GPU-drawn 3D area holds the compositor's placeholder colour). */
+    if (run->hi_n != 0u && run->hi_top != NULL && run->hi_bottom != NULL) {
+        const u8 *src[2];
+        int i;
+
+        src[0] = run->hi_top;
+        src[1] = run->hi_bottom;
+        for (i = 0; i < 2; i++) {
+            if (run->hi_sn[i] == 1u) {
+                in.screen_rgba[i] = src[i];
+                continue;
+            }
+            if (run->ui_px[i] == NULL) {
+                run->ui_px[i] = (u8 *)calloc(1, (size_t)256 * 192 * 4);
+            }
+            if (run->ui_px[i] != NULL) {
+                g2d_hw_box_downsample(src[i], run->hi_sn[i], run->ui_px[i]);
+                in.screen_rgba[i] = run->ui_px[i];
+            }
+        }
+    }
+    {
+        /* typing, for a recipe that asked for it last frame */
+        static char typed[128];
+
+        if (eidos_platform_take_text(run->plat, typed, (int)sizeof(typed)) > 0) {
+            in.text = typed;
+        }
+    }
+    {
+        /* the hints name the keys of the device the player used last */
+        const char *names[12];
+
+        eidos_platform_key_names(run->plat, names);
+        ui_set_key_names(names);
+    }
+    {
+        /* EIDOS_UI_TIME: the interface's cost, the mean over 300 frames */
+        static u64 spent, worst;
+        static u32 n;
+        u64 t0 = eidos_platform_now_ns(run->plat), dt;
+
+        eidos_ui_frame(&in, &view, &canvas);
+        eidos_platform_text_mode(run->plat, eidos_ui_text_wanted());
+        eidos_platform_set_view(run->plat, &view);
+        eidos_platform_set_ui_canvas(run->plat, canvas);
+        dt = eidos_platform_now_ns(run->plat) - t0;
+        spent += dt;
+        worst = dt > worst ? dt : worst;
+        if (++n == 300) {
+            if (getenv("EIDOS_UI_TIME") != NULL) {
+                fprintf(stderr, "eidos: ui time %s mean %.2f ms worst %.2f ms\n",
+                        eidos_ui_scene_name(), (double)spent / n / 1e6, (double)worst / 1e6);
+            }
+            spent = worst = 0;
+            n = 0;
+        }
+    }
+    if (run->gpu3d_ok) {
+        eidos_platform_view_scale(run->plat, &kx, &ky);
+    }
+    g3d_hw_set_view_scale(kx, ky);
+}
+#endif
+
 static void boot_render(void *user, u8 *top, u8 *bottom)
 {
     u32 unsupported[2];
@@ -1028,6 +1185,7 @@ static void boot_render(void *user, u8 *top, u8 *bottom)
     (void)top;
     (void)bottom;
 #if EIDOS_BOOT_SDL
+    boot_ui_frame(run);
     if (run->ff_skip) {
         return;     /* fast forward: this frame is not shown (boot_frame) */
     }
@@ -1346,7 +1504,9 @@ static void hold_draw(u8 *dst, const u8 *src, u32 n, const char *line1,
         dst[i + 2] = (u8)(src[i + 2] / 3);
         dst[i + 3] = src[i + 3];
     }
-    hold_text(dst, n, 84, line1);
+    if (line1 != NULL) {
+        hold_text(dst, n, 84, line1);
+    }
     if (line2 != NULL && line2[0] != '\0') {
         hold_text(dst, n, 100, line2);
     }
@@ -1407,7 +1567,10 @@ static void boot_mp_hold(BootRun *run)
                           strncmp(bw_mp_end_reason(), "the relay", 9) == 0
                           ? bw_mp_end_reason() : code_line);
                 memcpy(run->hi_top, work, bytes);
-                hold_draw(work, bottom, n, bw_mp_wait_text(), code_line);
+                /* the bottom screen only dims: the text is on the top one,
+                 * and the title's Multiplayer screen, when it is the one
+                 * held, already shows the code there (the two overlapped) */
+                hold_draw(work, bottom, n, NULL, NULL);
                 memcpy(run->hi_bottom, work, bytes);
                 eidos_platform_present_nn(run->plat, run->hi_top,
                                           (int)run->hi_sn[0], run->hi_bottom,
@@ -1487,7 +1650,7 @@ static void boot_mp_wait_saves(BootRun *run)
                 memcpy(bottom, run->hi_bottom, bytes);
                 hold_draw(work, top, n, "Saving everyone's games", line);
                 memcpy(run->hi_top, work, bytes);
-                hold_draw(work, bottom, n, "Saving everyone's games", line);
+                hold_draw(work, bottom, n, NULL, NULL);
                 memcpy(run->hi_bottom, work, bytes);
                 eidos_platform_present_nn(run->plat, run->hi_top,
                                           (int)run->hi_sn[0], run->hi_bottom,
@@ -1665,7 +1828,13 @@ static void boot_frame(void *user)
      * while the display capture is on: it reads the drawn frame back into
      * VRAM for the game. */
     {
-        int ff = run->plat != NULL ? eidos_platform_fast_forward(run->plat) : 1;
+        int ff;
+
+        /* No fast forward in a multiplayer session (host or joiner): the
+         * other players run at the game's own speed. */
+        eidos_platform_fast_forward_lock(bw_mp_state() != BW_MP_OFF &&
+                                         bw_mp_state() != BW_MP_ENDED);
+        ff = run->plat != NULL ? eidos_platform_fast_forward(run->plat) : 1;
 
         run->ff_skip = ff > 1 && run->ff_since + 1u < (u32)ff
             && eidos_platform_now_ns(run->plat) - run->ff_shown_ns < 16666667ull
@@ -2104,7 +2273,7 @@ static void usage(void)
                     "[--screenshot-dir DIR] [--g3d-trace N] [--keep-going] [--press BUTTONS@FRAME[:HOLD]] "
                     "[--input SCRIPT] [--fullscreen|--borderless|--windowed] "
                     "[--resolution N|auto] [--pixel-scale N|auto] "
-                    "[--layout vertical|horizontal] [--swap-screens] "
+                    "[--layout vertical|horizontal|one] [--two-screens] [--swap-screens] "
                     "[--gap N] [--volume N] [--mod FOLDER] [--mod-log FILE]\n");
 #if EIDOS_BOOT_SDL
     fputs(bw_setup_usage(), stderr);

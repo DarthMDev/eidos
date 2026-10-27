@@ -763,6 +763,14 @@ static int loader_run(int slot, void *state, BwEvent *event)
     if (event == NULL || m->loaded == 0) {
         return 0;
     }
+    /* A record of an earlier run of this slot that the event layer still
+     * holds carries that run's state, which is freed by now (a wasm mod's
+     * state is heap memory).  The port resets the event layer before it
+     * loads again (see "A disabled mod and the event layer"); a caller that
+     * does not must not get a call on that state. */
+    if (state != m->state) {
+        return 0;
+    }
     loader_enter_mod(m, &saved_ns, &saved_api);
     for (i = 0; i < m->binding_count; i++) {
         if (m->bindings[i].kind != event->kind) {

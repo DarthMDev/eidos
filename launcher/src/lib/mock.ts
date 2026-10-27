@@ -5,9 +5,9 @@
 
 const overview = {
   profiles: [
-    { name: "Default", version: "latest" },
-    { name: "Nuzlocke", version: "0.1.4" },
-    { name: "Randomizer", version: "local" },
+    { name: "Default", version: "latest", dataRoot: "" },
+    { name: "Nuzlocke", version: "0.1.4", dataRoot: "E:\\Games\\eidos" },
+    { name: "Randomizer", version: "local", dataRoot: "" },
   ],
   installed: ["0.1.5", "0.1.4"],
   localBuild: "C:\\eidos-game",
@@ -39,6 +39,7 @@ const answers: Record<string, unknown> = {
   mods_list: mods,
   get_settings: settings,
   save_settings: settings,
+  move_profile_data: "The data is now at E:\\Games\\eidos.",
   take_pending_join: null,
 };
 
@@ -46,6 +47,7 @@ let next = 1;
 
 export function installMock() {
   const w = window as unknown as Record<string, unknown>;
+  w.__EIDOS_MOCK__ = true;
   w.__TAURI_INTERNALS__ = {
     invoke: async (cmd: string) => {
       if (cmd.startsWith("plugin:event|")) return next++;

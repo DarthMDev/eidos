@@ -158,11 +158,26 @@ static u32 inject_mask(void)
     return mask;
 }
 
+/* The player's buttons the one-screen interface takes for itself this
+ * frame (bw_input_set_host_mask): the host's and the script's are hidden
+ * from the game, the injection is not. */
+static u32 g_host_mask;
+
+void bw_input_set_host_mask(u32 mask)
+{
+    g_host_mask = mask;
+}
+
+u32 bw_input_player_buttons(void)
+{
+    return (g_in.host.buttons | g_in.s_buttons) & BW_KEY_ALL;
+}
+
 static void merge(void)
 {
     BwInputState *c = &g_in.current;
 
-    c->buttons = (g_in.host.buttons | g_in.s_buttons | inject_mask()) &
+    c->buttons = (((g_in.host.buttons | g_in.s_buttons) & ~g_host_mask) | inject_mask()) &
                  BW_KEY_ALL;
     if (g_in.s_touch) {
         c->touch = 1;

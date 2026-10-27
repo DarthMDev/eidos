@@ -36,6 +36,7 @@
     X(PFNGLUNIFORM4FPROC, glUniform4f) \
     X(PFNGLUNIFORM4IPROC, glUniform4i) \
     X(PFNGLUNIFORM3FVPROC, glUniform3fv) \
+    X(PFNGLUNIFORM4FVPROC, glUniform4fv) \
     X(PFNGLUNIFORM1FVPROC, glUniform1fv) \
     X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays) \
     X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray) \
@@ -61,7 +62,7 @@
     X(PFNGLUNMAPBUFFERPROC, glUnmapBuffer) \
     X(PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC, glRenderbufferStorageMultisample) \
     X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer) \
-    X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)     X(PFNGLDRAWBUFFERSPROC, glDrawBuffers)     X(PFNGLCOLORMASKIPROC, glColorMaski)     X(PFNGLCLEARBUFFERFVPROC, glClearBufferfv)     X(PFNGLCLEARBUFFERUIVPROC, glClearBufferuiv)     X(PFNGLUNIFORM1UIPROC, glUniform1ui)
+    X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)     X(PFNGLBLENDCOLORPROC, glBlendColor)     X(PFNGLDRAWBUFFERSPROC, glDrawBuffers)     X(PFNGLCOLORMASKIPROC, glColorMaski)     X(PFNGLCLEARBUFFERFVPROC, glClearBufferfv)     X(PFNGLCLEARBUFFERUIVPROC, glClearBufferuiv)     X(PFNGLUNIFORM1UIPROC, glUniform1ui)
 
 typedef struct GlFb {
     GLuint fbo, color, depth;     /* depth: a DEPTH24_STENCIL8 texture       */

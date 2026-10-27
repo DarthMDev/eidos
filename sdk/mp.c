@@ -33,6 +33,7 @@
  *   FIELD_PLAYER_GetPos                  0x021A3038  thumb  ov021
  *   FIELD_PLAYER_GetRideEffect           0x021A2F98  thumb  ov021
  *   FIELD_PLAYER_GetSex                  0x021A30B0  thumb  ov021
+ *   FIELD_PLAYER_GetStepKind             0x021A3080  thumb  ov021
  */
 
 #include <stdio.h>
@@ -112,7 +113,22 @@ static struct {
     void      *save_gd;             /* the game data the save runs on */
     int        save_test;           /* the port's own check */
     u8         save_pending[BW_MP_PLAYERS_MAX];  /* the host: saves not in yet, by peer - 1 */
+    int        up_due;              /* a joiner: its save changed; the host has not got the change */
+    int        up_full;             /* a joiner: the next upload is the whole file */
+    u64        up_last_ms;          /* when the last upload started */
 } g_mp;
+
+/*
+ * What this game sent, by kind, since the last report: a joiner's upload
+ * is meant to be a few KB a second (positions, events, and a save's
+ * changes), and the report in the log is how that is checked.
+ */
+static struct {
+    u32 pos, evs, save;
+    u32 kind_bytes[128];        /* the event bytes, by event kind */
+    u64 since_ms;
+} g_sent_bytes;
+#define BW_MP_REPORT_EVERY_MS (60u * 1000u)
 
 /* ------------------------------------------------------------------ */
 /* The saves: files, ids, transfers                                    */
@@ -750,6 +766,7 @@ static void sends_pump(void)
             if (g_net->send(s->peer, msg, (u32)h + n) != 0) {
                 break;                  /* tried again next frame */
             }
+            g_sent_bytes.save += (u32)h + n;
             s->off += n;
             budget--;
         }
@@ -898,6 +915,8 @@ static void host_install(void)
 /* A joiner's game starts on the save the host sent: the file is the
  * backup chip's from now on, and the game boots on it (or on a new game
  * when the host has none for this player yet). */
+static void up_base_set(const u8 *buf, u32 size);
+
 static void joiner_install(const u8 *buf, u32 size)
 {
     char path[512];
@@ -913,26 +932,220 @@ static void joiner_install(const u8 *buf, u32 size)
         return;
     }
     (void)bw_slots_load_file(path);
+    up_base_set(buf, size);         /* what the host has of this save */
     g_mp.in_game = 1;
     g_mp.last_writes = bw_arm7_backup_writes != NULL ? bw_arm7_backup_writes() : 0;
     g_mp.started = 1;
 }
 
-/* A joiner's game wrote its save: the host gets it. */
+/*
+ * A joiner's save goes to the host as what changed.  A save is the whole
+ * 512 KB backup image, but a save changes a few blocks of it, so the
+ * joiner keeps the image the host has (g_up_base: the one the host sent,
+ * then the last one uploaded) and sends the runs of bytes that differ:
+ *
+ *   "DLT1", total size, base crc, new crc, then runs of
+ *   <offset u32> <length u32> <bytes>
+ *
+ * (little endian) as an ordinary transfer.  The host applies it to its copy
+ * of the player's save; when its copy is not the base (a lost transfer, a
+ * restored file) it says "savefull" and the joiner sends the whole file.
+ */
+#define BW_MP_DELTA_MAGIC "DLT1"
+#define BW_MP_DELTA_HEAD  16u
+/* Equal bytes that end a run (a shorter gap is cheaper sent than skipped). */
+#define BW_MP_DELTA_GAP   24u
+/* A joiner's changes go to the host at most this often. */
+#define BW_MP_UPLOAD_EVERY_MS 5000u
+
+static u8  *g_up_base;
+static u32  g_up_base_size;
+
+static void put_u32(u8 *dst, u32 v)
+{
+    memcpy(dst, &v, sizeof(v));
+}
+
+static u32 get_u32(const u8 *src)
+{
+    u32 v;
+
+    memcpy(&v, src, sizeof(v));
+    return v;
+}
+
+static void up_base_set(const u8 *buf, u32 size)
+{
+    free(g_up_base);
+    g_up_base = NULL;
+    g_up_base_size = 0;
+    if (buf != NULL && size > 0) {
+        g_up_base = (u8 *)malloc(size);
+        if (g_up_base != NULL) {
+            memcpy(g_up_base, buf, size);
+            g_up_base_size = size;
+        }
+    }
+}
+
+/* The difference between `base` and `now` (the same size) as a delta
+ * message; NULL when it would not be smaller than the file.  *out_size is
+ * its size. */
+static u8 *delta_make(const u8 *base, const u8 *now, u32 size, u32 *out_size)
+{
+    u8 *out = (u8 *)malloc(size);
+    u32 n = BW_MP_DELTA_HEAD;
+    u32 i = 0;
+
+    if (out == NULL) {
+        return NULL;
+    }
+    memcpy(out, BW_MP_DELTA_MAGIC, 4);
+    put_u32(out + 4, size);
+    put_u32(out + 8, crc32_of(base, size));
+    put_u32(out + 12, crc32_of(now, size));
+    while (i < size) {
+        u32 start, end, eq;
+
+        if (base[i] == now[i]) {
+            i++;
+            continue;
+        }
+        start = i;
+        end = i + 1;
+        eq = 0;
+        for (i = end; i < size && eq < BW_MP_DELTA_GAP; i++) {
+            if (base[i] == now[i]) {
+                eq++;
+            } else {
+                eq = 0;
+                end = i + 1;
+            }
+        }
+        if (n + 8u + (end - start) >= size) {
+            free(out);
+            return NULL;            /* the whole file is cheaper */
+        }
+        put_u32(out + n, start);
+        put_u32(out + n + 4, end - start);
+        memcpy(out + n + 8, now + start, end - start);
+        n += 8u + (end - start);
+        i = end;
+    }
+    *out_size = n;
+    return out;
+}
+
+/* A delta applied to `base`: the new file (malloc), or NULL when it does
+ * not fit the base or arrives damaged. */
+static u8 *delta_apply(const u8 *base, u32 base_size, const u8 *d, u32 dsize)
+{
+    u8 *out;
+    u32 total, at = BW_MP_DELTA_HEAD;
+
+    if (dsize < BW_MP_DELTA_HEAD) {
+        return NULL;
+    }
+    total = get_u32(d + 4);
+    if (total != base_size || total == 0 || crc32_of(base, total) != get_u32(d + 8)) {
+        return NULL;
+    }
+    out = (u8 *)malloc(total);
+    if (out == NULL) {
+        return NULL;
+    }
+    memcpy(out, base, total);
+    while (at + 8u <= dsize) {
+        u32 off = get_u32(d + at), len = get_u32(d + at + 4);
+
+        if (off > total || len > total - off || len > dsize - at - 8u) {
+            free(out);
+            return NULL;
+        }
+        memcpy(out + off, d + at + 8, len);
+        at += 8u + len;
+    }
+    if (at != dsize || crc32_of(out, total) != get_u32(d + 12)) {
+        free(out);
+        return NULL;
+    }
+    return out;
+}
+
+/* The test's check of the delta: `now` made into a delta of `base`, the
+ * delta applied to `base` again.  1 when the file comes back whole, 0 when
+ * it does not, -1 when no delta is made (the whole file is cheaper); the
+ * delta's size goes to *dsize.  A delta that damaged in one byte must be
+ * refused (bad_ok: 1 when it was). */
+int bw_mp_delta_test(const u8 *base, const u8 *now, u32 size, u32 *dsize, int *bad_ok)
+{
+    u8 *d = delta_make(base, now, size, dsize);
+    u8 *back;
+    int ok;
+
+    if (d == NULL) {
+        return -1;
+    }
+    back = delta_apply(base, size, d, *dsize);
+    ok = back != NULL && memcmp(back, now, size) == 0;
+    free(back);
+    d[*dsize - 1] ^= 0x55;
+    back = delta_apply(base, size, d, *dsize);
+    *bad_ok = back == NULL;
+    free(back);
+    free(d);
+    return ok;
+}
+
+/* A joiner's game wrote its save: the host gets the change soon. */
 static void joiner_upload(void)
+{
+    g_mp.up_due = 1;
+}
+
+/* The upload itself (at most every BW_MP_UPLOAD_EVERY_MS, one at a time;
+ * `now` skips the wait, when the player leaves). */
+static void joiner_upload_send(int now)
 {
     char path[512];
     u8 *buf;
     u32 size = 0;
 
-    if (mp_path(path, sizeof(path), "session.sav") != 0) {
+    if (!g_mp.up_due || (!now && g_mp.now_ms < g_mp.up_last_ms + BW_MP_UPLOAD_EVERY_MS) ||
+        sending_to(1) || mp_path(path, sizeof(path), "session.sav") != 0) {
         return;
     }
+    g_mp.up_due = 0;
+    g_mp.up_last_ms = g_mp.now_ms;
     buf = read_whole(path, &size);
-    if (buf != NULL) {
-        send_bytes(1, buf, size);
-        free(buf);
+    if (buf == NULL) {
+        return;
     }
+    if (!g_mp.up_full && g_up_base != NULL && g_up_base_size == size) {
+        u32 dsize = 0;
+        u8 *d = delta_make(g_up_base, buf, size, &dsize);
+
+        if (d != NULL) {
+            fprintf(stderr, "eidos: multiplayer: sending the host the save's changes (%u of %u bytes)\n",
+                    (unsigned)dsize, (unsigned)size);
+            send_bytes(1, d, dsize);
+            free(d);
+            up_base_set(buf, size);
+            free(buf);
+            return;
+        }
+    }
+    g_mp.up_full = 0;
+    fprintf(stderr, "eidos: multiplayer: sending the host the whole save (%u bytes)\n",
+            (unsigned)size);
+    send_bytes(1, buf, size);
+    up_base_set(buf, size);
+    free(buf);
+}
+
+static void joiner_upload_frame(void)
+{
+    joiner_upload_send(0);
 }
 
 /* One piece of a save: "save <total> <offset> <crc>\n<bytes>".  The whole
@@ -995,11 +1208,48 @@ static void on_save_piece(u32 peer, const u8 *msg, u32 size,
     }
 }
 
+/* The host's copy of a player's save (malloc), or NULL. */
+static u8 *host_read_save(const BwMpPlayer *p, u32 *size)
+{
+    char path[512], name[48];
+
+    if (p->fp[0] == '\0') {
+        return NULL;
+    }
+    snprintf(name, sizeof(name), "%s.sav", p->fp);
+    if (game_path(path, sizeof(path), name) != 0) {
+        return NULL;
+    }
+    return read_whole(path, size);
+}
+
 static void host_got_save(u32 peer, const u8 *buf, u32 size)
 {
     BwMpPlayer *p = player(peer);
+    u8 *applied = NULL;
 
-    if (p != NULL && p->peer == peer && size > 0) {
+    if (p == NULL || p->peer != peer) {
+        return;
+    }
+    if (size >= BW_MP_DELTA_HEAD && memcmp(buf, BW_MP_DELTA_MAGIC, 4) == 0) {
+        /* the changes since the save the host has */
+        u32 bsize = 0;
+        u8 *base = host_read_save(p, &bsize);
+
+        if (base != NULL) {
+            applied = delta_apply(base, bsize, buf, size);
+            free(base);
+        }
+        if (applied == NULL) {
+            fprintf(stderr, "eidos: multiplayer: %s's save changes do not fit; asking for the whole save\n",
+                    p->name);
+            (void)g_net->send(peer, "savefull", 8);
+            return;
+        }
+        size = get_u32(buf + 4);
+        buf = applied;
+    }
+    if (size > 0) {
         host_store(p, buf, size);
         if (g_mp.save_pending[peer - 1]) {
             g_mp.save_pending[peer - 1] = 0;
@@ -1008,6 +1258,7 @@ static void host_got_save(u32 peer, const u8 *buf, u32 size)
             }
         }
     }
+    free(applied);
 }
 
 static void joiner_got_save(u32 peer, const u8 *buf, u32 size)
@@ -1443,6 +1694,11 @@ static void joiner_on_message(u32 peer, const char *msg, u32 size)
         }
     } else if (size == 7 && memcmp(msg, "savenow", 7) == 0) {
         g_mp.save_wanted = 1;
+    } else if (size == 8 && memcmp(msg, "savefull", 8) == 0) {
+        /* the host could not use the changes: the whole file */
+        g_mp.up_full = 1;
+        g_mp.up_due = 1;
+        g_mp.up_last_ms = 0;
     }
 }
 
@@ -1755,13 +2011,21 @@ int bw_mp_shared_set_calling(const char *key, s32 value)
 static u8  g_evs[BW_MP_EVENTS_BYTES];
 static u32 g_evs_len;
 static u64 g_evs_sent_ms;
+static u32 g_evs_step_at;       /* where the batch's player.step is, 0 none */
+
+/* The event that fires every frame while the player is on the field, and
+ * says only where the player is now: a batch keeps the latest one (the
+ * positions go out on their own, "pos").  BW_EVENT_PLAYER_STEP. */
+#define BW_MP_EVENT_PLAYER_STEP 12u
 
 static void events_flush(void)
 {
     if (g_evs_len > 4u) {
         (void)g_net->send(1, g_evs, g_evs_len);
+        g_sent_bytes.evs += g_evs_len;
     }
     g_evs_len = 0;
+    g_evs_step_at = 0;
     g_evs_sent_ms = g_mp.now_ms;
 }
 
@@ -1771,6 +2035,25 @@ static void forward_event(const void *payload, u32 size)
         (g_mp.state != BW_MP_PLAYING && g_mp.state != BW_MP_GRACE) ||
         size < 8u || size > BW_MP_EVENTS_BYTES - 4u) {
         return;
+    }
+    {
+        u32 kind;
+
+        memcpy(&kind, (const u8 *)payload + 4, sizeof(kind));
+        if (kind == BW_MP_EVENT_PLAYER_STEP && g_evs_step_at != 0) {
+            /* the batch keeps only the latest, after the events before it */
+            u32 old = get_u32(g_evs + g_evs_step_at);
+
+            memmove(g_evs + g_evs_step_at, g_evs + g_evs_step_at + old,
+                    g_evs_len - g_evs_step_at - old);
+            g_evs_len -= old;
+            g_evs_step_at = 0;
+            g_sent_bytes.kind_bytes[kind] -= old;
+        }
+        g_sent_bytes.kind_bytes[kind < 128u ? kind : 127u] += size;
+        if (kind == BW_MP_EVENT_PLAYER_STEP && g_evs_len + size <= BW_MP_EVENTS_BYTES) {
+            g_evs_step_at = g_evs_len == 0 ? 4u : g_evs_len;
+        }
     }
     if (g_evs_len + size > BW_MP_EVENTS_BYTES) {
         events_flush();
@@ -1839,8 +2122,28 @@ static struct {
     u16   sprite;
     u64   sent_ms;
     int   changed;              /* moved since the place last went out */
-    void *field;                /* the field the avatars were made in */
+    void *field;                /* the field map the avatars were made in */
+    void *swept;                /* the field map swept for stale avatars */
+    u64   run_until_ms;         /* the player ran until about now */
+    u64   cell_ms;              /* when the player last entered a new cell */
+    u32   create_hold;          /* frames before an avatar may be made (after a sweep) */
 } g_me;
+
+/* The game frees the sprite of a deleted model a frame or two later, so a
+ * model made at once with the same sprite would lose it. */
+#define BW_MP_SWEEP_HOLD_FRAMES 30u
+
+/* How long a run counts after the player's last running frame (the step
+ * kind drops to "none" between two steps of a run). */
+#define BW_MP_RUN_HOLD_MS 300u
+
+/* A walk takes about 267 ms a cell and a run about 133 ms: two new cells
+ * closer than this are a run, whatever the step kind said. */
+#define BW_MP_RUN_CELL_MS 200u
+
+/* The step kind the field player has while it runs
+ * (FIELD_PLAYER_GRID_STEP_KIND_RUN). */
+#define BW_MP_STEP_KIND_RUN 2u
 
 /* How often an unchanged place is sent again, and how soon a changed one
  * may go after the last (the relay takes about 60 messages a second). */
@@ -1860,14 +2163,18 @@ extern u16   FIELD_PLAYER_GetDirDisp(void *player) BW_MP_WEAK;
 extern u32   FIELD_PLAYER_GetSex(void *player) BW_MP_WEAK;
 extern u32   FIELD_PLAYER_GetFormCode(void *player) BW_MP_WEAK;
 extern u32   FIELD_PLAYER_GetRideEffect(void *player) BW_MP_WEAK;
+extern u32   FIELD_PLAYER_GetStepKind(void *player) BW_MP_WEAK;
 
 extern u32  bw_mod_avatar_create(u32 sprite, s16 x, s16 z, u8 dir) BW_MP_WEAK;
 extern void bw_mod_avatar_move(u32 avatar, s16 x, s16 y, s16 z, u8 dir, u8 mode) BW_MP_WEAK;
 extern void bw_mod_avatar_delete(u32 avatar) BW_MP_WEAK;
 extern void bw_mod_avatar_reset(void) BW_MP_WEAK;
+extern u32  bw_mod_avatar_sweep(void) BW_MP_WEAK;
+extern int  bw_mod_avatar_pos(u32 avatar, s16 *x, s16 *y, s16 *z) BW_MP_WEAK;
 extern void bw_mod_avatar_set_game_data(void *game_data) BW_MP_WEAK;
 
 static void *field_running(void);
+static void *field_present(void);
 
 static s16 cell_of(s32 v)
 {
@@ -1961,36 +2268,118 @@ static int read_me(void *fm)
     }
     memset(&v, 0, sizeof(v));
     FIELD_PLAYER_GetPos(pl, &v);
+    if (g_me.have && (cell_of(v.x) != g_me.x || cell_of(v.z) != g_me.z)) {
+        if (g_mp.now_ms < g_me.cell_ms + BW_MP_RUN_CELL_MS) {
+            g_me.run_until_ms = g_mp.now_ms + BW_MP_RUN_HOLD_MS;
+        }
+        g_me.cell_ms = g_mp.now_ms;
+    }
     g_me.zone = FIELDMAP_GetZoneId(fm);
     g_me.x = cell_of(v.x);
     g_me.y = cell_of(v.y);
     g_me.z = cell_of(v.z);
     g_me.dir = FIELD_PLAYER_GetDirDisp != NULL ? (u8)FIELD_PLAYER_GetDirDisp(pl) : 0;
     form = FIELD_PLAYER_GetFormCode != NULL ? FIELD_PLAYER_GetFormCode(pl) : 0;
+    if (FIELD_PLAYER_GetStepKind != NULL &&
+        FIELD_PLAYER_GetStepKind(pl) == BW_MP_STEP_KIND_RUN) {
+        g_me.run_until_ms = g_mp.now_ms + BW_MP_RUN_HOLD_MS;
+    }
     g_me.mode = (form == 2u || form == 3u) ? 3 :           /* surfing, diving */
                 (FIELD_PLAYER_GetRideEffect != NULL &&
-                 FIELD_PLAYER_GetRideEffect(pl) != 0) ? 2 : 0;
+                 FIELD_PLAYER_GetRideEffect(pl) != 0) ? 2 :
+                g_mp.now_ms < g_me.run_until_ms ? 1 : 0;   /* running, walking */
     g_me.sprite = (u16)(FIELD_PLAYER_GetSex != NULL && FIELD_PLAYER_GetSex(pl) != 0
                         ? BW_MP_SPRITE_HEROINE : BW_MP_SPRITE_HERO);
     return 1;
+}
+
+/*
+ * Whether a player's avatar may be shown: the player is connected now.  A
+ * place the game remembers from an earlier session (the roster keeps the
+ * players of the host's game) is not a player who is here.
+ */
+static int pos_visible(u32 peer)
+{
+    const BwMpPlayer *pl = player(peer);
+
+    if (pl == NULL || pl->peer != peer || !pl->connected) {
+        return 0;
+    }
+    return peer != g_net->self_peer();
+}
+
+/*
+ * The other players' avatars, once a frame.  `quiet` is 1 when the field
+ * runs and no field event does: only then is an avatar made (the entity
+ * pool may be half built during a warp).  An avatar that exists stays and
+ * moves while a menu or a script runs.
+ */
+static void pos_show_others(int quiet)
+{
+    u32 i;
+
+    for (i = 0; i < BW_MP_PLAYERS_MAX; i++) {
+        BwMpPos *p = &g_pos[i];
+
+        if (p->avatar != 0 && bw_mod_avatar_pos != NULL) {
+            s16 ax, ay, az;
+
+            if (bw_mod_avatar_pos(p->avatar, &ax, &ay, &az) != 0) {
+                p->avatar = 0;      /* the game emptied the pool under it */
+            }
+        }
+        if (!p->have || !pos_visible((u32)(i + 1u)) || p->zone != g_me.zone) {
+            if (p->avatar != 0 && bw_mod_avatar_delete != NULL) {
+                bw_mod_avatar_delete(p->avatar);
+            }
+            p->avatar = 0;
+            continue;
+        }
+        if (p->avatar == 0 && quiet && bw_mod_avatar_create != NULL) {
+            p->avatar = bw_mod_avatar_create(p->sprite, p->x, p->z, p->dir);
+            fprintf(stderr, "eidos: multiplayer: player %u shown here (avatar %u)\n", (unsigned)(i + 1), (unsigned)p->avatar);
+        }
+        if (p->avatar != 0 && bw_mod_avatar_move != NULL) {
+            bw_mod_avatar_move(p->avatar, p->x, p->y, p->z, p->dir, p->mode);
+        }
+    }
 }
 
 /* Once a frame while a multiplayer game runs: this player's place goes
  * out, and the others in this zone are shown. */
 static void pos_frame(void)
 {
-    void *fm = field_running();
+    void *fm = field_running();         /* the field, no event running */
+    void *any = field_present();        /* the field, also in a menu */
     u16 zone = g_me.zone;
     s16 x = g_me.x, y = g_me.y, z = g_me.z;
     u8 dir = g_me.dir, mode = g_me.mode;
-    u32 i;
 
-    if (fm != g_me.field) {
-        /* the field came, went or was made again: its pool is new */
+    if (any != g_me.field) {
+        /* the field came, went or was made again: its pool is new (a menu
+         * or a script leaves the field where it is; a battle does not) */
         pos_hide_all();
-        g_me.field = fm;
+        g_me.field = any;
+        if (any == NULL) {
+            g_me.swept = NULL;          /* a new field may get the old address */
+        }
+    }
+    if (fm != NULL && fm != g_me.swept) {
+        /* a save brings the avatars it held back as records nobody owns */
+        if (bw_mod_avatar_sweep != NULL) {
+            u32 gone = bw_mod_avatar_sweep();
+
+            if (gone > 0) {
+                g_me.create_hold = BW_MP_SWEEP_HOLD_FRAMES;
+                fprintf(stderr, "eidos: multiplayer: removed %u stale avatar(s) the save held\n", (unsigned)gone);
+            }
+        }
+        g_me.swept = fm;
     }
     if (fm == NULL || !read_me(fm)) {
+        if (any != NULL) {
+            pos_show_others(0);
+        }
         return;
     }
     if (g_me.have && zone != g_me.zone) {
@@ -2011,24 +2400,20 @@ static void pos_frame(void)
                      (unsigned)g_me.dir, (unsigned)g_me.mode,
                      (unsigned)g_me.sprite);
         (void)g_net->send(0, msg, (u32)n);
+        g_sent_bytes.pos += (u32)n;
         g_me.sent_ms = g_mp.now_ms;
         g_me.have = 1;
         g_me.changed = 0;
     }
-    for (i = 0; i < BW_MP_PLAYERS_MAX; i++) {
-        BwMpPos *p = &g_pos[i];
-
-        if (!p->have || p->zone != g_me.zone) {
-            continue;
-        }
-        if (p->avatar == 0 && bw_mod_avatar_create != NULL) {
-            p->avatar = bw_mod_avatar_create(p->sprite, p->x, p->z, p->dir);
-            fprintf(stderr, "eidos: multiplayer: player %u shown here (avatar %u)\n", (unsigned)(i + 1), (unsigned)p->avatar);
-        }
-        if (p->avatar != 0 && bw_mod_avatar_move != NULL) {
-            bw_mod_avatar_move(p->avatar, p->x, p->y, p->z, p->dir, p->mode);
-        }
+    if (g_me.create_hold > 0) {
+        g_me.create_hold--;
     }
+    pos_show_others(g_me.create_hold == 0);
+}
+
+int bw_mp_peer_visible(u32 peer)
+{
+    return pos_visible(peer);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2102,6 +2487,7 @@ void bw_mp_on_net(u32 peer, int kind, const void *buf, u32 size)
 static void begin(int host, const char *code)
 {
     sends_clear();
+    up_base_set(NULL, 0);
     pos_clear();
     char game = g_mp.game;
     char mods[BW_MP_MODS_MAX + 1];
@@ -2191,6 +2577,9 @@ int bw_mp_join(const char *code)
 
 void bw_mp_leave(void)
 {
+    if (g_mp.in_game && !g_mp.host) {
+        joiner_upload_send(1);          /* the save's last change, not lost */
+    }
     if (g_mp.in_game) {
         /* the player's own save is the game's again, loaded in place */
         char own[512];
@@ -2285,6 +2674,20 @@ static void *field_running(void)
     }
     gs = *(void **)bw_dsref__GameSystemGlobal;
     return GAMESYSTEM_GetFieldMap(gs);
+}
+
+/* The field map while the field exists, whether or not a field event (a
+ * menu, a script) runs on it; NULL in a battle, a warp or off the field. */
+static void *field_present(void)
+{
+    void *gs;
+
+    if (&bw_dsref__GameSystemGlobal == NULL || bw_dsref__GameSystemGlobal == NULL ||
+        GAMESYSTEM_GetFieldMap == NULL) {
+        return NULL;
+    }
+    gs = *(void **)bw_dsref__GameSystemGlobal;
+    return gs == NULL ? NULL : GAMESYSTEM_GetFieldMap(gs);
 }
 
 /* A joiner's game saves at the first quiet moment after the host saved. */
@@ -2551,6 +2954,32 @@ void bw_mp_frame_at(u64 t)
             joiner_upload();
         }
     }
+    if (!g_mp.host) {
+        joiner_upload_frame();
+    }
+    if (g_sent_bytes.since_ms == 0) {
+        g_sent_bytes.since_ms = t;
+    } else if (t >= g_sent_bytes.since_ms + BW_MP_REPORT_EVERY_MS) {
+        if (g_sent_bytes.pos + g_sent_bytes.evs + g_sent_bytes.save > 0) {
+            fprintf(stderr, "eidos: multiplayer: sent in %u s: positions %u, events %u, saves %u bytes\n",
+                    (unsigned)((t - g_sent_bytes.since_ms) / 1000u),
+                    (unsigned)g_sent_bytes.pos, (unsigned)g_sent_bytes.evs,
+                    (unsigned)g_sent_bytes.save);
+            if (g_sent_bytes.evs > 0) {
+                u32 k, best = 0;
+
+                for (k = 1; k < 128u; k++) {
+                    if (g_sent_bytes.kind_bytes[k] > g_sent_bytes.kind_bytes[best]) {
+                        best = k;
+                    }
+                }
+                fprintf(stderr, "eidos: multiplayer: the busiest event is kind %u (%u bytes)\n",
+                        (unsigned)best, (unsigned)g_sent_bytes.kind_bytes[best]);
+            }
+        }
+        memset(&g_sent_bytes, 0, sizeof(g_sent_bytes));
+        g_sent_bytes.since_ms = t;
+    }
     field_quiet_save();
     if (g_mp.in_game && (g_mp.state == BW_MP_PLAYING || g_mp.state == BW_MP_GRACE)) {
         pos_frame();
@@ -2645,6 +3074,8 @@ void bw_mp_set_local(char game, const char *mods)
 void bw_mp_reset(void)
 {
     sends_clear();
+    up_base_set(NULL, 0);
+    memset(&g_sent_bytes, 0, sizeof(g_sent_bytes));
     memset(&g_mp, 0, sizeof(g_mp));
     g_net = &k_net;
 }

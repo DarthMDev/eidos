@@ -34,6 +34,28 @@ void eidos_gl_present(EidosGl *gl, int out_w, int out_h, const SDL_Rect dst[2]);
 int eidos_gl_grab(EidosGl *gl, int out_w, int out_h, const SDL_Rect dst[2],
                   unsigned char *rgb);
 
+/*
+ * The one-screen layout (engine/ui/ui.h; the presenter's own state, set each
+ * frame before the present).  _set turns it on or off; with `world` the
+ * window shows DS screen `screen` whose 3D was rendered at the window's
+ * size (eidos_gl_render3d with the window's w and h), the screen's 2D
+ * layers in `ds` (window pixels), `hide_2d` leaving them out and `blur`
+ * blurring and darkening the world.  Without `world` (the fallback) the two
+ * screens are drawn into the rectangles given to present.  _canvas shows the
+ * interface picture, premultiplied RGBA w x h, in `rect` (window pixels,
+ * NULL: none) over either; pass rgba only when the picture changed.
+ * _3d_matches says the last 3D frame is `screen`'s and was rendered at
+ * out_w x out_h.
+ */
+void eidos_gl_one_set(EidosGl *gl, int on, int world, int screen,
+                      const SDL_Rect *ds, int hide_2d, int blur, int no_fade);
+/* no_fade: bit 0 the game's fade is not applied to the world, bit 1 the last
+ * picture of the world is shown as it was (EidosUiView.hold_world), bit 2
+ * this world is the one to keep that picture of (EidosUiView.keep_world). */
+void eidos_gl_one_canvas(EidosGl *gl, const unsigned char *rgba, int w, int h,
+                         const SDL_Rect *rect);
+int  eidos_gl_3d_matches(const EidosGl *gl, int screen, int out_w, int out_h);
+
 /* The GPU 3D rasteriser (plat_gl3d.c).  has3d is false when the optional part
  * failed to build; then the platform keeps drawing screens only. */
 struct G3dSnapshot;

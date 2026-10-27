@@ -781,6 +781,10 @@ INT_TYPES = {
     "u64": "unsigned long long", "s64": "long long", "fx64": "long long",
     "fx32": "int", "fx16": "short", "BOOL": "int", "bool": "int", "_Bool": "int",
     "size_t": "unsigned int", "OSTick": "unsigned long long",
+    # the integers that hold an address (aletheia types.h): a word on this
+    # 32-bit host, as size_t is; types.h has two typedefs for them, one per
+    # target, so the typedef table cannot resolve them
+    "uptr": "unsigned int", "sptr": "int",
 }
 BASE_WORDS = {"unsigned", "signed", "char", "short", "int", "long", "void"}
 

@@ -873,6 +873,12 @@ static u32 g_snap_cap_ptex;
 
 static int g_skip_raster;
 static u32 g_gpu_features;
+static G3dBackdropHook g_backdrop_hook;
+
+void g3d_hw_set_backdrop_hook(G3dBackdropHook hook)
+{
+    g_backdrop_hook = hook;
+}
 
 void g3d_hw_gpu_features(u32 snap_mask)
 {
@@ -1081,6 +1087,10 @@ static void build_snapshot(u32 d3, u32 cc, u32 cd, const G3dTarget *t,
         s->unsupported |= G3D_SNAP_SHADOW;
     }
     s->unsupported &= ~g_gpu_features;
+    memset(&s->backdrop, 0, sizeof(s->backdrop));
+    if (g_backdrop_hook != NULL) {
+        g_backdrop_hook(&s->backdrop);
+    }
     g_snap_valid = 1;
 }
 
@@ -1843,6 +1853,24 @@ void g3d_hw_refresh(void)
 void g3d_hw_set_scale(u32 scale)
 {
     g_scale = scale == 0 ? 1u : scale;
+}
+
+void g3d_hw_set_view_scale(s32 kx, s32 ky)
+{
+    g3d_mtx_set_view_scale((fx32)kx, (fx32)ky);
+}
+
+void g3d_hw_view_scale(s32 *kx, s32 *ky)
+{
+    fx32 x, y;
+
+    g3d_mtx_view_scale(&x, &y);
+    if (kx != NULL) {
+        *kx = (s32)x;
+    }
+    if (ky != NULL) {
+        *ky = (s32)y;
+    }
 }
 
 u32 g3d_hw_scale(void)

@@ -868,7 +868,10 @@ int eidos_firstrun(const BwSetupRequest *req, char *data_dir, size_t n,
         (void)bw_setup_prepare(&headless, &r);     /* prints what to do */
         return 0;
     }
-    if (r.source != BW_SOURCE_ENV && bw_setup_remember(r.extract_dir, rom) != 0) {
+    /* A folder named on the command line is that run's own (the launcher
+     * passes one per profile): the ROM is remembered, the folder is not. */
+    if (r.source != BW_SOURCE_ENV
+        && bw_setup_remember(r.source == BW_SOURCE_FLAG ? NULL : r.extract_dir, rom) != 0) {
         fprintf(stderr, "eidos: the settings file could not be written; next "
                         "time pass --data-root \"%s\"\n", r.extract_dir);
     }

@@ -740,6 +740,10 @@ set(BW_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/light.c      # the lighting equation, for hw3d.c
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d/hw3d.c       # the 3D hardware: FIFO, ports, registers, swap
 
+    # engine/world/ -- the overworld map as a lit, textured mesh (battle backdrop).
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_data.c  # zone -> chunks -> world-space mesh
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_gimmick.c  # the gym puzzles' models
+
     # engine/audio/ -- the SDAT sequencer and mixer, the host's stand-in for
     # the ARM7 sound core.  No SDL here either: the platform layer's audio
     # callback calls into this, and tests/test_audio.c drives it headless
@@ -986,9 +990,29 @@ if(EIDOS_SDL_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_replace.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_gl.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/plat_gl3d.c
+        # the one-screen layout: scenes, recipes, the interface kit
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/ui.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipes.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_settings.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_title.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_battle.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_bag.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_shop.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_dex.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_party.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_menus.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_pc.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_input.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_field.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/kit.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_icons.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_sprites.c
     )
     target_include_directories(eidos_platform PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world
     )
     target_link_libraries(eidos_platform PUBLIC eidos eidos_setup eidos_sdl2)
     # The GPU presenter (plat_gl.c) calls the GL 1.1 core entry points directly.
@@ -1517,6 +1541,13 @@ add_test(NAME test_g3d COMMAND test_g3d ${BW_DATA_ROOT_ABS} ${BW_G3D_ORACLE_DIR}
                                ${CMAKE_CURRENT_BINARY_DIR}/g3d_house.bmp)
 eidos_data_test(test_g3d bw_g3d_oracle)
 
+# The map mesh: builds Route 1 and Accumula Town and renders them to PPM
+# files (second argument) for a look; needs only the data root.
+add_executable(test_bmap ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bmap.c)
+target_include_directories(test_bmap PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_bmap PRIVATE eidos)
+add_test(NAME test_bmap COMMAND test_bmap ${BW_DATA_ROOT_ABS} ${CMAKE_CURRENT_BINARY_DIR})
+
 # The audio test reads its sequence list out of the audio oracle's own
 # manifest, so the set of sequences is changed in one place
 # (BW_AUDIO_SEQS above), and writes its own note dump next to the oracle's
@@ -1675,6 +1706,21 @@ target_include_directories(test_mod_panel PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform)
 target_link_libraries(test_mod_panel PRIVATE eidos)
 add_test(NAME test_mod_panel COMMAND test_mod_panel)
+
+# test_one_layout checks the one-screen layout's geometry (the world view's
+# factors and rectangle, the fallback viewport) and the geometry engine's
+# clip matrix scale.  The geometry is the platform layer's own file, which
+# needs no SDL.
+add_executable(test_one_layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_one_layout.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_panel_draw.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/geometry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/font.c)
+target_include_directories(test_one_layout PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d)
+target_link_libraries(test_one_layout PRIVATE eidos)
+add_test(NAME test_one_layout COMMAND test_one_layout)
 
 # The rest of the mod layer (docs/mod-implementation.md, section 6, steps 6
 # and 7).  test_mod_manifest drives the manifest's parse, the namespace, the
@@ -2418,6 +2464,58 @@ if(EIDOS_SDL_FOUND)
             COMMENT "Copying SDL2.dll next to eidos_view")
     endif()
 
+    # eidos_spots -- the battle spot editor (docs/battle-backdrop.md): the
+    # map of any battle place, placed as the battle backdrop places it, with
+    # the battle and the field previews and the controls to set the spot.
+    # A tool for working on eidos, not part of the game: not built by default
+    # and not packaged (build it with `ninja eidos_spots.exe`).
+    add_executable(eidos_spots EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/tools/spot-editor/eidos_spots.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_place.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_spots.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_gimmick.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_data.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_npc.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bcam_sim.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/kit.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_icons.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_sprites.c)
+    # the kit's own copy: the interface layer it calls into (engine/ui/ui.c)
+    # is the game's, so the editor answers its two hooks itself
+    target_include_directories(eidos_spots PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/g3d
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
+        ${CMAKE_CURRENT_SOURCE_DIR}/install)
+    target_link_libraries(eidos_spots PRIVATE eidos_platform eidos_wizard)
+    # bmap_npc_dump -- writes the NPC pictures of a zone as BMP files (a check
+    # for engine/world/bmap_npc.c)
+    add_executable(bmap_npc_dump EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/demo/bmap_npc_dump.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_npc.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_gimmick.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_data.c)
+    target_include_directories(bmap_npc_dump PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
+        ${CMAKE_CURRENT_SOURCE_DIR}/install)
+    target_link_libraries(bmap_npc_dump PRIVATE eidos_platform)
+    # bcam_check -- compares the battle camera simulator (engine/world/bcam_sim.c)
+    # with a recording of the game's camera
+    add_executable(bcam_check EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/demo/bcam_check.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bcam_sim.c)
+    target_include_directories(bcam_check PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
+        ${CMAKE_CURRENT_SOURCE_DIR}/install)
+    target_link_libraries(bcam_check PRIVATE eidos_platform)
+    if(EIDOS_SDL_RUNTIME)
+        add_custom_command(TARGET eidos_spots POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:eidos_spots>"
+            COMMENT "Copying SDL2.dll next to eidos_spots")
+    endif()
+
     add_executable(test_view ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_view.c)
     target_include_directories(test_view PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -2588,6 +2686,16 @@ if(NOT MSVC)
     target_compile_definitions(eidos_platform PRIVATE EIDOS_WRAP_MSGDATA=1)
 endif()
 
+# The one-screen interface's sounds play on the game's own main thread:
+# PM_VOICE_StopFinished runs once a frame in the game's frame loop
+# (GFL_USE_UpdateFrameSubsystems, right after the sound update), and the
+# interface's queued sounds go through it first (engine/ui/ui.c,
+# eidos_ui_game_frame).  GNU ld only, and only with the game's boot.
+if(NOT MSVC AND EIDOS_BOOT AND TARGET eidos_platform)
+    target_link_options(eidos_boot PRIVATE "-Wl,--wrap=PM_VOICE_StopFinished")
+    target_compile_definitions(eidos_platform PRIVATE EIDOS_WRAP_PMVOICE=1)
+endif()
+
 # Instant text (Extras): the game's text streams start, and change speed,
 # through the port first (engine/platform/text_instant.c).  GNU ld only, and
 # only with the game's boot and the settings in the link.
@@ -2600,6 +2708,28 @@ if(NOT MSVC AND EIDOS_BOOT AND TARGET eidos_platform)
         "-Wl,--wrap=PRINTSYS_PrintStream"
         "-Wl,--wrap=PRINTSYS_PrintStreamCallBack"
         "-Wl,--wrap=PRINTSYS_PrintStreamSetSpeed")
+endif()
+
+# The one-screen layout's battle backdrop (docs/battle-backdrop.md): the
+# game's scenery draws are wrapped (sdk/battle_view.c) and the real map is
+# built and placed beside them (engine/world).  GNU ld only, with the game's boot
+# and the settings in the link.
+if(NOT MSVC AND EIDOS_BOOT AND TARGET eidos_platform)
+    target_sources(eidos_boot PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/sdk/battle_view.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_place.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_spots.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_gimmick.c)
+    target_sources(eidos_boot PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_data.c)
+    target_include_directories(eidos_boot PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/world)
+    target_link_options(eidos_boot PRIVATE
+        "-Wl,--wrap=G3D_SYSTEM_DrawObject"
+        "-Wl,--wrap=G3D_CAMERA_Reset"
+        "-Wl,--wrap=MCSS_Draw")
 endif()
 
 # A fixed image base on Windows.  The DS address space sits at its own
@@ -2788,3 +2918,61 @@ if(EIDOS_SOURCE_TREE STREQUAL "game")
         endif()
     endforeach()
 endif()
+
+# The battle spot table (engine/world/bmap_spots.c, docs/battle-backdrop.md):
+# reading the built-in rows, finding a battle's row, the placement of each
+# mode, saving the user's rows.  No game data.
+add_executable(test_bmap_spots ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bmap_spots.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_spots.c)
+target_include_directories(test_bmap_spots PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/engine/world)
+add_test(NAME test_bmap_spots COMMAND test_bmap_spots)
+
+# The interface kit's test (engine/ui/kit.c, assets.c, assets_icons.c, assets_sprites.c): the
+# synthetic checks need no game data; the data test needs the data root and
+# writes a contact sheet.  The kit's sources are compiled into the test
+# directly, so it builds without SDL.  The kit calls two hooks of the
+# interface layer (eidos_ui_hit, eidos_ui_press), which the test defines.
+add_executable(test_ui_kit ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ui_kit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/kit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_icons.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_sprites.c)
+target_include_directories(test_ui_kit PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui)
+target_link_libraries(test_ui_kit PRIVATE eidos)
+add_test(NAME test_ui_kit COMMAND test_ui_kit ${BW_DATA_ROOT_ABS})
+
+# The name entry and Xtransceiver recipes (engine/ui/recipe_input.c): the test
+# builds stand-ins for the game's structs, runs the recipes at several canvas
+# sizes, checks the taps their clicks make and writes the pictures when
+# UI_INPUT_OUT names a directory.
+add_executable(test_ui_input ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ui_input.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_input.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/kit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_icons.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_sprites.c)
+target_include_directories(test_ui_input PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui)
+target_link_libraries(test_ui_input PRIVATE eidos)
+add_test(NAME test_ui_input COMMAND test_ui_input ${BW_DATA_ROOT_ABS})
+
+# The PC boxes recipe (engine/ui/recipe_pc.c): the test includes the recipe's
+# source with BW_PC_TEST, builds stand-ins for the game's structs and
+# functions (a box task, a party, two boxes, the window frames, the bottom
+# screen's pixels), runs the recipe at several canvas sizes, checks the taps
+# its clicks and drags make and writes the pictures when UI_PC_OUT names a
+# directory.
+add_executable(test_ui_pc ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ui_pc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/kit.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_icons.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_sprites.c)
+target_include_directories(test_ui_pc PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui)
+target_link_libraries(test_ui_pc PRIVATE eidos)
+add_test(NAME test_ui_pc COMMAND test_ui_pc ${BW_DATA_ROOT_ABS})

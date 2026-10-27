@@ -37,7 +37,7 @@ The launcher uses the folders in `docs/distribution.md`:
 
 ```
 versions/<id>/                 an installed eidos
-profiles/<name>/profile.json   {"version": "latest" | "local" | "<id>"}
+profiles/<name>/profile.json   {"version": "latest" | "local" | "<id>", "data_root": "<folder>"}
 profiles/<name>/mods/          enabled mods
 profiles/<name>/mods-disabled/ switched-off mods (eidos never sees them)
 profiles/<name>/saves/
@@ -52,8 +52,26 @@ Play runs the version's program in its own folder with:
 --profile-dir <profile folder>
 ```
 
-Nothing else. eidos opens its window, asks for the ROM on its first run and
-keeps the extracted data in its own folder. The launcher never reads ROMs.
+The Home page has two start buttons when the version supports the
+one-screen layout: Classic (the DS layout, two screens) and Widescreen (one
+screen). Widescreen adds `--layout one` after the arguments above and before
+a join link. Classic adds nothing, so it starts as before. The button used
+last is the highlighted one, remembered per profile (in the launcher's local
+storage). A version supports Widescreen when it is at least
+`ONE_SCREEN_MIN_VERSION` in `launcher/src/lib/backend.ts`; the value is null
+until a release has the layout, so only Local build profiles show it. With no
+support there is one button, Play, as before. The `play` command takes
+`layout` ("classic" or "one"); invite joins always start Classic.
+
+A profile with a game data folder adds `--data-root <folder>` after it
+(the Profiles page sets it; empty means eidos uses its default place).
+Move... on the Profiles page moves the game data of a profile (its folder,
+or the game's default place) to a new empty folder. On one volume it is a
+rename. Otherwise the launcher copies into `<folder>.moving`, compares every
+byte, renames it into place, sets the profile and only then deletes the old
+folder. Any failure leaves the old data and the setting as they were.
+A join adds the invite link last. Nothing else. eidos opens its window,
+asks for the ROM on its first run and keeps the extracted data in its own folder. The launcher never reads ROMs.
 
 The program looked for in a version folder (or one folder below it):
 `eidos.exe`, `eidos`, `eidos.AppImage`, `eidos_boot.exe`, `eidos_boot`.

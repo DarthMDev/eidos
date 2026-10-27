@@ -124,7 +124,7 @@ int main(void)
     row(1);
     BW_CHECK_EQ("volume label", strcmp(g_label, "Master volume"), 0);
     press(LEFT);
-    BW_CHECK_EQ("volume -5", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 95);
+    BW_CHECK_EQ("volume -5", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 45);
 
     /* Controls: 12 buttons and the defaults, six shown, a scrollbar. */
     press(L);
@@ -234,7 +234,7 @@ int main(void)
     eidos_sui_leave();
     BW_CHECK_EQ("committed", eidos_settings_dirty(), 0);
     eidos_settings_load();
-    BW_CHECK_EQ("saved volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 95);
+    BW_CHECK_EQ("saved volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 45);
 
     /* The screen opens again on the tab it was left on; the stylus sets a
      * choice where it is touched, and the arrows act only on the selected

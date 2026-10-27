@@ -7,6 +7,7 @@
 //! and mod list in the invite, and the mods index. Today an invite link only
 //! launches the chosen profile with the join argument.
 
+mod datamove;
 mod launch;
 mod layout;
 mod mods;
@@ -137,6 +138,22 @@ fn delete_profile(app: State<App>, name: String) -> R<()> {
 #[tauri::command]
 fn set_profile_version(app: State<App>, name: String, version: String) -> R<()> {
     profile::set_version(&app.layout, &name, &version)
+}
+
+#[tauri::command]
+fn set_profile_data_root(app: State<App>, name: String, path: String) -> R<()> {
+    app.refuse_if_running(&name)?;
+    profile::set_data_root(&app.layout, &name, &path)
+}
+
+/// Moves the profile's game data folder; the answer says what happened.
+#[tauri::command]
+async fn move_profile_data(app: State<'_, App>, name: String, to: String) -> R<String> {
+    app.refuse_if_running(&name)?;
+    let layout = app.layout.clone();
+    tauri::async_runtime::spawn_blocking(move || datamove::move_profile_data(&layout, &name, &to))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// The releases of the eidos repository, with what this platform can install.
@@ -280,6 +297,7 @@ fn play(
     handle: tauri::AppHandle,
     name: String,
     join: Option<String>,
+    layout: Option<String>,
 ) -> R<Started> {
     let p = profile::get(&app.layout, &name)?;
     app.refuse_if_running(&name)?;
@@ -291,8 +309,12 @@ fn play(
         ),
         None => None,
     };
+    let layout = match layout.as_deref() {
+        None => launch::Layout::Classic,
+        Some(text) => launch::Layout::parse(text).ok_or("That screen layout is not known.")?,
+    };
     let dir = app.layout.profile(&name);
-    let args = launch::eidos_args(&dir, join.as_deref());
+    let args = launch::eidos_args(&dir, &p.data_root, join.as_deref(), layout);
     let mut child = launch::spawn(&v.exe, &args).map_err(|e| format!("Could not start eidos: {e}"))?;
     app.running.lock().unwrap().insert(name.clone(), child.id());
     let running = app.running.clone();
@@ -480,6 +502,8 @@ pub fn run() {
             duplicate_profile,
             delete_profile,
             set_profile_version,
+            set_profile_data_root,
+            move_profile_data,
             list_remote,
             install_version,
             remove_version,

@@ -1,5 +1,5 @@
 /*
- * patches: src/game/ov021/scrcmd_msgwin.c SCRCMD_MSGWIN_CmdPlainWinMsg SCRCMD_MSGWIN_CmdInfoSysWinMsg SCRCMD_MSGWIN_CmdYesNoWin SCRCMD_MSGWIN_OpenTalkWin
+ * patches: src/game/ov021/scrcmd_msgwin.c SCRCMD_MSGWIN_CmdPlainWinMsg SCRCMD_MSGWIN_CmdInfoSysWinMsg SCRCMD_MSGWIN_CmdYesNoWin SCRCMD_MSGWIN_OpenTalkWin SCRCMD_MSGWIN_CmdAddMenuItem
  *
  * The port's message service at the field's message window (sdk/mod_text.h;
  * sdk/mod_message.h; docs/mod-services.md, "Messages").
@@ -511,4 +511,116 @@ void SCRCMD_MSGWIN_OpenTalkWin(ScrcmdWork *cmdWork, FieldMsgBg *msgBg,
     }
     msgwin_show(TALKMSGWIN_GetBmpWin(talkWin->talkSys, talkWin->index),
                 talkWin->msgBg, 0, 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* The PC's storage menu                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The storage system's menu (the PC's script, message file 314 of the
+ * script texts: 14 DEPOSIT POKEMON, 15 WITHDRAW POKEMON, 16 MOVE POKEMON)
+ * offers three ways into the boxes.  The one-screen layout's box screen
+ * does all of it in MOVE POKEMON (the party and the box side by side, drag
+ * either way), so there the other two are not listed: the menu keeps MOVE
+ * POKEMON, BATTLE BOX, MOVE ITEMS and NO THANKS.  The two-screen layout is
+ * the game as it is: the menu is untouched there (eidos_ui_active).  The script picks by each item's value,
+ * not its place, so the rest of the menu works as before.  A menu with a
+ * message file of its own (ScrcmdMenu.ownsMsgData) is never touched.
+ */
+#define PC_MENU_MSG_FILE    314u
+#define PC_MENU_DEPOSIT     14u
+#define PC_MENU_WITHDRAW    15u
+
+extern void SCRCMD_WORK_AddMenuItem(ScrcmdWork *work, int msgId, int helpMsgId, int param,
+                                    Strbuf *str, Strbuf *tmp);
+extern void *SCRIPT_WORK_GetMsgBuffer(ScriptWork *work);
+extern void *SCRIPT_WORK_GetTempBuffer(ScriptWork *work);
+extern int eidos_ui_active(void) __attribute__((weak));
+
+/*
+ * The script command records up to the fields read here
+ * (src/game/ov010/scrcmd_work.c), with the game's own field types, so the
+ * host compiler lays them out as it lays out the game's at every pointer
+ * width.  The copies stop at the last field read.
+ */
+typedef struct PcScrcmdMenu {
+    u16 x;                          /* 0x00 */
+    u16 y;                          /* 0x02 */
+    u16 cursorPos;                  /* 0x04 */
+    u8 cancelable;                  /* 0x06 */
+    u8 alignRight;                  /* 0x07 */
+    u16 *result;                    /* 0x08 */
+    WordSet *wordSet;               /* 0x0C */
+    int ownsMsgData;                /* 0x10 */
+} PcScrcmdMenu;
+
+typedef struct PcScrcmdCommon {
+    ScriptWork *scriptWork;         /* 0x000 */
+    GameSystem *gameSystem;         /* 0x004 */
+    void *gameData;                 /* 0x008 */
+    void *occupyInfo;               /* 0x00C */
+    void *targetObject;             /* 0x010 */
+    void *animeTasks[8];            /* 0x014 */
+    PcScrcmdMenu menu;              /* 0x034 */
+} PcScrcmdCommon;
+
+typedef struct PcScrcmdParam {
+    u16 scriptId;                   /* 0x00 */
+    u32 callParam;                  /* 0x04 */
+    u32 callMode;                   /* 0x08 */
+    ScriptWork *scriptWork;         /* 0x0C */
+} PcScrcmdParam;
+
+typedef struct PcScrcmdWork {
+    u16 heapId;                     /* 0x00 */
+    PcScrcmdParam param;            /* 0x04 */
+    MsgBank *msgData;               /* 0x14 */
+    u16 msgDataId;                  /* 0x18 */
+    u8 childScriptIndex;            /* 0x1A */
+    void *savedLocalWork;           /* 0x1C */
+    PcScrcmdCommon *common;         /* 0x20 */
+} PcScrcmdWork;
+
+BW_PORT_STATIC_ASSERT(scrcmd_msg_id, sizeof(void *) != 4 ||
+                      offsetof(PcScrcmdWork, msgDataId) == 0x18u);
+BW_PORT_STATIC_ASSERT(scrcmd_common, sizeof(void *) != 4 ||
+                      offsetof(PcScrcmdWork, common) == 0x20u);
+BW_PORT_STATIC_ASSERT(scrcmd_owns_msg, sizeof(void *) != 4 ||
+                      offsetof(PcScrcmdCommon, menu.ownsMsgData) == 0x44u);
+
+static int pc_menu_hidden(ScrcmdWork *cmdWork, u32 msgId)
+{
+    const PcScrcmdWork *w = (const PcScrcmdWork *)cmdWork;
+    const PcScrcmdCommon *common = w->common;
+    u16 file = w->msgDataId;
+
+    if (msgId != PC_MENU_DEPOSIT && msgId != PC_MENU_WITHDRAW) {
+        return 0;
+    }
+    if (eidos_ui_active == NULL || !eidos_ui_active()) {
+        return 0;               /* the two-screen layout: the game's menu  */
+    }
+    if (common == NULL || common->menu.ownsMsgData != 0) {
+        return 0;
+    }
+    return file == PC_MENU_MSG_FILE;
+}
+
+int SCRCMD_MSGWIN_CmdAddMenuItem(ScriptVm *vm, ScrcmdWork *cmdWork)
+{
+    u32 msgId, helpMsgId, itemValue;
+    ScriptWork *scriptWork;
+
+    scriptWork = SCRCMD_WORK_GetScriptWork(cmdWork);
+    msgId = VM_ReadU16(vm);
+    helpMsgId = VM_ReadU16(vm);
+    itemValue = SCRIPT_WORK_ReadWorkValue(vm, cmdWork);
+    if (pc_menu_hidden(cmdWork, msgId)) {
+        return 0;
+    }
+    SCRCMD_WORK_AddMenuItem(cmdWork, (int)msgId, (int)helpMsgId, (int)itemValue,
+                            (Strbuf *)SCRIPT_WORK_GetMsgBuffer(scriptWork),
+                            (Strbuf *)SCRIPT_WORK_GetTempBuffer(scriptWork));
+    return 0;
 }

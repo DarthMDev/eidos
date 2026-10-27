@@ -119,6 +119,17 @@ const u8 *g3d_hw_frame(void);
  */
 void g3d_hw_set_scale(u32 scale);
 u32  g3d_hw_scale(void);
+/*
+ * The view scale (g3d_mtx_set_view_scale): kx and ky are fx32 factors on
+ * the clip matrix's x and y, so the same widening reaches the vertices the
+ * snapshot carries and the game's BOX_TEST / POS_TEST culling.  The default
+ * is FX32_ONE for both, bit-identical to the DS.  Like g3d_hw_set_scale it
+ * survives g3d_hw_reset, and it takes effect from the next vertex or test
+ * the game sends (a command already queued keeps the matrix it was made
+ * with, so a change shows from the next frame).
+ */
+void g3d_hw_set_view_scale(s32 kx, s32 ky);
+void g3d_hw_view_scale(s32 *kx, s32 *ky);
 u32  g3d_hw_frame_scale(void);
 u32       g3d_hw_frame_count(void);
 
@@ -141,6 +152,41 @@ typedef struct G3dSnapTex {
                              * texture is; 0 when unknown              */
 } G3dSnapTex;
 
+/*
+ * A scene a GPU renderer draws behind the game's own polygons (the
+ * one-screen layout's battle backdrop, sdk/battle_view.c).  The camera and
+ * the projection are the game's own at the frame, in the units its vertices
+ * use; `scene` is an immutable placed scene (engine/world/bmap.h) that the
+ * producer keeps alive for at least two battles, identified by `scene_gen`
+ * (the renderer uploads it when the number changes).  `valid` is 0 on every
+ * frame that has no backdrop.
+ */
+typedef struct G3dBackdrop {
+    u32 valid;
+    float eye[3], target[3], up[3];
+    float fovy_sin, fovy_cos, aspect, znear, zfar;
+    const void *scene;      /* a BmapScene, or NULL: only the sky colour   */
+    u32 scene_gen;
+    u8  sky[3];
+    /* the Pokemon and the trainers on the field (battle space: x, y, z and
+     * how tall the sprite's box is, its half-width a 0.47th of that): the map
+     * in front of one is drawn again over it, the sprites being drawn
+     * without the map's depth (what stands behind one never covers it, a
+     * wall it reaches into included; a negative height: nothing is drawn
+     * over it at all, the player's own trainer) */
+#define G3D_BACKDROP_SPRITES 32
+    float poke[G3D_BACKDROP_SPRITES][4];
+    u32 n_poke;
+    /* the spot editor (tools/spot-editor): draw only what stands in front of
+     * the Pokemon, over a transparent clear, to lay over its own sprites */
+    u32 front_only;
+} G3dBackdrop;
+
+/* Called on the game's thread while a snapshot is built; fills `out`
+ * (already zeroed).  NULL (the default) means no backdrop. */
+typedef void (*G3dBackdropHook)(G3dBackdrop *out);
+void g3d_hw_set_backdrop_hook(G3dBackdropHook hook);
+
 typedef struct G3dSnapshot {
     u32 serial;             /* g3d_hw_frame_count() when it was taken     */
     G3dVertex *verts;  u32 n_verts;
@@ -161,6 +207,7 @@ typedef struct G3dSnapshot {
     u32 fog_color;          /* FOG_COLOR: BGR555, alpha in bits 16-20     */
     u32 fog_offset;         /* FOG_OFFSET, 15 bits                        */
     u8  fog_table[32];      /* FOG_TABLE, 7-bit densities                 */
+    G3dBackdrop backdrop;   /* what to draw behind the polygons           */
 } G3dSnapshot;
 
 /* Frame features the GPU renderer does not do yet (a frame using one is

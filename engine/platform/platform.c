@@ -23,6 +23,7 @@
 #include "platform.h"
 #include "plat_gl.h"
 #include "settings.h"
+#include "ui.h"
 
 #define MAX_PADS 8
 
@@ -63,6 +64,14 @@ struct EidosPlatform {
     int panel_gen_ok;              /* ... and whether there was one         */
     int panel_w, panel_h;          /* the picture's size last uploaded      */
 
+    /* the one-screen layout (EIDOS_LAYOUT_ONE): what the interface layer
+     * asked the presenter to show this frame, and the mouse */
+    EidosUiView ui_view;           /* mode FALLBACK until a view is set      */
+    u32  ui_gen;                   /* the canvas generation last uploaded    */
+    int  ui_gen_ok;
+    int  ui_cw, ui_ch, ui_ck;      /* the canvas shown: size and scale       */
+    int  m_pressed, m_released, m_rpressed, m_wheel;   /* this pump's edges  */
+
     int layout;
     int gap;
     int swap;
@@ -77,6 +86,12 @@ struct EidosPlatform {
     EidosKeyBinding *keymap_own;    /* set by eidos_platform_set_bindings    */
     EidosPadBinding *padmap_own;
     int swallow_sc;                 /* a key held after Alt+Enter, not a press */
+    /* typing for the one-screen layout's name entry (eidos_platform_text_mode):
+     * the keyboard's letters are text, not buttons; the arrows still move */
+    int text_mode;
+    int pad_last;                   /* the last input came from a pad      */
+    char text[128];
+    int text_len;
     int cap_state;                  /* EIDOS_CAPTURE_*                       */
     EidosCaptured cap;
 
@@ -174,6 +189,10 @@ static u32 read_keyboard(const EidosPlatform *p)
         int sc = p->keymap[i].scancode;
         if (sc == p->swallow_sc) {
             continue;
+        }
+        if (p->text_mode && sc != SDL_SCANCODE_UP && sc != SDL_SCANCODE_DOWN &&
+            sc != SDL_SCANCODE_LEFT && sc != SDL_SCANCODE_RIGHT) {
+            continue;               /* typing: the letters are text */
         }
         if (sc > 0 && sc < SDL_NUM_SCANCODES && keys[sc]) {
             word |= p->keymap[i].button;
@@ -334,10 +353,16 @@ static void place(const EidosPlatform *p, EidosScreenPlacement *pl)
     eidos_layout_place(p->layout, p->swap, p->gap, pl);
 }
 
-/* Where the screens land in an output of w x h, at the pixel scale set. */
+/* Where the screens land in an output of w x h, at the pixel scale set.  In
+ * the one-screen layout this is the fallback's (the two screens side by
+ * side): the world view has no screen rectangles of its own. */
 static void viewport(const EidosPlatform *p, const EidosScreenPlacement *pl,
                      int w, int h, EidosViewport *vp)
 {
+    if (p->layout == EIDOS_LAYOUT_ONE) {
+        eidos_one_fallback_viewport(p->swap, p->pixel_scale, w, h, vp);
+        return;
+    }
     eidos_display_viewport_n(pl, w, h, p->pixel_scale, vp);
 }
 
@@ -392,12 +417,28 @@ int eidos_platform_window_to_touch(const EidosPlatform *p, int win_w,
     return eidos_viewport_to_touch(&pl, &vp, wx, wy, x, y);
 }
 
+/*
+ * The world view is on: the one-screen layout, a view that asks for the
+ * world, and a presenter that can draw it (the GPU one, with the GPU 3D).
+ * Otherwise the one-screen layout shows the fallback.
+ */
+extern int bw_battle_view_active(void) __attribute__((weak));    /* sdk/battle_view.c, eidos_boot only */
+
+static int world_active(const EidosPlatform *p)
+{
+    return p != NULL && p->layout == EIDOS_LAYOUT_ONE && p->gl != NULL &&
+           eidos_gl_has3d(p->gl) && p->ui_view.mode == EIDOS_VIEW_WORLD;
+}
+
 static void read_stylus(EidosPlatform *p)
 {
     int mx = 0, my = 0, ww = 0, wh = 0, x = 0, y = 0, inside;
     Uint32 buttons = SDL_GetMouseState(&mx, &my);
 
-    if (!(buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) || p->window == NULL) {
+    if (!(buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) || p->window == NULL ||
+        world_active(p)) {
+        /* In the world view the mouse belongs to the interface layer
+         * (eidos_platform_mouse); the stylus is only the fallback's. */
         p->touch_down = 0;
         return;
     }
@@ -475,6 +516,13 @@ u32 eidos_platform_late_frames(const EidosPlatform *p)
     return p == NULL ? 0 : p->late_frames;
 }
 
+static int g_fast_forward_locked;
+
+void eidos_platform_fast_forward_lock(int locked)
+{
+    g_fast_forward_locked = locked != 0;
+}
+
 int eidos_platform_fast_forward(const EidosPlatform *p)
 {
     const Uint8 *keys;
@@ -482,12 +530,31 @@ int eidos_platform_fast_forward(const EidosPlatform *p)
     if (p == NULL || p->window == NULL) {
         return 0;
     }
+    if (g_fast_forward_locked) {
+        return 1;
+    }
     /* SDL keeps the state of the window with keyboard focus only, so the
      * key does nothing while another program has the focus. */
     keys = SDL_GetKeyboardState(NULL);
     if (keys != NULL && keys[SDL_SCANCODE_TAB]) {
         return keys[SDL_SCANCODE_LSHIFT] ? EIDOS_FAST_FORWARD_MAX
                                          : EIDOS_FAST_FORWARD;
+    }
+    /* EIDOS_FAST_UNTIL_BATTLE (the spot editor's Preview in game): as fast
+     * as possible until the first battle shows, then the normal speed. */
+    {
+        static int until = -1, seen;
+
+        if (until < 0) {
+            until = getenv("EIDOS_FAST_UNTIL_BATTLE") != NULL;
+        }
+        if (until && !seen) {
+            if (bw_battle_view_active != NULL && bw_battle_view_active()) {
+                seen = 1;
+            } else {
+                return EIDOS_FAST_FORWARD_MAX;
+            }
+        }
     }
     /* EIDOS_FAST_FORWARD=1 holds Tab down for a whole run, =max left Shift
      * and Tab (tests, timing). */
@@ -993,13 +1060,34 @@ static void render(EidosPlatform *p)
     place(p, &pl);
     out_size(p, &ow, &oh);
     viewport(p, &pl, ow, oh, &vp);
-    have_panel = panel_view(&vp, &pl, &view) == 0;
+    have_panel = p->layout != EIDOS_LAYOUT_ONE && panel_view(&vp, &pl, &view) == 0;
     if (have_panel) {
         upload_panel(p, &view);
     }
     if (p->gl != NULL) {
         SDL_Rect rects[2];
         SDL_Rect prect;
+
+        /* The one-screen layout's state for this frame: the world's
+         * rectangle for the DS screen's 2D layers, or off. */
+        if (p->layout == EIDOS_LAYOUT_ONE) {
+            EidosWorldGeometry wg;
+            SDL_Rect ds;
+
+            eidos_world_geometry(ow, oh, p->ui_view.zoom, &wg);
+            ds.x = wg.ds.x;
+            ds.y = wg.ds.y;
+            ds.w = wg.ds.w;
+            ds.h = wg.ds.h;
+            eidos_gl_one_set(p->gl, 1, world_active(p), p->ui_view.world_screen,
+                             &ds, p->ui_view.hide_2d, p->ui_view.blur,
+                             (p->ui_view.no_fade ? 1 : 0) | (p->ui_view.hold_world ? 2 : 0) |
+                             (p->ui_view.keep_world ? 4 : 0) |
+                             ((p->ui_view.dark & 31) << 8) |
+                             ((p->ui_view.cap_mix & 31) << 13));
+        } else {
+            eidos_gl_one_set(p->gl, 0, 0, 0, NULL, 0, 0, 0);
+        }
 
         for (i = 0; i < 2; i++) {
             rects[i].x = vp.screen[i].x;
@@ -1175,7 +1263,9 @@ static int set_layout_now(EidosPlatform *p, int layout, int swap, int gap)
         return -1;
     }
     p->layout = layout == EIDOS_LAYOUT_SIDE_BY_SIDE
-                ? EIDOS_LAYOUT_SIDE_BY_SIDE : EIDOS_LAYOUT_STACKED;
+                ? EIDOS_LAYOUT_SIDE_BY_SIDE
+                : layout == EIDOS_LAYOUT_ONE ? EIDOS_LAYOUT_ONE
+                                             : EIDOS_LAYOUT_STACKED;
     p->swap = swap != 0;
     p->gap = gap > 0 ? gap : 0;
     layout_size(p, &nw, &nh);
@@ -1290,7 +1380,9 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     p->owner = SDL_ThreadID();
     p->tex_n[0] = p->tex_n[1] = 1;
     p->layout = cfg->layout == EIDOS_LAYOUT_SIDE_BY_SIDE
-                ? EIDOS_LAYOUT_SIDE_BY_SIDE : EIDOS_LAYOUT_STACKED;
+                ? EIDOS_LAYOUT_SIDE_BY_SIDE
+                : cfg->layout == EIDOS_LAYOUT_ONE ? EIDOS_LAYOUT_ONE
+                                                  : EIDOS_LAYOUT_STACKED;
     p->gap = cfg->gap > 0 ? cfg->gap : 0;
     p->swap = cfg->swap_screens != 0;
     p->volume = 100;
@@ -1540,12 +1632,51 @@ int eidos_platform_pump(EidosPlatform *p)
         p->pend_layout = 0;
         (void)set_layout_now(p, p->pl_layout, p->pl_swap, p->pl_gap);
     }
+    p->m_pressed = p->m_released = p->m_rpressed = p->m_wheel = 0;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
         case SDL_QUIT:
             p->quit = 1;
             break;
+        case SDL_MOUSEBUTTONDOWN:
+            p->pad_last = 0;
+            if (ev.button.button == SDL_BUTTON_LEFT) {
+                p->m_pressed = 1;
+            } else if (ev.button.button == SDL_BUTTON_RIGHT) {
+                p->m_rpressed = 1;
+            }
+            break;
+        case SDL_MOUSEBUTTONUP:
+            if (ev.button.button == SDL_BUTTON_LEFT) {
+                p->m_released = 1;
+            }
+            break;
+        case SDL_MOUSEWHEEL:
+            p->m_wheel += ev.wheel.direction == SDL_MOUSEWHEEL_FLIPPED
+                          ? -ev.wheel.y : ev.wheel.y;
+            break;
+        case SDL_TEXTINPUT:
+            if (p->text_mode) {
+                size_t n = strlen(ev.text.text);
+
+                if (p->text_len + (int)n < (int)sizeof(p->text)) {
+                    memcpy(p->text + p->text_len, ev.text.text, n);
+                    p->text_len += (int)n;
+                }
+            }
+            break;
         case SDL_KEYDOWN:
+            p->pad_last = 0;
+            if (p->text_mode && !(ev.key.keysym.mod & KMOD_ALT) &&
+                (ev.key.keysym.scancode == SDL_SCANCODE_BACKSPACE ||
+                 ev.key.keysym.scancode == SDL_SCANCODE_RETURN ||
+                 ev.key.keysym.scancode == SDL_SCANCODE_KP_ENTER)) {
+                if (p->text_len + 1 < (int)sizeof(p->text)) {
+                    p->text[p->text_len++] =
+                        ev.key.keysym.scancode == SDL_SCANCODE_BACKSPACE ? '\b' : '\n';
+                }
+                break;
+            }
             if (ev.key.repeat) {
                 break;
             }
@@ -1581,6 +1712,7 @@ int eidos_platform_pump(EidosPlatform *p)
             }
             break;
         case SDL_CONTROLLERBUTTONDOWN:
+            p->pad_last = 1;
             if (p->cap_state == EIDOS_CAPTURE_PENDING) {
                 p->cap.pad_kind = EIDOS_PADBIND_BUTTON;
                 p->cap.pad_index = ev.cbutton.button;
@@ -1798,13 +1930,237 @@ int eidos_platform_set_3d(EidosPlatform *p, int screen, const u8 *behind,
     if (n > 20) {
         n = 20;
     }
-    if (eidos_gl_render3d(p->gl, snap, (int)SCREEN_W * n, (int)SCREEN_H * n) != 0) {
-        eidos_gl_set_3d(p->gl, -1, NULL, 0, 0, 0, 0.f, 0);
-        return -1;
+    {
+        int rw = (int)SCREEN_W * n, rh = (int)SCREEN_H * n;
+
+        /* The world view: this screen's 3D is rendered at the window's
+         * shape and size, one to one with what is shown. */
+        if (world_active(p) && screen == p->ui_view.world_screen) {
+            int ow, oh;
+
+            out_size(p, &ow, &oh);
+            if (ow > 0 && oh > 0 && ow <= 8192 && oh <= 8192) {
+                rw = ow;
+                rh = oh;
+            }
+        }
+        if (eidos_gl_render3d(p->gl, snap, rw, rh) != 0) {
+            eidos_gl_set_3d(p->gl, -1, NULL, 0, 0, 0, 0.f, 0);
+            return -1;
+        }
     }
     eidos_gl_set_3d(p->gl, screen, behind, (int)SCREEN_W, (int)SCREEN_H, bmode,
                     bfac, dilate);
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* The one-screen layout                                               */
+/* ------------------------------------------------------------------ */
+
+int eidos_platform_layout(const EidosPlatform *p)
+{
+    return p == NULL ? EIDOS_LAYOUT_STACKED : p->layout;
+}
+
+void eidos_platform_set_view(EidosPlatform *p, const struct EidosUiView *v)
+{
+    if (p == NULL) {
+        return;
+    }
+    if (v == NULL) {
+        memset(&p->ui_view, 0, sizeof(p->ui_view));
+        p->ui_view.zoom = 1.0f;
+    } else {
+        p->ui_view = *v;
+        if (p->ui_view.zoom <= 0.0f) {
+            p->ui_view.zoom = 1.0f;
+        }
+    }
+}
+
+void eidos_platform_set_ui_canvas(EidosPlatform *p, const struct EidosUiCanvas *c)
+{
+    if (p == NULL || p->gl == NULL) {
+        return;
+    }
+    if (p->layout != EIDOS_LAYOUT_ONE || c == NULL || c->rgba == NULL ||
+        c->w <= 0 || c->h <= 0 || c->k <= 0) {
+        eidos_gl_one_canvas(p->gl, NULL, 0, 0, NULL);
+        p->ui_cw = p->ui_ch = p->ui_ck = 0;
+        return;
+    }
+    {
+        SDL_Rect r;
+        const u8 *up = NULL;
+
+        r.x = 0;
+        r.y = 0;
+        r.w = c->w * c->k;
+        r.h = c->h * c->k;
+        if (!p->ui_gen_ok || p->ui_gen != c->generation || p->ui_cw != c->w ||
+            p->ui_ch != c->h) {
+            up = c->rgba;                       /* only when it changed */
+            p->ui_gen = c->generation;
+            p->ui_gen_ok = 1;
+        }
+        p->ui_cw = c->w;
+        p->ui_ch = c->h;
+        p->ui_ck = c->k;
+        eidos_gl_one_canvas(p->gl, up, c->w, c->h, &r);
+    }
+}
+
+int eidos_platform_world_active(const EidosPlatform *p)
+{
+    return world_active(p);
+}
+
+void eidos_platform_view_scale(const EidosPlatform *p, s32 *kx, s32 *ky)
+{
+    EidosWorldGeometry wg;
+    int ow = 0, oh = 0;
+
+    wg.kx = wg.ky = 4096;
+    if (world_active(p)) {
+        out_size(p, &ow, &oh);
+        eidos_world_geometry(ow, oh, p->ui_view.zoom, &wg);
+    }
+    if (kx != NULL) {
+        *kx = wg.kx;
+    }
+    if (ky != NULL) {
+        *ky = wg.ky;
+    }
+}
+
+int eidos_platform_mouse(const EidosPlatform *p, struct EidosUiMouse *m)
+{
+    int mx = 0, my = 0, ww = 0, wh = 0, ow = 0, oh = 0;
+    Uint32 buttons;
+
+    if (m == NULL) {
+        return 0;
+    }
+    memset(m, 0, sizeof(*m));
+    m->x = m->y = -1;
+    if (p == NULL || p->window == NULL) {
+        return 0;
+    }
+    m->pressed = p->m_pressed;
+    m->released = p->m_released;
+    m->right_pressed = p->m_rpressed;
+    m->wheel = p->m_wheel;
+    buttons = SDL_GetMouseState(&mx, &my);
+    m->down = (buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+    if (SDL_GetMouseFocus() != p->window) {
+        return 0;
+    }
+    SDL_GetWindowSize(p->window, &ww, &wh);
+    out_size(p, &ow, &oh);
+    if (ww > 0 && wh > 0 && ow > 0 && oh > 0) {
+        mx = (int)((s64)mx * ow / ww);
+        my = (int)((s64)my * oh / wh);
+    }
+    if (mx >= 0 && my >= 0 && mx < (ow > 0 ? ow : ww) &&
+        my < (oh > 0 ? oh : wh)) {
+        m->x = mx;
+        m->y = my;
+    }
+    return 1;
+}
+
+int eidos_platform_pad_last(const EidosPlatform *p)
+{
+    return p != NULL && p->pad_last;
+}
+
+/* A short, readable name for a key (the arrows as arrows). */
+static const char *key_short_name(int sc)
+{
+    switch (sc) {
+    case SDL_SCANCODE_UP:        return "\xE2\x86\x91";
+    case SDL_SCANCODE_DOWN:      return "\xE2\x86\x93";
+    case SDL_SCANCODE_LEFT:      return "\xE2\x86\x90";
+    case SDL_SCANCODE_RIGHT:     return "\xE2\x86\x92";
+    case SDL_SCANCODE_RETURN:    return "Enter";
+    case SDL_SCANCODE_BACKSPACE: return "Bksp";
+    case SDL_SCANCODE_RSHIFT:    return "RShift";
+    case SDL_SCANCODE_LSHIFT:    return "Shift";
+    case SDL_SCANCODE_SPACE:     return "Space";
+    case SDL_SCANCODE_ESCAPE:    return "Esc";
+    case SDL_SCANCODE_TAB:       return "Tab";
+    default:                     return SDL_GetScancodeName((SDL_Scancode)sc);
+    }
+}
+
+void eidos_platform_key_names(const EidosPlatform *p, const char *names[12])
+{
+    /* the pad: the DS's own names are the face buttons' names */
+    static const char *const pad[12] = {
+        "A", "B", "Select", "Start", NULL, NULL, NULL, NULL, "R", "L", "X", "Y"
+    };
+    u32 b, i;
+
+    for (b = 0; b < 12; b++) {
+        names[b] = NULL;
+        if (p == NULL) {
+            continue;
+        }
+        if (p->pad_last) {
+            names[b] = pad[b];
+            continue;
+        }
+        for (i = 0; i < p->keymap_count; i++) {
+            if (p->keymap[i].button == (1u << b) && p->keymap[i].scancode > 0) {
+                names[b] = key_short_name(p->keymap[i].scancode);
+                break;
+            }
+        }
+    }
+}
+
+void eidos_platform_text_mode(EidosPlatform *p, int on)
+{
+    if (p == NULL || (on != 0) == p->text_mode) {
+        return;
+    }
+    p->text_mode = on != 0;
+    p->text_len = 0;
+    if (on) {
+        SDL_StartTextInput();
+    } else {
+        SDL_StopTextInput();
+    }
+}
+
+int eidos_platform_take_text(EidosPlatform *p, char *out, int cap)
+{
+    int n;
+
+    if (p == NULL || out == NULL || cap <= 0) {
+        return 0;
+    }
+    n = p->text_len < cap - 1 ? p->text_len : cap - 1;
+    memcpy(out, p->text, (size_t)n);
+    out[n] = '\0';
+    p->text_len = 0;
+    return n;
+}
+
+void eidos_platform_window_size(const EidosPlatform *p, int *w, int *h)
+{
+    int ow = 0, oh = 0;
+
+    if (p != NULL) {
+        out_size(p, &ow, &oh);
+    }
+    if (w != NULL) {
+        *w = ow;
+    }
+    if (h != NULL) {
+        *h = oh;
+    }
 }
 
 int eidos_platform_capture_hires(EidosPlatform *p, const u8 *a2d,
@@ -1923,6 +2279,12 @@ static int screenshot_gl(EidosPlatform *p, const char *path)
      * part of a screenshot of the screens.
      */
     screens_rect(&vp.screen[0], &vp.screen[1], &area);
+    if (p->layout == EIDOS_LAYOUT_ONE) {
+        /* The one-screen layout's picture is the whole window. */
+        area.x = area.y = 0;
+        area.w = ow;
+        area.h = oh;
+    }
     cx = area.x < 0 ? 0 : area.x;
     cy = area.y < 0 ? 0 : area.y;
     cw = area.w;

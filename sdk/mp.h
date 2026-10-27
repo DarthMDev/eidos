@@ -185,6 +185,13 @@ int  bw_mp_hide_save(void);
  * field runs and no field event (a menu, a script, a warp) does. */
 void bw_mp_request_save_for_test(void);
 
+/* 1 when the player `peer` may be drawn as an avatar: connected now, and
+ * not this game's own player.  Exposed for the tests. */
+int  bw_mp_peer_visible(u32 peer);
+
+/* The save delta a joiner uploads (tests): see sdk/mp.c. */
+int  bw_mp_delta_test(const u8 *base, const u8 *now, u32 size, u32 *dsize, int *bad_ok);
+
 /* The folder of the multiplayer files: <save folder>/multiplayer. */
 int  bw_mp_dir(char *out, u32 size);
 

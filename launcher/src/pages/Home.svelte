@@ -1,6 +1,6 @@
 <script lang="ts">
   import { toast } from "morphe/menu.svelte";
-  import { LATEST, LOCAL, message, play, versionLabel, type Overview, type Profile } from "../lib/backend";
+  import { LATEST, LOCAL, message, play, supportsOneScreen, versionLabel, type Layout, type Overview, type Profile } from "../lib/backend";
   import Icon from "../lib/Icon.svelte";
   import dragon from "../assets/dragon.png";
   import dragonDay from "../assets/dragon-day.png";
@@ -33,11 +33,34 @@
   });
   const running = $derived(ov.running.includes(selected));
 
-  async function start() {
+  // The layout a player used last, kept per profile in this browser.
+  const KEY = (name: string) => `eidos.layout.${name}`;
+  function recall(name: string): Layout {
+    try {
+      return localStorage.getItem(KEY(name)) === "one" ? "one" : "classic";
+    } catch {
+      return "classic";
+    }
+  }
+  let last = $state<Layout>("classic");
+  $effect(() => {
+    last = recall(selected);
+  });
+  const canOne = $derived(supportsOneScreen(version));
+  // Without the one-screen layout there is one button, and it is Play.
+  const primaryLayout = $derived<Layout>(canOne ? last : "classic");
+
+  async function start(layout: Layout) {
+    if (canOne) {
+      last = layout;
+      try {
+        localStorage.setItem(KEY(selected), layout);
+      } catch {}
+    }
     error = null;
     starting = true;
     try {
-      await play(selected);
+      await play(selected, undefined, layout);
       await onRefresh();
     } catch (e) {
       error = message(e);
@@ -71,10 +94,26 @@
           <span class="badge bad">No version</span>
         {/if}
       </div>
-      <button class="primary play" disabled={!version || running || starting} onclick={start}>
-        <Icon name="play" size={20} />
-        {running ? "Running" : starting ? "Starting" : "Play"}
-      </button>
+      <div class="plays" class:single={!canOne}>
+        {#if canOne}
+          {#each [["classic", "Classic", "classic"], ["one", "Widescreen", "widescreen"]] as [layout, label, icon]}
+            <button
+              class="play"
+              class:primary={primaryLayout === layout}
+              disabled={!version || running || starting}
+              onclick={() => start(layout as Layout)}
+            >
+              <Icon name={icon} size={20} />
+              {label}
+            </button>
+          {/each}
+        {:else}
+          <button class="primary play" disabled={!version || running || starting} onclick={() => start("classic")}>
+            <Icon name="play" size={20} />
+            {running ? "Running" : starting ? "Starting" : "Play"}
+          </button>
+        {/if}
+      </div>
     </div>
   </div>
 
@@ -153,6 +192,7 @@
     position: relative;
     display: flex;
     align-items: flex-end;
+    flex-wrap: wrap;
     gap: 1rem;
     padding: 1.25rem 1.5rem;
     background: var(--panel-2);
@@ -169,9 +209,26 @@
     align-items: flex-start;
     padding-bottom: 0.3rem;
   }
-  .play {
+  .plays {
+    display: flex;
+    gap: 0.75rem;
+  }
+  .plays .play {
+    flex: 1 1 0;
+    min-width: 10rem;
+    justify-content: center;
     font-size: 1.15rem;
+    padding: 0.75rem 1.6rem;
+  }
+  .plays.single .play {
+    flex: none;
     padding: 0.75rem 2.4rem;
+  }
+  @media (max-width: 520px) {
+    .plays {
+      flex-direction: column;
+      width: 100%;
+    }
   }
   .note {
     display: flex;

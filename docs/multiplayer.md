@@ -136,8 +136,14 @@ use multiplayer for now (SPEC section 17).
   joiner's game then boots on it (or on a new game). The joiner keeps no
   save of its own: the file is `multiplayer/session.sav`, and the joiner's
   own save is the chip's file again when it leaves.
-- When a joiner's game writes its save, the file goes to the host, which
-  keeps it as that player's save.
+- When a joiner's game writes its save, the host gets the change, which it
+  keeps as that player's save. The joiner keeps the image the host has (the
+  one it was sent, then the last one it uploaded) and sends the runs of
+  bytes that differ (`DLT1`, the size, the checksum of the base, the
+  checksum of the new image, then runs of offset, length and bytes), as an
+  ordinary transfer: about a kilobyte instead of the 512 KB image. When the
+  host's copy is not the base, it answers `savefull` and the joiner sends
+  the whole file. Uploads leave at most every 5 seconds.
 - The port's reset keeps the session while a multiplayer game runs.
 
 ## Saving (built)
@@ -181,10 +187,23 @@ use multiplayer for now (SPEC section 17).
   (`pos <zone> <x> <y> <z> <dir> <mode> <sprite>`) when it changes, and
   every 2 seconds when it does not.
 - Each game shows the players in its own zone as field avatars
-  (sdk/mod_avatar.h): the hero or the heroine, walking to each new cell.
-- A map change, a battle or a menu that leaves the field empties the
-  game's entity pool; the avatars are made again when the field is back.
-  A player who leaves takes its avatar with it.
+  (sdk/mod_avatar.h): the hero or the heroine. Only a player who is
+  connected now is shown; the roster of the host's game keeps players who
+  left, and their last place is not drawn. A player who leaves takes its
+  avatar with it.
+- An avatar moves at the speed of the other player's mode (walking, running,
+  cycling, surfing; the mode is read from the player's step kind, form and
+  ride). More than a cell behind, it speeds up in proportion to the lag;
+  more than two cells behind, it is put on the real place. It faces the
+  other player's real facing.
+- A map change or a battle empties the game's entity pool; the avatars are
+  made again when the field is back. A menu or a script on the field leaves
+  the avatars where they are, and they stay drawn.
+- The game saves its whole entity pool, the avatars with it, and brings it
+  back at a load. `bw_mod_avatar_sweep` deletes these stale avatars (the
+  hero's or heroine's sprite, no event, no hit checks, an object id outside
+  the port's range) when a field first runs.
+- Fast forward (Tab) is off while a session is open (host or joiner).
 
 ## Events and the shared table (built)
 
@@ -196,6 +215,10 @@ use multiplayer for now (SPEC section 17).
   fire every frame. The host runs the multiplayer mods' handlers over
   each one (`bw_mod_event_remote`); `event_player` names the player.
 - A changed place goes out at most ten times a second.
+- The `player.step` event fires every frame on the field and says only
+  where the player is; a batch keeps the latest one, so it costs about 20
+  bytes ten times a second. Every minute the log says how many bytes the
+  game sent as positions, events and saves, and the busiest event kind.
 - The shared table: `tset <key> <value>` from the host to everyone;
   `treq <key> <value>`, `tadd <key> <delta>` and
   `tcas <key> <expected> <value>` from a joiner to the host, which makes

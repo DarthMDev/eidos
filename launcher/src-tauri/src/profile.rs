@@ -20,20 +20,26 @@ const NAME_MAX: usize = 40;
 pub struct ProfileFile {
     /// `latest`, `local`, or an installed version id.
     pub version: String,
+    /// The game data folder passed to eidos; empty means its default place.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub data_root: String,
 }
 
 impl Default for ProfileFile {
     fn default() -> Self {
         ProfileFile {
             version: LATEST.to_string(),
+            data_root: String::new(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Profile {
     pub name: String,
     pub version: String,
+    pub data_root: String,
 }
 
 /// Checks a profile name: it becomes a folder name on every platform.
@@ -115,8 +121,12 @@ pub fn list(layout: &Layout) -> io::Result<Vec<Profile>> {
     Ok(names
         .into_iter()
         .map(|name| {
-            let version = read_file(&layout.profile(&name)).version;
-            Profile { name, version }
+            let f = read_file(&layout.profile(&name));
+            Profile {
+                name,
+                version: f.version,
+                data_root: f.data_root,
+            }
         })
         .collect())
 }
@@ -137,6 +147,7 @@ pub fn create(layout: &Layout, name: &str, version: &str) -> Result<Profile, Str
     }
     let file = ProfileFile {
         version: version.to_string(),
+        ..ProfileFile::default()
     };
     let dir = layout.profile(&name);
     write_file(&dir, &file).map_err(|e| e.to_string())?;
@@ -146,18 +157,40 @@ pub fn create(layout: &Layout, name: &str, version: &str) -> Result<Profile, Str
     Ok(Profile {
         name,
         version: file.version,
+        data_root: file.data_root,
     })
 }
 
 pub fn set_version(layout: &Layout, name: &str, version: &str) -> Result<(), String> {
     get(layout, name)?;
-    write_file(
-        &layout.profile(name),
-        &ProfileFile {
-            version: version.to_string(),
-        },
-    )
-    .map_err(|e| e.to_string())
+    let dir = layout.profile(name);
+    let file = ProfileFile {
+        version: version.to_string(),
+        ..read_file(&dir)
+    };
+    write_file(&dir, &file).map_err(|e| e.to_string())
+}
+
+/// Sets the game data folder of a profile; empty goes back to the default.
+/// The folder may not exist yet: eidos sets it up on its first run.
+pub fn set_data_root(layout: &Layout, name: &str, path: &str) -> Result<(), String> {
+    get(layout, name)?;
+    let path = path.trim();
+    if !path.is_empty() {
+        let p = Path::new(path);
+        if !p.is_absolute() {
+            return Err("The folder must be a full path.".into());
+        }
+        if p.is_file() {
+            return Err("That path is a file, not a folder.".into());
+        }
+    }
+    let dir = layout.profile(name);
+    let file = ProfileFile {
+        data_root: path.to_string(),
+        ..read_file(&dir)
+    };
+    write_file(&dir, &file).map_err(|e| e.to_string())
 }
 
 pub fn rename(layout: &Layout, from: &str, to: &str) -> Result<(), String> {
@@ -285,5 +318,28 @@ mod tests {
         create(&l, "p", LATEST).unwrap();
         set_version(&l, "p", "0.9.0").unwrap();
         assert_eq!(get(&l, "p").unwrap().version, "0.9.0");
+    }
+
+    #[test]
+    fn data_root_is_checked_kept_and_copied() {
+        let (t, l) = layout();
+        create(&l, "p", LATEST).unwrap();
+        assert_eq!(get(&l, "p").unwrap().data_root, "");
+        let folder = t.path().join("game data");
+        let text = folder.to_string_lossy().into_owned();
+        set_data_root(&l, "p", &format!("  {text} ")).unwrap();
+        assert_eq!(get(&l, "p").unwrap().data_root, text);
+        set_version(&l, "p", "0.9.0").unwrap();
+        assert_eq!(get(&l, "p").unwrap().data_root, text);
+        assert_eq!(duplicate(&l, "p").unwrap().data_root, text);
+        assert!(set_data_root(&l, "p", "relative/dir").is_err());
+        let file = t.path().join("a.txt");
+        fs::write(&file, b"x").unwrap();
+        assert!(set_data_root(&l, "p", &file.to_string_lossy()).is_err());
+        assert!(set_data_root(&l, "missing", &text).is_err());
+        set_data_root(&l, "p", " ").unwrap();
+        assert_eq!(get(&l, "p").unwrap().data_root, "");
+        let json = fs::read_to_string(l.profile("p").join("profile.json")).unwrap();
+        assert!(!json.contains("data_root"));
     }
 }

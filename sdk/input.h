@@ -140,6 +140,16 @@ void bw_input_publish(void);
  */
 void bw_input_set_host(const BwInputState *s);
 
+/*
+ * The one-screen interface's hold on the player's buttons: the buttons in
+ * `mask` (the host's and the script's) are not seen by the game until the
+ * mask changes; the interface reads them with bw_input_player_buttons and
+ * presses what it means with the injection instead (a column of commands
+ * moved with up and down, say).  0 gives every button back.
+ */
+void bw_input_set_host_mask(u32 mask);
+u32  bw_input_player_buttons(void);
+
 /* ------------------------------------------------------------------ */
 /* The script                                                          */
 /* ------------------------------------------------------------------ */

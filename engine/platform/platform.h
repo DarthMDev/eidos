@@ -135,6 +135,9 @@ const EidosPadBinding *eidos_default_padmap(u32 *count);
 
 #define EIDOS_LAYOUT_STACKED       0   /* top screen above the bottom one */
 #define EIDOS_LAYOUT_SIDE_BY_SIDE  1
+#define EIDOS_LAYOUT_ONE           2   /* one screen: the world fills the
+                                          window, the interface over it
+                                          (engine/ui/ui.h)               */
 #define EIDOS_LAYOUT_VERTICAL      EIDOS_LAYOUT_STACKED
 #define EIDOS_LAYOUT_HORIZONTAL    EIDOS_LAYOUT_SIDE_BY_SIDE
 
@@ -190,6 +193,58 @@ void eidos_display_viewport(const EidosScreenPlacement *pl, int out_w,
  * smaller than 1x fills it as eidos_display_viewport does. */
 void eidos_display_viewport_n(const EidosScreenPlacement *pl, int out_w,
                               int out_h, int scale, EidosViewport *vp);
+/*
+ * The one-screen layout (EIDOS_LAYOUT_ONE).  Three pieces of arithmetic,
+ * with no SDL, shared by the presenter, the mouse and the 3D setup so they
+ * cannot disagree.
+ *
+ * Arrangement.  eidos_layout_place(EIDOS_LAYOUT_ONE, ...) gives the shape
+ * the window takes when the layout is chosen: 16:9 (512 x 288), the shape of
+ * the world view.  The run-status panel is not shown in this layout.
+ *
+ * Fallback.  eidos_one_fallback_viewport puts the two DS screens side by
+ * side, filling the window letterboxed, exactly as the side-by-side layout
+ * does (pixel_scale 0 is auto, N a whole multiple as in
+ * eidos_display_viewport_n).  The mouse is the stylus on the bottom screen
+ * through this viewport.
+ *
+ * World.  One DS screen fills the window and its 3D is rendered at the
+ * window's shape.  Let a = win_w / win_h.  The DS view is 4:3.  Horizontal
+ * plus: for a >= 4/3 the vertical view stays the DS's own and the
+ * horizontal one grows, which is the clip matrix scaled in x by
+ * kx = (4/3) / a and in y by ky = 1 (a factor below one shows more).  For a
+ * window narrower than 4:3 the roles swap (kx = 1, ky = a / (4/3)), so the
+ * DS's whole width is always visible and the window shows more above and
+ * below instead of cropping the sides.  `zoom` multiplies both: zoom < 1
+ * shows more in both directions, zoom > 1 less (clamped to 0.25 .. 2).  The
+ * factors are fx32 (4096 = 1.0) because that is what the geometry engine
+ * takes (g3d_hw_set_view_scale), and the rectangle below is computed from
+ * the rounded factors so the 2D layers land exactly where the 3D put the
+ * DS screen's pixels.
+ *
+ * `ds` is the DS screen's rectangle in the window: where its 2D layers
+ * (text boxes, banners) are drawn, unstretched at the same pixel ratio as
+ * the 3D, centred.  Always 4:3 (up to a pixel).  It extends past the window
+ * only when zoom > 1.
+ */
+typedef struct EidosWorldGeometry {
+    s32 kx, ky;                 /* clip matrix x and y factors, fx32       */
+    EidosRect ds;               /* the DS screen's rectangle in the window */
+} EidosWorldGeometry;
+
+#define EIDOS_WORLD_ZOOM_MIN 0.25f
+#define EIDOS_WORLD_ZOOM_MAX 2.0f
+
+void eidos_world_geometry(int win_w, int win_h, float zoom,
+                          EidosWorldGeometry *out);
+void eidos_one_fallback_place(int swap, EidosScreenPlacement *out);
+void eidos_one_fallback_viewport(int swap, int pixel_scale, int out_w,
+                                 int out_h, EidosViewport *vp);
+/* The window pixel (wx, wy) as a point in the world's DS rectangle, in DS
+ * pixels (0..255 x 0..191, clamped); non-zero when it is inside. */
+int  eidos_world_to_ds(const EidosWorldGeometry *g, int wx, int wy, int *x,
+                       int *y);
+
 /* The window size for a first start: the largest whole multiple of the
  * arrangement whose height fits `percent` of work_h and whose width fits
  * work_w, at least 1x.  work_w/work_h 0 (unknown) gives 1x. */
@@ -252,7 +307,6 @@ void eidos_platform_quit(EidosPlatform *p);
  * Escape was pressed), non-zero to keep running.
  */
 int  eidos_platform_pump(EidosPlatform *p);
-
 /* The buttons currently held, as EIDOS_PAD_* bits. */
 u32  eidos_platform_buttons(const EidosPlatform *p);
 
@@ -375,6 +429,57 @@ struct G3dSnapshot;
 int  eidos_platform_gpu3d(const EidosPlatform *p);
 
 /*
+ * The one-screen layout (EIDOS_LAYOUT_ONE; engine/ui/ui.h).  Each frame,
+ * before eidos_platform_set_3d and the present, the caller gives the view
+ * the interface layer chose and its canvas:
+ *
+ *   - eidos_platform_set_view: FALLBACK shows the two DS screens side by
+ *     side (letterboxed, the mouse is the stylus); WORLD shows
+ *     view->world_screen filling the window, its 3D rendered by the GPU at
+ *     the window's size with the projection widened (eidos_world_geometry),
+ *     its 2D layers at the DS rectangle in the middle, blurred and dimmed
+ *     when view->blur.  NULL means FALLBACK.  WORLD needs the GPU
+ *     presenter; without it the fallback is shown.
+ *   - eidos_platform_set_ui_canvas: the interface picture, drawn over
+ *     either with nearest filtering at canvas->k window pixels per canvas
+ *     pixel, at the window's top-left, alpha blended.  Uploaded only when
+ *     canvas->generation changes.  NULL hides it.
+ *
+ * The widening reaches the game through the geometry engine's view scale:
+ * eidos_platform_view_scale gives the fx32 factors to pass to
+ * g3d_hw_set_view_scale (4096, 4096 when the world view is not active), and
+ * the caller applies them before the game's next frame so the game's own
+ * culling sees the wider view.
+ *
+ * eidos_platform_mouse fills the window mouse for the interface layer: the
+ * position in window pixels (-1 outside), the button state, and the edges
+ * and wheel steps seen by the last eidos_platform_pump.  Returns non-zero
+ * when the pointer is over the window.
+ */
+struct EidosUiView;
+struct EidosUiCanvas;
+struct EidosUiMouse;
+int  eidos_platform_layout(const EidosPlatform *p);
+void eidos_platform_set_view(EidosPlatform *p, const struct EidosUiView *v);
+void eidos_platform_set_ui_canvas(EidosPlatform *p,
+                                  const struct EidosUiCanvas *c);
+int  eidos_platform_world_active(const EidosPlatform *p);
+void eidos_platform_view_scale(const EidosPlatform *p, s32 *kx, s32 *ky);
+int  eidos_platform_mouse(const EidosPlatform *p, struct EidosUiMouse *m);
+void eidos_platform_window_size(const EidosPlatform *p, int *w, int *h);
+/* Typing (the one-screen name entry): on, the keyboard's letters, digits,
+ * Backspace and Return are text, not game buttons (the arrows still are);
+ * take_text hands over what was typed since the last call, UTF-8 with "\b"
+ * for Backspace and "\n" for Return. */
+void eidos_platform_text_mode(EidosPlatform *p, int on);
+/* The device the player used last (1 a pad, 0 the keyboard or mouse), and
+ * the names of the game's twelve buttons on it (names[i] for bit i: the
+ * bound keyboard keys, or the pad's labels; NULL when none). */
+int  eidos_platform_pad_last(const EidosPlatform *p);
+void eidos_platform_key_names(const EidosPlatform *p, const char *names[12]);
+int  eidos_platform_take_text(EidosPlatform *p, char *out, int cap);
+
+/*
  * The display capture at the 3D's resolution (GPU path only).  A scene that
  * captures the main screen into VRAM every frame and shows that bank would
  * otherwise stay at DS size.  _capture_hires makes this frame's capture from
@@ -453,6 +558,11 @@ void eidos_platform_wait_frame(EidosPlatform *p);
 #define EIDOS_FAST_FORWARD     2
 #define EIDOS_FAST_FORWARD_MAX 1000
 int  eidos_platform_fast_forward(const EidosPlatform *p);
+
+/* A lock on fast forward: while it is set (a multiplayer session: the
+ * other players cannot speed up with this one), eidos_platform_fast_forward
+ * answers 1 whatever keys are held.  The caller sets it every frame. */
+void eidos_platform_fast_forward_lock(int locked);
 
 /* Monotonic nanoseconds since the platform was created. */
 u64  eidos_platform_now_ns(const EidosPlatform *p);

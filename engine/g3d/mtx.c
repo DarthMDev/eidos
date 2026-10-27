@@ -369,10 +369,61 @@ void g3d_mtx_stack_mult(G3dMtxStack *st, const G3dMtx *m)
     }
 }
 
+/*
+ * The view scale.  Row-vector convention (v' = v * M): the x output is
+ * column 0 and the y output column 1, so scaling those two columns of the
+ * product scales clip x and clip y and leaves z and w, hence the depth and
+ * the perspective divide, as they were.  A vertex that the DS view would
+ * have clipped can now lie inside the (wider) view, and the hardware-style
+ * clip against -w..w happens after this matrix, so nothing is cut early.
+ */
+static fx32 g_view_kx = FX32_ONE;
+static fx32 g_view_ky = FX32_ONE;
+static u32  g_view_gen;
+
+void g3d_mtx_set_view_scale(fx32 kx, fx32 ky)
+{
+    if (kx <= 0) {
+        kx = FX32_ONE;
+    }
+    if (ky <= 0) {
+        ky = FX32_ONE;
+    }
+    if (kx != g_view_kx || ky != g_view_ky) {
+        g_view_kx = kx;
+        g_view_ky = ky;
+        g_view_gen++;
+    }
+}
+
+void g3d_mtx_view_scale(fx32 *kx, fx32 *ky)
+{
+    if (kx != NULL) {
+        *kx = g_view_kx;
+    }
+    if (ky != NULL) {
+        *ky = g_view_ky;
+    }
+}
+
+u32 g3d_mtx_view_scale_generation(void)
+{
+    return g_view_gen;
+}
+
 const G3dMtx *g3d_mtx_stack_clip(G3dMtxStack *st)
 {
-    if (st->clip_dirty) {
+    if (st->clip_dirty || st->view_gen != g_view_gen) {
         g3d_mtx_mul(&st->clip, &st->pos, &st->proj);
+        if (g_view_kx != FX32_ONE || g_view_ky != FX32_ONE) {
+            u32 i;
+
+            for (i = 0; i < 4; i++) {
+                st->clip.m[i * 4 + 0] = FX_MUL(st->clip.m[i * 4 + 0], g_view_kx);
+                st->clip.m[i * 4 + 1] = FX_MUL(st->clip.m[i * 4 + 1], g_view_ky);
+            }
+        }
+        st->view_gen = g_view_gen;
         st->clip_dirty = 0;
     }
     return &st->clip;

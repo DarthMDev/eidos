@@ -206,6 +206,17 @@ static void test_host(void)
     BW_CHECK_EQ("the new player's drop and return change nothing",
                 (long)bw_mp_state(), (long)BW_MP_PLAYING);
 
+    printf("who may be drawn\n");
+    BW_CHECK_EQ("a connected player", bw_mp_peer_visible(2), 1);
+    BW_CHECK_EQ("not this game's own player", bw_mp_peer_visible(1), 0);
+    BW_CHECK_EQ("not one who never joined", bw_mp_peer_visible(9), 0);
+    BW_CHECK_EQ("not peer 0", bw_mp_peer_visible(0), 0);
+    bw_mp_on_net(2, (int)BW_SESSION_LEAVE, NULL, 0);
+    BW_CHECK_EQ("not a player who left (the roster still lists it)",
+                bw_mp_peer_visible(2), 0);
+    bw_mp_on_net(2, (int)BW_SESSION_JOIN, NULL, 0);
+    BW_CHECK_EQ("again when it is back", bw_mp_peer_visible(2), 1);
+
     printf("a drop and a return within the grace\n");
     bw_mp_on_net(2, (int)BW_SESSION_LEAVE, NULL, 0);
     BW_CHECK_EQ("the others play on", (long)bw_mp_state(), (long)BW_MP_GRACE);
@@ -619,6 +630,37 @@ static void test_shared(void)
     bw_mp_reset();
 }
 
+static void test_delta(void)
+{
+    enum { N = 100000 };
+    static u8 base[N], now[N];
+    u32 dsize = 0;
+    int bad_ok = 0, i;
+
+    printf("a save as changes\n");
+    for (i = 0; i < N; i++) {
+        base[i] = (u8)(i * 7);
+    }
+    memcpy(now, base, N);
+    BW_CHECK_EQ("a save that did not change is a few bytes",
+                bw_mp_delta_test(base, now, N, &dsize, &bad_ok), 1);
+    BW_CHECK_EQ("of 16", (long)dsize, 16);
+    BW_CHECK_EQ("a damaged delta is refused", bad_ok, 1);
+    now[10] ^= 1;
+    now[11] ^= 1;
+    now[50000] ^= 0xFF;
+    now[N - 1] ^= 3;
+    BW_CHECK_EQ("a few changed blocks come back whole",
+                bw_mp_delta_test(base, now, N, &dsize, &bad_ok), 1);
+    BW_CHECK_EQ("in far fewer bytes than the file", dsize < 200, 1);
+    BW_CHECK_EQ("and a damaged one is refused", bad_ok, 1);
+    for (i = 0; i < N; i++) {
+        now[i] = (u8)(base[i] + 1);
+    }
+    BW_CHECK_EQ("a file that changed everywhere is sent whole",
+                bw_mp_delta_test(base, now, N, &dsize, &bad_ok), -1);
+}
+
 int main(void)
 {
     /* every file the layer writes goes to the test's own folder */
@@ -629,5 +671,6 @@ int main(void)
     test_saves();
     test_games();
     test_shared();
+    test_delta();
     BW_REPORT("test_mp");
 }

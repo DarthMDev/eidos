@@ -141,8 +141,25 @@ typedef struct G3dMtxStack {
     u32   sp;        /* position/vector stack pointer */
     u32   error;     /* sticky over/underflow */
     int   clip_dirty;
+    u32   view_gen;  /* g3d_mtx_view_scale_generation() when clip was made */
     G3dMtx clip;     /* pos * proj, recomputed lazily */
 } G3dMtxStack;
+
+/*
+ * The view scale: a runtime widening of the clip matrix.  The clip matrix
+ * (position times projection) is what both the vertices and the game's own
+ * BOX_TEST / POS_TEST / VEC_TEST culling go through, so scaling its x and y
+ * output columns changes what is drawn and what the game decides to draw
+ * together.  kx and ky are fx32 factors (FX32_ONE is 1.0, the default and
+ * exactly the hardware's behaviour); a factor below one shows more of the
+ * world in that direction.  The one-screen layout sets them from the
+ * window's shape (engine/platform/geometry.c, eidos_world_geometry).
+ * Global to every stack, as the window is; the stacks notice a change
+ * through a generation count and rebuild their clip matrix.
+ */
+void  g3d_mtx_set_view_scale(fx32 kx, fx32 ky);
+void  g3d_mtx_view_scale(fx32 *kx, fx32 *ky);
+u32   g3d_mtx_view_scale_generation(void);
 
 void g3d_mtx_stack_init(G3dMtxStack *st);
 void g3d_mtx_stack_set_mode(G3dMtxStack *st, u32 mode);

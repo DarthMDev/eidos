@@ -277,6 +277,7 @@ typedef struct OptWork {
     int marq_tick;              /* frames to the next step (below 0: the first wait) */
     int marq_on;                /* the selected row's value moves */
     int marq_row;               /* the row it belongs to */
+    int asked;                  /* the question before the first frame was asked */
 } OptWork;
 
 /* A value too long for the selected row moves along, one letter every
@@ -1000,6 +1001,13 @@ static u32 opt_main(void *proc, u32 *seq, u32 pwork, u32 work)
     (void)work;
     switch (*seq) {
     case 0:
+        /* A question the screen asks before it first shows (the name, when
+         * Multiplayer opens without one): the keyboard comes straight
+         * after the title's fade-out, and the screen fades in after it. */
+        if (!w->asked && (w->asked = 1, kb_open(w))) {
+            *seq = 5;
+            return 0;
+        }
         screen_build(w);
         *seq = 1;
         break;
@@ -1095,6 +1103,13 @@ static const struct {
 const void *eidos_opt_proc_table(void)
 {
     return &k_proc;
+}
+
+/* Non-zero while this screen is up (the one-screen layout draws it
+ * itself, engine/ui/recipe_settings.c). */
+int eidos_opt_proc_active(void)
+{
+    return g_w != NULL;
 }
 
 /* ------------------------------------------------------------------ */

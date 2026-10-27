@@ -1084,6 +1084,10 @@ typedef struct G2dRig {
  * streams do not decode and which no pose needs.
  */
 int  g2d_rig_load(G2dRig *rig, BwArcFile *arc, u32 block_start, u32 block_size);
+/* Append the palette member `index` (an RLCN) to a loaded rig: a block
+ * loaded by parts (one of a species' two sprite sets) and its palette
+ * apart.  Returns 0 on success. */
+int  g2d_rig_load_palette(G2dRig *rig, BwArcFile *arc, u32 index);
 void g2d_rig_free(G2dRig *rig);
 
 #ifdef __cplusplus

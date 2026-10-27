@@ -51,7 +51,8 @@ u32  bw_mod_avatar_create(u32 sprite, s16 x, s16 z, u8 dir);
  * The avatar goes to a cell: the one the mod read from the other player.
  * The direction is the other's facing and the mode is how the other moves
  * (0 walking, 1 running, 2 cycling, 3 surfing).  The port walks the
- * avatar there; it does not jump.
+ * avatar there at the speed of that mode, faster when it falls a cell or
+ * more behind; more than two cells behind, it is put on the cell.
  *
  * A handle the port does not know is ignored.
  */
@@ -84,6 +85,16 @@ void bw_mod_avatar_set_game_data(void *game_data);
  * pool before the event fires) are only forgotten.
  */
 void bw_mod_avatar_reset(void);
+
+/*
+ * The avatars a save brought back: the game saves its entity pool whole,
+ * the port's avatars with it, and a load puts them in the pool again as
+ * records nobody owns.  The call deletes them (a record with the hero's or
+ * heroine's sprite, no event, no hit checks and an object id outside the
+ * port's range).  The multiplayer layer calls it when a field comes up.  The
+ * answer is how many it deleted.
+ */
+u32  bw_mod_avatar_sweep(void);
 
 /*
  * The port's own frame: it walks the avatars one step towards the cells

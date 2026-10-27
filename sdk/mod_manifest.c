@@ -397,7 +397,8 @@ static const struct {
     { "fx64", "long long" },
     { "fx32", "int" }, { "fx16", "short" },
     { "BOOL", "int" }, { "bool", "int" }, { "_Bool", "int" },
-    { "size_t", "unsigned int" }, { "OSTick", "unsigned long long" }
+    { "size_t", "unsigned int" }, { "OSTick", "unsigned long long" },
+    { "uptr", "unsigned int" }, { "sptr", "int" }      /* address-sized: a word on this host */
 };
 
 /* One identifier, with its bounds in the text it was read from. */

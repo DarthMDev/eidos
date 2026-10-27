@@ -54,6 +54,12 @@ static const LimitRow k_limits[BW_PORT_LIMIT_COUNT] = {
      * fldmmdl_types.h).  Not raisable until the code-to-index remap is in
      * the port. */
     { NULL, 799u, 799u },
+    /* SPECIES_LAST: the last species id (arm9 species.h).  Not raisable
+     * yet: the tables indexed by species (the ARM9's own, the sprite and
+     * icon member math, the save's seen and caught bit arrays) still have
+     * the DS sizes; it becomes "limit.species" (ceiling 2047) once they
+     * grow with it. */
+    { NULL, 649u, 649u },
 };
 
 static u32 g_value[BW_PORT_LIMIT_COUNT];

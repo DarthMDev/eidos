@@ -700,7 +700,7 @@ int main(void)
                 (long)g_calls_add, 1);
 
     printf("the move\n");
-    bw_mod_avatar_move(handle, 14, 0, 13, T_DIR_RIGHT, T_MODE_WALKING);
+    bw_mod_avatar_move(handle, 11, 0, 13, T_DIR_RIGHT, T_MODE_WALKING);
     BW_CHECK_EQ("the avatar does not jump to the cell",
                 (long)rec->pos_x, (long)cell_fx32(10));
     BW_CHECK_EQ("nor to the other one",
@@ -725,31 +725,61 @@ int main(void)
     BW_CHECK_EQ("it is still in the cell it was in",
                 (long)x, 10);
 
-    /* Four cells are sixty-four frames of a sixteenth of a cell. */
-    for (i = 1; i < 64; i++) {
+    /* One cell is sixteen frames of a sixteenth of a cell. */
+    for (i = 1; i < 16; i++) {
         bw_mod_avatar_frame();
     }
     BW_REQUIRE("the port knows where the avatar is",
                bw_mod_avatar_pos(handle, &x, &y, &z) == 0);
     BW_CHECK_EQ("the avatar has reached the cell the mod named",
-                (long)x, 14);
+                (long)x, 11);
     BW_CHECK_EQ("and the other one",
                 (long)z, 13);
     BW_CHECK_EQ("the game is told where it is",
-                (long)g_last_grid_x, 14);
+                (long)g_last_grid_x, 11);
     BW_CHECK_EQ("and where the other way is",
                 (long)g_last_grid_z, 13);
     BW_CHECK_EQ("and the position is the cell's own",
-                (long)rec->pos_x, (long)cell_fx32(14));
+                (long)rec->pos_x, (long)cell_fx32(11));
     BW_CHECK_EQ("in the other way too",
                 (long)rec->pos_z, (long)cell_fx32(13));
+
+    printf("the speed follows the other player\n");
+    bw_mod_avatar_move(handle, 12, 0, 13, T_DIR_RIGHT, T_MODE_RUNNING);
+    bw_mod_avatar_frame();
+    BW_CHECK_EQ("a run is twice a walk",
+                (long)rec->pos_x, (long)(cell_fx32(11) + 2 * T_STEP));
+    for (i = 1; i < 8; i++) {
+        bw_mod_avatar_frame();
+    }
+    BW_CHECK_EQ("and a cell takes eight frames",
+                (long)rec->pos_x, (long)cell_fx32(12));
+    bw_mod_avatar_move(handle, 14, 0, 13, T_DIR_RIGHT, T_MODE_WALKING);
+    bw_mod_avatar_frame();
+    BW_CHECK_EQ("two cells behind it catches up faster than a walk",
+                (long)(rec->pos_x > cell_fx32(12) + T_STEP), 1);
+    for (i = 0; i < 20; i++) {
+        bw_mod_avatar_frame();
+    }
+    BW_CHECK_EQ("and arrives long before a walk would",
+                (long)rec->pos_x, (long)cell_fx32(14));
+    bw_mod_avatar_move(handle, 30, 0, 13, T_DIR_LEFT, T_MODE_WALKING);
+    bw_mod_avatar_frame();
+    BW_CHECK_EQ("far behind it is put on the real place, not walked there",
+                (long)rec->pos_x, (long)cell_fx32(30));
+    BW_CHECK_EQ("and it faces the real facing",
+                (long)bw_mod_avatar_dir(handle), (long)T_DIR_LEFT);
+    bw_mod_avatar_move(handle, 11, 0, 13, T_DIR_RIGHT, T_MODE_WALKING);
+    bw_mod_avatar_frame();
+    BW_CHECK_EQ("and 19 cells away is a snap again",
+                (long)rec->pos_x, (long)cell_fx32(11));
 
     printf("a handle the port does not know\n");
     bw_mod_avatar_move(0u, 1, 2, 3, T_DIR_LEFT, T_MODE_WALKING);
     bw_mod_avatar_move(handle + 0x010000u, 1, 2, 3, T_DIR_LEFT,
                        T_MODE_WALKING);
     BW_CHECK_EQ("the avatar did not move",
-                (long)rec->pos_x, (long)cell_fx32(14));
+                (long)rec->pos_x, (long)cell_fx32(11));
     BW_CHECK_EQ("and it did not turn",
                 (long)bw_mod_avatar_dir(handle), (long)T_DIR_RIGHT);
     bw_mod_avatar_delete(0u);

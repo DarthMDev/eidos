@@ -187,6 +187,166 @@ static struct {
     GLint u_rect, u_tex, u_texsize, u_dstsize;
 } g_panel;
 
+/*
+ * The one-screen layout's pictures (engine/ui/ui.h).  Three programs, all
+ * drawn with the same full-quad vertex shader as everything else here.
+ *
+ * k_fsw: the world.  A DS screen whose 3D the GPU drew at the WINDOW's size
+ * (the projection widened to the window's shape, g3d_hw_set_view_scale).
+ * It is the k_fs3 composition with two changes.  The 3D frame is sampled at
+ * the window pixel, one to one, never resampled; the DS-resolution images
+ * (`tex`, `behind`, `zero`) are sampled through the DS screen's rectangle in
+ * the window (`dsr`: x, y, w, h in window pixels, y down), which is where
+ * the 2D layers belong when the view is widened around its centre.  Outside
+ * that rectangle only the 3D shows (over black where it is transparent), so
+ * the sides of a widened view carry the world and no stretched 2D.  hide2d
+ * treats the whole window like the outside.
+ *
+ * k_fsb: a separable Gaussian-ish blur (13 taps along `dir`, weights
+ * exp(-i^2 / 18)) times `tint`, for the world behind a modal.  Run twice,
+ * horizontal into a texture, then vertical onto the window with the dark
+ * tint.
+ *
+ * k_fsu: the interface canvas, premultiplied RGBA, sampled nearest and
+ * blended over what is there.
+ */
+static const char *k_fsw =
+    "#version 330 core\n"
+    "uniform sampler2D tex;\n"
+    "uniform sampler2D behind;\n"
+    "uniform sampler2D g3d;\n"
+    "uniform sampler2D zero;\n"
+    "uniform vec2 texsize;\n"
+    "uniform vec4 dsr;\n"
+    "uniform vec2 win;\n"
+    "uniform int bmode;\n"
+    "uniform int dil;\n"
+    "uniform int hasz;\n"
+    "uniform int hide2d;\n"
+    "uniform float bfac;\n"
+    "uniform vec3 sent;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    SHARP_FN
+    "void main() {\n"
+    "    vec2 f = vec2(gl_FragCoord.x, win.y - gl_FragCoord.y);\n"
+    "    vec4 g = texture(g3d, gl_FragCoord.xy / win);\n"
+    "    vec3 P = g.rgb;\n"
+    "    float A = g.a;\n"
+    "    if (bmode == 1) { P = (1.0 - bfac) * P + bfac * A; }\n"
+    "    else if (bmode == 2) { P = (1.0 - bfac) * P; }\n"
+    "    vec2 duv = (f - dsr.xy) / dsr.zw;\n"
+    "    bool inside = hide2d == 0 && duv.x >= 0.0 && duv.y >= 0.0 && duv.x < 1.0 && duv.y < 1.0;\n"
+    /* Outside the DS rectangle the world shows its 3D, except where the
+     * game covers the edge of its screen with black 2D (a wipe, a fade to
+     * black that the game draws with a layer, not the brightness): that
+     * black reaches out to the window's edge on the same row, so the
+     * transition covers the whole window and nothing is stretched. */
+    "    if (!inside && hide2d == 0 && duv.y >= 0.0 && duv.y < 1.0) {\n"
+    "        ivec2 sz0 = ivec2(texsize);\n"
+    "        ivec2 e = ivec2(duv.x < 0.0 ? 0 : sz0.x - 1, clamp(int(floor(duv.y * texsize.y)), 0, sz0.y - 1));\n"
+    "        vec3 T = texelFetch(tex, e, 0).rgb;\n"
+    "        if (T == texelFetch(behind, e, 0).rgb && max(T.r, max(T.g, T.b)) < 0.03) {\n"
+    "            color = vec4(T, 1.0);\n"
+    "            return;\n"
+    "        }\n"
+    /* the same black layer half blended over the 3D (a fade the game
+     * makes with alpha blending): the edge pixel blend, worked out from
+     * the screen with a black 3D layer as inside, applied to the world on
+     * the rest of the row */
+    "        if (hasz != 0) {\n"
+    "            vec3 X = texelFetch(zero, e, 0).rgb;\n"
+    "            if (T != X && max(X.r, max(X.g, X.b)) < 0.03) {\n"
+    "                float w = clamp((T.g - X.g) / sent.g, 0.0, 1.0);\n"
+    "                color = vec4(X + w * P, 1.0);\n"
+    "                return;\n"
+    "            }\n"
+    "        }\n"
+    "    }\n"
+    "    if (!inside) { color = vec4(P, 1.0); return; }\n"
+    "    ivec2 sz = ivec2(texsize);\n"
+    "    ivec2 ip = ivec2(floor(duv * texsize));\n"
+    "    vec2 dstsize = dsr.zw;\n"
+    "    bool m = false;\n"
+    "    int rad = (dil != 0) ? 1 : 0;\n"
+    "    for (int dy = -rad; dy <= rad; dy++) {\n"
+    "        for (int dx = -rad; dx <= rad; dx++) {\n"
+    "            ivec2 q = clamp(ip + ivec2(dx, dy), ivec2(0), sz - 1);\n"
+    "            if (texelFetch(tex, q, 0).rgb != texelFetch(behind, q, 0).rgb) { m = true; }\n"
+    "        }\n"
+    "    }\n"
+    "    if (!m) {\n"
+    "        color = vec4(sharp(tex, duv, texsize, dstsize), 1.0);\n"
+    "        return;\n"
+    "    }\n"
+    "    vec3 b = sharp(behind, duv, texsize, dstsize);\n"
+    "    vec3 d = P + (1.0 - A) * b;\n"
+    "    if (hasz != 0) {\n"
+    "        ivec2 c = clamp(ip, ivec2(0), sz - 1);\n"
+    "        vec3 T = texelFetch(tex, c, 0).rgb;\n"
+    "        vec3 X = texelFetch(zero, c, 0).rgb;\n"
+    "        if (T != X) {\n"
+    "            float w = clamp((T.g - X.g) / sent.g, 0.0, 1.0);\n"
+    "            d = min(vec3(1.0), sharp(zero, duv, texsize, dstsize) + w * d);\n"
+    "        }\n"
+    "    }\n"
+    "    color = vec4(d, 1.0);\n"
+    "}\n";
+
+static const char *k_fsb =
+    "#version 330 core\n"
+    "uniform sampler2D src;\n"
+    "uniform vec2 win;\n"
+    "uniform vec2 dir;\n"            /* one tap's step, in pixels */
+    "uniform float tint;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    "void main() {\n"
+    "    vec2 q = gl_FragCoord.xy / win;\n"
+    "    vec3 sum = vec3(0.0);\n"
+    "    float wsum = 0.0;\n"
+    "    for (int i = -6; i <= 6; i++) {\n"
+    "        float w = exp(-float(i * i) / 18.0);\n"
+    "        sum += w * texture(src, q + dir * float(i) / win).rgb;\n"
+    "        wsum += w;\n"
+    "    }\n"
+    "    color = vec4(tint * sum / wsum, 1.0);\n"
+    "}\n";
+
+static const char *k_fsu =
+    "#version 330 core\n"
+    "uniform sampler2D ctex;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    "void main() {\n"
+    "    color = texture(ctex, uv);\n"
+    "}\n";
+
+/*
+ * The one-screen layout's state in the presenter, like g_panel: the process
+ * has one presenter.  `on` is the layout; `world` says the view is a world
+ * (else the fallback draws the two screens as the other layouts do).
+ */
+static struct {
+    int on, world, screen, hide2d, blur, no_fade, hold, keep, dark, mix;
+    SDL_Rect ds;                   /* the DS screen's rectangle in the window */
+    GLuint progw, progb, progu;
+    GLint w_tex, w_behind, w_g3d, w_zero, w_texsize, w_dsr, w_win, w_bmode,
+          w_dil, w_hasz, w_hide2d, w_bfac, w_sent, w_rect;
+    GLint b_src, b_win, b_dir, b_tint, b_rect;
+    GLint u_ctex, u_rect;
+    GLuint ctex;                   /* the canvas */
+    int cw, ch;                    /* its size, 0: none uploaded */
+    SDL_Rect crect;                /* where it goes in the window, w 0: none */
+    GLuint fbo, btex[2];           /* the blur targets */
+    int bw, bh;
+    /* The last live world, kept for the modals: an app (the Bag, the
+     * Pokedex) closes the field, so the world behind its blur would be
+     * empty; the blur takes the picture from before the app opened. */
+    GLuint frozen;
+    int fw, fh, frozen_ok;
+} g_one;
+
 static GLuint compile(EidosGl *g, GLenum type, const char *src)
 {
     GLuint s = g->glCreateShader(type);
@@ -420,6 +580,44 @@ EidosGl *eidos_gl_create(SDL_Window *window)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
+
+    /* The one-screen layout's programs: optional like the panel's. */
+    g_one.progw = eidos_gl_compile_program(g, k_vs, k_fsw);
+    if (g_one.progw != 0) {
+        g_one.w_rect = g->glGetUniformLocation(g_one.progw, "rect");
+        g_one.w_tex = g->glGetUniformLocation(g_one.progw, "tex");
+        g_one.w_behind = g->glGetUniformLocation(g_one.progw, "behind");
+        g_one.w_g3d = g->glGetUniformLocation(g_one.progw, "g3d");
+        g_one.w_zero = g->glGetUniformLocation(g_one.progw, "zero");
+        g_one.w_texsize = g->glGetUniformLocation(g_one.progw, "texsize");
+        g_one.w_dsr = g->glGetUniformLocation(g_one.progw, "dsr");
+        g_one.w_win = g->glGetUniformLocation(g_one.progw, "win");
+        g_one.w_bmode = g->glGetUniformLocation(g_one.progw, "bmode");
+        g_one.w_dil = g->glGetUniformLocation(g_one.progw, "dil");
+        g_one.w_hasz = g->glGetUniformLocation(g_one.progw, "hasz");
+        g_one.w_hide2d = g->glGetUniformLocation(g_one.progw, "hide2d");
+        g_one.w_bfac = g->glGetUniformLocation(g_one.progw, "bfac");
+        g_one.w_sent = g->glGetUniformLocation(g_one.progw, "sent");
+    }
+    g_one.progb = eidos_gl_compile_program(g, k_vs, k_fsb);
+    if (g_one.progb != 0) {
+        g_one.b_rect = g->glGetUniformLocation(g_one.progb, "rect");
+        g_one.b_src = g->glGetUniformLocation(g_one.progb, "src");
+        g_one.b_win = g->glGetUniformLocation(g_one.progb, "win");
+        g_one.b_dir = g->glGetUniformLocation(g_one.progb, "dir");
+        g_one.b_tint = g->glGetUniformLocation(g_one.progb, "tint");
+    }
+    g_one.progu = eidos_gl_compile_program(g, k_vs, k_fsu);
+    if (g_one.progu != 0) {
+        g_one.u_rect = g->glGetUniformLocation(g_one.progu, "rect");
+        g_one.u_ctex = g->glGetUniformLocation(g_one.progu, "ctex");
+        glGenTextures(1, &g_one.ctex);
+        glBindTexture(GL_TEXTURE_2D, g_one.ctex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
     return g;
 }
 
@@ -447,6 +645,28 @@ void eidos_gl_destroy(EidosGl *g)
         }
         g_panel.tex = 0;
         g_panel.prog = 0;
+
+        if (g_one.ctex != 0) {
+            glDeleteTextures(1, &g_one.ctex);
+        }
+        if (g_one.btex[0] != 0) {
+            glDeleteTextures(2, g_one.btex);
+        }
+        if (g_one.fbo != 0 && g->glDeleteFramebuffers != NULL) {
+            g->glDeleteFramebuffers(1, &g_one.fbo);
+        }
+        if (g->glDeleteProgram != NULL) {
+            if (g_one.progw != 0) {
+                g->glDeleteProgram(g_one.progw);
+            }
+            if (g_one.progb != 0) {
+                g->glDeleteProgram(g_one.progb);
+            }
+            if (g_one.progu != 0) {
+                g->glDeleteProgram(g_one.progu);
+            }
+        }
+        memset(&g_one, 0, sizeof(g_one));
         g_panel.w = 0;
         g_panel.h = 0;
         if (g->have3d || g->p3d != 0) {
@@ -793,6 +1013,337 @@ static void draw_panel(EidosGl *g, int out_w, int out_h, const SDL_Rect *r)
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* The one-screen layout                                               */
+/* ------------------------------------------------------------------ */
+
+void eidos_gl_one_set(EidosGl *g, int on, int world, int screen,
+                      const SDL_Rect *ds, int hide_2d, int blur, int no_fade)
+{
+    (void)g;
+    g_one.on = on != 0;
+    g_one.world = on && world && ds != NULL && screen >= 0 && screen < 2;
+    g_one.screen = screen;
+    g_one.hide2d = hide_2d != 0;
+    g_one.blur = blur != 0;
+    g_one.no_fade = (no_fade & 1) != 0;
+    g_one.hold = (no_fade & 2) != 0;
+    g_one.keep = (no_fade & 4) != 0;
+    g_one.dark = (no_fade >> 8) & 31;
+    g_one.mix = (no_fade >> 13) & 31;
+    if (ds != NULL) {
+        g_one.ds = *ds;
+    }
+}
+
+/* The canvas: uploaded when the caller says its picture changed (rgba not
+ * NULL), shown in `rect` (window pixels); rect NULL hides it. */
+void eidos_gl_one_canvas(EidosGl *g, const unsigned char *rgba, int w, int h,
+                         const SDL_Rect *rect)
+{
+    if (g == NULL || g_one.ctex == 0) {
+        return;
+    }
+    if (rect == NULL || w <= 0 || h <= 0) {
+        g_one.crect.w = g_one.crect.h = 0;
+        return;
+    }
+    g_one.crect = *rect;
+    if (rgba == NULL) {
+        return;
+    }
+    glBindTexture(GL_TEXTURE_2D, g_one.ctex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (g_one.cw != w || g_one.ch != h) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, rgba);
+        g_one.cw = w;
+        g_one.ch = h;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA,
+                        GL_UNSIGNED_BYTE, rgba);
+    }
+}
+
+/* Non-zero when the last 3D frame was rendered at out_w x out_h and belongs
+ * to `screen`: the world path can use it one to one. */
+int eidos_gl_3d_matches(const EidosGl *g, int screen, int out_w, int out_h)
+{
+    return g != NULL && g->s3d == screen && g->fb[0].color != 0 &&
+           g->fb[0].w == out_w && g->fb[0].h == out_h;
+}
+
+static float ndc_x(int x, int w) { return 2.f * (float)x / (float)w - 1.f; }
+static float ndc_y(int y, int h) { return 1.f - 2.f * (float)y / (float)h; }
+
+/* Make blur target i the size of the window and bind it. */
+static int one_bind_target(EidosGl *g, int i, int w, int h)
+{
+    if (g_one.fbo == 0) {
+        g->glGenFramebuffers(1, &g_one.fbo);
+        glGenTextures(2, g_one.btex);
+    }
+    if (g_one.bw != w || g_one.bh != h) {
+        int k;
+
+        for (k = 0; k < 2; k++) {
+            glBindTexture(GL_TEXTURE_2D, g_one.btex[k]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
+                         GL_UNSIGNED_BYTE, NULL);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+        g_one.bw = w;
+        g_one.bh = h;
+    }
+    g->glBindFramebuffer(GL_FRAMEBUFFER, g_one.fbo);
+    g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                              GL_TEXTURE_2D, g_one.btex[i], 0);
+    if (g->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return -1;
+    }
+    glViewport(0, 0, w, h);
+    return 0;
+}
+
+/* The two blur passes: target 0 (the world) to target 1 horizontally, then
+ * target 1 to the window vertically, darkened.  The tap spacing follows the
+ * window's height so the blur looks the same at any size. */
+static void one_blur(EidosGl *g, int out_w, int out_h)
+{
+    float step = (float)out_h / 180.f;
+
+    if (step < 1.f) {
+        step = 1.f;
+    }
+    glDisable(GL_BLEND);
+    g->glBindVertexArray(g->vao);
+    g->glUseProgram(g_one.progb);
+    g->glUniform1i(g_one.b_src, 0);
+    g->glUniform4f(g_one.b_rect, -1.f, -1.f, 1.f, 1.f);
+    g->glUniform2f(g_one.b_win, (float)out_w, (float)out_h);
+    g->glActiveTexture(GL_TEXTURE0);
+
+    if (one_bind_target(g, 1, out_w, out_h) == 0) {
+        g->glUniform2f(g_one.b_dir, step, 0.f);
+        g->glUniform1f(g_one.b_tint, 1.f);
+        glBindTexture(GL_TEXTURE_2D, g_one.btex[0]);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+    g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, out_w, out_h);
+    g->glUniform2f(g_one.b_dir, 0.f, step);
+    g->glUniform1f(g_one.b_tint, 0.45f);
+    glBindTexture(GL_TEXTURE_2D, g_one.btex[1]);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
+static void one_world(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
+{
+    const int s = g_one.screen;
+    const int use_w = g_one.progw != 0 && g->prog3 != 0 && g->tw[s] != 0 &&
+                      s != g->cap_screen && g->behind_w == g->tw[s] &&
+                      g->behind_h == g->th[s] &&
+                      eidos_gl_3d_matches(g, s, out_w, out_h);
+    int blur = g_one.blur && g_one.progb != 0;
+    int frozen = g_one.frozen_ok && g_one.fw == out_w && g_one.fh == out_h;
+    int dark = g->bmode != 0 && g->bfac > 0.f;
+
+    (void)dst;
+    if ((g_one.hold || (!use_w && g_one.no_fade)) && !blur && frozen) {
+        /* an app opening or closing over the world, the world not drawn:
+         * the last picture of it stands */
+        g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, out_w, out_h);
+        g->glBindVertexArray(g->vao);
+        g->glUseProgram(g_one.progb);
+        g->glUniform1i(g_one.b_src, 0);
+        g->glUniform4f(g_one.b_rect, -1.f, -1.f, 1.f, 1.f);
+        g->glUniform2f(g_one.b_win, (float)out_w, (float)out_h);
+        g->glUniform2f(g_one.b_dir, 0.f, 0.f);
+        g->glUniform1f(g_one.b_tint, 1.f);
+        g->glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, g_one.frozen);
+        glDisable(GL_BLEND);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        return;
+    }
+    if (blur && one_bind_target(g, 0, out_w, out_h) != 0) {
+        blur = 0;
+    }
+    if (blur && (g_one.hold || !use_w) && frozen) {
+        /* a modal over an app that closed the world: the kept picture */
+        g->glBindVertexArray(g->vao);
+        g->glUseProgram(g_one.progb);
+        g->glUniform1i(g_one.b_src, 0);
+        g->glUniform4f(g_one.b_rect, -1.f, -1.f, 1.f, 1.f);
+        g->glUniform2f(g_one.b_win, (float)out_w, (float)out_h);
+        g->glUniform2f(g_one.b_dir, 0.f, 0.f);
+        g->glUniform1f(g_one.b_tint, 1.f);
+        g->glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, g_one.frozen);
+        glDisable(GL_BLEND);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        one_blur(g, out_w, out_h);
+        return;
+    }
+    if (use_w && !blur && !g_one.keep && !g_one.hold && !g_one.no_fade) {
+        /* a live world that is not the field (a battle, the title): the
+         * kept picture of the field is out of date from here */
+        g_one.frozen_ok = 0;
+    }
+    if (use_w) {
+        static const GLfloat sent[3] = { 84.f / 255.f, 168.f / 255.f, 52.f / 255.f };
+
+        glViewport(0, 0, out_w, out_h);
+        glClearColor(0.f, 0.f, 0.f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        g->glBindVertexArray(g->vao);
+        g->glUseProgram(g_one.progw);
+        g->glUniform1i(g_one.w_tex, 0);
+        g->glUniform1i(g_one.w_behind, 1);
+        g->glUniform1i(g_one.w_g3d, 2);
+        g->glUniform1i(g_one.w_zero, 3);
+        g->glUniform4f(g_one.w_rect, -1.f, -1.f, 1.f, 1.f);
+        g->glUniform2f(g_one.w_texsize, (float)g->tw[s], (float)g->th[s]);
+        g->glUniform4f(g_one.w_dsr, (float)g_one.ds.x, (float)g_one.ds.y,
+                       (float)g_one.ds.w, (float)g_one.ds.h);
+        g->glUniform2f(g_one.w_win, (float)out_w, (float)out_h);
+        g->glUniform1i(g_one.w_bmode, g_one.no_fade ? 0 : g->bmode);
+        g->glUniform1f(g_one.w_bfac, g->bfac);
+        g->glUniform1i(g_one.w_dil, g->dilate);
+        g->glUniform1i(g_one.w_hasz, g->has_zero);
+        g->glUniform1i(g_one.w_hide2d, g_one.hide2d);
+        g->glUniform3fv(g_one.w_sent, 1, sent);
+        g->glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, g->zero_tex);
+        g->glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, g->fb[0].color);
+        g->glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, g->behind_tex);
+        g->glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, g->tex[s]);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        if (g_one.mix > 0 && frozen && !blur) {
+            /* a scene change blends the old picture out over the new
+             * world: the kept wide picture at the game's weight */
+            float a = g_one.mix >= 16 ? 1.f : (float)g_one.mix / 16.f;
+
+            g->glUseProgram(g_one.progb);
+            g->glUniform1i(g_one.b_src, 0);
+            g->glUniform4f(g_one.b_rect, -1.f, -1.f, 1.f, 1.f);
+            g->glUniform2f(g_one.b_win, (float)out_w, (float)out_h);
+            g->glUniform2f(g_one.b_dir, 0.f, 0.f);
+            g->glUniform1f(g_one.b_tint, 1.f);
+            g->glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, g_one.frozen);
+            glEnable(GL_BLEND);
+            g->glBlendColor(0.f, 0.f, 0.f, a);
+            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glDisable(GL_BLEND);
+        } else if (!blur && g_one.keep && (!dark || g_one.no_fade)) {
+            /* keep this live world for a later modal (see g_one.frozen) */
+            if (g_one.frozen == 0) {
+                glGenTextures(1, &g_one.frozen);
+            }
+            glBindTexture(GL_TEXTURE_2D, g_one.frozen);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 0, 0, out_w, out_h, 0);
+            g_one.fw = out_w;
+            g_one.fh = out_h;
+            g_one.frozen_ok = 1;
+        }
+    } else if (g_one.keep && frozen && !blur) {
+        /* The field without window-size 3D for a while (a door: the game
+         * shows a capture of its screen while it fades): the last wide
+         * picture of the field, faded the way the game fades the screen,
+         * not the DS rectangle (which would squeeze the world to 4:3). */
+        int bm = s == g->cap_screen ? g->cap_bmode : g->bmode;
+        float bf = s == g->cap_screen ? g->cap_bfac : g->bfac;
+        float tint = bm == 2 ? 1.f - bf : 1.f;
+
+        /* the game's fade by any means (the master brightness or the
+         * blend registers, which the UI measures) */
+        if (1.f - (float)g_one.dark / 16.f < tint) {
+            tint = 1.f - (float)g_one.dark / 16.f;
+        }
+        glViewport(0, 0, out_w, out_h);
+        g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        g->glBindVertexArray(g->vao);
+        g->glUseProgram(g_one.progb);
+        g->glUniform1i(g_one.b_src, 0);
+        g->glUniform4f(g_one.b_rect, -1.f, -1.f, 1.f, 1.f);
+        g->glUniform2f(g_one.b_win, (float)out_w, (float)out_h);
+        g->glUniform2f(g_one.b_dir, 0.f, 0.f);
+        g->glUniform1f(g_one.b_tint, tint);
+        g->glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, g_one.frozen);
+        glDisable(GL_BLEND);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    } else {
+        /* No window-size 3D this frame (a screen without the GPU 3D, the
+         * capture, an older frame): the screen as it is, at the DS
+         * rectangle, which keeps its own aspect. */
+        SDL_Rect d[2];
+
+        memset(d, 0, sizeof(d));
+        d[s] = g_one.ds;
+        draw_frame(g, out_w, out_h, d);
+    }
+    if (blur) {
+        one_blur(g, out_w, out_h);
+    }
+}
+
+static void one_canvas(EidosGl *g, int out_w, int out_h)
+{
+    const SDL_Rect *r = &g_one.crect;
+
+    if (g_one.progu == 0 || g_one.ctex == 0 || g_one.cw <= 0 || g_one.ch <= 0 ||
+        r->w <= 0 || r->h <= 0) {
+        return;
+    }
+    glViewport(0, 0, out_w, out_h);
+    g->glBindVertexArray(g->vao);
+    g->glUseProgram(g_one.progu);
+    g->glUniform1i(g_one.u_ctex, 0);
+    g->glUniform4f(g_one.u_rect, ndc_x(r->x, out_w), ndc_y(r->y + r->h, out_h),
+                   ndc_x(r->x + r->w, out_w), ndc_y(r->y, out_h));
+    g->glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g_one.ctex);
+    glEnable(GL_BLEND);
+    g->glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE,
+                           GL_ONE_MINUS_SRC_ALPHA);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDisable(GL_BLEND);
+}
+
+/* One frame: the layout's picture, or the two screens as ever. */
+static void draw_scene(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
+{
+    if (g == NULL || out_w <= 0 || out_h <= 0) {
+        return;
+    }
+    if (!g_one.on) {
+        draw_frame(g, out_w, out_h, dst);
+        return;
+    }
+    if (g_one.world) {
+        one_world(g, out_w, out_h, dst);
+    } else {
+        draw_frame(g, out_w, out_h, dst);
+    }
+    one_canvas(g, out_w, out_h);
+}
+
 /*
  * The present: the two screens and, when the port has one, the run-status
  * panel beside them.  The panel's rectangle is the room the arrangement
@@ -804,8 +1355,10 @@ void eidos_gl_present_panel(EidosGl *g, int out_w, int out_h,
     if (g == NULL || out_w <= 0 || out_h <= 0) {
         return;
     }
-    draw_frame(g, out_w, out_h, dst);
-    draw_panel(g, out_w, out_h, panel);
+    draw_scene(g, out_w, out_h, dst);
+    if (!g_one.on) {
+        draw_panel(g, out_w, out_h, panel);
+    }
     gl_debug_dump(out_w, out_h);
     SDL_GL_SwapWindow(g->window);
 }
@@ -830,7 +1383,7 @@ int eidos_gl_grab(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2],
     if (raw == NULL) {
         return -1;
     }
-    draw_frame(g, out_w, out_h, dst);      /* not swapped: only read */
+    draw_scene(g, out_w, out_h, dst);      /* not swapped: only read */
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, out_w, out_h, GL_RGB, GL_UNSIGNED_BYTE, raw);
     for (y = 0; y < out_h; y++) {          /* GL rows run bottom-up */

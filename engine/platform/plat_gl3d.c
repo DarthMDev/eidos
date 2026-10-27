@@ -38,11 +38,18 @@
  * Anti-aliasing is the resolution itself.
  */
 
+#include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "plat_gl_int.h"
+#ifdef far
+#undef far /* the windows headers define it; BmapDraw has a member of that name */
+#endif
+#include "bmap.h"
+#include "bmap_place.h"
 #include "g3d.h"
 #include "hw3d.h"
 #include "prof.h"
@@ -242,6 +249,739 @@ static const char *k_fsf =
     "    o = vec4(nc * na, na);\n"
     "}\n";
 
+/* ------------------------------------------------------------------ */
+/* The battle backdrop (sdk/battle_view.c, docs/battle-backdrop.md)     */
+/* ------------------------------------------------------------------ */
+
+/* A placed scene (engine/world/bmap.h) drawn before the game's polygons with
+ * the battle's camera: the same projection, the same view scale and the same
+ * depth buffer, so the game's sprites, shadows and particles depth test
+ * against the map.  The scene's textures and vertices go to the GPU once per
+ * scene, when the snapshot names a new one. */
+#ifndef GL_TEXTURE_MAX_LEVEL
+#define GL_TEXTURE_MAX_LEVEL 0x813D
+#endif
+#ifndef GL_MIRRORED_REPEAT
+#define GL_MIRRORED_REPEAT 0x8370
+#endif
+
+static const char *k_vsb =
+    "#version 330 core\n"
+    "layout(location = 0) in vec3 a_pos;\n"
+    "layout(location = 1) in vec2 a_st;\n"
+    "layout(location = 2) in vec4 a_rgb;\n"
+    "uniform vec4 u_r0;\n"
+    "uniform vec4 u_r1;\n"
+    "uniform vec4 u_r2;\n"
+    "uniform vec4 u_r3;\n"
+    "uniform vec3 u_eye;\n"
+    "uniform vec3 u_pivot;\n"
+    "uniform int u_bb;\n"
+    "out vec2 v_st;\n"
+    "out vec3 v_rgb;\n"
+    "out vec3 v_pos;\n"
+    "out float v_bbc;\n"
+    "void main() {\n"
+    "    vec3 q = a_pos;\n"
+    "    v_bbc = 1.0;\n"
+    "    if (u_bb > 0) {\n"
+    "        /* built facing +z around the pivot: turn it toward the camera */\n"
+    "        vec3 z = u_eye - u_pivot;\n"
+    "        if (u_bb == 2) { z.y = 0.0; }\n"
+    "        z = normalize(z);\n"
+    "        vec3 x = normalize(cross(vec3(0.0, 1.0, 0.0), z));\n"
+    "        vec3 y = cross(z, x);\n"
+    "        vec3 o = a_pos - u_pivot;\n"
+    "        q = u_pivot + x * o.x + y * o.y + z * o.z;\n"
+    "    }\n"
+    "    vec4 p = vec4(q, 1.0);\n"
+    "    v_pos = q;\n"
+    "    v_st = a_st;\n"
+    "    v_rgb = a_rgb.rgb;\n"
+    "    gl_Position = vec4(dot(u_r0, p), dot(u_r1, p), dot(u_r2, p), dot(u_r3, p));\n"
+    "}\n";
+
+static const char *k_fsb =
+    "#version 330 core\n"
+    "in vec2 v_st;\n"
+    "in vec3 v_rgb;\n"
+    "in vec3 v_pos;\n"
+    "in float v_bbc;\n"
+    "layout(location = 0) out vec4 o;\n"
+    "uniform vec3 u_eye;\n"
+    "uniform vec3 u_foc;\n"
+    "uniform vec4 u_atm;\n"
+    "uniform vec3 u_sky;\n"
+    "uniform vec4 u_fog;\n"
+    "uniform vec3 u_fogc;\n"
+    "uniform int u_tex;\n"
+    "uniform sampler2D u_texture;\n"
+    "uniform float u_alpha;\n"
+    "uniform float u_cut;\n"
+    "uniform int u_front;\n"
+    "uniform vec4 u_poke[32];\n"
+    "uniform int u_npoke;\n"
+    "uniform int u_grass;\n"
+    "void main() {\n"
+    "    if (u_front == 1) {\n"
+    "        /* the second pass: what of the map stands between the camera and\n"
+    "           a Pokemon, over the sprite's box (seen at the Pokemon's\n"
+    "           distance: 2.8 units either side, from just under its feet to\n"
+    "           6 above), is drawn again over it */\n"
+    "        bool keep = false, behind = false;\n"
+    "        vec3 f = v_pos - u_eye;\n"
+    "        for (int i = 0; i < u_npoke; i++) {\n"
+    "            vec3 d = u_poke[i].xyz - u_eye;\n"
+    "            float L = length(d);\n"
+    "            if (L < 1e-3) { continue; }\n"
+    "            vec3 n = d / L;\n"
+    "            float along = dot(f, n);\n"
+    "            if (along < 0.05) { continue; }\n"
+    "            vec3 side = normalize(cross(n, vec3(0.0, 1.0, 0.0)));\n"
+    "            vec3 up = cross(side, n);\n"
+    "            vec3 o = (f - n * along) * (L / along);\n"
+    "            float sx = dot(o, side), uy = dot(o, up);\n"
+    "            float hgt = abs(u_poke[i].w);\n"
+    "            if (abs(sx) < 0.47 * hgt && uy > -1.0 && uy < hgt) {\n"
+    "                if (u_poke[i].w < 0.0) { behind = true; }   /* a shield: never covered */\n"
+    "                /* in front of this Pokemon: drawn again; behind it\n"
+    "                   (a nearer Pokemon covers it): never over that one */\n"
+    "                if (along <= L - 0.3) { keep = true; } else { behind = true; }\n"
+    "            }\n"
+    "        }\n"
+    "        if (!keep || behind) { discard; }\n"
+    "    }\n"
+    "    vec4 c = vec4(v_rgb, 1.0);\n"
+    "    if (u_tex == 1) { c *= texture(u_texture, v_st); }\n"
+    "    float a = c.a * u_alpha;\n"
+    "    if (a < u_cut) { discard; }\n"
+    "    if (u_cut > 0.4) { a = 1.0; }\n"
+    "    if (u_fog.z > 0.0) {\n"
+    "        float f = clamp((length(v_pos.xz - u_fog.xy) - u_fog.z) / u_fog.w, 0.0, 1.0);\n"
+    "        c.rgb = mix(c.rgb, u_fogc, f);\n"
+    "    }\n"
+    "    if (u_atm.w > 0.0) {\n"
+    "        /* the far part fades into the sky before the map ends */\n"
+    "        float f = smoothstep(u_atm.z, u_atm.w, length(v_pos.xz - u_atm.xy));\n"
+    "        c.rgb = mix(c.rgb, u_sky, f);\n"
+    "    }\n"
+    "    o = vec4(c.rgb * a, a);\n"
+    "}\n";
+
+/* A see-through triangle of the map, with its draw and its middle: these
+ * are drawn far to near, each blended over what lies behind it (one object,
+ * a gym's stage with the glow behind it, can lie both before and behind
+ * another part of itself). */
+/* The stencil while the game's polygons draw: the low bits hold 0x40 | the
+ * polygon ID of the last see-through pixel (the hardware's rule), the top
+ * bit marks every pixel the game drew, for the backdrop's front pass. */
+#define STENCIL_GAME 0x80u
+#define STENCIL_IDS  0x7Fu
+
+typedef struct BdPiece {
+    unsigned draw, first, count;
+    float mid[3];
+} BdPiece;
+
+typedef struct Gl3dBackdrop {
+    GLuint prog, vao, vbo;
+    GLint u_r[4], u_pivot, u_bb, u_atm, u_sky, u_eye, u_foc, u_fog, u_fogc, u_tex, u_texture, u_alpha, u_cut;
+    GLint u_front, u_poke, u_npoke, u_grass;
+    const void *scene;          /* the scene on the GPU                    */
+    unsigned gen;
+    float reach;                /* half-width of the placed map, battle units */
+    GLuint *tex;
+    unsigned n_tex;
+    BdPiece *piece;             /* the see-through parts, and their order  */
+    unsigned n_piece;
+    unsigned *order;
+    float *dist;
+} Gl3dBackdrop;
+
+static Gl3dBackdrop g_bd;
+
+static void backdrop_free_scene(void)
+{
+    if (g_bd.n_tex > 0) {
+        glDeleteTextures((GLsizei)g_bd.n_tex, g_bd.tex);
+    }
+    free(g_bd.tex);
+    g_bd.tex = NULL;
+    g_bd.n_tex = 0;
+    free(g_bd.piece);
+    free(g_bd.order);
+    free(g_bd.dist);
+    g_bd.piece = NULL;
+    g_bd.order = NULL;
+    g_bd.dist = NULL;
+    g_bd.n_piece = 0;
+    g_bd.scene = NULL;
+}
+
+/* The see-through parts of a scene (see BdPiece). */
+static void backdrop_pieces(const BmapScene *sc)
+{
+    unsigned i, n = 0, cap = 0;
+
+    for (i = 0; i < sc->nd; i++) {
+        const BmapDraw *d = &sc->d[i];
+        unsigned a, e;
+
+        if (!d->translucent || d->count == 0 || d->first + d->count > sc->nv) {
+            continue;
+        }
+        for (a = d->first; a < d->first + d->count; a = e) {
+            BdPiece *pc;
+            unsigned j;
+
+            e = a + 3;              /* one triangle: an object can be both near and far */
+            if (e > d->first + d->count) {
+                break;              /* a draw whose count is not whole triangles */
+            }
+            if (n == cap) {
+                BdPiece *np = (BdPiece *)realloc(g_bd.piece, (cap = cap ? cap * 2 : 64) * sizeof *np);
+
+                if (np == NULL) {
+                    break;
+                }
+                g_bd.piece = np;
+            }
+            pc = &g_bd.piece[n++];
+            pc->draw = i;
+            pc->first = a;
+            pc->count = e - a;
+            pc->mid[0] = pc->mid[1] = pc->mid[2] = 0.0f;
+            for (j = a; j < e; j++) {
+                pc->mid[0] += sc->v[j].x / (float)(e - a);
+                pc->mid[1] += sc->v[j].y / (float)(e - a);
+                pc->mid[2] += sc->v[j].z / (float)(e - a);
+            }
+        }
+    }
+    g_bd.n_piece = n;
+    g_bd.order = (unsigned *)malloc((n > 0 ? n : 1) * sizeof *g_bd.order);
+    g_bd.dist = (float *)malloc((n > 0 ? n : 1) * sizeof *g_bd.dist);
+    if (g_bd.order == NULL || g_bd.dist == NULL) {
+        g_bd.n_piece = 0;
+    }
+}
+
+static int piece_far_first(const void *a, const void *b)
+{
+    float da = g_bd.dist[*(const unsigned *)a], db = g_bd.dist[*(const unsigned *)b];
+
+    return da < db ? 1 : da > db ? -1 : 0;
+}
+
+static void backdrop_destroy(EidosGl *g)
+{
+    backdrop_free_scene();
+    if (g_bd.vbo != 0) {
+        g->glDeleteBuffers(1, &g_bd.vbo);
+    }
+    if (g_bd.vao != 0) {
+        g->glDeleteVertexArrays(1, &g_bd.vao);
+    }
+    if (g_bd.prog != 0) {
+        g->glDeleteProgram(g_bd.prog);
+    }
+    memset(&g_bd, 0, sizeof(g_bd));
+}
+
+static int backdrop_init(EidosGl *g)
+{
+    int i;
+
+    g_bd.prog = eidos_gl_compile_program(g, k_vsb, k_fsb);
+    if (g_bd.prog == 0) {
+        return -1;
+    }
+    for (i = 0; i < 4; i++) {
+        char nm[8];
+
+        snprintf(nm, sizeof(nm), "u_r%d", i);
+        g_bd.u_r[i] = g->glGetUniformLocation(g_bd.prog, nm);
+    }
+    g_bd.u_eye = g->glGetUniformLocation(g_bd.prog, "u_eye");
+    g_bd.u_foc = g->glGetUniformLocation(g_bd.prog, "u_foc");
+    g_bd.u_pivot = g->glGetUniformLocation(g_bd.prog, "u_pivot");
+    g_bd.u_bb = g->glGetUniformLocation(g_bd.prog, "u_bb");
+    g_bd.u_atm = g->glGetUniformLocation(g_bd.prog, "u_atm");
+    g_bd.u_sky = g->glGetUniformLocation(g_bd.prog, "u_sky");
+    g_bd.u_fog = g->glGetUniformLocation(g_bd.prog, "u_fog");
+    g_bd.u_fogc = g->glGetUniformLocation(g_bd.prog, "u_fogc");
+    g_bd.u_tex = g->glGetUniformLocation(g_bd.prog, "u_tex");
+    g_bd.u_texture = g->glGetUniformLocation(g_bd.prog, "u_texture");
+    g_bd.u_alpha = g->glGetUniformLocation(g_bd.prog, "u_alpha");
+    g_bd.u_cut = g->glGetUniformLocation(g_bd.prog, "u_cut");
+    g_bd.u_front = g->glGetUniformLocation(g_bd.prog, "u_front");
+    g_bd.u_poke = g->glGetUniformLocation(g_bd.prog, "u_poke");
+    g_bd.u_npoke = g->glGetUniformLocation(g_bd.prog, "u_npoke");
+    g_bd.u_grass = g->glGetUniformLocation(g_bd.prog, "u_grass");
+    g->glGenVertexArrays(1, &g_bd.vao);
+    g->glGenBuffers(1, &g_bd.vbo);
+    return 0;
+}
+
+/* Upload a texture with a box-filtered mip chain (alpha-weighted colour, so
+ * cut-out edges do not darken): the far map does not shimmer, the near map
+ * keeps its crisp texels (nearest magnification). */
+static void backdrop_mips(const BmapTexture *t)
+{
+    int w = t->w, h = t->h, lvl = 0, cut = 0;
+    float cov = 0.0f;
+    unsigned char *cur = (unsigned char *)malloc((size_t)w * h * 4);
+
+    if (cur == NULL) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t->w, t->h, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, t->rgba);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        return;
+    }
+    memcpy(cur, t->rgba, (size_t)w * h * 4);
+    {
+        int q, n = w * h, hard = 0, on = 0;
+
+        for (q = 0; q < n; q++) {
+            unsigned a = t->rgba[(size_t)q * 4 + 3];
+
+            hard += a == 0u || a >= 248u;
+            on += a >= 128u;
+        }
+        cut = hard * 10 >= n * 9 && on > 0 && on < n;
+        cov = (float)on / (float)(n > 0 ? n : 1);
+    }
+    for (;;) {
+        int nw, nh, x, y;
+        unsigned char *nx;
+
+        glTexImage2D(GL_TEXTURE_2D, lvl, GL_RGBA8, w, h, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, cur);
+        if (w == 1 && h == 1) {
+            break;
+        }
+        nw = w > 1 ? w / 2 : 1;
+        nh = h > 1 ? h / 2 : 1;
+        nx = (unsigned char *)malloc((size_t)nw * nh * 4);
+        if (nx == NULL) {
+            break;
+        }
+        for (y = 0; y < nh; y++) {
+            for (x = 0; x < nw; x++) {
+                unsigned sum[4] = { 0, 0, 0, 0 }, wa = 0, n = 0;
+                int dx, dy, k;
+
+                for (dy = 0; dy < 2; dy++) {
+                    for (dx = 0; dx < 2; dx++) {
+                        int sx = x * 2 + dx, sy = y * 2 + dy;
+                        const unsigned char *p;
+
+                        if (sx >= w) { sx = w - 1; }
+                        if (sy >= h) { sy = h - 1; }
+                        p = cur + ((size_t)sy * w + sx) * 4;
+                        for (k = 0; k < 3; k++) {
+                            sum[k] += (unsigned)p[k] * p[3];
+                        }
+                        sum[3] += p[3];
+                        wa += p[3];
+                        n++;
+                    }
+                }
+                for (k = 0; k < 3; k++) {
+                    nx[((size_t)y * nw + x) * 4 + k] =
+                        wa > 0 ? (unsigned char)(sum[k] / wa) : 0;
+                }
+                nx[((size_t)y * nw + x) * 4 + 3] = (unsigned char)(sum[3] / n);
+            }
+        }
+        if (cut) {
+            /* keep the covered share of a cut-out texture: the alpha test
+             * would otherwise eat the leaves at a distance */
+            float lo = 1.0f, hi = 16.0f;
+            int it, k2;
+
+            for (it = 0; it < 12; it++) {
+                float mid = 0.5f * (lo + hi);
+                unsigned cnt = 0;
+
+                for (k2 = 0; k2 < nw * nh; k2++) {
+                    cnt += (float)nx[(size_t)k2 * 4 + 3] * mid >= 128.0f;
+                }
+                if ((float)cnt / (float)(nw * nh) < cov) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            for (k2 = 0; k2 < nw * nh; k2++) {
+                float a2 = (float)nx[(size_t)k2 * 4 + 3] * hi;
+
+                nx[(size_t)k2 * 4 + 3] = (unsigned char)(a2 > 255.0f ? 255.0f : a2);
+            }
+        }
+        free(cur);
+        cur = nx;
+        w = nw;
+        h = nh;
+        lvl++;
+    }
+    free(cur);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, lvl);
+}
+
+static void backdrop_upload(EidosGl *g, const BmapScene *sc)
+{
+    unsigned i;
+
+    backdrop_free_scene();
+    g_bd.scene = sc;
+    if (sc->nt > 0) {
+        g_bd.tex = (GLuint *)calloc(sc->nt, sizeof(GLuint));
+        if (g_bd.tex == NULL) {
+            g_bd.scene = NULL;
+            return;
+        }
+        g_bd.n_tex = sc->nt;
+        glGenTextures((GLsizei)sc->nt, g_bd.tex);
+    }
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    for (i = 0; i < sc->nt; i++) {
+        const BmapTexture *t = &sc->t[i];
+
+        glBindTexture(GL_TEXTURE_2D, g_bd.tex[i]);
+        backdrop_mips(t);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                        GL_NEAREST_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                        !t->repeat_s ? GL_CLAMP_TO_EDGE
+                        : t->flip_s ? GL_MIRRORED_REPEAT : GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                        !t->repeat_t ? GL_CLAMP_TO_EDGE
+                        : t->flip_t ? GL_MIRRORED_REPEAT : GL_REPEAT);
+    }
+    {
+        /* the half-width of the placed map around the player tile */
+        float x0 = 0.0f, x1 = 0.0f, z0 = 7.0f, z1 = 7.0f;
+        unsigned n;
+
+        for (n = 0; n < sc->nv; n++) {
+            const BmapVertex *v = &sc->v[n];
+
+            x0 = v->x < x0 ? v->x : x0;
+            x1 = v->x > x1 ? v->x : x1;
+            z0 = v->z < z0 ? v->z : z0;
+            z1 = v->z > z1 ? v->z : z1;
+        }
+        g_bd.reach = fminf(fminf(-x0, x1), fminf(7.0f - z0, z1 - 7.0f));
+    }
+    backdrop_pieces(sc);
+    g->glBindVertexArray(g_bd.vao);
+    g->glBindBuffer(GL_ARRAY_BUFFER, g_bd.vbo);
+    g->glBufferData(GL_ARRAY_BUFFER,
+                    (GLsizeiptr)((size_t)sc->nv * sizeof(BmapVertex)), sc->v,
+                    GL_STATIC_DRAW);
+    g->glEnableVertexAttribArray(0);
+    g->glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(BmapVertex),
+                             (void *)offsetof(BmapVertex, x));
+    g->glEnableVertexAttribArray(1);
+    g->glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(BmapVertex),
+                             (void *)offsetof(BmapVertex, u));
+    g->glEnableVertexAttribArray(2);
+    g->glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE,
+                             sizeof(BmapVertex),
+                             (void *)offsetof(BmapVertex, r));
+}
+
+static void vcross(const float *a, const float *b, float *o)
+{
+    o[0] = a[1] * b[2] - a[2] * b[1];
+    o[1] = a[2] * b[0] - a[0] * b[2];
+    o[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+static float vdot(const float *a, const float *b)
+{
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static void vnorm(float *v)
+{
+    float l = sqrtf(vdot(v, v));
+
+    if (l > 1e-6f) {
+        v[0] /= l; v[1] /= l; v[2] /= l;
+    }
+}
+
+/* clip = the game's perspective (NNS_G3dGlbPerspectiveW) times its look-at,
+ * x and y scaled by the view scale as the geometry engine does.  Row i gives
+ * clip component i from (x, y, z, 1). */
+static void backdrop_matrix(const G3dBackdrop *b, float r[4][4])
+{
+    float f[3], rt[3], u[3], t, m0, m5, a, c, ex, ey, ef, kx, ky;
+    fx32 kxf, kyf;
+    int i;
+
+    g3d_mtx_view_scale(&kxf, &kyf);
+    kx = (float)kxf / 4096.0f;
+    ky = (float)kyf / 4096.0f;
+    for (i = 0; i < 3; i++) {
+        f[i] = b->target[i] - b->eye[i];
+    }
+    vnorm(f);
+    vcross(f, b->up, rt);
+    vnorm(rt);
+    vcross(rt, f, u);
+    t = b->fovy_sin / b->fovy_cos;
+    m5 = 1.0f / t;
+    m0 = m5 / b->aspect;
+    a = -(b->zfar + b->znear) / (b->zfar - b->znear);
+    c = -2.0f * b->zfar * b->znear / (b->zfar - b->znear);
+    ex = vdot(rt, b->eye);
+    ey = vdot(u, b->eye);
+    ef = vdot(f, b->eye);
+    for (i = 0; i < 3; i++) {
+        r[0][i] = m0 * kx * rt[i];
+        r[1][i] = m5 * ky * u[i];
+        r[2][i] = -a * f[i];
+        r[3][i] = f[i];
+    }
+    r[0][3] = -m0 * kx * ex;
+    r[1][3] = -m5 * ky * ey;
+    r[2][3] = a * ef + c;
+    r[3][3] = -ef;
+}
+
+/* Draw the scene.  The frame's framebuffer is bound and cleared. */
+/* front: the second pass, after the game's polygons.  The game draws its
+ * sprites without the map's depth, so the map would never hide a Pokemon;
+ * this pass draws the map again where it stands between the camera and a
+ * Pokemon (the shader keeps those parts only).  The depth is cleared over
+ * the Pokemon's boxes first, so the parts drawn again hide one another in
+ * the right order (a hedge before the ground behind it). */
+static void front_depth_clear(const G3dBackdrop *b, const float r[4][4])
+{
+    GLint vp[4];
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    unsigned i, c;
+
+    glGetIntegerv(GL_VIEWPORT, vp);
+    for (i = 0; i < b->n_poke && i < G3D_BACKDROP_SPRITES; i++) {
+        float d[3], L, n[3], side[3];
+
+        for (c = 0; c < 3; c++) {
+            d[c] = b->poke[i][c] - b->eye[c];
+        }
+        L = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (L < 1e-3f) {
+            continue;
+        }
+        for (c = 0; c < 3; c++) {
+            n[c] = d[c] / L;
+        }
+        side[0] = -n[2];
+        side[1] = 0.0f;
+        side[2] = n[0];
+        {
+            float sl = sqrtf(side[0] * side[0] + side[2] * side[2]);
+
+            if (sl < 1e-3f) {
+                continue;
+            }
+            side[0] /= sl;
+            side[2] /= sl;
+        }
+        for (c = 0; c < 4; c++) {
+            float p[3], cl[4];
+            int k;
+            float hgt = fabsf(b->poke[i][3]);
+            float sx = (c & 1) ? 0.47f * hgt : -0.47f * hgt, uy = (c & 2) ? hgt : -1.0f;
+
+            p[0] = b->poke[i][0] + side[0] * sx;
+            p[1] = b->poke[i][1] + uy;
+            p[2] = b->poke[i][2] + side[2] * sx;
+            for (k = 0; k < 4; k++) {
+                cl[k] = r[k][0] * p[0] + r[k][1] * p[1] + r[k][2] * p[2] + r[k][3];
+            }
+            if (cl[3] < 0.05f) {
+                x0 = y0 = -1e9f;            /* behind the camera: the whole frame */
+                x1 = y1 = 1e9f;
+                continue;
+            }
+            x0 = fminf(x0, cl[0] / cl[3]);
+            x1 = fmaxf(x1, cl[0] / cl[3]);
+            y0 = fminf(y0, cl[1] / cl[3]);
+            y1 = fmaxf(y1, cl[1] / cl[3]);
+        }
+    }
+    if (x1 < x0) {
+        return;
+    }
+    x0 = fmaxf(x0, -1.0f);
+    y0 = fmaxf(y0, -1.0f);
+    x1 = fminf(x1, 1.0f);
+    y1 = fminf(y1, 1.0f);
+    if (x1 <= x0 || y1 <= y0) {
+        return;
+    }
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(vp[0] + (GLint)floorf((x0 * 0.5f + 0.5f) * (float)vp[2]),
+              vp[1] + (GLint)floorf((y0 * 0.5f + 0.5f) * (float)vp[3]),
+              (GLsizei)ceilf((x1 - x0) * 0.5f * (float)vp[2]) + 2,
+              (GLsizei)ceilf((y1 - y0) * 0.5f * (float)vp[3]) + 2);
+    glDepthMask(GL_TRUE);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glDisable(GL_SCISSOR_TEST);
+}
+
+static void backdrop_draw(EidosGl *g, const G3dBackdrop *b, int front)
+{
+    const BmapScene *sc = (const BmapScene *)b->scene;
+    float r[4][4];
+    unsigned pass, i;
+
+    if (g_bd.prog == 0 || sc == NULL || sc->nv == 0) {
+        return;
+    }
+    if (g_bd.scene != sc || g_bd.gen != b->scene_gen) {
+        backdrop_upload(g, sc);
+        g_bd.gen = b->scene_gen;
+        if (g_bd.scene == NULL) {
+            return;
+        }
+    }
+    backdrop_matrix(b, r);
+    g->glUseProgram(g_bd.prog);
+    g->glBindVertexArray(g_bd.vao);
+    g->glBindBuffer(GL_ARRAY_BUFFER, g_bd.vbo);
+    for (i = 0; i < 4; i++) {
+        g->glUniform4f(g_bd.u_r[i], r[i][0], r[i][1], r[i][2], r[i][3]);
+    }
+    {
+        float at[4] = { 0.0f, 7.0f, 0.0f, 0.0f };
+
+        if (g_bd.reach > 40.0f) {
+            at[2] = 0.45f * g_bd.reach;
+            at[3] = 0.97f * g_bd.reach;
+        }
+        g->glUniform4f(g_bd.u_atm, at[0], at[1], at[2], at[3]);
+        float sk[3];
+
+        sk[0] = (float)b->sky[0] / 255.0f;
+        sk[1] = (float)b->sky[1] / 255.0f;
+        sk[2] = (float)b->sky[2] / 255.0f;
+        g->glUniform3fv(g_bd.u_sky, 1, sk);
+    }
+    g->glUniform3fv(g_bd.u_eye, 1, b->eye);
+    g->glUniform1i(g_bd.u_front, front);
+    g->glUniform1i(g_bd.u_npoke, (GLint)(b->n_poke > G3D_BACKDROP_SPRITES ? G3D_BACKDROP_SPRITES : b->n_poke));
+    g->glUniform4fv(g_bd.u_poke, G3D_BACKDROP_SPRITES, &b->poke[0][0]);
+    g->glUniform3fv(g_bd.u_foc, 1, b->target);
+    {
+        /* the zone's fog: linear in the distance from the player's tile
+         * (battle x 0, z 7), scaled from map units; .z = start, .w = span */
+        float fg[4] = { 0.0f, 7.0f, 0.0f, 1.0f };
+        float fc[3] = { 0.0f, 0.0f, 0.0f };
+
+        if (sc->fog_on && sc->fog_end > sc->fog_start) {
+            fg[2] = sc->fog_start * (sc->place_k > 0.0f ? sc->place_k : BMAP_PLACE_K) + 1e-3f;
+            fg[3] = (sc->fog_end - sc->fog_start) * (sc->place_k > 0.0f ? sc->place_k : BMAP_PLACE_K);
+            fc[0] = (float)sc->fog[0] / 255.0f;
+            fc[1] = (float)sc->fog[1] / 255.0f;
+            fc[2] = (float)sc->fog[2] / 255.0f;
+        }
+        g->glUniform4f(g_bd.u_fog, fg[0], fg[1], fg[2], fg[3]);
+        g->glUniform3fv(g_bd.u_fogc, 1, fc);
+    }
+    g->glActiveTexture(GL_TEXTURE0);
+    g->glUniform1i(g_bd.u_texture, 0);
+    glDisable(GL_STENCIL_TEST);
+    if (front) {
+        front_depth_clear(b, (const float (*)[4])r);
+        if (!b->front_only) {
+            /* only where the game drew (its sprites, their shadows and
+             * effects): the map in front of a sprite covers the sprite and
+             * nothing else, whatever the sprite's size */
+            glEnable(GL_STENCIL_TEST);
+            glStencilFunc(GL_EQUAL, STENCIL_GAME, STENCIL_GAME);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+        }
+    }
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(0.0f, 1.0f); /* no slope term: it pushed far, grazing triangles over the near map */
+    g->glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    for (pass = 0; pass < 2; pass++) {
+        if (pass == 1) {
+            glEnable(GL_BLEND);
+            g->glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE,
+                                   GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+        } else {
+            glDisable(GL_BLEND);
+            glDepthMask(GL_TRUE);
+        }
+        unsigned n = pass == 1 && g_bd.n_piece > 0 ? g_bd.n_piece : sc->nd;
+
+        if (pass == 1 && g_bd.n_piece > 0) {
+            /* the see-through parts far to near from this camera */
+            for (i = 0; i < g_bd.n_piece; i++) {
+                const float *m = g_bd.piece[i].mid;
+                float dx = m[0] - b->eye[0], dy = m[1] - b->eye[1], dz = m[2] - b->eye[2];
+
+                g_bd.order[i] = i;
+                g_bd.dist[i] = dx * dx + dy * dy + dz * dz;
+            }
+            qsort(g_bd.order, g_bd.n_piece, sizeof *g_bd.order, piece_far_first);
+        }
+        for (i = 0; i < n; i++) {
+            const BmapDraw *d;
+            unsigned first, count;
+
+            if (pass == 1 && g_bd.n_piece > 0) {
+                const BdPiece *pc = &g_bd.piece[g_bd.order[i]];
+
+                d = &sc->d[pc->draw];
+                first = pc->first;
+                count = pc->count;
+            } else {
+                d = &sc->d[i];
+                first = d->first;
+                count = d->count;
+            }
+            if ((d->translucent != 0) != (pass == 1) || count == 0
+                || d->alpha == 0 || first + count > sc->nv) {
+                continue;
+            }
+            if (d->cull == 0) {
+                glDisable(GL_CULL_FACE);
+            } else {
+                glEnable(GL_CULL_FACE);
+                glCullFace(d->cull == 1 ? GL_BACK : GL_FRONT);
+            }
+            if (d->tex >= 0 && (unsigned)d->tex < g_bd.n_tex) {
+                glBindTexture(GL_TEXTURE_2D, g_bd.tex[d->tex]);
+                g->glUniform1i(g_bd.u_tex, 1);
+            } else {
+                g->glUniform1i(g_bd.u_tex, 0);
+            }
+            g->glUniform1i(g_bd.u_bb, d->billboard);
+            g->glUniform1i(g_bd.u_grass, d->grass);
+            g->glUniform3fv(g_bd.u_pivot, 1, d->pivot);
+            g->glUniform1f(g_bd.u_alpha, (float)d->alpha / 31.0f);
+            g->glUniform1f(g_bd.u_cut, pass == 1 ? 0.02f : 0.5f);
+            glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)count);
+        }
+    }
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    g->glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+}
+
 static u8 c5to8(u32 v)
 {
     v &= 31u;
@@ -296,6 +1036,10 @@ int eidos_gl3d_init(EidosGl *g)
         g->uf_aonly = g->glGetUniformLocation(g->pfog, "u_aonly");
         g->uf_clear = g->glGetUniformLocation(g->pfog, "u_clear");
     }
+    /* The battle backdrop is optional too: without its program the game's
+     * own scenery is not drawn either and the frame has only the sky
+     * colour. */
+    (void)backdrop_init(g);
     g->glGenFramebuffers(1, &g->fb[0].fbo);
     g->glGenFramebuffers(1, &g->fb[1].fbo);
     g->glGenVertexArrays(1, &g->vao3);
@@ -352,6 +1096,7 @@ void eidos_gl3d_destroy(EidosGl *g)
     if (g->pfog != 0) {
         g->glDeleteProgram(g->pfog);
     }
+    backdrop_destroy(g);
     g3d_hw_gpu_features(0u);
     for (i = 0; i < g->n_gtex; i++) {
         glDeleteTextures(1, &g->gtex[i]);
@@ -654,12 +1399,12 @@ static void draw_run(EidosGl *g, const G3dSnapshot *s, const Gl3dRun *d,
          * do not (unless bit 11 says so).  One draw cannot do both:
          * two passes can. */
         glDepthMask(GL_TRUE);
-        glStencilFunc(GL_ALWAYS, 0, 0xFFu);
+        glStencilFunc(GL_ALWAYS, STENCIL_GAME, 0xFFu);
         g->glUniform1i(g->u_pass, 1);
         g->glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
         glDepthMask(d->xlu_depth ? GL_TRUE : GL_FALSE);
-        glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
+        glStencilFunc(GL_NOTEQUAL, xid | STENCIL_GAME, STENCIL_IDS);
         g->glUniform1i(g->u_pass, 2);
         /* a translucent pixel keeps the ID beneath it */
         g->glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
@@ -668,9 +1413,9 @@ static void draw_run(EidosGl *g, const G3dSnapshot *s, const Gl3dRun *d,
         *prev_mask = d->xlu_depth;
     } else {
         if (d->a5 >= 31) {
-            glStencilFunc(GL_ALWAYS, 0, 0xFFu);
+            glStencilFunc(GL_ALWAYS, STENCIL_GAME, 0xFFu);
         } else {
-            glStencilFunc(GL_NOTEQUAL, xid, 0xFFu);
+            glStencilFunc(GL_NOTEQUAL, xid | STENCIL_GAME, STENCIL_IDS);
         }
         g->glColorMaski(1, d->a5 >= 31, d->a5 >= 31, d->a5 >= 31, d->a5 >= 31);
         glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)verts);
@@ -687,12 +1432,13 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     int prev_depth_eq = -1, prev_mask = -1;
     GLfloat toon[96];
     unsigned long long t_up, t_dr;
-    int use_ms, edges, fog;
+    int use_ms, edges, fog, backdrop;
     double cdepth;
 
     if (g == NULL || !g->have3d || s == NULL || w < 1 || h < 1) {
         return -1;
     }
+    backdrop = s->backdrop.valid && g_bd.prog != 0 && !s->wbuffer;
     if (fbo_resize(g, fb, w, h) != 0) {
         return -1;
     }
@@ -802,6 +1548,16 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
     cr = c5to8(cc);
     cg = c5to8(cc >> 5);
     cb = c5to8(cc >> 10);
+    if (backdrop) {
+        /* the sky beyond the map; opaque, the 2D layers are behind it */
+        alpha = 255u;
+        cr = s->backdrop.sky[0];
+        cg = s->backdrop.sky[1];
+        cb = s->backdrop.sky[2];
+    }
+    if (backdrop && s->backdrop.front_only) {
+        alpha = 0u;                     /* only the front pass shows */
+    }
     glClearColor((float)cr / 255.f * (float)alpha / 255.f,
                  (float)cg / 255.f * (float)alpha / 255.f,
                  (float)cb / 255.f * (float)alpha / 255.f,
@@ -830,6 +1586,13 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
         glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     }
 
+    if (backdrop) {
+        if (s->backdrop.front_only) {
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        }
+        backdrop_draw(g, &s->backdrop, 0);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
     if (nv > 0) {
         unsigned drawn = 0, first = 0;
 
@@ -942,6 +1705,9 @@ static int render_into(EidosGl *g, GlFb *fb, const G3dSnapshot *s, int w, int h)
             }
         }
         (void)drawn;
+    }
+    if (backdrop && s->backdrop.n_poke > 0) {
+        backdrop_draw(g, &s->backdrop, 1);
     }
     glDepthMask(GL_TRUE);
     glDisable(GL_DEPTH_TEST);

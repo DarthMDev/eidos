@@ -196,5 +196,7 @@ the whole canvas between two states.
 
 ## Status
 
-Design only. No implementation is part of this document. The scene
+The decisions that override this document (two-screen layouts kept,
+fallback per scene, mod fallback, the interface kit) are in
+[`unified-view-plan.md`](unified-view-plan.md). Design only. No implementation is part of this document. The scene
 inventory is [`unified-view-inventory.md`](unified-view-inventory.md).

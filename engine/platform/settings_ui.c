@@ -110,6 +110,10 @@ static const char *const k_option_help[EIDOS_OPT_COUNT][2] = {
     [EIDOS_OPT_SOUND_VOLUME]        = { "The volume.", "" },
     [EIDOS_OPT_EXTRAS_INSTANT_TEXT] = { "Show each page of a message",
                                         "at once." },
+    [EIDOS_OPT_BATTLE_BACKDROP]     = { "The real map, or the game's",
+                                        "own battle scenery." },
+    [EIDOS_OPT_BATTLE_PLATFORMS]    = { "The game's own stages",
+                                        "under the Pokemon." },
 };
 #define HELP_BIND1     "Bind a key or pad button."
 #define HELP_BIND2     ""
@@ -213,6 +217,8 @@ static const char *const k_option_labels[EIDOS_OPT_COUNT] = {
     [EIDOS_OPT_LAYOUT_GAP]          = "Screen gap",
     [EIDOS_OPT_SOUND_VOLUME]        = "Master volume",
     [EIDOS_OPT_EXTRAS_INSTANT_TEXT] = "Instant text",
+    [EIDOS_OPT_BATTLE_BACKDROP]     = "Battle backdrop",
+    [EIDOS_OPT_BATTLE_PLATFORMS]    = "Battle platforms",
 };
 
 /* Value names that differ from the backend's lowercase choice names:
@@ -224,10 +230,15 @@ static const ValueName k_value_names[] = {
     { EIDOS_OPT_DISPLAY_MODE,        2, "Borderless" },
     { EIDOS_OPT_LAYOUT_ARRANGEMENT,  0, "Stacked" },
     { EIDOS_OPT_LAYOUT_ARRANGEMENT,  1, "Side by side" },
+    { EIDOS_OPT_LAYOUT_ARRANGEMENT,  2, "One screen" },
     { EIDOS_OPT_LAYOUT_SWAP,         0, "Off" },
     { EIDOS_OPT_LAYOUT_SWAP,         1, "On" },
     { EIDOS_OPT_EXTRAS_INSTANT_TEXT, 0, "Off" },
     { EIDOS_OPT_EXTRAS_INSTANT_TEXT, 1, "On" },
+    { EIDOS_OPT_BATTLE_BACKDROP,     0, "Real map" },
+    { EIDOS_OPT_BATTLE_BACKDROP,     1, "Original" },
+    { EIDOS_OPT_BATTLE_PLATFORMS,    0, "Off" },
+    { EIDOS_OPT_BATTLE_PLATFORMS,    1, "On" },
 };
 
 /* Short names for the side-by-side choices (a choice has about 48 pixels). */
@@ -237,6 +248,7 @@ static const ValueName k_choice_names[] = {
     { EIDOS_OPT_DISPLAY_MODE,        2, "Border" },
     { EIDOS_OPT_LAYOUT_ARRANGEMENT,  0, "Stacked" },
     { EIDOS_OPT_LAYOUT_ARRANGEMENT,  1, "Wide" },
+    { EIDOS_OPT_LAYOUT_ARRANGEMENT,  2, "One" },
 };
 
 #define STR_AUTO         "Auto"
@@ -694,6 +706,11 @@ static void build_rows(void)
         break;
     case TAB_EXTRAS:
         add_row(ROW_OPTION, EIDOS_OPT_EXTRAS_INSTANT_TEXT, 0);
+        if (eidos_settings_get(EIDOS_OPT_LAYOUT_ARRANGEMENT) == EIDOS_LAYOUT_ONE) {
+            /* the battle backdrop is the one-screen layout's own */
+            add_row(ROW_OPTION, EIDOS_OPT_BATTLE_BACKDROP, 0);
+            add_row(ROW_OPTION, EIDOS_OPT_BATTLE_PLATFORMS, 0);
+        }
         break;
     case TAB_MODS:
         build_mods_rows();
@@ -884,6 +901,11 @@ void eidos_sui_enter(void)
             g_mp_view = MP_VIEW_JOIN;
             build_rows();
             (void)session_action(ROW_MP_JOIN_GO);
+        } else if (eidos_settings_net_name()[0] == '\0') {
+            /* No name yet: the other players see it, so the keyboard asks
+             * for it before the screen first shows (mod_options_proc.c
+             * opens it in place of the screen's fade-in). */
+            (void)keyboard_open(KB_NAME);
         }
         return;
     }
@@ -2581,4 +2603,30 @@ void eidos_sui_help_line(int i, char *out, int n)
     if (i >= 0 && i < 4) {
         put(out, n, l[i]);
     }
+}
+
+/*
+ * The mouse is over a row: the cursor goes there and nothing else happens
+ * (no sound, no action), so a key goes on from the row the mouse was on.
+ * `row` is as for eidos_sui_touch.  Returns 1 when the cursor moved.
+ */
+int eidos_sui_hover(int row)
+{
+    int at;
+
+    if (question_up() || g.wait_release || g.capturing || g.editing) {
+        return 0;
+    }
+    if (has_back() && row == eidos_sui_row_count() - 1) {
+        at = g.nrows;
+    } else if (row >= 1 && g.scroll + row - 1 < g.nrows) {
+        at = g.scroll + row - 1;
+    } else {
+        return 0;
+    }
+    if (g.cursor == at) {
+        return 0;
+    }
+    g.cursor = at;
+    return 1;
 }

@@ -228,9 +228,18 @@ static void nitromain_init_part(void)
     func_0200523C();
 }
 
+/* The one-screen interface's game-thread work (engine/ui/ui.c): the sounds
+ * it asked for.  Port glue, not part of NitroMain: the interface runs on
+ * the frame thread, and the sound system may only be called from the
+ * game's own thread. */
+extern void eidos_ui_game_frame(void) __attribute__((weak));
+
 /* 0x02005166..0x0200519A: the frame's work, up to the vblank wait. */
 static void nitromain_head(void)
 {
+    if (eidos_ui_game_frame != NULL) {
+        eidos_ui_game_frame();
+    }
     func_020053EC();
     func_020055F8();
     func_020052EC();

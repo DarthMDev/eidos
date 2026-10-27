@@ -145,6 +145,17 @@ int g2d_rig_load(G2dRig *rig, BwArcFile *arc, u32 block_start, u32 block_size)
     return 0;
 }
 
+int g2d_rig_load_palette(G2dRig *rig, BwArcFile *arc, u32 index)
+{
+    u32 size = 0;
+    const u8 *data = index < arc->count ? rig_member(rig, arc, index, &size) : NULL;
+
+    if (data == NULL || size < 4 || bw_rd32(data) != FOURCC('R', 'L', 'C', 'N')) {
+        return -1;
+    }
+    return g2d_palette_append_nclr(&rig->palette, data, size);
+}
+
 void g2d_rig_free(G2dRig *rig)
 {
     u32 i;

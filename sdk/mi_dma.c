@@ -94,14 +94,30 @@ static void bw_dma_wait(u32 dmaNo)
 }
 
 /* The transfer the channel's registers describe, done now. */
+/*
+ * The LCDC window of VRAM repeats every MiB: the ARM9 decodes 0x06800000
+ * to 0x06FFFFFF as LCDC and keeps the low 20 bits, so 0x06A90000 is
+ * 0x06890000 (melonDS does the same).  The host maps the banks only at
+ * 0x06800000..0x068A3FFF, so a DMA to a mirror is folded back first.  The
+ * trainer card's 3D palette load (ov111 VIEWER_ACTOR_LoadTexture) reaches
+ * the palette bank through the mirror at +2 MiB.
+ */
+static u32 bw_dma_lcdc_fold(u32 a)
+{
+    if (a >= 0x06900000u && a < 0x07000000u) {
+        return 0x06800000u + ((a - 0x06800000u) & 0xFFFFFu);
+    }
+    return a;
+}
+
 static void bw_dma_run(u32 src, u32 dest, u32 ctrl)
 {
     u32 unit = (ctrl & BW_DMA_32BIT) ? 4u : 2u;
     u32 count = ctrl & BW_DMA_COUNT;
     intptr_t ds = bw_dma_step(ctrl >> 21, unit);
     intptr_t ss = bw_dma_step(ctrl >> 23, unit);
-    u8 *d = (u8 *)(uintptr_t)dest;
-    const u8 *s = (const u8 *)(uintptr_t)src;
+    u8 *d = (u8 *)(uintptr_t)bw_dma_lcdc_fold(dest);
+    const u8 *s = (const u8 *)(uintptr_t)bw_dma_lcdc_fold(src);
     u32 i;
 
     /* The addresses are raw: a VRAMCNT store since the last translation

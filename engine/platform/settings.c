@@ -38,8 +38,9 @@
 /* ------------------------------------------------------------------ */
 
 static const char *const k_modes[] = { "windowed", "fullscreen", "borderless" };
-static const char *const k_arrangements[] = { "vertical", "horizontal" };
+static const char *const k_arrangements[] = { "vertical", "horizontal", "one" };
 static const char *const k_offon[] = { "off", "on" };
+static const char *const k_backdrops[] = { "real map", "original" };
 
 static const EidosOption k_options[EIDOS_OPT_COUNT] = {
     { "Display", "mode", "Display mode", EIDOS_OPTKIND_CHOICE, 0, 2, 1,
@@ -56,16 +57,20 @@ static const EidosOption k_options[EIDOS_OPT_COUNT] = {
       NULL, "px", 1, NULL },
     { "Display", "maximized", "Window maximized", EIDOS_OPTKIND_CHOICE, 0, 1,
       1, 0, k_offon, "", 1, NULL },
-    { "Layout", "arrangement", "Screen layout", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
+    { "Layout", "arrangement", "Screen layout", EIDOS_OPTKIND_CHOICE, 0, 2, 1,
       EIDOS_LAYOUT_VERTICAL, k_arrangements, "", 0, NULL },
     { "Layout", "swap_screens", "Swap screens", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
       0, k_offon, "", 0, NULL },
     { "Layout", "gap", "Gap between screens", EIDOS_OPTKIND_INT, 0, 128, 1, 0,
       NULL, "px", 0, NULL },
-    { "Sound", "volume", "Master volume", EIDOS_OPTKIND_INT, 0, 100, 5, 100,
+    { "Sound", "volume", "Master volume", EIDOS_OPTKIND_INT, 0, 100, 5, 50,
       NULL, "%", 0, NULL },
     { "Extras", "instant_text", "Instant text", EIDOS_OPTKIND_CHOICE, 0, 1, 1,
       0, k_offon, "", 0, NULL },
+    { "Extras", "battle_backdrop", "Battle backdrop", EIDOS_OPTKIND_CHOICE, 0,
+      1, 1, 0, k_backdrops, "", 0, NULL },
+    { "Extras", "battle_platforms", "Battle platforms", EIDOS_OPTKIND_CHOICE,
+      0, 1, 1, 0, k_offon, "", 0, NULL },
 };
 
 static const EidosButtonInfo k_buttons[NBTN] = {
@@ -2410,6 +2415,14 @@ int eidos_settings_parse_arg(int argc, char **argv, int *i)
         override_opt(EIDOS_OPT_LAYOUT_SWAP, 1);
         return 1;
     }
+    if (strcmp(a, "--two-screens") == 0) {
+        /* the saved two-screen arrangement, or stacked when one is saved */
+        ensure_init();
+        if (g_cur.v[EIDOS_OPT_LAYOUT_ARRANGEMENT] == EIDOS_LAYOUT_ONE) {
+            override_opt(EIDOS_OPT_LAYOUT_ARRANGEMENT, EIDOS_LAYOUT_STACKED);
+        }
+        return 1;
+    }
     if (strcmp(a, "--resolution") == 0) {
         id = EIDOS_OPT_DISPLAY_RESOLUTION;
     } else if (strcmp(a, "--pixel-scale") == 0) {
@@ -2567,4 +2580,22 @@ void eidos_settings_on_quit(EidosPlatform *p)
         }
         g_plat = NULL;
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* The one-screen interface, running or not                            */
+/* ------------------------------------------------------------------ */
+
+static u32 g_ui_ran_at;
+static int g_ui_ran;
+
+void eidos_ui_mark_active(void)
+{
+    g_ui_ran = 1;
+    g_ui_ran_at = bw_input_frame_number();
+}
+
+int eidos_ui_active(void)
+{
+    return g_ui_ran && bw_input_frame_number() - g_ui_ran_at <= 4u;
 }

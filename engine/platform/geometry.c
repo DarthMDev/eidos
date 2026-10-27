@@ -25,6 +25,107 @@
  */
 extern u32 bw_mod_panel_shown_used(void);
 
+/*
+ * The one-screen layout's fallback: the two screens side by side, no gap,
+ * in a 512 x 192 box.  The same arithmetic as the side-by-side layout, but
+ * without the run-status panel (the one-screen layout shows none).
+ */
+void eidos_one_fallback_place(int swap, EidosScreenPlacement *out)
+{
+    const int w = (int)EIDOS_DS_SCREEN_WIDTH;
+    const int h = (int)EIDOS_DS_SCREEN_HEIGHT;
+    int first = swap ? 1 : 0;
+
+    out->screen[first].x = 0;
+    out->screen[first].y = 0;
+    out->screen[1 - first].x = w;
+    out->screen[1 - first].y = 0;
+    out->screen[0].w = out->screen[1].w = w;
+    out->screen[0].h = out->screen[1].h = h;
+    out->width = 2 * w;
+    out->height = h;
+}
+
+void eidos_one_fallback_viewport(int swap, int pixel_scale, int out_w,
+                                 int out_h, EidosViewport *vp)
+{
+    EidosScreenPlacement pl;
+
+    eidos_one_fallback_place(swap, &pl);
+    eidos_display_viewport_n(&pl, out_w, out_h, pixel_scale, vp);
+}
+
+void eidos_world_geometry(int win_w, int win_h, float zoom,
+                          EidosWorldGeometry *out)
+{
+    double a, kx, ky;
+    s32 fx, fy;
+
+    out->kx = out->ky = 4096;
+    out->ds.x = out->ds.y = 0;
+    out->ds.w = win_w > 0 ? win_w : 0;
+    out->ds.h = win_h > 0 ? win_h : 0;
+    if (win_w <= 0 || win_h <= 0) {
+        return;
+    }
+    if (!(zoom > 0.0f)) {                       /* unset, or NaN */
+        zoom = 1.0f;
+    }
+    if (zoom < EIDOS_WORLD_ZOOM_MIN) {
+        zoom = EIDOS_WORLD_ZOOM_MIN;
+    }
+    if (zoom > EIDOS_WORLD_ZOOM_MAX) {
+        zoom = EIDOS_WORLD_ZOOM_MAX;
+    }
+    a = (double)win_w / (double)win_h;
+    if (a >= 4.0 / 3.0) {
+        kx = (4.0 / 3.0) / a;
+        ky = 1.0;
+    } else {
+        kx = 1.0;
+        ky = a / (4.0 / 3.0);
+    }
+    kx *= (double)zoom;
+    ky *= (double)zoom;
+    fx = (s32)(kx * 4096.0 + 0.5);
+    fy = (s32)(ky * 4096.0 + 0.5);
+    if (fx < 1) {
+        fx = 1;
+    }
+    if (fy < 1) {
+        fy = 1;
+    }
+    out->kx = fx;
+    out->ky = fy;
+    out->ds.w = (int)((double)win_w * (double)fx / 4096.0 + 0.5);
+    out->ds.h = (int)((double)win_h * (double)fy / 4096.0 + 0.5);
+    out->ds.x = (win_w - out->ds.w) / 2;
+    out->ds.y = (win_h - out->ds.h) / 2;
+}
+
+int eidos_world_to_ds(const EidosWorldGeometry *g, int wx, int wy, int *x,
+                      int *y)
+{
+    const EidosRect *r = &g->ds;
+    int cx, cy, inside;
+
+    if (r->w <= 0 || r->h <= 0) {
+        return 0;
+    }
+    cx = wx < r->x ? r->x : wx >= r->x + r->w ? r->x + r->w - 1 : wx;
+    cy = wy < r->y ? r->y : wy >= r->y + r->h ? r->y + r->h - 1 : wy;
+    inside = cx == wx && cy == wy;
+    if (x != NULL) {
+        *x = (int)((s64)(2 * (cx - r->x) + 1) * (s64)EIDOS_DS_SCREEN_WIDTH /
+                   (2 * (s64)r->w));
+    }
+    if (y != NULL) {
+        *y = (int)((s64)(2 * (cy - r->y) + 1) * (s64)EIDOS_DS_SCREEN_HEIGHT /
+                   (2 * (s64)r->h));
+    }
+    return inside;
+}
+
 void eidos_layout_place(int layout, int swap, int gap,
                         EidosScreenPlacement *out)
 {
@@ -33,6 +134,15 @@ void eidos_layout_place(int layout, int swap, int gap,
     int first = swap ? 1 : 0;      /* the screen that goes first (top/left) */
     int second = 1 - first;
 
+    if (layout == EIDOS_LAYOUT_ONE) {
+        /* The window's shape is 16:9, the world view's; the screens are
+         * the fallback's, centred in it.  No panel, no gap. */
+        eidos_one_fallback_place(swap, out);
+        out->screen[0].y = out->screen[1].y = 48;
+        out->width = 2 * w;
+        out->height = 288;
+        return;
+    }
     if (gap < 0) {
         gap = 0;
     }

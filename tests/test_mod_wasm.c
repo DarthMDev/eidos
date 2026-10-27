@@ -342,6 +342,30 @@ static void synthetic_refuse(BwEventCall *call)
     call->ret = -7;
 }
 
+/*
+ * The event layer is built again, the way the port does it after it stops
+ * the mods (sdk/mod_menu.c): a stopped mod's handler records stay in the
+ * layer until the reset, and they carry the state of the run that is gone
+ * (a wasm mod's state is freed with its instance).  The test's own row is
+ * bound again as well, because the reset empties the binding table.
+ */
+static int rebuild_events(void)
+{
+    BwEventBinding binding;
+
+    bw_mod_event_reset();
+    bw_mod_event_bind_all();
+    memset(&binding, 0, sizeof binding);
+    binding.region = T_REGION;
+    binding.addr = T_ADDR;
+    binding.kind = BW_EVENT_FLAG_SET;
+    binding.point = BW_EVENT_BEFORE;
+    binding.scope = BW_SCOPE_ANY;
+    binding.build = synthetic_build;
+    binding.refuse = synthetic_refuse;
+    return bw_mod_event_bind(&binding);
+}
+
 /* The port's own row for an event in one area table, or NULL. */
 static const BwEventBinding *port_row(const BwEventBinding *(*table)(u32 *),
                                       u32 kind)
@@ -437,7 +461,6 @@ static int fire_flag(u32 flag)
 int main(void)
 {
     const BwEventBinding *menu_row;
-    BwEventBinding binding;
     BwEventCall call;
     BwEventPayload payload;
     char path[512];
@@ -466,19 +489,8 @@ int main(void)
     BW_CHECK_EQ("the module is told from a library",
                 (long)bw_mod_wasm_is_module(path), 1);
 
-    bw_mod_event_reset();
-    bw_mod_event_bind_all();
     menu_row = port_row(bw_event_bindings_field, BW_EVENT_MENU_OPEN);
-    memset(&binding, 0, sizeof binding);
-    binding.region = T_REGION;
-    binding.addr = T_ADDR;
-    binding.kind = BW_EVENT_FLAG_SET;
-    binding.point = BW_EVENT_BEFORE;
-    binding.scope = BW_SCOPE_ANY;
-    binding.build = synthetic_build;
-    binding.refuse = synthetic_refuse;
-    BW_REQUIRE("the test's flag.set row is bound",
-               bw_mod_event_bind(&binding) == 0);
+    BW_REQUIRE("the test's flag.set row is bound", rebuild_events() == 0);
     BW_REQUIRE("the port has a row for menu.open", menu_row != NULL);
 
     bw_clear_mods();
@@ -528,6 +540,7 @@ int main(void)
                 (long)fire_flag(T_FLAG), 0);
 
     printf("the load again\n");
+    BW_REQUIRE("the event layer is built again", rebuild_events() == 0);
     BW_CHECK_EQ("the module loads a second time",
                 (long)bw_mod_loader_load_all(), 1);
     BW_CHECK_EQ("and refuses again",
@@ -535,6 +548,7 @@ int main(void)
     bw_mod_loader_stop_all();
 
     printf("a module that never grows its memory\n");
+    BW_REQUIRE("the event layer is built again", rebuild_events() == 0);
     bw_clear_mods();
     BW_REQUIRE("the module is added", bw_add_mod_root(T_NOGROW) == 0);
     BW_CHECK_EQ("it loads: the port's page is added all the same",
@@ -551,6 +565,7 @@ int main(void)
                          sizeof k_nested) == 0);
     BW_REQUIRE("the test's import is registered",
                wasm_runtime_register_natives("eidostest", k_test_natives, 2));
+    BW_REQUIRE("the event layer is built again", rebuild_events() == 0);
     bw_clear_mods();
     BW_REQUIRE("the nested module is added", bw_add_mod_root(T_NESTED) == 0);
     BW_CHECK_EQ("it loads", (long)bw_mod_loader_load_all(), 1);
@@ -578,6 +593,7 @@ int main(void)
                    write_mod(T_SESSION, "Session", "wasmsession", k_session,
                              sizeof k_session) == 0);
         bw_mod_net_reset();
+        BW_REQUIRE("the event layer is built again", rebuild_events() == 0);
         bw_mod_net_set_transport(&fake);
         bw_mod_net_set_relay("relay.test", 4141);
         bw_clear_mods();

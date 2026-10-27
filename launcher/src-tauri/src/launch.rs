@@ -31,11 +31,48 @@ pub fn invite_url(code: &str) -> String {
     format!("{INVITE_PREFIX}{code}")
 }
 
-/// The arguments for eidos: the profile folder, and for a join the invite
-/// link (eidos opens Multiplayer and joins). Nothing else: eidos opens its
-/// window when it gets only these.
-pub fn eidos_args(profile_dir: &Path, join: Option<&str>) -> Vec<OsString> {
-    let mut args = vec![OsString::from("--profile-dir"), profile_dir.into()];
+/// The screen layout a start asks for. Classic adds `--two-screens` (the
+/// saved two-screen arrangement, never the one screen); One adds `--layout one`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Layout {
+    #[default]
+    Classic,
+    One,
+}
+
+impl Layout {
+    /// "classic" or "one"; anything else is refused.
+    pub fn parse(text: &str) -> Option<Layout> {
+        match text {
+            "classic" => Some(Layout::Classic),
+            "one" => Some(Layout::One),
+            _ => None,
+        }
+    }
+}
+
+/// The arguments for eidos: the profile folder, `--window` (eidos runs
+/// headless when it gets arguments other than the profile and the invite),
+/// the game data folder when the profile sets one, `--two-screens` or
+/// `--layout one`, and for a join the invite link (eidos opens Multiplayer
+/// and joins).
+pub fn eidos_args(profile_dir: &Path, data_root: &str, join: Option<&str>, layout: Layout) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("--profile-dir"),
+        profile_dir.into(),
+        OsString::from("--window"),
+    ];
+    if !data_root.is_empty() {
+        args.push("--data-root".into());
+        args.push(data_root.into());
+    }
+    match layout {
+        Layout::Classic => args.push("--two-screens".into()),
+        Layout::One => {
+            args.push("--layout".into());
+            args.push("one".into());
+        }
+    }
     if let Some(code) = join {
         args.push(invite_url(code).into());
     }
@@ -75,17 +112,76 @@ mod tests {
     #[test]
     fn play_arguments() {
         let dir = PathBuf::from("/u/profiles/Default");
-        let a = eidos_args(&dir, None);
-        assert_eq!(a, [OsString::from("--profile-dir"), dir.clone().into()]);
-        let j = eidos_args(&dir, Some("ABC123"));
+        let a = eidos_args(&dir, "", None, Layout::Classic);
+        assert_eq!(
+            a,
+            [
+                OsString::from("--profile-dir"),
+                dir.clone().into(),
+                OsString::from("--window"),
+                OsString::from("--two-screens")
+            ]
+        );
+        let j = eidos_args(&dir, "", Some("ABC123"), Layout::Classic);
         assert_eq!(
             j,
             [
                 OsString::from("--profile-dir"),
                 dir.into(),
+                OsString::from("--window"),
+                OsString::from("--two-screens"),
                 OsString::from("eidos://join/ABC123")
             ]
         );
+    }
+
+    #[test]
+    fn data_root_goes_before_the_invite() {
+        let dir = PathBuf::from("/u/profiles/Default");
+        let a = eidos_args(&dir, "/games/eidos", Some("ABC123"), Layout::Classic);
+        assert_eq!(
+            a,
+            [
+                OsString::from("--profile-dir"),
+                dir.into(),
+                OsString::from("--window"),
+                OsString::from("--data-root"),
+                OsString::from("/games/eidos"),
+                OsString::from("--two-screens"),
+                OsString::from("eidos://join/ABC123")
+            ]
+        );
+    }
+
+    #[test]
+    fn one_screen_layout() {
+        let dir = PathBuf::from("/u/profiles/Default");
+        let a = eidos_args(&dir, "/games/eidos", Some("ABC123"), Layout::One);
+        assert_eq!(
+            a,
+            [
+                OsString::from("--profile-dir"),
+                dir.clone().into(),
+                OsString::from("--window"),
+                OsString::from("--data-root"),
+                OsString::from("/games/eidos"),
+                OsString::from("--layout"),
+                OsString::from("one"),
+                OsString::from("eidos://join/ABC123")
+            ]
+        );
+        let b = eidos_args(&dir, "", None, Layout::One);
+        assert_eq!(b.len(), 5);
+        assert!(!eidos_args(&dir, "", None, Layout::Classic).iter().any(|x| x == "--layout"));
+    }
+
+    #[test]
+    fn layout_names() {
+        assert_eq!(Layout::parse("classic"), Some(Layout::Classic));
+        assert_eq!(Layout::parse("one"), Some(Layout::One));
+        assert_eq!(Layout::parse("One"), None);
+        assert_eq!(Layout::parse("--x"), None);
+        assert_eq!(Layout::default(), Layout::Classic);
     }
 
     /// Runs a real eidos with a hidden window for a few frames. Needs
@@ -98,7 +194,7 @@ mod tests {
         };
         let scratch = tempfile::tempdir().unwrap();
         let dir = scratch.path().join("profile");
-        let mut args = eidos_args(&dir, Some("TEST42"));
+        let mut args = eidos_args(&dir, "", Some("TEST42"), Layout::Classic);
         args.extend(["--frames".into(), "300".into()]);
         std::env::set_var("EIDOS_WINDOW_HIDDEN", "1");
         let status = spawn(Path::new(&exe), &args).unwrap().wait().unwrap();

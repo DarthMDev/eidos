@@ -446,7 +446,7 @@ static void test_file(void)
                 eidos_settings_get(EIDOS_OPT_DISPLAY_RESOLUTION), 0);
     BW_CHECK_EQ("default pixel scale is auto",
                 eidos_settings_get(EIDOS_OPT_DISPLAY_PIXEL_SCALE), 0);
-    BW_CHECK_EQ("default volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 100);
+    BW_CHECK_EQ("default volume", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 50);
     BW_CHECK_EQ("default gap", eidos_settings_get(EIDOS_OPT_LAYOUT_GAP), 0);
     BW_CHECK_EQ("clean at start", eidos_settings_dirty(), 0);
 
@@ -467,7 +467,7 @@ static void test_file(void)
     snapshot(o1, k1, pk1, pi1);
 
     eidos_settings_defaults();
-    BW_CHECK_EQ("defaults reset", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 100);
+    BW_CHECK_EQ("defaults reset", eidos_settings_get(EIDOS_OPT_SOUND_VOLUME), 50);
     BW_CHECK_EQ("defaults dirty", eidos_settings_dirty(), 1);
     eidos_settings_revert();
     snapshot(o2, k2, pk2, pi2);
