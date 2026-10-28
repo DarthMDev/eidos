@@ -820,6 +820,31 @@ static const u32 k_type_color[18] = {
     0xF85888u, 0x98D8D8u, 0x7038F8u, 0x705848u, 0x525252u
 };
 
+/* Move names the one-screen layout spells as later games do: Black and
+ * White fit every name in 12 letters (DragonBreath, Hi Jump Kick); from X
+ * and Y on they read in full.  Indexed by the game's move number. */
+static const struct { u16 id; const char *name; } k_modern_moves[] = {
+    { 3, "Double Slap" },    { 9, "Thunder Punch" },   { 11, "Vice Grip" },
+    { 28, "Sand Attack" },   { 49, "Sonic Boom" },     { 61, "Bubble Beam" },
+    { 76, "Solar Beam" },    { 77, "Poison Powder" },  { 84, "Thunder Shock" },
+    { 108, "Smokescreen" },  { 120, "Self-Destruct" }, { 135, "Soft-Boiled" },
+    { 136, "High Jump Kick" }, { 185, "Feint Attack" }, { 223, "Dynamic Punch" },
+    { 225, "Dragon Breath" }, { 245, "Extreme Speed" }, { 246, "Ancient Power" },
+    { 265, "Smelling Salts" }, { 297, "Feather Dance" }, { 320, "Grass Whistle" },
+};
+
+const char *ui_move_name_modern(int id)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(k_modern_moves) / sizeof(k_modern_moves[0]); i++) {
+        if (k_modern_moves[i].id == id) {
+            return k_modern_moves[i].name;
+        }
+    }
+    return NULL;
+}
+
 const char *ui_type_name(int type)
 {
     return (type >= 0 && type < 18) ? k_type_name[type] : "???";
@@ -1408,7 +1433,7 @@ void ui_plate(EidosUiCtx *c, int x, int y, int w, const char *name, int gender,
               int level, int hp, int maxhp, int exp_num, int exp_den)
 {
     int player = exp_den > 0;
-    int h = player ? 36 : 24, nx, tw, i, j;
+    int h = player ? 32 : 24, nx, tw, i, j;
     char lv[16], t[12];
     int n = level;
 
@@ -1430,8 +1455,9 @@ void ui_plate(EidosUiCtx *c, int x, int y, int w, const char *name, int gender,
     tw = ui_text_w(lv, UI_FONT_SMALL);
     ui_text(c, x + w - 10 - tw, y + 2, lv, UI_LIGHT, SHADOW_DARK, UI_FONT_SMALL, 1);
     ui_text(c, x + 8, y + 14, "HP", UI_LIME, SHADOW_DARK, UI_FONT_SMALL, 1);
-    ui_bar(c, x + 24, y + 16, w - 36, 4, hp, maxhp);
-    if (player) {
+    if (!player) {
+        ui_bar(c, x + 24, y + 16, w - 36, 4, hp, maxhp);
+    } else {
         char hpn[24];
         int a = hp, b = maxhp, k;
 
@@ -1454,13 +1480,19 @@ void ui_plate(EidosUiCtx *c, int x, int y, int w, const char *name, int gender,
             hpn[k++] = t[i - 1];
         }
         hpn[k] = '\0';
-        ui_text(c, x + w - 10 - ui_text_w(hpn, UI_FONT_SMALL), y + 21, hpn, UI_WHITE,
-                SHADOW_DARK, UI_FONT_SMALL, 1);
-        ui_fill(c, x + 8, y + 31, w - 60, 2, UI_INK, 255);
-        if (exp_num > 0) {
-            int ew = (int)((long)(w - 60) * (exp_num > exp_den ? exp_den : exp_num) / exp_den);
+        /* the numbers after the bar, on its row; the EXP line along the
+         * bottom, inside the cut corners */
+        {
+            int nw = ui_text_w(hpn, UI_FONT_SMALL), bw = w - 24 - nw - 8 - 12;
+            int ex = x + 10, ew0 = w - 16, ew;
 
-            ui_fill(c, x + 8, y + 31, ew, 1, UI_SKY, 255);
+            ui_bar(c, x + 24, y + 16, bw, 4, hp, maxhp);
+            ui_text(c, x + 24 + bw + 5, y + 14, hpn, UI_WHITE, SHADOW_DARK, UI_FONT_SMALL, 1);
+            ui_fill(c, ex, y + h - 6, ew0, 2, UI_INK, 255);
+            if (exp_num > 0) {
+                ew = (int)((long)ew0 * (exp_num > exp_den ? exp_den : exp_num) / exp_den);
+                ui_fill(c, ex, y + h - 6, ew, 1, UI_SKY, 255);
+            }
         }
     }
 }

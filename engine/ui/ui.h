@@ -66,7 +66,7 @@ typedef struct EidosUiCanvas {
     u32 generation;         /* bumped when the picture changed             */
 } EidosUiCanvas;
 
-/* The interface scale for a window: max(2, floor(h / 240)). */
+/* The interface scale for a window: max(1, floor(h / 270)). */
 int eidos_ui_scale(int win_w, int win_h);
 
 /* ------------------------------------------------------------------ */
@@ -88,7 +88,9 @@ typedef struct EidosUiView {
     int ds_only;            /* non-zero: nothing of the 3D shows outside the
                                DS screen's rectangle (the sides stay black),
                                for scenes drawn for the DS's own frame      */
-    int blur;               /* non-zero: the world is blurred and dimmed
+    int blur;               /* non-zero: the world is blurred and dimmed;
+                               after eidos_ui_frame, how much: 1..16 as it
+                               eases in and out
                                (behind a modal)                            */
     int hide_2d;            /* non-zero: the world screen's 2D layers are
                                not shown (the recipe redraws them)          */
@@ -273,6 +275,12 @@ void eidos_ui_crossfade(void);
 /* Show the last frame's picture again (a recipe that cannot read the game
  * for a frame keeps what was on screen instead of showing nothing). */
 void eidos_ui_hold_canvas(void);
+/* The game is fading between two screens of an app and the interface holds
+ * the old screen's picture meanwhile. */
+int eidos_ui_holding(void);
+/* This frame's recipe shows its own change of screen (the Pokedex's doors):
+ * no crossfade when the held picture lets go. */
+void eidos_ui_own_reveal(void);
 /* A Pokemon's cry, queued like eidos_ui_sound and played on the game's
  * thread at its next frame. */
 void eidos_ui_cry(u32 species);

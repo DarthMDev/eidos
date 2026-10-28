@@ -404,6 +404,8 @@ void ui_mon_front_draw(EidosUiCtx *c, u16 species, int shiny, u32 t, int x, int 
     k = w / f_w < h / f_h ? w / f_w : h / f_h;
     if (k < 1) {
         k = 1;
+    } else if (k > 2) {
+        k = 2;              /* a large window's bigger box: no giant sprites */
     }
     im = ui_mon_front_anim(species, shiny, t, &ox, &oy);
     if (im != NULL) {

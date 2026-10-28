@@ -1326,7 +1326,15 @@ static int boot_match(void)
         void *gs = (&bw_dsref__GameSystemGlobal != NULL && bw_dsref__GameSystemGlobal != NULL)
                    ? *(void **)bw_dsref__GameSystemGlobal : NULL;
 
+        static int field_seen;
+
         if (gs != NULL && *(u32 *)((u8 *)gs + 0x20) != 0u) {
+            field_seen = 1;
+        }
+        /* the cutscene comes once, before the first field of a run: once a
+         * field has been up, an app that closed it (the Bag, the trainer
+         * card) is not the cutscene */
+        if (field_seen) {
             return 0;
         }
         if (bw_overlay_is_loaded != NULL && bw_overlay_is_loaded(94)) {

@@ -948,6 +948,45 @@ static void run_splash(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in,
 
 static int g_last_kind = -1;    /* the dex screen shown last frame */
 
+/* The splash opening onto the list: its body splits along the middle and
+ * the two halves slide apart, the list behind them. */
+#define DOOR_FRAMES 18
+static int g_doors;             /* frames of the opening left              */
+static int g_from_splash;       /* the splash was the last screen shown    */
+
+static void draw_doors(EidosUiCtx *c, int left)
+{
+    DexLayout L;
+    int half, off, i, t;
+    EidosUiRect saved;
+
+    dex_layout(c, &L);
+    half = L.bh / 2;
+    /* eased out: fast at first, settling */
+    t = (DOOR_FRAMES - left) * 256 / DOOR_FRAMES;
+    t = 256 - (256 - t) * (256 - t) / 256;
+    off = (half + 2) * t / 256;
+    for (i = 0; i < 2; i++) {
+        int dy = i == 0 ? -off : off;
+        int y0 = i == 0 ? L.by : L.by + half, h = i == 0 ? half : L.bh - half;
+
+        ui_push(c, 0, 0, &saved);
+        ui_clip(c, L.bx, L.by, L.bw, L.bh);
+        ui_fill(c, L.bx, y0 + dy, L.bw, h, DEX_PANEL, 255);
+        ui_fill(c, L.bx, (i == 0 ? y0 + h - 1 : y0) + dy, L.bw, 1, UI_DEX, 255);
+        /* the splash's title, cut along the middle with its half */
+        {
+            int top = y0 + dy > L.by ? y0 + dy : L.by, bot = y0 + dy + h;
+
+            ui_clip(c, L.bx, top, L.bw, bot > top ? bot - top : 0);
+        }
+        ui_text(c, L.bx + (L.bw - ui_text_w("POK\xC3\x89" "DEX", UI_FONT_LARGE) * 3) / 2,
+                L.by + L.bh / 2 - 22 + dy, "POK\xC3\x89" "DEX", UI_DEX, UI_DEX3,
+                UI_FONT_LARGE, 3);
+        ui_pop(c, 0, 0, &saved);
+    }
+}
+
 static int dex_match(void)
 {
     DexNow v;
@@ -965,10 +1004,20 @@ static void dex_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
     /* the splash, the list and an entry are one scene to the interface:
      * a change between them crossfades like a change of scene */
     if (v.kind != g_last_kind) {
-        if (g_last_kind != -1) {
+        if (g_from_splash && v.kind == DEX_LIST) {
+            g_doors = DOOR_FRAMES;      /* the splash opens onto the list */
+        } else if (g_last_kind != -1) {
             eidos_ui_crossfade();
         }
         g_last_kind = v.kind;
+    }
+    /* the splash, then the game's fade between it and the list */
+    if (v.kind == DEX_SPLASH) {
+        g_from_splash = 1;
+    } else if (v.kind == DEX_LIST || v.kind == DEX_ENTRY) {
+        if (g_doors == 0 && v.kind != DEX_LIST) {
+            g_from_splash = 0;
+        }
     }
     /* a right click is B, a click outside the modal is B */
     if (eidos_ui_right_click() && (v.kind == DEX_LIST || v.kind == DEX_ENTRY)) {
@@ -985,11 +1034,26 @@ static void dex_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
         run_splash(c, view, in, &v);
         break;
     }
+    if (g_doors > 0 && v.kind == DEX_LIST) {
+        /* the doors wait, shut, while the splash's picture is held through
+         * the game's fade, and open once the list shows; they are the
+         * change of screen, so no crossfade on top */
+        draw_doors(c, g_doors);
+        eidos_ui_own_reveal();
+        if (!eidos_ui_holding()) {
+            g_doors--;
+        }
+        g_from_splash = 0;
+    } else {
+        g_doors = 0;
+    }
 }
 
 static void dex_reset(void)
 {
     g_last_kind = -1;
+    g_doors = 0;
+    g_from_splash = 0;
     g_target = -1;
     g_press_wait = 0;
     g_first = 0;

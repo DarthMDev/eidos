@@ -70,10 +70,12 @@ void eidos_ui_set_enabled(int on)
 
 int eidos_ui_scale(int win_w, int win_h)
 {
-    int k = win_h / 240;
+    /* the layouts need about 270 canvas rows (the menu's six buttons, the
+     * battle's plates and sheets): the largest whole scale that keeps them */
+    int k = win_h / 270;
 
     (void)win_w;
-    return k < 2 ? 2 : k;
+    return k < 1 ? 1 : k;
 }
 
 const char *eidos_ui_scene_name(void)
@@ -223,6 +225,10 @@ int eidos_ui_wheel(EidosUiRect r)
 static u8 *g_prev;               /* the last frame's canvas               */
 static int g_prev_w, g_prev_h;
 static u8 *g_fade_from;          /* the old scene's last picture          */
+static u8 *g_before;             /* the scene before this one, its last
+                                    picture: what an app goes back to       */
+static int g_before_w, g_before_h;
+static const void *g_shown;      /* the last scene a recipe drew          */
 static int g_fade_w, g_fade_h, g_fade_left;
 static int g_ring_x = -1, g_ring_y, g_ring_age;
 static u32 g_scene_frames;       /* frames since the scene began          */
@@ -297,12 +303,13 @@ static u32 game_darkness(void)
 
 /*
  * An app over the world closes with the game's fade to black, then the
- * field loads: the modal would stand through all of that.  Once a modal
- * scene starts to fade out, the modal goes at once (a quick crossfade) and
- * the world shows as it was until the field is back.
+ * field loads.  Once a modal scene starts to fade out, its last picture
+ * stands over the blurred world until the next scene is up, which then
+ * crossfades from it: the window never goes empty in between.
  */
 static int g_leaving;
 static u32 g_dark_prev;
+static int g_holding;            /* an app's picture held through its fade */
 
 static void fade_start(void);
 
@@ -311,10 +318,64 @@ void eidos_ui_crossfade(void)
     fade_start();
 }
 
+static int g_own_reveal;         /* the recipe draws its own reveal */
+
+void eidos_ui_own_reveal(void)
+{
+    g_own_reveal = 1;
+}
+
+int eidos_ui_holding(void)
+{
+    return g_holding;
+}
+
 void eidos_ui_hold_canvas(void)
 {
     if (g_prev != NULL && g_prev_w == g_canvas.w && g_prev_h == g_canvas.h) {
         memcpy(g_canvas.rgba, g_prev, (size_t)g_prev_w * (size_t)g_prev_h * 4);
+    }
+}
+
+/* The app on top of the game system's proc stack is ending (Proc.seq 3,
+ * PROCSYS_StepProc's end step): it is closing, not changing screens inside
+ * itself (the Pokedex's splash to its list fades the same way). */
+extern u8 *bw_dsref__GameSystemGlobal __attribute__((weak));
+
+static int app_ending(void)
+{
+    const u8 *gs, *ps, *cur;
+
+    if (&bw_dsref__GameSystemGlobal == NULL || bw_dsref__GameSystemGlobal == NULL) {
+        return 0;
+    }
+    gs = (const u8 *)(uintptr_t)*(const u32 *)bw_dsref__GameSystemGlobal;
+    ps = gs != NULL ? (const u8 *)(uintptr_t)*(const u32 *)(gs + 0x08) : NULL;
+    cur = ps != NULL ? (const u8 *)(uintptr_t)*(const u32 *)(ps + 0x08) : NULL;
+    return cur != NULL && *(const u32 *)(cur + 0x08) == 3u;
+}
+
+/* For the log: the top proc's overlay and step, and its child's. */
+static void app_state(u32 *ov, u32 *seq, u32 *child_ov, u32 *child_seq)
+{
+    const u8 *gs, *ps, *cur, *nx;
+
+    *ov = *seq = *child_ov = *child_seq = 0xFFFFFFFFu;
+    if (&bw_dsref__GameSystemGlobal == NULL || bw_dsref__GameSystemGlobal == NULL) {
+        return;
+    }
+    gs = (const u8 *)(uintptr_t)*(const u32 *)bw_dsref__GameSystemGlobal;
+    ps = gs != NULL ? (const u8 *)(uintptr_t)*(const u32 *)(gs + 0x08) : NULL;
+    cur = ps != NULL ? (const u8 *)(uintptr_t)*(const u32 *)(ps + 0x08) : NULL;
+    if (cur == NULL) {
+        return;
+    }
+    *ov = *(const u32 *)(cur + 0x04);
+    *seq = *(const u32 *)(cur + 0x08);
+    nx = (const u8 *)(uintptr_t)*(const u32 *)(cur + 0x1C);
+    if (nx != NULL) {
+        *child_ov = *(const u32 *)(nx + 0x04);
+        *child_seq = *(const u32 *)(nx + 0x08);
     }
 }
 
@@ -335,26 +396,56 @@ static void leave_check(EidosUiView *view)
         view->dark = (int)(f > 16u ? 16u : f);
     }
     if (getenv("EIDOS_UI_DARK_LOG") != NULL) {
-        fprintf(stderr, "eidos: ui %u %s dark %u blur %d leaving %d\n",
+        u32 ov, sq, cov, csq;
+
+        app_state(&ov, &sq, &cov, &csq);
+        fprintf(stderr, "eidos: ui %u %s dark %u blur %d leaving %d proc %d/%d child %d/%d\n",
                 (unsigned)bw_input_frame_number(), g_scene, (unsigned)dark, view->blur,
-                g_leaving);
+                g_leaving, (int)ov, (int)sq, (int)cov, (int)csq);
     }
 
-    if (view->blur && dark > g_dark_prev && dark >= 2u && !g_leaving && g_scene_frames > 60) {
+    int fading_out = dark > g_dark_prev || dark >= 16u;
+
+    if (view->blur && !g_leaving && app_ending()) {
         g_leaving = 1;
-        fade_start();
-    } else if (g_leaving && dark < g_dark_prev) {
+        if (g_before != NULL && g_before_w == g_canvas.w && g_before_h == g_canvas.h) {
+            fade_start();               /* from the app to the scene before */
+        }
+    } else if (g_leaving && dark < g_dark_prev && !app_ending()) {
         g_leaving = 0;                  /* it fades back in: the same app */
         fade_start();
     }
     g_dark_prev = dark;
     if (g_leaving) {
-        memset(g_canvas.rgba, 0, (size_t)g_canvas.w * (size_t)g_canvas.h * 4);
+        /* the modal's last picture stays, over the blurred world, until the
+         * next scene is up and crossfades from it: no empty frames while
+         * the game fades and loads */
+        if (g_before != NULL && g_before_w == g_canvas.w && g_before_h == g_canvas.h) {
+            /* the scene the app goes back to (the menu), at once, over the
+             * world as it was: the blur eases out under it */
+            memcpy(g_canvas.rgba, g_before, (size_t)g_canvas.w * (size_t)g_canvas.h * 4);
+            view->blur = 0;
+        } else {
+            eidos_ui_hold_canvas();
+            view->blur = 1;
+        }
         g_take = 0;
-        view->blur = 0;
         view->hide_2d = 1;
         view->no_fade = 1;
         view->hold_world = 1;
+    } else if (view->blur) {
+        /* an app between two of its own screens: the game fades to black
+         * and back; its last picture stays instead, and the next screen
+         * crossfades from it, so the window never goes dark */
+        if (fading_out && g_scene_frames > 0) {
+            eidos_ui_hold_canvas();
+            g_holding = 1;
+        } else if (g_holding) {
+            g_holding = 0;
+            if (!g_own_reveal) {
+                fade_start();
+            }
+        }
     } else if (!view->no_fade) {
         /* The interface fades with the game: a screen that leaves with a
          * fade to black (the title, a menu, a battle) takes the interface
@@ -948,13 +1039,35 @@ void eidos_ui_frame(const EidosUiFrame *in, EidosUiView *view,
             }
         }
     }
+    if (r != NULL && r != g_shown) {
+        /* keep the scene before this one: an app closing goes back to it,
+         * and shows it at once while the game fades and loads */
+        if (g_prev != NULL && g_shown != NULL) {
+            size_t n = (size_t)g_prev_w * (size_t)g_prev_h * 4;
+
+            if (g_before == NULL || g_before_w != g_prev_w || g_before_h != g_prev_h) {
+                free(g_before);
+                g_before = (u8 *)malloc(n);
+            }
+            if (g_before != NULL) {
+                memcpy(g_before, g_prev, n);
+                g_before_w = g_prev_w;
+                g_before_h = g_prev_h;
+            }
+        }
+        g_shown = r;
+    }
     if (r != g_last) {
-        g_leaving = 0;
+        if (r != NULL) {
+            g_leaving = 0;      /* a gap keeps it: the app is still closing */
+        }
         /* a new scene: a press that began in the old one is not a click */
         g_down_x = g_down_y = -1;
         g_last = r;
         g_scene_frames = 0;
-        fade_start();
+        if (r != NULL || !g_leaving) {
+            fade_start();       /* (a closing app's crossfade runs on) */
+        }
     } else {
         g_scene_frames++;
     }
@@ -1001,6 +1114,13 @@ void eidos_ui_frame(const EidosUiFrame *in, EidosUiView *view,
             fflush(stderr);
         }
         leave_check(view);
+        g_own_reveal = 0;
+        if (getenv("EIDOS_UI_BARE") != NULL) {
+            /* For mock-ups only: the world alone, no interface and none of
+             * the game's 2D, as a background to draw designs over. */
+            memset(g_canvas.rgba, 0, (size_t)g_canvas.w * (size_t)g_canvas.h * 4);
+            view->hide_2d = 1;
+        }
         if (view->hide_2d) {
             g_hide_tail = HIDE_TAIL_FRAMES;
         } else if (g_hide_tail > 0) {
@@ -1027,6 +1147,21 @@ void eidos_ui_frame(const EidosUiFrame *in, EidosUiView *view,
             if (g_prev != NULL && g_prev_w == g_canvas.w && g_prev_h == g_canvas.h) {
                 memcpy(g_canvas.rgba, g_prev, (size_t)g_prev_w * (size_t)g_prev_h * 4);
             }
+            /* an app closed (its proc is ending or gone, its recipe let
+             * go): the scene it goes back to (the menu) shows at once, and
+             * stays while the game rebuilds the field, over a sharp world */
+            if (((g_last_view.blur && app_ending()) || g_leaving) && g_before != NULL &&
+                g_before_w == g_canvas.w && g_before_h == g_canvas.h) {
+                if (!g_leaving) {
+                    g_leaving = 1;
+                    fade_start();
+                }
+                memcpy(g_canvas.rgba, g_before, (size_t)g_canvas.w * (size_t)g_canvas.h * 4);
+                view->blur = 0;
+                view->hold_world = 1;
+                view->hide_2d = 1;
+                view->no_fade = 1;
+            }
         } else {
             g_last_view_ok = 0;
         }
@@ -1045,6 +1180,23 @@ void eidos_ui_frame(const EidosUiFrame *in, EidosUiView *view,
         } else if (g_modal_age < MODAL_FADE_FRAMES) {
             g_modal_age++;
             view->no_fade = 1;
+        }
+    }
+    {
+        /* the blur behind a modal eases in and out (eight frames) instead
+         * of snapping on and off: view->blur becomes its strength, 1..16 */
+        static int amount;
+        int target = (view->blur && view->mode == EIDOS_VIEW_WORLD) ? 16 : 0;
+
+        if (amount < target) {
+            amount = amount + 2 < target ? amount + 2 : target;
+        } else if (amount > target) {
+            amount = amount - 2 > target ? amount - 2 : target;
+        }
+        if (view->mode == EIDOS_VIEW_WORLD) {
+            view->blur = amount;
+        } else {
+            amount = 0;
         }
     }
     if (g_released) {

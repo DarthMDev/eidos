@@ -1024,7 +1024,9 @@ static int test_data(const char *root)
     BW_REQUIRE("heroine figure 33", ui_overworld(33, 0, 0) != NULL);
     BW_REQUIRE("no figure 34", ui_overworld(34, 0, 0) == NULL);
     BW_REQUIRE("no direction 4", ui_overworld(0, 4, 0) == NULL);
-    BW_REQUIRE("fronts are not decoded", ui_mon_front(495, 0, 0) == NULL && ui_trainer_front(1) == NULL);
+    /* a Pokemon's front comes from its animated sprite; trainers' are not decoded */
+    BW_REQUIRE("Pokemon front", image_pixels(ui_mon_front(495, 0, 0)) > 100);
+    BW_REQUIRE("trainer fronts are not decoded", ui_trainer_front(1) == NULL);
 
     /* the contact sheet */
     memset(&cv, 0, sizeof cv);

@@ -1086,7 +1086,7 @@ void eidos_gl_one_set(EidosGl *g, int on, int world, int screen,
     g_one.screen = screen;
     g_one.hide2d = hide_2d != 0;
     g_one.crop = (no_fade & (1 << 18)) != 0;
-    g_one.blur = blur != 0;
+    g_one.blur = blur < 0 ? 0 : blur > 16 ? 16 : blur;
     g_one.no_fade = (no_fade & 1) != 0;
     g_one.hold = (no_fade & 2) != 0;
     g_one.keep = (no_fade & 4) != 0;
@@ -1175,11 +1175,10 @@ static int one_bind_target(EidosGl *g, int i, int w, int h)
  * window's height so the blur looks the same at any size. */
 static void one_blur(EidosGl *g, int out_w, int out_h)
 {
-    float step = (float)out_h / 180.f;
-
-    if (step < 1.f) {
-        step = 1.f;
-    }
+    /* the strength eases in and out (g_one.blur 1..16): the taps spread
+     * and the tint darkens with it */
+    float a = (float)g_one.blur / 16.f;
+    float step = (float)out_h / 180.f * a;
     glDisable(GL_BLEND);
     g->glBindVertexArray(g->vao);
     g->glUseProgram(g_one.progb);
@@ -1197,7 +1196,7 @@ static void one_blur(EidosGl *g, int out_w, int out_h)
     g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, out_w, out_h);
     g->glUniform2f(g_one.b_dir, 0.f, step);
-    g->glUniform1f(g_one.b_tint, 0.45f);
+    g->glUniform1f(g_one.b_tint, 1.f - 0.55f * a);
     glBindTexture(GL_TEXTURE_2D, g_one.btex[1]);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
