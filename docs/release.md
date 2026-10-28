@@ -66,7 +66,7 @@ the games keep the version, which installed launchers look for
 | `eidos-<version>-windows.zip` | `eidos.exe` (`tools/build64.py`'s program), `SDL3.dll`, `LICENSE`, `LEGAL.md`, `README.txt`. Files sit at the top of the zip. |
 | `eidos-<version>-macos.zip` | `eidos`, `libSDL3.0.dylib` (its load path points at the executable's folder), `LICENSE`, `LEGAL.md`, `README.txt`. Unsigned: the notes tell the player to run `xattr -dr com.apple.quarantine .` or right-click and choose Open. |
 | `eidos-<version>-linux-x86_64.AppImage` | One file: `eidos`, the shared libraries linuxdeploy found, a desktop file and the icon. License files are under `usr/share/doc/eidos`. |
-| `SHA256SUMS` | The SHA-256 of every other file. The launcher checks each game it installs against it. |
+| `SHA256SUMS` | The SHA-256 of each `eidos-*` file. The launcher checks each game it installs against it. |
 
 The Windows program needs nothing else at run time: its other imports are
 Windows system libraries (`api-ms-win-crt-*`, `OPENGL32`, `WS2_32` and the
