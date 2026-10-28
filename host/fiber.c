@@ -12,6 +12,18 @@
  * Windows has fibers of its own; elsewhere ucontext does the same.
  */
 
+/* Before every header: on macOS, ucontext_t holds the saved registers only
+ * when _XOPEN_SOURCE is defined where its type is first seen (stdlib.h
+ * already brings it in).  Without them the context is 64 bytes, and
+ * getcontext and swapcontext write the registers past its end, over the
+ * fiber table.  _DARWIN_C_SOURCE and _DEFAULT_SOURCE keep the rest of the
+ * system's names (macOS, glibc). */
+#if !defined(_WIN32)
+#define _XOPEN_SOURCE 700
+#define _DARWIN_C_SOURCE 1
+#define _DEFAULT_SOURCE 1
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -25,10 +37,14 @@
 #include <windows.h>
 typedef void *NativeFiber;
 #else
-#define _XOPEN_SOURCE 700
 #include <time.h>
 #include <ucontext.h>
 typedef struct { ucontext_t uc; void *stack; } *NativeFiber;
+#if defined(__APPLE__)
+/* the registers' room is in the context (see the top of this file) */
+_Static_assert(sizeof(((ucontext_t *)0)->__mcontext_data) > 0,
+               "ucontext_t has no room for the registers");
+#endif
 #endif
 
 typedef struct {
