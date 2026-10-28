@@ -512,7 +512,7 @@ u32 w2c_wasi__snapshot__preview1_fd_close(struct w2c_wasi__snapshot__preview1 *w
     return 0;
 }
 
-static long long io_rw_here(u32 fd, u32 iovs, u32 n, int write, long long at)
+static long long io_rw_here(u32 fd, u32 iovs, u32 n, int wr, long long at)
 {
     long long total = 0;
     u32 i;
@@ -551,9 +551,9 @@ static long long io_rw_here(u32 fd, u32 iovs, u32 n, int write, long long at)
             r = (long long)fread(P(b), 1, l, stdin);
         } else {
 #if defined(_WIN32)
-            r = write ? _write(g_fd[fd].native, P(b), l) : _read(g_fd[fd].native, P(b), l);
+            r = wr ? _write(g_fd[fd].native, P(b), l) : _read(g_fd[fd].native, P(b), l);
 #else
-            r = write ? write(g_fd[fd].native, P(b), l) : read(g_fd[fd].native, P(b), l);
+            r = wr ? write(g_fd[fd].native, P(b), l) : read(g_fd[fd].native, P(b), l);
 #endif
         }
         if (r < 0) {
@@ -569,7 +569,7 @@ static long long io_rw_here(u32 fd, u32 iovs, u32 n, int write, long long at)
 
 /* fd_pread and fd_pwrite leave the file position where it was (POSIX
  * pread); the C library mixes them with plain reads on one file. */
-static long long io_rw(u32 fd, u32 iovs, u32 n, int write, long long at)
+static long long io_rw(u32 fd, u32 iovs, u32 n, int wr, long long at)
 {
     long long r, pos = -1;
 
@@ -580,7 +580,7 @@ static long long io_rw(u32 fd, u32 iovs, u32 n, int write, long long at)
         pos = (long long)lseek(g_fd[fd].native, 0, SEEK_CUR);
 #endif
     }
-    r = io_rw_here(fd, iovs, n, write, at);
+    r = io_rw_here(fd, iovs, n, wr, at);
     if (pos >= 0) {
 #if defined(_WIN32)
         _lseeki64(g_fd[fd].native, pos, SEEK_SET);

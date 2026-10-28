@@ -125,9 +125,32 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
 endif()
 if(WIN32)
     # The icon (assets/eidos.rc), and for a release no console window:
-    # `eidos --console` opens one (host/main.c, console_open).
-    enable_language(RC)
-    target_sources(eidos PRIVATE ${_root}/assets/eidos.rc)
+    # `eidos --console` opens one (host/main.c, console_open).  With GCC the
+    # icon is a plain build step: a toolchain with only prefixed names (CI's)
+    # has no windres for CMake's RC language to find, overriding that
+    # compiler makes CMake reset its cache on every configure, and windres
+    # runs its preprocessor as `gcc`.  windres and the preprocessor both come
+    # from the compiler's own folder.
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        get_filename_component(_cc_dir "${CMAKE_C_COMPILER}" DIRECTORY)
+        find_program(EIDOS_HOST_WINDRES NAMES x86_64-w64-mingw32-windres windres
+            HINTS "${_cc_dir}")
+        if(NOT EIDOS_HOST_WINDRES)
+            message(FATAL_ERROR "eidos host: no windres next to ${CMAKE_C_COMPILER} or on the PATH")
+        endif()
+        set(_icon_obj ${CMAKE_CURRENT_BINARY_DIR}/eidos_rc.o)
+        add_custom_command(OUTPUT ${_icon_obj}
+            COMMAND ${EIDOS_HOST_WINDRES} --preprocessor=${CMAKE_C_COMPILER}
+                    --preprocessor-arg=-E --preprocessor-arg=-xc
+                    --preprocessor-arg=-DRC_INVOKED -O coff -i ${_root}/assets/eidos.rc -o ${_icon_obj}
+            DEPENDS ${_root}/assets/eidos.rc
+            WORKING_DIRECTORY ${_root}/assets
+            VERBATIM)
+        target_sources(eidos PRIVATE ${_icon_obj})
+    else()
+        enable_language(RC)
+        target_sources(eidos PRIVATE ${_root}/assets/eidos.rc)
+    endif()
     if(EIDOS_HOST_WINDOWED)
         target_link_options(eidos PRIVATE -mwindows)
     endif()

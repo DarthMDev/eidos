@@ -3029,6 +3029,9 @@ add_executable(test_bmap_spots ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bmap_spots
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_spots.c)
 target_include_directories(test_bmap_spots PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/engine/world)
+if(BW_HAVE_LIBM)
+    target_link_libraries(test_bmap_spots PRIVATE m)
+endif()
 add_test(NAME test_bmap_spots COMMAND test_bmap_spots)
 
 # The interface kit's test (engine/ui/kit.c, assets.c, assets_icons.c, assets_sprites.c): the
