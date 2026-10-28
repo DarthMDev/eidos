@@ -19,7 +19,8 @@ hand (Actions, release, Run workflow).
    skip themselves), build the game with `tools/build64.py --release` (the
    wasm32 module, wasm2c, the native 64-bit program: `docs/lp64.md`), and
    package it with `tools/package_release.py`.
-3. `release` (on a tag) collects the three packages, writes `SHA256SUMS` and
+3. `release` (on a tag) collects the packages and the launchers, writes
+   `SHA256SUMS` and `latest.json`, and
    makes a **draft** GitHub Release with the notice text in its body. A
    person reads it and presses Publish.
 
@@ -45,17 +46,27 @@ write`) to make the draft. No other secret is needed.
 3. Commit and push to the main branch.
 4. `git tag vx.y.z` and `git push origin vx.y.z`.
 5. Wait for the workflow. Open the draft release, read the notes, check the
-   file list (three packages and `SHA256SUMS`), try at least the Windows zip,
+   file list (the nine files below), try at least the Windows zip,
    and publish.
 
 ## What each package holds
 
+A release has nine files, each once. The launchers have no version in their
+names, so the README's buttons can link `.../releases/latest/download/<name>`;
+the games keep the version, which installed launchers look for
+(`launcher/src-tauri/src/versions.rs`).
+
 | File | Contents |
 |---|---|
+| `eidos-launcher-windows-setup.exe` | The launcher's installer for Windows. |
+| `eidos-launcher-macos.dmg` | The launcher for macOS (Apple silicon): a disk image to drag to Applications. Unsigned. |
+| `eidos-launcher-linux-x86_64.AppImage` | The launcher for Linux. |
+| `eidos-launcher-macos.app.tar.gz` | The macOS launcher packed for its own updates (`latest.json` points at it); players do not open it. |
+| `latest.json` | What a running launcher reads to update itself: the version and, per platform, the file and its signature. |
 | `eidos-<version>-windows.zip` | `eidos.exe` (`tools/build64.py`'s program), `SDL3.dll`, `LICENSE`, `LEGAL.md`, `README.txt`. Files sit at the top of the zip. |
 | `eidos-<version>-macos.zip` | `eidos`, `libSDL3.0.dylib` (its load path points at the executable's folder), `LICENSE`, `LEGAL.md`, `README.txt`. Unsigned: the notes tell the player to run `xattr -dr com.apple.quarantine .` or right-click and choose Open. |
 | `eidos-<version>-linux-x86_64.AppImage` | One file: `eidos`, the shared libraries linuxdeploy found, a desktop file and the icon. License files are under `usr/share/doc/eidos`. |
-| `SHA256SUMS` | The SHA-256 of the three files. |
+| `SHA256SUMS` | The SHA-256 of every other file. The launcher checks each game it installs against it. |
 
 The Windows program needs nothing else at run time: its other imports are
 Windows system libraries (`api-ms-win-crt-*`, `OPENGL32`, `WS2_32` and the
