@@ -41,6 +41,12 @@ message(STATUS "eidos: version ${EIDOS_VERSION_STRING}")
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+# Strict C99 on glibc hides the POSIX calls the port's Linux code uses
+# (nanosleep, clock_gettime, setenv, getaddrinfo); _DEFAULT_SOURCE shows
+# them again, as macOS and the BSDs do by default.  The language stays C99.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_compile_definitions(_DEFAULT_SOURCE)
+endif()
 
 # Where the aletheia decompilation checkout lives.  eidos consumes matched
 # sources, layout/ manifests and tools/assets/ scripts from it as an external
