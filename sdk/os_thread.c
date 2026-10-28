@@ -81,7 +81,9 @@
  *   reads either.
  */
 
+#ifndef __wasi__
 #include <setjmp.h>
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -163,8 +165,22 @@ typedef struct HostRec {
     u32       cpsr;          /* the thread's CPSR I/F bits while out      */
     int       kept;          /* the caller's: its host thread runs on     */
     int       retired;       /* the thread must not resume                */
+#ifndef __wasi__
     jmp_buf   exit_to;
+#endif
 } HostRec;
+
+#ifdef __wasi__
+/* setjmp is a native operation: unwind wasm2c's C frames to a protected
+ * host call, then return to the guest trampoline for its normal cleanup. */
+__attribute__((import_module("eidos"), import_name("thread_run")))
+extern void bw_host_thread_run(u32 callback, u32 arg);
+__attribute__((import_module("eidos"), import_name("thread_unwind"), noreturn))
+extern void bw_host_thread_unwind(void);
+#define THREAD_UNWIND(r) bw_host_thread_unwind()
+#else
+#define THREAD_UNWIND(r) longjmp((r)->exit_to, 1)
+#endif
 
 static BwMutex   *g_mx;
 static BwCond    *g_cv;
@@ -191,7 +207,7 @@ void bw_os_wait(void)
 
     if (r != NULL && r->kill && !r->launcher) {
         bw_mutex_unlock(g_mx);
-        longjmp(r->exit_to, 1);
+        THREAD_UNWIND(r);
     }
     bw_cond_wait(g_cv, g_mx);
 }
@@ -308,7 +324,7 @@ static void wait_token(HostRec *r)
     while (g_token != r->thread) {
         if (r->kill && !r->launcher) {
             bw_mutex_unlock(g_mx);
-            longjmp(r->exit_to, 1);
+            THREAD_UNWIND(r);
         }
         if (g_freq && !g_serving && r == g_frame_rec) {
             serve_frame();
@@ -342,19 +358,30 @@ static void resume(HostRec *r)
     }
 }
 
-static void trampoline(void *p)
+static void thread_body(void *p)
 {
     HostRec *r = (HostRec *)p;
 
     bw_mutex_lock(g_mx);
+    wait_token(r);
+    bw_mutex_unlock(g_mx);
+    r->cpsr = 0;            /* a new context starts with IRQs enabled */
+    resume(r);
+    r->fn(r->arg);
+    OS_ExitThread();        /* the DS context's lr */
+}
+
+static void trampoline(void *p)
+{
+    HostRec *r = (HostRec *)p;
+
+#ifdef __wasi__
+    bw_host_thread_run((u32)(uintptr_t)thread_body, (u32)(uintptr_t)p);
+#else
     if (setjmp(r->exit_to) == 0) {
-        wait_token(r);
-        bw_mutex_unlock(g_mx);
-        r->cpsr = 0;            /* a new context starts with IRQs enabled */
-        resume(r);
-        r->fn(r->arg);
-        OS_ExitThread();        /* the DS context's lr */
+        thread_body(p);
     }
+#endif
     /* Reached by longjmp, lock released: the thread is over. */
     bw_mutex_lock(g_mx);
     r->finished = 1;
@@ -395,7 +422,7 @@ static void host_switch(OSThread *from, OSThread *to)
     if (from->state == OS_THREAD_STATE_TERMINATED) {
         if (!fr->launcher) {
             bw_mutex_unlock(g_mx);
-            longjmp(fr->exit_to, 1);
+            THREAD_UNWIND(fr);
         }
         for (;;) {               /* the launcher has nowhere to return to */
             bw_cond_wait(g_cv, g_mx);
@@ -429,7 +456,7 @@ int bw_os_frame_delegate(BwOsHaltHook hook, void *user)
     while (g_freq) {
         if (me->kill && !me->launcher) {
             bw_mutex_unlock(g_mx);
-            longjmp(me->exit_to, 1);
+            THREAD_UNWIND(me);
         }
         if (me->retired) {
             /* A restart in the frame retired this thread (the launcher):

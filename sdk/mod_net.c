@@ -115,6 +115,7 @@
  * has to add.
  */
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -227,6 +228,31 @@ static void net_leave_mod(const char *saved)
 /* The sockets                                                         */
 /* ------------------------------------------------------------------ */
 
+#ifdef __wasi__
+
+/* Socket descriptors and resolver state belong to the native host. Buffer
+ * arguments are guest offsets; the embedder validates them before use. */
+typedef int BwSock;
+#define BW_SOCK_INVALID (-1)
+#define NET_IMPORT(name) __attribute__((import_module("eidos"), import_name(name)))
+NET_IMPORT("socket_new") extern int sock_new(void);
+NET_IMPORT("socket_connect") extern int sock_connect_to(int, const char *, u16);
+NET_IMPORT("socket_listen") extern int sock_listen_loopback(u16);
+NET_IMPORT("socket_accept") extern int sock_accept_one(int);
+NET_IMPORT("socket_recv") extern int sock_recv_some(int, void *, u32, u32 *);
+NET_IMPORT("socket_send") extern int sock_send_all(int, const void *, u32);
+NET_IMPORT("socket_close") extern void sock_shutdown(int);
+NET_IMPORT("socket_wait") extern int sock_wait(int, int, int);
+NET_IMPORT("sleep_ms") extern void net_sleep_ms(unsigned);
+NET_IMPORT("socket_error") extern void host_sock_error(char *, u32);
+static const char *sock_error(void)
+{
+    static char text[128];
+    host_sock_error(text, sizeof(text));
+    return text;
+}
+
+#else
 #ifdef _WIN32
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -700,6 +726,8 @@ static void net_sleep_ms(unsigned ms)
     (void)nanosleep(&ts, NULL);
 #endif
 }
+
+#endif /* __wasi__: sockets are host imports */
 
 /* ------------------------------------------------------------------ */
 /* The state                                                           */

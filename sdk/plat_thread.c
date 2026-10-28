@@ -124,6 +124,75 @@ unsigned long long bw_clock_ns(void)
                  / (unsigned long long)f.QuadPart;
 }
 
+#elif defined(__wasi__)
+
+/* Native handles are opaque 32-bit IDs, never host pointers. The native
+ * wasm2c embedder implements this import module and enters callbacks through
+ * eidos_thread_dispatch with the correct per-thread shadow stack. */
+#define BW_HOST_IMPORT(name) __attribute__((import_module("eidos"), import_name(name)))
+BW_HOST_IMPORT("mutex_create") extern u32 bw_host_mutex_create(void);
+BW_HOST_IMPORT("mutex_destroy") extern void bw_host_mutex_destroy(u32);
+BW_HOST_IMPORT("mutex_lock") extern void bw_host_mutex_lock(u32);
+BW_HOST_IMPORT("mutex_unlock") extern void bw_host_mutex_unlock(u32);
+BW_HOST_IMPORT("cond_create") extern u32 bw_host_cond_create(void);
+BW_HOST_IMPORT("cond_destroy") extern void bw_host_cond_destroy(u32);
+BW_HOST_IMPORT("cond_wait") extern void bw_host_cond_wait(u32, u32);
+BW_HOST_IMPORT("cond_broadcast") extern void bw_host_cond_broadcast(u32);
+BW_HOST_IMPORT("thread_start") extern u32 bw_host_thread_start(u32, u32, u32);
+BW_HOST_IMPORT("thread_join") extern void bw_host_thread_join(u32);
+BW_HOST_IMPORT("cpu_count") extern u32 bw_host_cpu_count(void);
+BW_HOST_IMPORT("clock_ns") extern u64 bw_host_clock_ns(void);
+
+struct BwMutex { u32 handle; };
+struct BwCond { u32 handle; };
+struct BwThread { u32 handle; void *stack; };
+
+static void *bw_host_handle(u32 handle)
+{
+    u32 *object;
+    if (!handle) bw_panic("wasm host handle", 0, "native host creation failed");
+    object = malloc(sizeof(*object));
+    if (!object) bw_panic("wasm host handle", 0, "out of memory");
+    *object = handle;
+    return object;
+}
+
+BwMutex *bw_mutex_create(void) { return bw_host_handle(bw_host_mutex_create()); }
+void bw_mutex_destroy(BwMutex *m) { if (m) { bw_host_mutex_destroy(m->handle); free(m); } }
+void bw_mutex_lock(BwMutex *m) { bw_host_mutex_lock(m->handle); }
+void bw_mutex_unlock(BwMutex *m) { bw_host_mutex_unlock(m->handle); }
+BwCond *bw_cond_create(void) { return bw_host_handle(bw_host_cond_create()); }
+void bw_cond_destroy(BwCond *c) { if (c) { bw_host_cond_destroy(c->handle); free(c); } }
+void bw_cond_wait(BwCond *c, BwMutex *m) { bw_host_cond_wait(c->handle, m->handle); }
+void bw_cond_broadcast(BwCond *c) { bw_host_cond_broadcast(c->handle); }
+BwThread *bw_thread_start(void (*fn)(void *), void *arg)
+{
+    /* The DS stacks remain game-visible (including SDK canaries), but C
+     * shims need room beyond the DS compiler's stack budget. Each native
+     * worker owns a separate aligned wasm shadow stack until it is joined. */
+    const u32 size = 1024u * 1024u;
+    BwThread *t = malloc(sizeof(*t));
+    if (!t) bw_panic("wasm thread", 0, "out of memory");
+    t->stack = malloc(size + 15u);
+    if (!t->stack) bw_panic("wasm thread stack", 0, "out of memory");
+    t->handle = bw_host_thread_start((u32)(uintptr_t)fn, (u32)(uintptr_t)arg,
+        ((u32)(uintptr_t)t->stack + size) & ~15u);
+    if (!t->handle) bw_panic("wasm thread", 0, "native thread creation failed");
+    return t;
+}
+void bw_thread_join(BwThread *t)
+{
+    if (t) { bw_host_thread_join(t->handle); free(t->stack); free(t); }
+}
+unsigned bw_cpu_count(void) { u32 n = bw_host_cpu_count(); return n ? n : 1; }
+unsigned long long bw_clock_ns(void) { return bw_host_clock_ns(); }
+
+__attribute__((export_name("eidos_thread_dispatch")))
+void bw_wasm_thread_dispatch(u32 callback, u32 arg)
+{
+    ((void (*)(void *))(uintptr_t)callback)((void *)(uintptr_t)arg);
+}
+
 #else /* POSIX */
 
 #include <pthread.h>

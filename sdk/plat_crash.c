@@ -37,8 +37,35 @@ void bw_plat_crash_context_run(void)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
-#if defined(_WIN32)
+#if defined(__wasi__)
+
+/* Signals and watchdog sampling are native host responsibilities. */
+#define CRASH_IMPORT(name) __attribute__((import_module("eidos"), import_name(name)))
+CRASH_IMPORT("crash_install") extern void bw_host_crash_install(void);
+CRASH_IMPORT("watchdog") extern void bw_host_watchdog(unsigned, unsigned);
+CRASH_IMPORT("backtrace") extern void bw_host_backtrace(void);
+static int bw_crash_on;
+void bw_plat_crash_install(void) { bw_host_crash_install(); bw_crash_on = 1; }
+int bw_plat_crash_installed(void) { return bw_crash_on; }
+void bw_plat_backtrace(void) { bw_host_backtrace(); }
+void bw_plat_console_open(void) { }
+void bw_plat_sampler_start(void) { }
+void bw_plat_crash_code_resolver(BwCodeResolver resolve) { (void)resolve; }
+void bw_plat_watchdog(unsigned seconds, unsigned long long (*progress)(void))
+{
+    bw_host_watchdog(seconds, (unsigned)(uintptr_t)progress);
+}
+__attribute__((export_name("eidos_progress_dispatch")))
+unsigned long long bw_wasm_progress_dispatch(unsigned callback)
+{
+    return ((unsigned long long (*)(void))(uintptr_t)callback)();
+}
+__attribute__((export_name("eidos_crash_context")))
+void bw_wasm_crash_context(void) { bw_plat_crash_context_run(); }
+
+#elif defined(_WIN32)
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
