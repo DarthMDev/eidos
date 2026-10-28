@@ -3,6 +3,21 @@
 Each release's notes on GitHub start with its section here
 (tools/release_notes.py). Newest first.
 
+## 0.1.7
+
+- macOS: 3D scenes draw again. The title screen's Reshiram, the new
+  game's house scene and the starter choice showed as a flat white or
+  green screen. 3D edge smoothing is off on macOS for now.
+- macOS: choosing your ROM no longer crashes the game.
+- Remaster battles: about 150 battle places now have a camera placed and
+  checked by hand, so the battle shows the right part of the map.
+- Settings: values no longer overlap their arrows, and long text such as
+  the mods folder is shortened to fit small windows. The CONTINUE card on
+  the title menu keeps its cut corner.
+- Downloads: the macOS launcher is a disk image (.dmg) with a READ ME
+  FIRST file for the first start, and each release has one file per
+  download.
+
 ## 0.1.6
 
 - 64-bit on Windows, Linux (an AppImage) and macOS (Apple silicon), with
