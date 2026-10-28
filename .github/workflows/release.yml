@@ -22,6 +22,10 @@ on:
         description: "Also make a draft release (tag name v<version>-test)"
         type: boolean
         default: false
+      launcher_only:
+        description: "Build only the launchers (the games are skipped)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -60,6 +64,7 @@ jobs:
   windows:
     name: windows
     needs: meta
+    if: ${{ !inputs.launcher_only }}
     runs-on: ${{ fromJSON(vars.EIDOS_RUNNER_WINDOWS || '["windows-2022"]') }}
     timeout-minutes: 90
     defaults:
@@ -163,6 +168,7 @@ jobs:
   linux:
     name: linux
     needs: meta
+    if: ${{ !inputs.launcher_only }}
     runs-on: ubuntu-22.04     # the oldest glibc we ship against
     timeout-minutes: 90
     env:
@@ -244,6 +250,7 @@ jobs:
   macos:
     name: macos
     needs: meta
+    if: ${{ !inputs.launcher_only }}
     runs-on: macos-14
     timeout-minutes: 90
     env:
