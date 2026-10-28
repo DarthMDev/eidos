@@ -85,6 +85,9 @@ typedef struct EidosUiView {
      * screen's 2D layers stay at the DS size, centred where the DS screen
      * sits in the wider view. */
     float zoom;             /* 1.0: the DS's own vertical view             */
+    int ds_only;            /* non-zero: nothing of the 3D shows outside the
+                               DS screen's rectangle (the sides stay black),
+                               for scenes drawn for the DS's own frame      */
     int blur;               /* non-zero: the world is blurred and dimmed
                                (behind a modal)                            */
     int hide_2d;            /* non-zero: the world screen's 2D layers are

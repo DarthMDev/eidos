@@ -223,6 +223,7 @@ static const char *k_fsw =
     "uniform int dil;\n"
     "uniform int hasz;\n"
     "uniform int hide2d;\n"
+    "uniform int crop;\n"
     "uniform float bfac;\n"
     "uniform vec3 sent;\n"
     "in vec2 uv;\n"
@@ -230,13 +231,19 @@ static const char *k_fsw =
     SHARP_FN
     "void main() {\n"
     "    vec2 f = vec2(gl_FragCoord.x, win.y - gl_FragCoord.y);\n"
-    "    vec4 g = texture(g3d, gl_FragCoord.xy / win);\n"
+    "    vec2 duv = (f - dsr.xy) / dsr.zw;\n"
+    /* a cropped world's 3D was rendered at the DS rectangle's size */
+    "    vec4 g = texture(g3d, crop != 0 ? vec2(duv.x, 1.0 - duv.y) : gl_FragCoord.xy / win);\n"
     "    vec3 P = g.rgb;\n"
     "    float A = g.a;\n"
     "    if (bmode == 1) { P = (1.0 - bfac) * P + bfac * A; }\n"
     "    else if (bmode == 2) { P = (1.0 - bfac) * P; }\n"
-    "    vec2 duv = (f - dsr.xy) / dsr.zw;\n"
     "    bool inside = hide2d == 0 && duv.x >= 0.0 && duv.y >= 0.0 && duv.x < 1.0 && duv.y < 1.0;\n"
+    /* A scene drawn for the DS's own frame: nothing outside its rectangle. */
+    "    if (crop != 0 && (duv.x < 0.0 || duv.y < 0.0 || duv.x >= 1.0 || duv.y >= 1.0)) {\n"
+    "        color = vec4(0.0, 0.0, 0.0, 1.0);\n"
+    "        return;\n"
+    "    }\n"
     /* Outside the DS rectangle the world shows its 3D, except where the
      * game covers the edge of its screen with black 2D (a wipe, a fade to
      * black that the game draws with a layer, not the brightness): that
@@ -328,11 +335,11 @@ static const char *k_fsu =
  * (else the fallback draws the two screens as the other layouts do).
  */
 static struct {
-    int on, world, screen, hide2d, blur, no_fade, hold, keep, dark, mix;
+    int on, world, screen, hide2d, crop, blur, no_fade, hold, keep, dark, mix;
     SDL_Rect ds;                   /* the DS screen's rectangle in the window */
     GLuint progw, progb, progu;
     GLint w_tex, w_behind, w_g3d, w_zero, w_texsize, w_dsr, w_win, w_bmode,
-          w_dil, w_hasz, w_hide2d, w_bfac, w_sent, w_rect;
+          w_dil, w_hasz, w_hide2d, w_crop, w_bfac, w_sent, w_rect;
     GLint b_src, b_win, b_dir, b_tint, b_rect;
     GLint u_ctex, u_rect;
     GLuint ctex;                   /* the canvas */
@@ -601,6 +608,7 @@ EidosGl *eidos_gl_create(SDL_Window *window)
         g_one.w_dil = g->glGetUniformLocation(g_one.progw, "dil");
         g_one.w_hasz = g->glGetUniformLocation(g_one.progw, "hasz");
         g_one.w_hide2d = g->glGetUniformLocation(g_one.progw, "hide2d");
+        g_one.w_crop = g->glGetUniformLocation(g_one.progw, "crop");
         g_one.w_bfac = g->glGetUniformLocation(g_one.progw, "bfac");
         g_one.w_sent = g->glGetUniformLocation(g_one.progw, "sent");
     }
@@ -1077,6 +1085,7 @@ void eidos_gl_one_set(EidosGl *g, int on, int world, int screen,
     g_one.world = on && world && ds != NULL && screen >= 0 && screen < 2;
     g_one.screen = screen;
     g_one.hide2d = hide_2d != 0;
+    g_one.crop = (no_fade & (1 << 18)) != 0;
     g_one.blur = blur != 0;
     g_one.no_fade = (no_fade & 1) != 0;
     g_one.hold = (no_fade & 2) != 0;
@@ -1199,7 +1208,8 @@ static void one_world(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
     const int use_w = g_one.progw != 0 && g->prog3 != 0 && g->tw[s] != 0 &&
                       s != g->cap_screen && g->behind_w == g->tw[s] &&
                       g->behind_h == g->th[s] &&
-                      eidos_gl_3d_matches(g, s, out_w, out_h);
+                      eidos_gl_3d_matches(g, s, g_one.crop ? g_one.ds.w : out_w,
+                                          g_one.crop ? g_one.ds.h : out_h);
     int blur = g_one.blur && g_one.progb != 0;
     int frozen = g_one.frozen_ok && g_one.fw == out_w && g_one.fh == out_h;
     int dark = g->bmode != 0 && g->bfac > 0.f;
@@ -1269,6 +1279,7 @@ static void one_world(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
         g->glUniform1i(g_one.w_dil, g->dilate);
         g->glUniform1i(g_one.w_hasz, g->has_zero);
         g->glUniform1i(g_one.w_hide2d, g_one.hide2d);
+        g->glUniform1i(g_one.w_crop, g_one.crop);
         g->glUniform3fv(g_one.w_sent, 1, sent);
         g->glActiveTexture(GL_TEXTURE3);
         glBindTexture(GL_TEXTURE_2D, g->zero_tex);

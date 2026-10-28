@@ -53,6 +53,7 @@
 extern void *bw_dsref_g_ProcSys TT_WEAK;
 extern void *bw_dsref_ov088_d_021BD574 TT_WEAK;     /* title ProcData      */
 extern void *bw_dsref_ov088_d_021BD66C TT_WEAK;     /* menu ProcData       */
+extern void *bw_dsref_ov088_d_0209DF9C TT_WEAK;     /* intro cutscene ProcData */
 
 extern void  *SAVE_CONTROL_Get(void) TT_WEAK;
 extern void  *SYSTEM_DATA_GetMyStatus(void *save) TT_WEAK;
@@ -1299,7 +1300,8 @@ static const EidosUiRecipe recipe_menu = {
 
 /*
  * Everything else the boot stack runs before the game (the logos and the
- * copyright in ov088, the opening cinematic in ov179, the new-game intro):
+ * copyright in ov088, the opening cinematic in ov179, the new-game intro and
+ * the cutscene after it):
  * one screen shown big in the middle of the window, the one that holds
  * the picture, rather than the two DS screens side by side.  No interface.
  */
@@ -1309,6 +1311,14 @@ static int boot_match(void)
 
     if (p == NULL || scene(NULL) != TT_SCENE_NONE) {
         return 0;
+    }
+    if (p->overlayId == 0xFFFFFFFFu) {
+        /* The cutscene after the professor's intro (the Unova flyover, the
+         * season card, the walk to the house) runs as a main-program proc
+         * before any field map exists, so no field recipe takes it. */
+        void *const *c = &bw_dsref_ov088_d_0209DF9C != NULL ? &bw_dsref_ov088_d_0209DF9C : NULL;
+
+        return addr_is(p->data, c, 0x0209DF9Cu);
     }
     return p->overlayId == 88 || p->overlayId == 179;
 }
@@ -1341,6 +1351,10 @@ static void boot_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
     (void)c;
     view->mode = EIDOS_VIEW_WORLD;
     view->zoom = 1.0f;
+    /* These scenes are drawn for the DS's frame (banners that run off its
+     * edges, sprites placed for its shape): no widened 3D, nothing outside
+     * the DS rectangle. */
+    view->ds_only = 1;
     /* the screen with the picture; a clear lead is needed to switch, so a
      * fade does not make the view jump between the two */
     if (shown < 0 || (shown == 0 && bottom > top * 2 + 2000) ||
