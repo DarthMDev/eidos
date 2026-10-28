@@ -24,9 +24,14 @@ DOWNLOADS = [
      "profiles and mods. Start here."),
     ("eidos-windows.zip",
      "Windows: eidos on its own. Unzip it anywhere and run `eidos.exe`."),
+    ("eidos-launcher-macos.zip",
+     "macOS (Apple silicon): the launcher. The build is not signed: "
+     "right-click it and choose Open the first time."),
     ("eidos-macos.zip",
-     "macOS: eidos on its own. The build is not signed: right-click `eidos` "
-     "and choose Open the first time."),
+     "macOS (Apple silicon): eidos on its own. The build is not signed: "
+     "right-click `eidos` and choose Open the first time."),
+    ("eidos-launcher-linux-x86_64.AppImage",
+     "Linux: the launcher. Make it executable and run it."),
     ("eidos-linux-x86_64.AppImage",
      "Linux: eidos on its own. Make it executable and run it."),
 ]

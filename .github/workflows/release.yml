@@ -230,7 +230,10 @@ jobs:
           echo "$LINUXDEPLOY_SHA256  linuxdeploy" | sha256sum -c -
           chmod +x linuxdeploy
       - name: Package
-        run: python3 tools/package_release.py linux --build-dir build64/host --version "${{ needs.meta.outputs.version }}" --out dist --linuxdeploy "$PWD/linuxdeploy"
+        run: |
+          python3 tools/package_release.py linux --build-dir build64/host --version "${{ needs.meta.outputs.version }}" --out dist --linuxdeploy "$PWD/linuxdeploy"
+          # a name without the version, for .../releases/latest/download/
+          cp "dist/eidos-${{ needs.meta.outputs.version }}-linux-x86_64.AppImage" dist/eidos-linux-x86_64.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: package-linux
@@ -283,7 +286,10 @@ jobs:
             --sdl3-prefix "$(brew --prefix sdl3)" \
             --relay "$EIDOS_DEFAULT_RELAY"
       - name: Package
-        run: python3 tools/package_release.py macos --build-dir build64/host --version "${{ needs.meta.outputs.version }}" --out dist --lib "$(brew --prefix sdl3)/lib/libSDL3.0.dylib"
+        run: |
+          python3 tools/package_release.py macos --build-dir build64/host --version "${{ needs.meta.outputs.version }}" --out dist --lib "$(brew --prefix sdl3)/lib/libSDL3.0.dylib"
+          # a name without the version, for .../releases/latest/download/
+          cp "dist/eidos-${{ needs.meta.outputs.version }}-macos.zip" dist/eidos-macos.zip
       - uses: actions/upload-artifact@v4
         with:
           name: package-macos
