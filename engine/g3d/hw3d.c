@@ -1144,9 +1144,11 @@ static void render_frame(void)
          * hashes of the frame's transformed vertices and polygons, and the
          * registers the picture depends on.  Equal hashes on both: the 3D
          * input is the same, and a difference comes later. */
+        /* "all": every frame, not every 60th */
         static u32 frames;
+        int every = getenv("EIDOS_DEBUG_G3D_HASH")[0] == 'a';
 
-        if ((++frames % 60u) == 0) {
+        if ((++frames % 60u) == 0 || every) {
             u32 hv = 2166136261u, hp = 2166136261u, k;
             const u8 *b;
 
@@ -1272,6 +1274,24 @@ static void render_frame(void)
     }
     cache_clear();
     rear_passes(t, d3, cc, cd);
+    if (getenv("EIDOS_DEBUG_G3D_HASH") != NULL) {
+        /* the rasteriser's output: its hash and how much of it is drawn */
+        static u32 frames;
+        int every = getenv("EIDOS_DEBUG_G3D_HASH")[0] == 'a';
+
+        if ((++frames % 60u) == 0 || every) {
+            u32 h = 2166136261u, k, drawn = 0, n = t->width * t->height;
+
+            for (k = 0; k < n * 4u; k++) {
+                h = (h ^ t->rgba[k]) * 16777619u;
+            }
+            for (k = 0; k < n; k++) {
+                drawn += t->rgba[k * 4u + 3u] != 0;
+            }
+            fprintf(stderr, "g3d out frame %u: %ux%u %08X drawn %u of %u\n",
+                    frames, t->width, t->height, h, drawn, n);
+        }
+    }
 
     g_hw.unsup_frame = unsup;
     g_hw.have_frame = 1;
