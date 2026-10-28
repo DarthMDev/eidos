@@ -87,6 +87,11 @@ void __real_G3D_SYSTEM_DrawObject(void *obj, void *status);
 #define SIT_ZONE    18u             /* u16                                  */
 #define SIT_HOUR    20u             /* u8                                   */
 #define SIT_MINUTE  21u             /* u8                                   */
+/* BattleSetupParam.trainerData[1], the opponent's BattleTrainerData *
+ * (after competitor, rule, the 16-byte fieldSituation, the two BGM ids,
+ * netHandle, four bytes of net state, party[4], playerStatus[4] and
+ * voiceFlags[4]); its first word is the trainer's number */
+#define SETUP_TRAINER1 0x4Cu
 /* GameData: the player's work (GAME_DATA_GetMyPlayerWork) */
 #define GD_PLAYER   (4u + 4u * 0x44u)
 #define PW_ZONE     0x00u           /* u16                                  */
@@ -141,6 +146,7 @@ typedef struct BvJob {
     int has_py;                     /* py is known (the ground nearest it) */
     int season, hour, minute;
     int trainer;                    /* a trainer battle (the setup's competitor) */
+    int trainer_id;                 /* the opponent's trainer number, 0 unknown */
     BmapPlaceSpec spec;
     int rc;
     volatile int done;
@@ -315,6 +321,12 @@ static int read_place(uintptr_t eff, BvJob *j)
     bm = rd32(eff, EFF_MAIN);
     setup = gptr_ok(bm) ? rd32(bm, 0) : 0;
     j->trainer = gptr_ok(setup) && rd32(setup, 0) != 0;     /* competitor: 0 wild */
+    if (j->trainer) {
+        /* the opponent: trainerData[1]->trainerId (BattleSetupParam) */
+        uintptr_t td = rd32(setup, SETUP_TRAINER1);
+
+        j->trainer_id = gptr_ok(td) ? (int)rd32(td, 0) : 0;
+    }
     j->zone = rd16(pw, PW_ZONE);
     j->px = rdfx(pw, PW_X);
     j->py = rdfx(pw, PW_Y);
@@ -526,7 +538,19 @@ static void battle_begin(uintptr_t eff)
         return;
     }
     /* the battle's row of the spot table (bmap_spots.c) */
-    row = j->reach != 0 ? -1 : bmap_spots_find(j->zone, j->trainer, j->px, j->pz);
+    /* a trainer by its number first (a story battle starts wherever the
+     * player stands), then by the sight line, then the zone's nearest
+     * story place */
+    row = -1;
+    if (j->reach == 0 && j->trainer && j->trainer_id > 0) {
+        row = bmap_spots_find_trainer(j->zone, j->trainer_id, j->px, j->pz);
+    }
+    if (j->reach == 0 && row < 0) {
+        row = bmap_spots_find(j->zone, j->trainer, j->px, j->pz);
+    }
+    if (j->reach == 0 && row < 0 && j->trainer) {
+        row = bmap_spots_find_trainer(j->zone, 0, j->px, j->pz);
+    }
     if (j->reach == 0 && row < 0 && getenv("EIDOS_DEBUG_BMAP_AT") != NULL) {
         row = bmap_spots_find(j->zone, !j->trainer, j->px, j->pz);  /* the previewed place */
     }
@@ -539,9 +563,9 @@ static void battle_begin(uintptr_t eff)
         BmapSpot *r = bmap_spots_get(row);
 
         fprintf(stderr, "battle_view: zone %u pos (%.1f, %.1f) facing %04x "
-                "season %d time %02d:%02d %s row %s\n", j->zone, (double)j->px,
+                "season %d time %02d:%02d %s %d row %s\n", j->zone, (double)j->px,
                 (double)j->pz, j->facing, j->season, j->hour, j->minute,
-                j->trainer ? "trainer" : "wild", r != NULL ? r->id : "none");
+                j->trainer ? "trainer" : "wild", j->trainer_id, r != NULL ? r->id : "none");
     }
     j->thread = bw_thread_start(job_main, j);
     g_job = j;

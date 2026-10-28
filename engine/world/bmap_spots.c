@@ -249,6 +249,40 @@ BmapSpot *bmap_spots_get(int i)
     return i >= 0 && i < g_n ? &g_rows[i] : NULL;
 }
 
+/* A trainer battle's row by the trainer's number (story battles start
+ * wherever the player stands, not on a sight line): among rows of that
+ * number in the zone, the one nearest the player.  trainer_id 0: the
+ * nearest story row (sight range 0) in the zone instead, the last resort
+ * after the sight-line search (a rival's number changes with the starter
+ * the player chose; the place does not).  -1: none. */
+int bmap_spots_find_trainer(unsigned zone, int trainer_id, float px, float pz)
+{
+    int i, best = -1, best_story = -1;
+    float bd = 1e30f, bs = 1e30f;
+
+    load();
+    for (i = 0; i < g_n; i++) {
+        const BmapSpot *r = &g_rows[i];
+        float dx, dz, d;
+
+        if (r->zone != zone || r->kind != 'T') {
+            continue;
+        }
+        dx = px - ((float)r->tx * 16.0f + 8.0f);
+        dz = pz - ((float)r->tz * 16.0f + 8.0f);
+        d = dx * dx + dz * dz;
+        if (trainer_id > 0 && r->trainer_id == trainer_id && d < bd) {
+            bd = d;
+            best = i;
+        }
+        if (trainer_id <= 0 && r->range <= 0 && d < bs) {
+            bs = d;
+            best_story = i;
+        }
+    }
+    return trainer_id > 0 ? best : best_story;
+}
+
 int bmap_spots_find(unsigned zone, int trainer, float px, float pz)
 {
     int tx = (int)floorf(px / 16.0f), tz = (int)floorf(pz / 16.0f);
