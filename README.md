@@ -11,13 +11,14 @@ A native PC port of Pokémon Black, built from the
 ## Download
 
 [![Windows](https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge&logo=windows11&logoColor=white)](https://github.com/Project-Holon/eidos/releases/latest/download/eidos-launcher-windows-setup.exe)
-[![Windows zip](https://img.shields.io/badge/Windows-.zip%20(no%20installer)-0078D6?style=for-the-badge&logo=windows11&logoColor=white)](https://github.com/Project-Holon/eidos/releases/latest/download/eidos-windows.zip)
-![macOS](https://img.shields.io/badge/macOS-not%20available%20yet-lightgrey?style=for-the-badge&logo=apple&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-not%20available%20yet-lightgrey?style=for-the-badge&logo=linux&logoColor=white)
+[![macOS](https://img.shields.io/badge/macOS-Download-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/Project-Holon/eidos/releases/latest/download/eidos-launcher-macos.zip)
+[![Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/Project-Holon/eidos/releases/latest/download/eidos-launcher-linux-x86_64.AppImage)
 
-Click your system to download. You need your own copy of Pokémon Black or
-White. The builds are not signed: on Windows, choose "More info" then "Run
-anyway".
+Click your system to download the launcher. It installs eidos and keeps it
+up to date. You need your own copy of Pokémon Black or White. The builds
+are not signed: on Windows, choose "More info" then "Run anyway"; on macOS
+(Apple silicon), right-click the app and choose Open the first time; on
+Linux, make the AppImage executable and run it.
 
 ## Status
 
