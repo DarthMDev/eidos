@@ -1110,8 +1110,22 @@ static void shell_layout(EidosUiCtx *c, const Bt *b, Shell *s)
     s->pw = clampi(w * 35 / 100, 150, 166);
     s->px = w - s->pw - 6;
     for (vp = 2; vp <= 6; vp += 2) {
-        if (poke_at_view(b, vp) != NULL && gauge_read(b, vp, &(GaugeView){ 0 }) != 0) {
+        u8 *poke = poke_at_view(b, vp);
+        MonView m;
+
+        if (poke == NULL) {
+            continue;
+        }
+        /* a shown gauge; or the Pokemon choosing a command, whose gauge the
+         * game slides in a few frames after the menu: its plate is there
+         * from the start, so the sheets above it do not jump */
+        if (gauge_read(b, vp, &(GaugeView){ 0 }) != 0) {
             s->own_vp[n++] = vp;
+        } else if (poke == chooser) {
+            mon_view(poke, &m);
+            if (m.hp > 0) {
+                s->own_vp[n++] = vp;
+            }
         }
     }
     /* the chooser last: it ends nearest the corner */
