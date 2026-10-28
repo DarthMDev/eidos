@@ -825,7 +825,10 @@ static int card_draw(EidosUiCtx *c, int x, int y, int w, int h, const SaveInfo *
     const UiImage *fig = NULL;
 
     ui_panel(c, x, y, w, h, CUT_DEF, 8, body, edge, 245);
-    ui_fill(c, x + 2, y + 2, w - 4, tb - 4, on ? 0x00718Fu : 0x061E38u, 255);
+    /* the header strip keeps the card's cut corner (a plain fill squared
+     * the top left off again) */
+    ui_panel(c, x + 2, y + 2, w - 4, tb - 4, UI_CUT_TL, 7,
+             on ? 0x00718Fu : 0x061E38u, on ? 0x00718Fu : 0x061E38u, 255);
     ui_fill(c, x + 2, y + tb - 2, w - 4, 1, on ? UI_CYAN : UI_NAVY2, 255);
     ui_text(c, x + 10, y + 2 + ui_text_y(tb - 4, UI_FONT_LARGE), "CONTINUE", UI_WHITE,
                  CARD_SHADE, UI_FONT_LARGE, 1);
