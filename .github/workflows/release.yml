@@ -400,7 +400,7 @@ jobs:
             bundles: appimage
           - os: macos
             runner: macos-14
-            bundles: app
+            bundles: app,dmg
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -471,8 +471,8 @@ jobs:
             sig=$(ls $b/appimage/*.AppImage.sig 2>/dev/null | head -1)
             platform=linux-x86_64
           else
-            (cd $b/macos && zip -qry "$GITHUB_WORKSPACE/out/eidos-launcher-${VERSION}-macos.zip" *.app)
-            cp "out/eidos-launcher-${VERSION}-macos.zip" out/eidos-launcher-macos.zip
+            cp $b/dmg/*.dmg "out/eidos-launcher-${VERSION}-macos.dmg"
+            cp "out/eidos-launcher-${VERSION}-macos.dmg" out/eidos-launcher-macos.dmg
             name="eidos-launcher-${VERSION}-macos.app.tar.gz"
             sig=$(ls $b/macos/*.app.tar.gz.sig 2>/dev/null | head -1)
             [ -n "$sig" ] && cp $b/macos/*.app.tar.gz "out/$name"
