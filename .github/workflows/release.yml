@@ -209,7 +209,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake \
-            -DCMAKE_C_FLAGS="-O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-m32 -O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
             -DEIDOS_SDL=OFF \
             -DALETHEIA_ROOT="$PWD/aletheia" \
             -DBW_DATA_ROOT="$PWD/no-game-data/extract/data"
