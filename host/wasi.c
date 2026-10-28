@@ -930,12 +930,13 @@ u32 w2c_wasi__snapshot__preview1_path_open(struct w2c_wasi__snapshot__preview1 *
         return W_EIO;
     }
     if (getenv("EIDOS_DEBUG_IO") != NULL) {
-        const char *base = strrchr(p, '/'), *bs = strrchr(p, '\\');
+        /* the path from the data folder down (no user folders in the log) */
+        const char *rel = strstr(p, "/data/");
 
-        if (bs != NULL && (base == NULL || bs > base)) {
-            base = bs;
+        if (rel == NULL) {
+            rel = strstr(p, "\\data\\");
         }
-        fprintf(stderr, "io open fd %d %s\n", fd, base != NULL ? base + 1 : p);
+        fprintf(stderr, "io open fd %d %s\n", fd, rel != NULL ? rel + 6 : p);
     }
     free(p);
     g_fd[fd].native = nfd;
