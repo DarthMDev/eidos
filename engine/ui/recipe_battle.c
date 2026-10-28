@@ -928,6 +928,13 @@ static void levelup_draw(EidosUiCtx *c, const Bt *b, int phase)
     }
 }
 
+/* The message box between two messages: the game clears its window for a
+ * few frames between them (and through a move's animation); the box stays
+ * that long, empty, and only then fades out, so it does not blink. */
+#define MSG_HOLD_FRAMES 24
+#define MSG_FADE_FRAMES 8
+static u32 g_msg_frame;                 /* the last frame with text          */
+
 static void plain_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
 {
     static const char *const hints[] = { "A", "Next" };
@@ -944,16 +951,30 @@ static void plain_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
      * game's own window, so the screen looks the same as in the menus. */
     if (bt_read(&b) && b.core != NULL) {
         int pw = clampi(w * 34 / 100, 120, 170);
+        int mw = w - 12 - pw - 6 > 260 ? w - 12 - pw - 6 : w - 12;
         int lv;
+        u32 now = bw_input_frame_number(), since;
 
         view->hide_2d = 1;
         shell_draw(c, &b, w - 6, h - 17 - 6 - 44, NULL);
-        (void)draw_battle_message(c, &b, 6, h - 17 - 4 - 40, w - 12 - pw - 6 > 260 ?
-                                  w - 12 - pw - 6 : w - 12, 40);
+        if (draw_battle_message(c, &b, 6, h - 17 - 4 - 40, mw, 40)) {
+            g_msg_frame = now;
+        } else if ((since = now - g_msg_frame) < MSG_HOLD_FRAMES + MSG_FADE_FRAMES) {
+            int a = since < MSG_HOLD_FRAMES ? 225
+                    : 225 * (int)(MSG_HOLD_FRAMES + MSG_FADE_FRAMES - since) / MSG_FADE_FRAMES;
+
+            ui_panel(c, 6, h - 17 - 4 - 40, mw, 40, UI_CUT_TL | UI_CUT_BR, 6, UI_BODY, UI_EDGE, a);
+        }
         lv = levelup_phase(&b);
         if (lv != LV_NONE) {
             levelup_draw(c, &b, lv);
         }
+    } else {
+        /* a frame the battle's state is not readable (a screen changing):
+         * the last picture stays, and the game's own plates stay hidden */
+        view->hide_2d = 1;
+        eidos_ui_hold_canvas();
+        return;
     }
     /* a click anywhere that is not the hints advances the message */
     full = hit(c, 0, 0, w, c->canvas->h - 17);

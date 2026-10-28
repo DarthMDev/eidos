@@ -207,8 +207,8 @@ static struct {
  * horizontal into a texture, then vertical onto the window with the dark
  * tint.
  *
- * k_fsu: the interface canvas, premultiplied RGBA, sampled nearest and
- * blended over what is there.
+ * k_fsu: the interface canvas, straight RGBA, sampled nearest and blended
+ * over what is there.
  */
 static const char *k_fsw =
     "#version 330 core\n"
@@ -1382,7 +1382,10 @@ static void one_canvas(EidosGl *g, int out_w, int out_h)
     g->glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, g_one.ctex);
     glEnable(GL_BLEND);
-    g->glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE,
+    /* the canvas is straight RGBA (engine/ui/kit.c): a pixel fading out
+     * keeps its colour and loses its alpha, so it is weighed by its alpha
+     * here, or a fading panel would brighten toward white */
+    g->glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE,
                            GL_ONE_MINUS_SRC_ALPHA);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glDisable(GL_BLEND);

@@ -1,6 +1,22 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { toast } from "morphe/menu.svelte";
-  import { LATEST, LOCAL, message, play, supportsOneScreen, versionLabel, type Layout, type Overview, type Profile } from "../lib/backend";
+  import {
+    LATEST,
+    LOCAL,
+    installVersion,
+    listRemote,
+    message,
+    newerThan,
+    play,
+    supportsOneScreen,
+    versionLabel,
+    type Layout,
+    type Overview,
+    type Profile,
+    type Remote,
+  } from "../lib/backend";
   import Icon from "../lib/Icon.svelte";
   import dragon from "../assets/dragon.png";
   import dragonDay from "../assets/dragon-day.png";
@@ -34,6 +50,44 @@
   const running = $derived(ov.running.includes(selected));
 
   const canOne = $derived(supportsOneScreen(version));
+
+  // A newer release than any installed one, for the profiles that follow
+  // the latest version.  A failed check shows nothing.
+  let remote = $state<Remote[] | null>(null);
+  let updating = $state(false);
+  let stage = $state("");
+  const update = $derived.by(() => {
+    if (!remote || !current || current.version !== LATEST) return null;
+    const r = remote.find((x) => !x.prerelease && x.available);
+    if (!r || r.installed) return null;
+    const have = ov.installed[0];
+    return !have || newerThan(r.id ?? r.tag, have) ? r : null;
+  });
+
+  async function installUpdate(r: Remote) {
+    updating = true;
+    try {
+      await installVersion(r.tag);
+      toast(`eidos ${r.id ?? r.tag} installed.`);
+      await onRefresh();
+      remote = await listRemote();
+    } catch (e) {
+      toast(message(e), true);
+    } finally {
+      updating = false;
+      stage = "";
+    }
+  }
+
+  onMount(() => {
+    listRemote()
+      .then((r) => (remote = r))
+      .catch(() => {});
+    const stop = listen<[string, string]>("install-progress", (e) => (stage = e.payload[1]));
+    return () => {
+      stop.then((f) => f());
+    };
+  });
 
   async function start(layout: Layout) {
     error = null;
@@ -96,6 +150,19 @@
       </div>
     </div>
   </div>
+
+  {#if update}
+    <div class="update window" role="status">
+      <Icon name="download" size={20} />
+      <div class="what">
+        <span class="headline">eidos {update.id ?? update.tag} is available</span>
+        <span class="sub">{updating ? stage || "Installing" : `You have ${version ? versionLabel(version) : "no version"}.`}</span>
+      </div>
+      <button class="primary" disabled={updating || running} onclick={() => installUpdate(update)}>
+        {updating ? "Installing" : "Update"}
+      </button>
+    </div>
+  {/if}
 
   {#if running}
     <p class="note">{selected} is running.</p>
@@ -222,6 +289,27 @@
       flex-direction: column;
       width: 100%;
     }
+  }
+  .update {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0.8rem 1rem 0.8rem 1.2rem;
+    border-color: var(--accent);
+  }
+  .update .what {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+  .update .headline {
+    font-weight: 700;
+  }
+  .update .sub {
+    color: var(--muted);
+    font-size: 0.9rem;
   }
   .note {
     display: flex;

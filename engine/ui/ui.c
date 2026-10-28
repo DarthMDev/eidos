@@ -50,6 +50,7 @@ static int g_mouse_live, g_last_mx = -1, g_last_my = -1;
 static int g_down_x = -1, g_down_y = -1;     /* where the button went down */
 static int g_right;                          /* right button this frame    */
 static int g_want_text, g_text_wanted;       /* typing asked this frame    */
+static int g_want_objs, g_objs_wanted;       /* OBJ layers asked (bits)    */
 static u32 g_keys_prev, g_keys_now, g_keys_edge, g_take;   /* the player's keys    */
 static int g_k = 2;
 
@@ -175,6 +176,18 @@ int eidos_ui_text_wanted(void)
     return g_text_wanted;
 }
 
+void eidos_ui_want_objs(int screen)
+{
+    if (screen == 0 || screen == 1) {
+        g_want_objs |= 1 << screen;
+    }
+}
+
+int eidos_ui_objs_wanted(void)
+{
+    return g_objs_wanted;
+}
+
 int eidos_ui_keys_lit(void)
 {
     return !g_mouse_live;
@@ -203,8 +216,8 @@ int eidos_ui_wheel(EidosUiRect r)
  * where it landed.  Both are done here, on the finished canvas, so every
  * recipe gets them without drawing anything.
  */
-#define FADE_FRAMES   6
-#define SLIDE_PIXELS  5
+#define FADE_FRAMES   10
+#define SLIDE_PIXELS  0
 #define RING_FRAMES   10
 
 static u8 *g_prev;               /* the last frame's canvas               */
@@ -247,6 +260,11 @@ u32 eidos_ui_keys_pressed(void)
 }
 
 #define GAP_FRAMES 75
+/* The game takes its own menu down a frame or two after its state moves
+ * on (a YES / NO, a battle's command menu): a view that stops hiding the
+ * game's 2D keeps it hidden this many frames more, so that menu does not
+ * flash between the recipe's interface and the next picture. */
+#define HIDE_TAIL_FRAMES 3
 #define KEY_REPEAT_WAIT 16
 #define KEY_REPEAT_STEP 4
 
@@ -291,6 +309,13 @@ static void fade_start(void);
 void eidos_ui_crossfade(void)
 {
     fade_start();
+}
+
+void eidos_ui_hold_canvas(void)
+{
+    if (g_prev != NULL && g_prev_w == g_canvas.w && g_prev_h == g_canvas.h) {
+        memcpy(g_canvas.rgba, g_prev, (size_t)g_prev_w * (size_t)g_prev_h * 4);
+    }
 }
 
 static void leave_check(EidosUiView *view)
@@ -361,6 +386,16 @@ void eidos_ui_sound(u32 seq)
         g_sound[g_sound_n] = seq;
         g_sound_n++;
     }
+}
+
+static volatile u32 g_cry;              /* a species whose cry is queued */
+extern u32 PM_VOICE_Play(u32 species, u32 form, u32 pan, u32 dual, u32 volumeBiasB,
+                         u32 frequencyOffsetB, u32 reverse, void **recordedVoice)
+    __attribute__((weak));
+
+void eidos_ui_cry(u32 species)
+{
+    g_cry = species;
 }
 
 /* The spot editor's Preview in game (and tests): EIDOS_DEBUG_PARTY="species,species,..." and
@@ -576,6 +611,12 @@ void eidos_ui_game_frame(void)
         }
     }
     g_sound_n = 0;
+    if (g_cry != 0) {
+        if (PM_VOICE_Play != NULL) {
+            PM_VOICE_Play(g_cry, 0, 64, 0, 0, 0, 0, NULL);
+        }
+        g_cry = 0;
+    }
 }
 
 #if defined(EIDOS_WRAP_PMVOICE)
@@ -596,6 +637,7 @@ static u32 g_modal_age = MODAL_FADE_FRAMES;
 static EidosUiView g_last_view;
 static int g_last_view_ok;
 static int g_gap;
+static int g_hide_tail;          /* frames the game's 2D stays hidden after */
 
 u32 eidos_ui_scene_age(void)
 {
@@ -848,6 +890,7 @@ void eidos_ui_frame(const EidosUiFrame *in, EidosUiView *view,
     ui_begin(&g_ctx, &g_canvas, w, h, g_k);
     read_mouse(in);
     g_want_text = 0;
+    g_want_objs = 0;
     g_keys_now = bw_input_player_buttons();
     g_keys_edge = g_keys_now & ~g_keys_prev;
     if (g_mx != g_last_mx || g_my != g_last_my) {
@@ -958,6 +1001,14 @@ void eidos_ui_frame(const EidosUiFrame *in, EidosUiView *view,
             fflush(stderr);
         }
         leave_check(view);
+        if (view->hide_2d) {
+            g_hide_tail = HIDE_TAIL_FRAMES;
+        } else if (g_hide_tail > 0) {
+            g_hide_tail--;
+            if (view->mode == EIDOS_VIEW_WORLD) {
+                view->hide_2d = 1;
+            }
+        }
         g_last_view = *view;
         g_last_view_ok = 1;
         g_gap = 0;
@@ -1000,6 +1051,7 @@ void eidos_ui_frame(const EidosUiFrame *in, EidosUiView *view,
         g_down_x = g_down_y = -1;
     }
     g_text_wanted = g_want_text;
+    g_objs_wanted = g_want_objs;
     bw_input_set_host_mask(g_take);
     ring_apply(&g_ctx);
     fade_apply(&g_canvas);

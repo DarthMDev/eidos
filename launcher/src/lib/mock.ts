@@ -18,6 +18,7 @@ const overview = {
 };
 
 const remote = [
+  { tag: "v0.1.6", id: "0.1.6", name: "eidos 0.1.6", prerelease: false, published: "2026-10-27T18:40:02Z", size: 7450000, available: true, installed: false },
   { tag: "v0.1.5", id: "0.1.5", name: "eidos 0.1.5", prerelease: false, published: "2026-10-23T13:07:48Z", size: 7400000, available: true, installed: true },
   { tag: "v0.1.4", id: "0.1.4", name: "eidos 0.1.4", prerelease: false, published: "2026-10-23T12:28:22Z", size: 7390000, available: true, installed: true },
   { tag: "v0.1.3", id: "0.1.3", name: "eidos 0.1.3", prerelease: false, published: "2026-10-23T11:50:44Z", size: 7380000, available: true, installed: false },
@@ -31,7 +32,14 @@ const mods = [
   { folder: "my-test", name: "my-test", order: 2, enabled: true, hasManifest: false },
 ];
 
-const settings = { repo: "Project-Holon/eidos", tokenSet: false, indexUrl: "", localBuild: "C:\\eidos-game" };
+const settings = {
+  repo: "Project-Holon/eidos",
+  tokenSet: false,
+  indexUrl: "",
+  localBuild: "C:\\eidos-game",
+  romBlack: "D:\\ROMs\\Pokemon - Black Version (USA, Europe).nds",
+  romWhite: null,
+};
 
 const answers: Record<string, unknown> = {
   overview,
@@ -39,6 +47,7 @@ const answers: Record<string, unknown> = {
   mods_list: mods,
   get_settings: settings,
   save_settings: settings,
+  set_rom: settings,
   move_profile_data: "The data is now at E:\\Games\\eidos.",
   take_pending_join: null,
 };

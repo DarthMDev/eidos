@@ -141,6 +141,10 @@ typedef struct EidosUiFrame {
      * game's own pictures from it (a Pokemon's front sprite, a menu icon)
      * with ui_blit_screen (engine/ui/kit.h). */
     const u8 *screen_rgba[2];
+    /* The OBJs of each screen alone, 256 x 192 RGBA at 1x, alpha 0 where
+     * no OBJ shows: the game's sprites without the BGs behind them (NULL
+     * unless a recipe asked last frame with eidos_ui_want_objs). */
+    const u8 *objs_rgba[2];
     /* Text the player typed on the PC keyboard this frame (UTF-8; "\b" a
      * Backspace, "\n" Return), only while a recipe asked for it with
      * eidos_ui_want_text; NULL otherwise. */
@@ -241,6 +245,14 @@ int  eidos_ui_mouse_pos(int *x, int *y);
 void eidos_ui_want_text(int on);
 int  eidos_ui_text_wanted(void);
 
+/* A recipe that takes the game's sprites apart from what is behind them
+ * (a menu's icons) calls this every frame it wants a screen's OBJ layer
+ * alone (EidosUiFrame.objs_rgba): it costs a composition, so the platform
+ * makes it only on request.  The request lasts one frame;
+ * eidos_ui_objs_wanted returns the screens asked, one bit each. */
+void eidos_ui_want_objs(int screen);
+int  eidos_ui_objs_wanted(void);
+
 /* ------------------------------------------------------------------ */
 /* Recipes                                                             */
 /* ------------------------------------------------------------------ */
@@ -258,6 +270,12 @@ void eidos_ui_sound(u32 seq);
 /* Crossfade from the last frame's picture to this one's (a recipe whose
  * picture changes at once within its scene: a menu that closes). */
 void eidos_ui_crossfade(void);
+/* Show the last frame's picture again (a recipe that cannot read the game
+ * for a frame keeps what was on screen instead of showing nothing). */
+void eidos_ui_hold_canvas(void);
+/* A Pokemon's cry, queued like eidos_ui_sound and played on the game's
+ * thread at its next frame. */
+void eidos_ui_cry(u32 species);
 void eidos_ui_game_frame(void);
 
 typedef struct EidosUiRecipe {

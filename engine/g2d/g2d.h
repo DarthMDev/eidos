@@ -317,6 +317,8 @@ int g2d_affine_resample(const u8 *src, u32 sw, u32 sh, s32 src_ox, s32 src_oy,
 typedef struct G2dPose {
     u32 width, height;
     u8 *indices;   /* owned, width*height palette indices; 0 = transparent */
+    s32 ox, oy;    /* where the rig's origin falls on the canvas: the
+                      frames of one animation line up on it */
 } G2dPose;
 
 /*
@@ -1058,6 +1060,11 @@ int g2d_hw_render_dsmem_adaptive_ex(u32 scale, const u8 *rgba3d, u8 *top,
 int g2d_hw_main_graphics_dsmem(const u8 *rgba3d, u8 *out);
 /* The two at once (with rgba3d, and with the 3D off), on the worker pool. */
 int g2d_hw_main_graphics_pair_dsmem(const u8 *rgba3d, u8 *with3d, u8 *without);
+
+/* The OBJs of one screen (0 top, 1 bottom) alone at DS size, RGBA8: alpha
+ * 255 where an OBJ pixel shows, 0 elsewhere.  The game's sprites without
+ * the BGs, the 3D, the colour effects or the master brightness. */
+int g2d_hw_objs_dsmem(int screen, u8 *out);
 
 /* ------------------------------------------------------------------ */
 /* Rig blocks (a/0/0/4 and its siblings)                               */

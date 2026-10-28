@@ -1676,6 +1676,59 @@ int g2d_hw_main_graphics_dsmem(const u8 *rgba3d, u8 *out)
     return rc;
 }
 
+int g2d_hw_objs_dsmem(int screen, u8 *out)
+{
+    G2dHwState hw;
+    G2dFrameDesc desc;
+    G2dFrameSample s;
+    Engine *e;
+    int main_on_top, rc = 0;
+    s32 x, y;
+
+    g2d_hw_state_from_dsmem(&hw);
+    if (hw.io == NULL || hw.pal == NULL || hw.oam == NULL || out == NULL) {
+        return -1;
+    }
+    memset(out, 0, (size_t)SCREEN_PX * 4u);
+    e = (Engine *)calloc(1, sizeof(Engine));
+    if (e == NULL) {
+        return -1;
+    }
+    main_on_top = (bw_rd16(hw.io + REG_POWCNT1) & 0x8000u) != 0;
+    e->hw = &hw;
+    e->scale = 1u;
+    e->main = (screen == 0) == main_on_top;
+    e->io = hw.io + (e->main ? 0u : REG_SUB_BASE);
+    e->dispcnt = reg32(e, REG_DISPCNT);
+    g2d_tables_init();
+    if (alloc_engine(e) != 0) {
+        rc = -1;
+    } else if ((e->dispcnt & 0x1000u) != 0
+               && build_objs(e) == 0 && emit_obj_poses(e) == 0) {
+        memset(&desc, 0, sizeof(desc));
+        desc.objs = e->objs;
+        desc.n_objs = e->n_objs;
+        desc.backdrop_pal = &e->bg_pal;
+        for (y = 0; y < (s32)SCREEN_H; y++) {
+            for (x = 0; x < (s32)SCREEN_W; x++) {
+                u8 *px = out + ((size_t)y * SCREEN_W + (size_t)x) * 4u;
+
+                if (g2d_frame_stack(&desc, x, y, &s, 1) == 0 || !s.is_obj
+                    || s.pal == NULL || s.color_index >= s.pal->count) {
+                    continue;
+                }
+                px[0] = s.pal->colors[s.color_index].r;
+                px[1] = s.pal->colors[s.color_index].g;
+                px[2] = s.pal->colors[s.color_index].b;
+                px[3] = 255;
+            }
+        }
+    }
+    engine_free(e);
+    free(e);
+    return rc;
+}
+
 typedef struct GraphicsPair {
     const u8 *rgba3d;
     u8 *out[2];

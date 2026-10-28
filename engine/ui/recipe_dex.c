@@ -18,8 +18,8 @@
  *     read through the port's file layer so a mod that replaces a member shows
  *     here too;
  *   - the types from the personal data (a/0/1/6, the kit's archive slot);
- *   - the Pokemon's picture from the game's own top screen (the game draws it
- *     as 2D sprites), copied with ui_blit_screen.
+ *   - the Pokemon's picture from its front sprite in the game's data (a/0/0/4,
+ *     ui_mon_front_draw), playing its idle loop.
  *
  * A click becomes what the game expects: a tap on the bottom screen at the
  * centre of the touch rectangle the game tests, or a key press (the list's
@@ -405,17 +405,6 @@ static void species_types(int species, int *t1, int *t2)
 #define DEX_PANEL2  0x08080Au
 #define DEX_ROWSEL  0x3C0812u
 
-/* Where the game draws the Pokemon's picture on its top screen: the list's
- * preview and the entry's picture (found by looking at the screens). */
-#define LIST_PIC_X  2
-#define LIST_PIC_Y  22
-#define LIST_PIC_W  92
-#define LIST_PIC_H  58
-#define ENTRY_PIC_X 10
-#define ENTRY_PIC_Y 19
-#define ENTRY_PIC_W 88
-#define ENTRY_PIC_H 57
-
 typedef struct DexLayout {
     int mx, my, mw, mh;         /* the modal                                */
     int bx, by, bw, bh;         /* the body under the header                */
@@ -541,220 +530,10 @@ static void dex_row(EidosUiCtx *c, int x, int y, int w, int h, int number, int s
     }
 }
 
-/* The Pokemon's picture from the game's own screen: the rectangle (sx, sy,
- * sw, sh) of a DS screen holds the game's 2D sprite over a flat or dotted
- * backdrop.  The backdrop is the set of colours on the rectangle's border
- * ring; a flood from the ring through those colours leaves the sprite, which
- * is cropped to its bounding box and drawn at the largest whole scale that
- * fits (x, y, w, h), standing on the shadow. */
-typedef struct SpriteCache { int species, w, h; long lum; u8 rgba[128 * 128 * 4]; } SpriteCache;
-static int g_pic_species = -1, g_pic_age;
-static SpriteCache g_sc;        /* the last sprite taken from the info page  */
-
-static void draw_crop(EidosUiCtx *c, int x, int y, int w, int h, const u8 *rgba, int cw,
-                      int ch)
-{
-    UiImage im;
-    int k = imax(1, imin(w / cw, h / ch));
-
-    im.w = cw;
-    im.h = ch;
-    im.rgba = rgba;
-    ui_image(c, x + (w - cw * k) / 2, y + h - ch * k, &im, k);
-}
-
-static int dex_sprite(EidosUiCtx *c, const u8 *scr, int species, int x, int y, int w, int h,
-                      int sx, int sy, int sw, int sh)
-{
-    static u8 mask[128 * 128];
-    static u8 crop[128 * 128 * 4];
-    static int stack[128 * 128];
-    u32 bgc[8];
-    int nbg = 0, i, xx, yy, sp = 0, x0 = sw, y0 = sh, x1 = -1, y1 = -1, k, cw, ch;
-    int cnt[8] = { 0 };
-
-    if (scr == NULL || sw > 128 || sh > 128 || sx < 0 || sy < 0 || sx + sw > 256 ||
-        sy + sh > 192) {
-        return 0;
-    }
-#define PX(xx_, yy_) (scr + ((size_t)(sy + (yy_)) * 256 + (size_t)(sx + (xx_))) * 4)
-#define COL(p_) (((u32)(p_)[0] << 16) | ((u32)(p_)[1] << 8) | (u32)(p_)[2])
-    for (yy = 0; yy < sh; yy++) {
-        for (xx = 0; xx < sw; xx++) {
-            u32 col;
-
-            if (yy > 1 && yy < sh - 2 && xx > 1 && xx < sw - 2) {
-                continue;
-            }
-            col = COL(PX(xx, yy));
-            for (i = 0; i < nbg && bgc[i] != col; i++) {
-            }
-            if (i == nbg && nbg < 8) {
-                bgc[nbg++] = col;
-            }
-            if (i < nbg) {
-                cnt[i]++;
-            }
-        }
-    }
-    /* keep the colours that fill a real part of the ring */
-    {
-        int m = 0;
-
-        for (i = 0; i < nbg; i++) {
-            if (cnt[i] >= 6) {
-                bgc[m++] = bgc[i];
-            }
-        }
-        nbg = m;
-    }
-    memset(mask, 0, (size_t)sw * (size_t)sh);
-    for (yy = 0; yy < sh; yy++) {
-        for (xx = 0; xx < sw; xx++) {
-            if (xx == 0 || yy == 0 || xx == sw - 1 || yy == sh - 1) {
-                stack[sp++] = yy * sw + xx;
-            }
-        }
-    }
-    while (sp > 0) {
-        int idx = stack[--sp], px = idx % sw, py = idx / sw, ok = 0;
-        u32 col;
-
-        if (mask[idx]) {
-            continue;
-        }
-        col = COL(PX(px, py));
-        for (i = 0; i < nbg; i++) {
-            ok |= bgc[i] == col;
-        }
-        if (!ok) {
-            continue;
-        }
-        mask[idx] = 1;
-        if (px > 0 && !mask[idx - 1] && sp < 128 * 128) stack[sp++] = idx - 1;
-        if (px < sw - 1 && !mask[idx + 1] && sp < 128 * 128) stack[sp++] = idx + 1;
-        if (py > 0 && !mask[idx - sw] && sp < 128 * 128) stack[sp++] = idx - sw;
-        if (py < sh - 1 && !mask[idx + sw] && sp < 128 * 128) stack[sp++] = idx + sw;
-    }
-    /* Holes inside the sprite (between a tail and the body, under an arm)
-     * show the backdrop too, cut off from the ring.  On a dotted backdrop
-     * (two colours or more) a closed patch that holds two of its colours
-     * is such a hole, as the sprite's own pixels never repeat the dots; a
-     * patch of one colour may be the sprite's and stays. */
-    if (nbg >= 2) {
-        static int comp[128 * 128];
-        int cy0;
-
-        for (cy0 = 0; cy0 < sh * sw; cy0++) {
-            u32 col0;
-            int n = 0, seen = 0, j, ok0 = 0;
-
-            if (mask[cy0]) {
-                continue;
-            }
-            col0 = COL(PX(cy0 % sw, cy0 / sw));
-            for (i = 0; i < nbg; i++) {
-                ok0 |= bgc[i] == col0;
-            }
-            if (!ok0) {
-                continue;
-            }
-            sp = 0;
-            stack[sp++] = cy0;
-            mask[cy0] = 2;
-            while (sp > 0) {
-                int idx = stack[--sp], px = idx % sw, py = idx / sw, nb[4], q;
-                u32 col = COL(PX(px, py));
-
-                comp[n++] = idx;
-                for (i = 0; i < nbg; i++) {
-                    if (bgc[i] == col) {
-                        seen |= 1 << i;
-                    }
-                }
-                nb[0] = px > 0 ? idx - 1 : -1;
-                nb[1] = px < sw - 1 ? idx + 1 : -1;
-                nb[2] = py > 0 ? idx - sw : -1;
-                nb[3] = py < sh - 1 ? idx + sw : -1;
-                for (q = 0; q < 4; q++) {
-                    int ok = 0;
-
-                    if (nb[q] < 0 || mask[nb[q]]) {
-                        continue;
-                    }
-                    col = COL(PX(nb[q] % sw, nb[q] / sw));
-                    for (i = 0; i < nbg; i++) {
-                        ok |= bgc[i] == col;
-                    }
-                    if (ok) {
-                        mask[nb[q]] = 2;
-                        stack[sp++] = nb[q];
-                    }
-                }
-            }
-            for (j = 0, i = 0; i < nbg; i++) {
-                j += (seen >> i) & 1;
-            }
-            for (i = 0; i < n; i++) {
-                /* 1: a hole (backdrop), 3: the sprite's own pixels */
-                mask[comp[i]] = (u8)(j >= 2 && n >= 6 ? 1 : 3);
-            }
-        }
-        for (i = 0; i < sw * sh; i++) {
-            if (mask[i] == 3) {
-                mask[i] = 0;
-            }
-        }
-    }
-    for (yy = 0; yy < sh; yy++) {
-        for (xx = 0; xx < sw; xx++) {
-            if (!mask[yy * sw + xx]) {
-                x0 = imin(x0, xx); x1 = imax(x1, xx);
-                y0 = imin(y0, yy); y1 = imax(y1, yy);
-            }
-        }
-    }
-    if (x1 < x0 || y1 < y0) {
-        return 0;
-    }
-    cw = x1 - x0 + 1;
-    ch = y1 - y0 + 1;
-    for (yy = 0; yy < ch; yy++) {
-        for (xx = 0; xx < cw; xx++) {
-            const u8 *p = PX(x0 + xx, y0 + yy);
-            u8 *d = crop + ((size_t)yy * (size_t)cw + (size_t)xx) * 4;
-
-            d[0] = p[0]; d[1] = p[1]; d[2] = p[2];
-            d[3] = mask[(y0 + yy) * sw + x0 + xx] ? 0 : 255;
-        }
-    }
-#undef PX
-#undef COL
-    (void)k;
-    {
-        /* keep the brightest picture seen of this species: the game fades
-         * its screens in and out, and the picture should not */
-        long lum = 0;
-
-        for (i = 0; i < cw * ch; i++) {
-            lum += crop[i * 4] + crop[i * 4 + 1] + crop[i * 4 + 2];
-        }
-        if (g_sc.species != species || lum >= g_sc.lum) {
-            g_sc.species = species;
-            g_sc.w = cw;
-            g_sc.h = ch;
-            g_sc.lum = lum;
-            memcpy(g_sc.rgba, crop, (size_t)cw * (size_t)ch * 4);
-        }
-    }
-    draw_crop(c, x, y, w, h, g_sc.rgba, g_sc.w, g_sc.h);
-    return 1;
-}
-
-/* The picture block: the shadow, then the game's sprite from the DS screen
- * `scr` (or the Pokemon's icon, scaled, when the screen is not there). */
-static void dex_picture(EidosUiCtx *c, const u8 *scr, int species, int x, int y, int w,
-                        int h, int sx, int sy, int sw, int sh, int visible, int stable)
+/* The picture block: the shadow, then the Pokemon's front sprite playing
+ * its idle loop (the game's own sprite data, ui_mon_front_draw), or its
+ * icon, scaled, when the sprite cannot be read. */
+static void dex_picture(EidosUiCtx *c, int species, int x, int y, int w, int h, int visible)
 {
     int k;
     const UiImage *ic;
@@ -764,11 +543,8 @@ static void dex_picture(EidosUiCtx *c, const u8 *scr, int species, int x, int y,
     if (!visible) {
         return;
     }
-    if (scr != NULL && stable && dex_sprite(c, scr, species, x, y, w, h - 8, sx, sy, sw, sh)) {
-        return;
-    }
-    if (g_sc.species == species && g_sc.w > 0) {
-        draw_crop(c, x, y, w, h - 8, g_sc.rgba, g_sc.w, g_sc.h);
+    if (ui_mon_front_anim((u16)species, 0, 0, NULL, NULL) != NULL) {
+        ui_mon_front_draw(c, (u16)species, 0, bw_input_frame_number(), x, y, w, h - 8);
         return;
     }
     ic = ui_mon_icon((u16)species, 0, 0);
@@ -790,9 +566,9 @@ static void hw_strings(int species, int caught, char *ht, int htn, char *wt, int
 
 /* The species block: number, name, category, types, picture, height and
  * weight, into the panel (x, y, w, h). */
-static void dex_species_panel(EidosUiCtx *c, const u8 *scr, const DexNow *v,
+static void dex_species_panel(EidosUiCtx *c, const DexNow *v,
                               int x, int y, int w, int h, int species, int number,
-                              int state, int sx, int sy, int sw, int sh)
+                              int state)
 {
     char s[8], name[64], cat[64], ht[40], wt[40];
     int t1 = UI_TYPE_UNKNOWN, t2 = UI_TYPE_UNKNOWN, tx, ih = 15, py, ph;
@@ -825,16 +601,7 @@ static void dex_species_panel(EidosUiCtx *c, const u8 *scr, const DexNow *v,
     py = y + 38;
     ph = h - 38 - 2 * (ih + 3) - 6;
     if (ph > 20) {
-        /* the game loads a new picture a moment after the species changes: do
-         * not take the old one for the new species */
-        if (species != g_pic_species) {
-            g_pic_species = species;
-            g_pic_age = 0;
-        } else if (g_pic_age < 1000) {
-            g_pic_age++;
-        }
-        dex_picture(c, scr, species, x + 6, py, w - 12, ph, sx, sy, sw, sh, state != 0,
-                    g_pic_age >= (v->kind == DEX_LIST ? 12 : 30));
+        dex_picture(c, species, x + 6, py, w - 12, ph, state != 0);
     }
     ui_info_row(c, x + 6, y + h - 2 * (ih + 3) - 3, w - 12, "HT", ht);
     ui_info_row(c, x + 6, y + h - (ih + 3) - 1, w - 12, "WT", wt);
@@ -1003,8 +770,7 @@ static void run_list(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in,
         int sp = v->ids[psel], state = dex_state(v, sp);
         EidosUiRect pr = { rx, L.by, rw, L.bh };
 
-        dex_species_panel(c, in->screen_rgba[1], v, rx, L.by, rw, L.bh, sp, psel + 1, state,
-                          LIST_PIC_X, LIST_PIC_Y, LIST_PIC_W, LIST_PIC_H);
+        dex_species_panel(c, v, rx, L.by, rw, L.bh, sp, psel + 1, state);
         if (eidos_ui_hit(pr) & EIDOS_UI_CLICK) {
             if (state != 0) {
                 list_open(v);
@@ -1071,9 +837,7 @@ static void run_entry(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in,
     dex_modal(c, &L, "ENTRY", right);
 
     lw = iclamp(L.bw * 2 / 5, 130, L.bw - 120);
-    dex_species_panel(c, v->page == 1 ? in->screen_rgba[1] : NULL, v, L.bx, L.by, lw, L.bh,
-                      v->species, v->number,
-                      state, ENTRY_PIC_X, ENTRY_PIC_Y, ENTRY_PIC_W, ENTRY_PIC_H);
+    dex_species_panel(c, v, L.bx, L.by, lw, L.bh, v->species, v->number, state);
     rx = L.bx + lw + 6;
     rw = L.bx + L.bw - rx;
     ui_panel(c, rx, L.by, rw, L.bh, UI_CUT_TL | UI_CUT_BR, 6, DEX_PANEL2, UI_DEX2, 255);
@@ -1230,6 +994,17 @@ static void dex_reset(void)
     g_press_wait = 0;
     g_first = 0;
     g_open_pending = 0;
+}
+
+/* For other recipes (kit.h): the species' name and types. */
+int ui_species_name(int species, char *out, int cap)
+{
+    return msg_get(MSG_NAME, (u32)species, out, cap);
+}
+
+void ui_species_types(int species, int *t1, int *t2)
+{
+    species_types(species, t1, t2);
 }
 
 static const EidosUiRecipe recipe_dex = { "pokedex", dex_match, dex_run, dex_reset };

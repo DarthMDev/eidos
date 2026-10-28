@@ -862,9 +862,11 @@ int eidos_firstrun(const BwSetupRequest *req, char *data_dir, size_t n,
     memset(&cfg, 0, sizeof(cfg));
     cfg.extract_dir = r.extract_dir;
     cfg.reason = r.state != BW_ROOT_MISSING ? r.why : NULL;
-    if (r.state == BW_ROOT_OLD && r.rom[0] != '\0'
-        && bw_path_kind_utf8(r.rom) == BW_PATH_FILE) {
-        cfg.rom = r.rom;                /* make it again, with progress */
+    /* A remembered ROM (the game's own, or the one chosen in the launcher):
+     * make the data from it, with progress, instead of asking. */
+    if ((r.state == BW_ROOT_OLD || r.state == BW_ROOT_MISSING || r.state == BW_ROOT_DAMAGED)
+        && r.rom[0] != '\0' && bw_path_kind_utf8(r.rom) == BW_PATH_FILE) {
+        cfg.rom = r.rom;
     }
     rc = eidos_wizard_run(&cfg, rom, sizeof(rom));
     if (rc == EIDOS_WIZARD_QUIT) {

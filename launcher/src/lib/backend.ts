@@ -38,7 +38,11 @@ export type SettingsView = {
   tokenSet: boolean;
   indexUrl: string;
   localBuild: string | null;
+  romBlack: string | null;
+  romWhite: string | null;
 };
+
+export type Game = "black" | "white";
 
 export const LATEST = "latest";
 export const LOCAL = "local";
@@ -63,6 +67,17 @@ export type Layout = "classic" | "one";
 export const ONE_SCREEN_MIN_VERSION: string | null = "0.1.6";
 
 const parts = (v: string) => v.replace(/^v/i, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+
+/** Whether version a (0.1.7, or a tag with a leading v) comes after b. */
+export function newerThan(a: string, b: string): boolean {
+  const x = parts(a);
+  const y = parts(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+}
 
 // Whether a resolved version (an id, or LOCAL for the local build) can start
 // in the one-screen layout. A local build always can, so it can be tried.
@@ -94,6 +109,7 @@ export const openFolder = (what: "root" | "profile" | "mods", profile?: string) 
 export const getSettings = () => invoke<SettingsView>("get_settings");
 export const saveSettings = (s: { repo: string; token: string | null; indexUrl: string; localBuild: string | null }) =>
   invoke<SettingsView>("save_settings", s);
+export const setRom = (game: Game, path: string | null) => invoke<SettingsView>("set_rom", { game, path });
 export const takePendingJoin = () => invoke<string | null>("take_pending_join");
 
 /** The text of a failed command. */

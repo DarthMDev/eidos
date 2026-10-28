@@ -13,6 +13,7 @@ mod layout;
 mod mods;
 mod profile;
 mod remote;
+mod rom;
 mod settings;
 mod versions;
 
@@ -75,6 +76,8 @@ struct SettingsView {
     token_set: bool,
     index_url: String,
     local_build: Option<String>,
+    rom_black: Option<String>,
+    rom_white: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -313,6 +316,12 @@ fn play(
         None => launch::Layout::Classic,
         Some(text) => launch::Layout::parse(text).ok_or("That screen layout is not known.")?,
     };
+    // the game may have remembered another ROM since: give it the chosen one
+    if let (Some(rom), Some(home)) = (s.rom_black.as_deref(), game_home()) {
+        if rom.is_file() {
+            let _ = rom::remember(&home, Some(rom));
+        }
+    }
     let dir = app.layout.profile(&name);
     let args = launch::eidos_args(&dir, &p.data_root, join.as_deref(), layout);
     let mut child = launch::spawn(&v.exe, &args).map_err(|e| format!("Could not start eidos: {e}"))?;
@@ -396,7 +405,39 @@ fn view(s: &Settings) -> SettingsView {
             .local_build
             .as_ref()
             .map(|p| p.to_string_lossy().into_owned()),
+        rom_black: s.rom_black.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        rom_white: s.rom_white.as_ref().map(|p| p.to_string_lossy().into_owned()),
     }
+}
+
+/// The game's own folder, where its `config.txt` is.
+fn game_home() -> Option<PathBuf> {
+    datamove::game_home(std::env::consts::OS, &|k| std::env::var(k).ok())
+}
+
+/// Sets or clears (`path` None) the ROM of a game ("black" or "white").
+/// The file must be a ROM of that game; the Black one goes to the game.
+#[tauri::command]
+fn set_rom(app: State<App>, game: String, path: Option<String>) -> R<SettingsView> {
+    let game = rom::Game::parse(&game).ok_or("That game is not known.")?;
+    let path = path.map(|p| PathBuf::from(p.trim())).filter(|p| !p.as_os_str().is_empty());
+    if let Some(p) = &path {
+        rom::check(p, game)?;
+    }
+    let mut s = app.settings.lock().unwrap();
+    match game {
+        rom::Game::Black => s.rom_black = path.clone(),
+        rom::Game::White => s.rom_white = path,
+    }
+    s.save(&app.layout.settings_file())
+        .map_err(|e| format!("Could not save the settings: {e}"))?;
+    if game == rom::Game::Black {
+        if let Some(home) = game_home() {
+            rom::remember(&home, s.rom_black.as_deref())
+                .map_err(|e| format!("Could not give the ROM to the game: {e}"))?;
+        }
+    }
+    Ok(view(&s))
 }
 
 #[tauri::command]
@@ -503,6 +544,7 @@ pub fn run() {
             delete_profile,
             set_profile_version,
             set_profile_data_root,
+            set_rom,
             move_profile_data,
             list_remote,
             install_version,
