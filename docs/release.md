@@ -13,10 +13,12 @@ hand (Actions, release, Run workflow).
    from `cmake/aletheia_pin.cmake`. On a tag it stops when the tag is not
    `v<version>`.
 2. `windows`, `linux` and `macos` check out eidos and aletheia (at the
-   pinned revision), fetch SDL2, WAMR and Mbed TLS with the repository's
-   fetch tools (each checks a recorded SHA-256), build with
-   `-DEIDOS_RELEASE=ON`, run `ctest` and package the result with
-   `tools/package_release.py`. Tests that need a ROM skip themselves.
+   pinned revision) and fetch SDL3, WAMR, Mbed TLS and the wasm toolchain
+   with the repository's fetch tools (each checks a recorded SHA-256). They
+   build the engine's tests natively and run `ctest` (tests that need a ROM
+   skip themselves), build the game with `tools/build64.py --release` (the
+   wasm32 module, wasm2c, the native 64-bit program: `docs/lp64.md`), and
+   package it with `tools/package_release.py`.
 3. `release` (on a tag) collects the three packages, writes `SHA256SUMS` and
    makes a **draft** GitHub Release with the notice text in its body. A
    person reads it and presses Publish.
@@ -50,8 +52,8 @@ write`) to make the draft. No other secret is needed.
 
 | File | Contents |
 |---|---|
-| `eidos-<version>-windows.zip` | `eidos.exe` (the `eidos_boot` target), `SDL2.dll`, `LICENSE`, `LEGAL.md`, `README.txt`. Files sit at the top of the zip. |
-| `eidos-<version>-macos.zip` | `eidos`, `libSDL2-2.0.0.dylib` (its load path points at the executable's folder), `LICENSE`, `LEGAL.md`, `README.txt`. Unsigned: the notes tell the player to run `xattr -dr com.apple.quarantine .` or right-click and choose Open. |
+| `eidos-<version>-windows.zip` | `eidos.exe` (`tools/build64.py`'s program), `SDL3.dll`, `LICENSE`, `LEGAL.md`, `README.txt`. Files sit at the top of the zip. |
+| `eidos-<version>-macos.zip` | `eidos`, `libSDL3.0.dylib` (its load path points at the executable's folder), `LICENSE`, `LEGAL.md`, `README.txt`. Unsigned: the notes tell the player to run `xattr -dr com.apple.quarantine .` or right-click and choose Open. |
 | `eidos-<version>-linux-x86_64.AppImage` | One file: `eidos`, the shared libraries linuxdeploy found, a desktop file and the icon. License files are under `usr/share/doc/eidos`. |
 | `SHA256SUMS` | The SHA-256 of the three files. |
 
@@ -81,11 +83,13 @@ data at run time). This is an open decision; see the build notes below.
 
 ### Package on this computer
 
-Build as usual, with `-DEIDOS_RELEASE=ON`, in a folder of its own (never the
-folder you play from), then:
+Build the game in a folder of its own (never the folder you play from),
+then package it:
 
 ```
-python tools/package_release.py windows --build-dir <build> --version <v> --out <out>
+python tools/fetch_wasm.py
+python tools/build64.py --build-dir <build> --release --aletheia-root <aletheia>
+python tools/package_release.py windows --build-dir <build>/host --version <v> --out <out>
 ```
 
 Without a ROM, run `python tools/package_release.py placeholders
@@ -150,11 +154,12 @@ with `--linuxdeploy`, and run the AppImage with
 
 ## Build notes and open points
 
-- Windows is the only platform proved end to end. The game is built for
-  32-bit pointers (`docs/pointer-width.md`). Linux and macOS have no proved
-  game build yet: Linux x86-64 and macOS are 64-bit, and the plan for them
-  is `docs/lp64.md`. The Linux and macOS jobs build the 64-bit
-  configuration; if that does not link, the job fails and says where.
+- Every package is 64-bit: Windows x86-64 (MinGW-w64), Linux x86-64 and
+  macOS arm64. The game inside is compiled for wasm32, so it keeps the DS's
+  4-byte pointers and struct layouts, and translated back to C for the
+  platform's compiler (`docs/lp64.md`). There are no 32-bit packages. The launcher is
+  built for all three, and each updates itself (latest.json lists
+  windows-x86_64, linux-x86_64 and darwin-aarch64).
 - macOS packages are unsigned and not notarised.
 - The release notice text lives in `release.yml` and must match "The notice"
   in `docs/distribution.md`.

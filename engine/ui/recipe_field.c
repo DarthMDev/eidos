@@ -40,6 +40,7 @@
 
 #include "ui.h"
 #include "kit.h"
+#include "plat_thread.h"
 #include "port.h"
 #include "dsmem.h"
 #include "input.h"
@@ -771,7 +772,7 @@ static void menu_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
 
     /* The party (the game's data; a click on a row opens the party list). */
     {
-        char cnt[12];
+        char cnt[16];
 
         snprintf(cnt, sizeof(cnt), "%d/6", np);
         ui_header(c, px, py, pw, "PARTY", NULL, cnt, UI_SKY);
@@ -1118,7 +1119,8 @@ static void field_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
     }
     if (!have_time) {
         time_t tt = time(NULL);
-        struct tm *tmv = localtime(&tt);
+        struct tm tmb;
+        struct tm *tmv = bw_localtime((long long)tt, &tmb) == 0 ? &tmb : NULL;
 
         if (tmv != NULL) {
             t3[0] = (u32)tmv->tm_hour;

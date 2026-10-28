@@ -91,7 +91,9 @@
 #include "frame.h"
 #include "plat_crash.h"
 #include "port.h"
-#include "settings.h"
+#if EIDOS_BOOT_SDL
+#include "settings.h"           /* engine/platform: the SDL3 build's */
+#endif
 
 #ifndef EIDOS_DEFAULT_DATA_ROOT
 #define EIDOS_DEFAULT_DATA_ROOT ""

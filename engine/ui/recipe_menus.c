@@ -41,6 +41,7 @@
 #include "assets.h"
 #include "input.h"
 #include "overlay.h"
+#include "plat_thread.h"
 #include "port.h"
 #include "settings.h"
 
@@ -1302,7 +1303,7 @@ static void save_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
     char place[64], buf[96], msg[256];
     int x, y, w, i, st_yes_no, answer = -1, busy, msgmode, compact;
     time_t now;
-    struct tm *tm;
+    struct tm tmb, *tm;
     EidosUiRect hr;
     const char *pairs[4];
 
@@ -1331,7 +1332,7 @@ static void save_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
     ui_text(c, x, y + text_cy(15, UI_FONT_LARGE), place_name(gs, place, (int)sizeof place),
             UI_WHITE, UI_GREY, UI_FONT_LARGE, 1);
     now = time(NULL);
-    tm = localtime(&now);
+    tm = bw_localtime((long long)now, &tmb) == 0 ? &tmb : NULL;
     if (tm != NULL) {
         snprintf(buf, sizeof buf, "%02d/%02d/%04d  %02d:%02d", tm->tm_mon + 1, tm->tm_mday,
                  tm->tm_year + 1900, tm->tm_hour, tm->tm_min);

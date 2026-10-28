@@ -9,7 +9,7 @@ Run Pokémon Black (and eventually White) natively on modern platforms (PC, macO
 `eidos` is the native platform and runtime engine companion to aletheia.
 
 - **aletheia**: Focuses on clean-room reverse engineering, decompilation, and byte-matching accuracy against the original Nintendo DS ARM9 binary.
-- **eidos**: Consumes the matched C source code from aletheia, providing host platform abstraction (SDL2), 2D/3D hardware shims, native audio mixing, and file I/O.
+- **eidos**: Consumes the matched C source code from aletheia, providing host platform abstraction (SDL3), 2D/3D hardware shims, native audio mixing, and file I/O.
 
 `eidos` does not vendor any of aletheia's source: `ALETHEIA_ROOT` (see
 "Building" below) points at a sibling checkout of the decompilation project
@@ -113,9 +113,9 @@ parts:
 | `engine/g3d/` | the 3D engine: the fixed-point geometry pipeline, NSBMD/NSBTX loading, the display-list interpreter and a software rasteriser, no SDL |
 | `engine/audio/` | the SDAT sequencer and the 16-channel mixer, the ARM7 sound core's stand-in, no SDL |
 | `engine/frame/` | the per-frame skeleton: the vblank convention and the DS OS tick, no SDL |
-| `engine/platform/` | the host: the SDL2 window, the keyboard, the audio device and the frame pacer |
+| `engine/platform/` | the host: the SDL3 window, the keyboard, the audio device and the frame pacer |
 
-Only `engine/platform/` includes SDL2, and it is the only optional piece of
+Only `engine/platform/` includes SDL3, and it is the only optional piece of
 the build.
 
 **Assets** come from the player's own ROM. aletheia's `tools/ndsrom.py

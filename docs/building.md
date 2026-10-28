@@ -5,11 +5,11 @@
 Requirements: CMake 3.16+, a C99 compiler (GCC, Clang or MSVC), Python 3.11+
 for the fixture generator, a sibling checkout of aletheia, and an
 `extract/` (in the aletheia checkout, by default) produced from your own
-ROM. The standard library is the only hard dependency; SDL2 is optional and
+ROM. The standard library is the only hard dependency; SDL3 is optional and
 is needed only for `engine/platform/` and the `eidos_view` demo.
 
-**SDL2 without an installer.** `tools/fetch_sdl.py` downloads SDL
-**2.32.10** from the official libsdl-org GitHub release, verifies it against
+**SDL3 without an installer.** `tools/fetch_sdl.py` downloads SDL
+**3.4.18** from the official libsdl-org GitHub release, verifies it against
 a SHA-256 recorded in the script (the same values as the asset digests
 GitHub publishes for that release), and unpacks it into a per-user cache
 **outside the repository**: `%LOCALAPPDATA%\eidos\sdl` on Windows,
@@ -21,9 +21,9 @@ flavours of the same release:
 
 | flavour | archive | for |
 | --- | --- | --- |
-| `mingw` | `SDL2-devel-2.32.10-mingw.tar.gz` | MinGW-w64, x64 and x86 |
-| `vc` | `SDL2-devel-2.32.10-VC.zip` | `cl.exe` and `clang-cl`, x64 and x86 |
-| `source` | `SDL2-2.32.10.tar.gz` | anything else: built with CMake, with this build's own compiler, flags and toolchain file, into a prefix named after them |
+| `mingw` | `SDL3-devel-3.4.18-mingw.tar.gz` | MinGW-w64, x64 and x86 |
+| `vc` | `SDL3-devel-3.4.18-VC.zip` | `cl.exe` and `clang-cl`, x64 and x86 |
+| `source` | `SDL3-3.4.18.tar.gz` | anything else: built with CMake, with this build's own compiler, flags and toolchain file, into a prefix named after them |
 
 ```
 python tools/fetch_sdl.py                 # the host's default (mingw on Windows, source elsewhere)
@@ -31,16 +31,16 @@ python tools/fetch_sdl.py --flavor vc     # one flavour; --flavor all for every 
 python tools/fetch_sdl.py --check         # report what the cache holds
 ```
 
-**How CMake finds it** (`cmake/sdl2.cmake`): it asks the script for the
+**How CMake finds it** (`cmake/sdl3.cmake`): it asks the script for the
 flavour this toolchain links (`vc` under MSVC and clang-cl, `mingw` under
 MinGW-w64, `source` otherwise; `-DEIDOS_SDL_FLAVOR=` overrides) at this
 build's pointer width, which never touches the network; then an older
-fetch's `third_party/SDL2-*` inside the checkout, if one is there; then an
-SDL2 CMake package (a system package, Homebrew, vcpkg, or `-DSDL2_DIR`);
-then pkg-config's `sdl2.pc`. With none of them it says so and skips the
+fetch's `third_party/SDL3-*` inside the checkout, if one is there; then an
+SDL3 CMake package (a system package, Homebrew, vcpkg, or `-DSDL3_DIR`);
+then pkg-config's `sdl3.pc`. With none of them it says so and skips the
 platform layer and the demo: **every other target still builds, and every
 test but `test_view` still runs.** `-DEIDOS_SDL=OFF` forces that path, which
-is how the no-SDL build is checked. On Windows `SDL2.dll` is copied next to
+is how the no-SDL build is checked. On Windows `SDL3.dll` is copied next to
 `eidos_view.exe` after it links.
 
 **`-DEIDOS_SDL_FETCH=ON`** adds a last step: when nothing was found, run
@@ -91,7 +91,7 @@ configure line says `eidos: wasm code mods on` or `off`. Without it, or with
 a message. No assembler is needed: native calls go through WAMR's portable
 C path.
 
-### SDL2 on every platform
+### SDL3 on every platform
 
 None of the following can be tested on the Windows machine this port is
 developed on; the package names are the distributions' own.
@@ -99,23 +99,22 @@ developed on; the package names are the distributions' own.
 **Linux.** The development package, found through its CMake package or
 pkg-config:
 
-| distribution | 64-bit | 32-bit (the ILP32 configuration) |
-| --- | --- | --- |
-| Debian, Ubuntu | `libsdl2-dev` | `libsdl2-dev:i386` (after `dpkg --add-architecture i386`), with `gcc-multilib` |
-| Fedora | `SDL2-devel` | `SDL2-devel.i686`, with `glibc-devel.i686` |
-| Arch | `sdl2` | `lib32-sdl2` (multilib repository), with `lib32-glibc` |
-| openSUSE | `libSDL2-devel` | `libSDL2-devel-32bit` |
-| Alpine | `sdl2-dev` | none (no multilib) |
+| distribution | package |
+| --- | --- |
+| Debian 13, Ubuntu 25.04 and later | `libsdl3-dev` |
+| Fedora 42 and later | `SDL3-devel` |
+| Arch | `sdl3` |
+| openSUSE Tumbleweed | `SDL3-devel` |
+| Alpine 3.21 and later | `sdl3-dev` |
 
-Fedora 42 and later and Arch ship SDL2 as `sdl2-compat`, the SDL2 API
-implemented over SDL3; the package names above still resolve to it and it
-is meant to be a drop-in replacement. If the 32-bit package is missing,
-the configure-time link probe (below) reports SDL2 as not found for that
-build rather than failing half way through it, and
-`-DEIDOS_SDL_FETCH=ON` builds it from source for `-m32` instead.
+Older releases (Ubuntu 22.04 and 24.04 among them) have no SDL3 package:
+configure with `-DEIDOS_SDL_FETCH=ON` and SDL3 is built from its source
+release (below). The configure-time link probe reports an SDL3 that does
+not link for this target as not found rather than failing half way
+through the build.
 
-**macOS.** `brew install sdl2` (Homebrew) or `sudo port install libsdl2`
-(MacPorts). Homebrew installs both a CMake package and `sdl2.pc`; if CMake
+**macOS.** `brew install sdl3` (Homebrew) or `sudo port install libsdl3`
+(MacPorts). Homebrew installs both a CMake package and `sdl3.pc`; if CMake
 does not search Homebrew's prefix (`/opt/homebrew` on Apple silicon),
 configure with `-DCMAKE_PREFIX_PATH=$(brew --prefix)`. Only 64-bit builds
 exist on current macOS, so the ILP32 configuration is not available there.
@@ -124,15 +123,15 @@ exist on current macOS, so the ILP32 configuration is not available there.
 configure eidos with `-DEIDOS_SDL_FETCH=ON`. The script downloads the
 source release, verifies it, and builds it with the compiler, C flags,
 toolchain file and generator of the eidos build that asked, into
-`SDL2-2.32.10-<system>-<compiler>-<arch>-<hash>/` in the cache, so a GCC
+`SDL3-3.4.18-<system>-<compiler>-<arch>-<hash>/` in the cache, so a GCC
 build, a Clang build and an `-m32` build each get their own. On Linux, SDL
 builds the video and audio back ends whose development headers are
 installed (X11 or Wayland, ALSA, PulseAudio or PipeWire); with none of them
 it still builds, with only the dummy drivers, which is enough for
 `test_view` but opens no window.
 
-**Android and iOS.** Not built yet; the route is SDL2's own templates.
-The SDL2 source release carries `android-project/` (a Gradle project whose
+**Android and iOS.** Not built yet; the route is SDL3's own templates.
+The SDL3 source release carries `android-project/` (a Gradle project whose
 `SDLActivity` loads the game as `libmain.so`, built with the NDK through
 CMake or ndk-build) and `Xcode/` (the iOS template and SDL's own
 `SDL.xcodeproj`). Three things differ from the desktop build:
@@ -148,44 +147,9 @@ CMake or ndk-build) and `Xcode/` (the iOS template and SDL's own
   files directory, iOS: the app's sandbox), which the first-run extractor
   in `install/` would write to.
 - **Input.** The DS keypad has no keyboard to come from; the touch screen
-  maps to SDL's touch events (`SDL_FINGERDOWN` and friends) on the bottom
-  screen's rectangle, and the buttons to an on-screen overlay or a game
-  controller (`SDL_GameController`).
-
-### SDL2 or SDL3
-
-SDL3 (3.2.0, January 2025; the 3.4 series now) is a new major version with
-a renamed and partly redesigned API; SDL2 2.32.x is in maintenance. The cost
-of moving is small and contained, because `engine/platform/platform.c`
-(about 600 lines) is the only file that includes SDL, and the demo and
-`test_view` see only `platform.h`. What would change there:
-
-- **Audio**, the only real rewrite: SDL3 replaces the device callback and
-  `SDL_LockAudioDevice` with an `SDL_AudioStream`
-  (`SDL_OpenAudioDeviceStream` with a get-callback, and
-  `SDL_LockAudioStream` around the mixer handover). Same shape, new calls.
-- **Renaming**: `SDL_RenderCopy` to `SDL_RenderTexture` (float rectangles),
-  `SDL_CreateRGBSurfaceWithFormatFrom` to `SDL_CreateSurfaceFrom`,
-  `SDL_FreeSurface` to `SDL_DestroySurface`, `SDL_KEYDOWN` and `SDL_QUIT` to
-  `SDL_EVENT_KEY_DOWN` and `SDL_EVENT_QUIT`, `SDL_NUM_SCANCODES` to
-  `SDL_SCANCODE_COUNT`, `#include <SDL3/SDL.h>`.
-- **Small semantic changes**: functions return `bool` (true on success)
-  instead of 0, `SDL_GetKeyboardState` returns `const bool *`,
-  `SDL_CreateWindow` drops the position arguments and `SDL_WINDOW_SHOWN`,
-  `SDL_CreateRenderer` takes a driver name and vsync is set separately
-  (`SDL_SetRenderVSync`), and the scale-quality hint becomes
-  `SDL_SetTextureScaleMode(..., SDL_SCALEMODE_NEAREST)` per texture.
-- **Build glue**: `find_package(SDL3)`, `SDL3::SDL3`, new archive names and
-  hashes in `tools/fetch_sdl.py`, `SDL3.dll`.
-
-Recommendation: **stay on SDL2 for now and move to SDL3 before the mobile
-ports**, as one change to `platform.c`, `cmake/sdl2.cmake` and the fetch
-script. Nothing the port uses today needs SDL3, and SDL2 is still what
-Debian, Ubuntu LTS and Alpine ship natively, while the distributions that
-moved ship `sdl2-compat`, so SDL2 code keeps building everywhere. What SDL3
-adds is what the later milestones want: a better touch, pen and gamepad
-model for the bottom screen and the buttons, proper high-DPI handling, and
-the actively developed Android and iOS back ends.
+  maps to SDL's touch events (`SDL_EVENT_FINGER_DOWN` and friends) on the
+  bottom screen's rectangle, and the buttons to an on-screen overlay or a
+  gamepad (`SDL_Gamepad`).
 
 **Without game data.** The fixtures and the four oracles are generated from
 the extracted ROM at build time, so a tree with no `extract/` used to fail
@@ -198,10 +162,10 @@ and the seven data-driven ones (`test_text`, `test_stats`, `test_g2d`,
 disabled, so ctest lists them as `Not Run (Disabled)` rather than dropping
 them from the count. `-DEIDOS_DATA_TESTS=ON` forces the data path.
 
-Configure also compiles and links a one-line SDL2 program before it trusts
-an SDL2 it found. On a 64-bit Linux host configured with the ILP32
-toolchain file, pkg-config reports the 64-bit SDL2, which does not build
-under `-m32`; the probe turns that into "SDL2 not found for this target"
+Configure also compiles and links a one-line SDL3 program before it trusts
+an SDL3 it found. On a 64-bit Linux host configured with the ILP32
+toolchain file, pkg-config reports the 64-bit SDL3, which does not build
+under `-m32`; the probe turns that into "SDL3 not found for this target"
 and the platform layer is skipped, instead of a compile error half way
 through the build. libm is asked for the same way, by linking a call to
 `pow` with `-lm` for the target being built, because `find_library` answers
@@ -266,7 +230,7 @@ compiler for its "32-bit" build; the search is now split by host OS.
 On a Windows host the two MinGW configurations are native builds and run
 their tests directly. Every Windows configuration (`mingw-*`, `msvc-*`,
 `clangcl-x64`) configures with `-DEIDOS_SDL_FETCH=ON` and fails if it still
-has no SDL2, so the platform layer, `eidos_view` and `test_view` are part
+has no SDL3, so the platform layer, `eidos_view` and `test_view` are part
 of what "ok" means there; the summary's `sdl` column says which
 configurations had it.
 
@@ -321,14 +285,14 @@ headers and CRT, and `vcvarsall.bat`) and a Windows SDK (the UCRT headers
 and `kernel32.lib`); clang-cl is
 `Microsoft.VisualStudio.Component.VC.Llvm.Clang`.
 
-**SDL2 under MSVC.** `cl.exe` and `clang-cl` link the `vc` flavour, the
-official `SDL2-devel-2.32.10-VC.zip` (`SDL2.lib` and `SDL2.dll` for x64 and
+**SDL3 under MSVC.** `cl.exe` and `clang-cl` link the `vc` flavour, the
+official `SDL3-devel-3.4.18-VC.zip` (`SDL3.lib` and `SDL3.dll` for x64 and
 x86); the MinGW import library does not link with `link.exe`. Run
 `python tools/fetch_sdl.py --flavor vc` once, or configure with
 `-DEIDOS_SDL_FETCH=ON`, and the platform layer, `eidos_view` and `test_view`
 build in all three Visual Studio configurations. vcpkg
-(`vcpkg install sdl2:x64-windows`, with its toolchain file) or
-`-DSDL2_DIR=<somewhere>/cmake` also work, through the `find_package` step.
+(`vcpkg install sdl3:x64-windows`, with its toolchain file) or
+`-DSDL3_DIR=<somewhere>/cmake` also work, through the `find_package` step.
 
 **No dialogs.** The Microsoft runtime reports `abort()`, a failed
 `assert()`, an invalid CRT argument and every debug-CRT error with a modal
@@ -386,11 +350,11 @@ aletheia's `tools/gcc-host/` (the MinGW-w64 archive ships
 whole of what it needs) and then on PATH, and falls back to `-m32` on the
 default compiler. It does not set `CMAKE_SYSTEM_NAME`: this is a same-OS,
 different-ABI build and ctest runs the executables exactly as it does the
-64-bit ones. SDL2 is not a problem either, because the MinGW devel package
+64-bit ones. SDL3 is not a problem either, because the MinGW devel package
 `tools/fetch_sdl.py` unpacks carries an `i686-w64-mingw32` tree beside the
 64-bit one (and the VC package an `x86` library beside the `x64` one), and
-`cmake/sdl2.cmake` picks by pointer width;
-`-DEIDOS_SDL=OFF` is there for a host with no 32-bit SDL2.
+`cmake/sdl3.cmake` picks by pointer width;
+`-DEIDOS_SDL=OFF` is there for a host with no 32-bit SDL3.
 
 `CMakeLists.txt` then reads `CMAKE_SIZEOF_VOID_P` and decides one thing:
 
@@ -619,7 +583,7 @@ header `u16`), neither needed for the transform.
 
 With the ILP32 configuration added (2026-09-16): the same tree configured
 with `cmake/ilp32-toolchain.cmake` against the `i686-w64-mingw32-gcc` in the
-same MinGW-w64 archive builds 96 targets warning-free, finds the i686 SDL2
+same MinGW-w64 archive builds 96 targets warning-free, finds the i686 SDL3
 tree beside the x86_64 one, and passes the same **ten tests** in 1.2 seconds,
 with the nine pointer-width-dependent tcbl sources compiled as written and
 the node and the manager at the DS's own `0x18` and `0x38`. `tools/hostbuild.py --check`

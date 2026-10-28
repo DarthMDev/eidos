@@ -94,6 +94,11 @@ class Forms(unittest.TestCase):
         self.check("x = *(volatile u32 *)( ( 0x04000000 ) );",
                    "x = *((volatile u32 *)bw_ds_ptr(0x04000000u));")
 
+    def test_ioreg_addr(self):
+        # aletheia's sdk_ioreg.h: IOREG_ADDR(a) is the plain number on the DS
+        self.check("x = *(volatile u16 *)IOREG_ADDR(0x04000280);",
+                   "x = *((volatile u16 *)bw_ds_ptr(0x04000280u));")
+
     def test_suffixes(self):
         self.check("p = (u8 *)0x05000000u;", "p = ((u8 *)bw_ds_ptr(0x05000000u));")
         self.check("p = (u8 *)0x05000000UL;", "p = ((u8 *)bw_ds_ptr(0x05000000u));")

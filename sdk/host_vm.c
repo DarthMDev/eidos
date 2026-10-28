@@ -5,7 +5,7 @@
  * the port needs a reserved-but-uncommitted block at all.
  */
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(__wasm__)
 /* mmap and MAP_ANONYMOUS are POSIX/BSD, hidden by a strict -std=c99. */
 #  ifndef _DEFAULT_SOURCE
 #    define _DEFAULT_SOURCE 1
@@ -234,6 +234,53 @@ void bw_vm_discard(void *p, size_t size)
         == MAP_FAILED) {
         memset(p, 0, size);
     }
+}
+
+#elif defined(__wasm__)
+
+/*
+ * The wasm32 build: the module's memory starts with the DS's own address
+ * space.  The link puts everything the module has at or above
+ * BW_WASM_DS_TOP (CMakeLists.txt, --global-base), so the DS's windows
+ * below it are nobody else's: a fixed reservation there is the address
+ * itself, and a DS address the game holds is the module address of its
+ * byte (sdk/dsmem.c, "Identity mapping").  The memory starts zeroed.
+ */
+#define BW_WASM_DS_TOP 0x08000000u
+
+void *bw_vm_reserve(size_t size)
+{
+    return calloc(1, size);
+}
+
+void *bw_vm_reserve_at(size_t addr, size_t size)
+{
+    if (addr == 0 || addr + size > BW_WASM_DS_TOP) {
+        return NULL;
+    }
+    return (void *)addr;
+}
+
+int bw_vm_relaunch_reserved(const size_t *addr, const size_t *size, int count,
+                            int *status)
+{
+    (void)addr;
+    (void)size;
+    (void)count;
+    (void)status;
+    return 0;
+}
+
+int bw_vm_commit(void *p, size_t size)
+{
+    (void)p;
+    (void)size;
+    return 0;
+}
+
+void bw_vm_discard(void *p, size_t size)
+{
+    memset(p, 0, size);
 }
 
 #else /* neither Win32 nor POSIX: commit everything up front */

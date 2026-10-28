@@ -23,6 +23,9 @@
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
+#if defined(__wasm__)
+#include "wasm_host.h"
+#endif
 
 #if defined(_WIN32)
 
@@ -101,7 +104,10 @@ int bw_plat_replace_file(const char *from, const char *to)
 
 int bw_plat_default_save_dir(char *out, size_t out_size)
 {
-#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
+#if defined(__wasm__)
+    /* The platform's rule, which only the host knows (sdk/wasm_host.h). */
+    return bw_host_os_path(BW_HOST_PATH_SAVE_DIR, out, (unsigned)out_size);
+#elif defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
     /* App-private storage is known only to the Java/Objective-C side: the
      * front end calls bw_set_save_dir (docs/installer.md).                 */
     (void)out;

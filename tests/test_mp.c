@@ -391,7 +391,9 @@ static int file_size(const char *name)
     if (bw_mp_dir(dir, sizeof dir) != 0) {
         return -1;
     }
-    snprintf(path, sizeof path, "%s/%s", dir, name);
+    if (snprintf(path, sizeof path, "%s/%s", dir, name) >= (int)sizeof path) {
+        return -1;
+    }
     f = fopen(path, "rb");
     if (f == NULL) {
         return -1;

@@ -3,7 +3,7 @@
  * keyboard, gamepads, the mouse as the stylus, the audio device and the
  * frame pacer.
  *
- * This is the only part of eidos that includes SDL2, and it is the only part
+ * This is the only part of eidos that includes SDL3, and it is the only part
  * that is optional: the engine library, the shim, the stubs and every test
  * build and run without it (CMakeLists.txt, EIDOS_SDL).  Nothing here knows
  * anything about the game; it hands the frame loop in engine/frame/ two
@@ -95,9 +95,9 @@ typedef struct EidosKeyBinding {
 const EidosKeyBinding *eidos_default_keymap(u32 *count);
 
 /*
- * One gamepad binding, through SDL's game controller API (every pad SDL's
+ * One gamepad binding, through SDL's gamepad API (every pad SDL's
  * controller database knows, under one positional layout).  `kind` says
- * what `index` is: an SDL_GameControllerButton, or an SDL_GameControllerAxis
+ * what `index` is: an SDL_GamepadButton, or an SDL_GamepadAxis
  * read past half its travel in the positive or the negative direction.
  * Every open pad is read through the same table; any binding held presses
  * its button.
@@ -113,13 +113,12 @@ typedef struct EidosPadBinding {
 } EidosPadBinding;
 
 /*
- * The default table.  SDL names a pad's face buttons by position (A south,
- * B east, X west, Y north; the platform layer asks SDL for positions on
- * Nintendo pads too), and the defaults keep the DS's own positions: DS A is
- * east, B south, X north, Y west.
+ * The default table.  SDL names a pad's face buttons by position (south,
+ * east, west, north, on Nintendo pads too), and the defaults keep the DS's
+ * own positions: DS A is east, B south, X north, Y west.
  *
- *     A            east (SDL B)       B            south (SDL A)
- *     X            north (SDL Y)      Y            west (SDL X)
+ *     A            east               B            south
+ *     X            north              Y            west
  *     L, R         the shoulders and the triggers
  *     START        Start              SELECT       Back
  *     d-pad        the d-pad and the left stick
@@ -143,7 +142,7 @@ const EidosPadBinding *eidos_default_padmap(u32 *count);
 
 #define EIDOS_DISPLAY_WINDOWED     0
 /* Neither fullscreen mode ever changes the OS video mode: both are
- * SDL_WINDOW_FULLSCREEN_DESKTOP (desktop-sized, picture scaled by the
+ * SDL3's desktop fullscreen (desktop-sized, picture scaled by the
  * presenter).  They are kept as two values for the settings file only. */
 #define EIDOS_DISPLAY_FULLSCREEN   1
 #define EIDOS_DISPLAY_BORDERLESS   2
@@ -379,7 +378,7 @@ int  eidos_platform_display_mode(const EidosPlatform *p);
 typedef struct EidosCaptured {
     int scancode;               /* KEY: SDL_Scancode                       */
     int pad_kind;               /* PAD: EIDOS_PADBIND_*                    */
-    int pad_index;              /* PAD: SDL_GameControllerButton / Axis    */
+    int pad_index;              /* PAD: SDL_GamepadButton / Axis          */
 } EidosCaptured;
 
 void eidos_platform_capture_begin(EidosPlatform *p);

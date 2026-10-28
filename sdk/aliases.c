@@ -201,3 +201,66 @@ u32 sub_02060F90(void *block)
 }
 
 #endif /* EIDOS_HEAP_MATCHED */
+
+#if !EIDOS_TCBL_MATCHED
+/*
+ * The task-callback list under LP64: the matched callers use aletheia's
+ * names for the nine pointer-width-dependent functions, and the stand-ins
+ * in stubs/reimpl_02030*.c keep the address names.  Each name forwards to
+ * its stand-in.
+ */
+extern void *sub_02030EF0(void *list, u32 idx);
+extern void sub_02030F34(void *list, void *node);
+extern void sub_02030F50(void *list, void *node);
+extern void sub_02030F70(void *node);
+extern void *sub_02030FB4(void *node);
+
+void *TCBL_GetTaskSlot(void *list, u32 idx);
+void TCBL_PushFreeTask(void *list, void *node);
+void TCBL_InitTaskLinks(void *list, void *node);
+void TCBL_FreeTask(void *node);
+void *TCBL_GetTaskWork(void *node);
+
+void *TCBL_GetTaskSlot(void *list, u32 idx) { return sub_02030EF0(list, idx); }
+void TCBL_PushFreeTask(void *list, void *node) { sub_02030F34(list, node); }
+void TCBL_InitTaskLinks(void *list, void *node) { sub_02030F50(list, node); }
+void TCBL_FreeTask(void *node) { sub_02030F70(node); }
+void *TCBL_GetTaskWork(void *node) { return sub_02030FB4(node); }
+#endif /* !EIDOS_TCBL_MATCHED */
+
+/*
+ * 0x020307B0, the heap's release entry: the matched GFL_HEAP_Free
+ * (src/matched/arm9_sdk/sub_020307B0.c), by the address name the LP64
+ * free stand-in and the overlay sets without the boot call it by.
+ */
+extern u32 GFL_HEAP_Free(void *p);
+void sub_020307B0(void *block);
+
+void sub_020307B0(void *block)
+{
+    (void)GFL_HEAP_Free(block);
+}
+
+#if !EIDOS_HEAP_MATCHED
+/*
+ * The expanded heap's two free-list walks under LP64: the matched front
+ * door (src/matched/func_02060CA0.c) calls them by aletheia's names, the
+ * stand-ins (stubs/reimpl_02060A08.c, reimpl_02060ABC.c) keep the address
+ * names.
+ */
+extern void *func_02060A08(void *heap, u32 size, s32 align);
+extern void *func_02060ABC(void *heap, u32 size, s32 align);
+
+void *NNSi_FndAllocFromExpHeapHead(void *heap, u32 size, s32 align);
+void *NNSi_FndAllocFromExpHeapTail(void *heap, u32 size, s32 align);
+
+void *NNSi_FndAllocFromExpHeapHead(void *heap, u32 size, s32 align)
+{
+    return func_02060A08(heap, size, align);
+}
+
+void *NNSi_FndAllocFromExpHeapTail(void *heap, u32 size, s32 align)
+{
+    return func_02060ABC(heap, size, align);
+}
+#endif /* !EIDOS_HEAP_MATCHED */

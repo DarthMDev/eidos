@@ -5,30 +5,28 @@ Each release's notes on GitHub start with its section here
 
 ## 0.1.6
 
-- One screen: a new layout that shows the game on one screen. The world
-  fills the window, wider than the DS, and the menus, the Bag, the
-  Pokedex, the party, battles, Options, Save, the trainer card, the PC,
-  name entry and the title screen have a new interface in the game's own
-  colours, font and icons. Everything works with the mouse; the keyboard
-  and pads work as before. Start it with Widescreen in the launcher, or
-  choose ONE in Options, DISPLAY, SCREENS. Screens without the new
-  interface show the two DS screens side by side.
-- Names can be typed on the keyboard in the one-screen name entry.
-- Multiplayer: a player who left no longer stays on the map; the other
-  player stays visible while a menu is open; avatars keep up with running
-  and cycling; fast-forward is off in a session; a joiner sends much less
-  data.
-- The trainer card no longer crashes the game.
-- The joiner's waiting text is no longer drawn twice.
-- The name for multiplayer is asked when Multiplayer first opens.
-- The volume starts at 50%.
-- The title menu no longer offers NINTENDO WFC SETTINGS, which closed
-  years ago and crashed the game.
-- The launcher updates itself when it starts. If an update fails, the
-  launcher keeps running on the version it has. Install this version once by
-  hand; later ones arrive by themselves.
-- A new look for the launcher, two play buttons (Classic and Widescreen),
-  and a game data folder per profile, with a safe move of existing data.
+- 64-bit on Windows, Linux (an AppImage) and macOS (Apple silicon), with
+  multiplayer and code mods. The game keeps the DS's own memory layout and
+  plays the same as before. There are no 32-bit packages any more.
+- One screen: a new layout that shows the game on one screen, wider than
+  the DS, with a new interface for the menus, the Bag, the Pokedex, the
+  party, battles, Options, Save, the trainer card, the PC, name entry and
+  the title screen, in the game's own colours, font and icons. It works
+  with the mouse, and names can be typed on the keyboard. Start it with
+  Remaster in the launcher, or choose ONE in Options, DISPLAY, SCREENS.
+- Multiplayer: a player who left no longer stays on the map, the other
+  player stays visible while a menu is open, avatars keep up with running
+  and cycling, fast-forward is off in a session, a joiner sends much less
+  data, and the name is asked when Multiplayer first opens.
+- The launcher updates itself when it starts, on every platform, and keeps
+  running on the version it has if an update fails. Install this version
+  once by hand; later ones arrive by themselves. It also has a new look,
+  two play buttons (Remaster and Classic), and a game data folder per
+  profile.
+- SDL3 in place of SDL2.
+- Fixes: the trainer card no longer crashes the game; NINTENDO WFC
+  SETTINGS, which closed years ago and crashed the game, is gone from the
+  title menu; the volume starts at 50%.
 
 ## 0.1.5
 

@@ -35,7 +35,7 @@ that changes it. Where an item is only partly done, it says which part.
   mixer. Bit-identical to aletheia's `sseqsynth.py` on three sequences
   (`test_audio`).
 - **engine/frame and engine/platform**: the vblank frame loop with the DS OS
-  tick, and the SDL2 window, input, audio device and pacer.
+  tick, and the SDL3 window, input, audio device and pacer.
 - **sdk/**: the SDK-name shims (`fs`, `mi`, `os_alloc`, `os_irq`, `gx`,
   `os_tick`) plus the port's own `narc`, `vfs`, `game_globals`, `aliases`
   and `panic`.
@@ -128,7 +128,7 @@ that changes it. Where an item is only partly done, it says which part.
   at `/W4` and pass every test with game data, MinGW at both widths too;
   CRT dialogs are off in every MSVC executable (`sdk/plat_nodialog.c`).
   Still open: GCC and Clang on a real Linux machine (and macOS), which
-  `tools/check.py` covers but nobody has run there yet. SDL2 is wired up
+  `tools/check.py` covers but nobody has run there yet. SDL3 is wired up
   under MSVC too, through the `vc` devel zip (docs/building.md "Building with MSVC").
 - **Milestone 5, oracle breadth**: more sequences in the audio oracle is
   mechanical coverage, not accuracy.

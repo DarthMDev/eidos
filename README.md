@@ -81,7 +81,7 @@ lobbies is still experimental.
 - Your own dump of Pokémon Black (USA/Europe)
 - CMake 3.16 or later, Ninja, Python 3.11 or later
 - A 32-bit compiler: MinGW-w64 GCC (`i686-w64-mingw32-gcc`) or MSVC x86
-- SDL2 (`python tools/fetch_sdl.py` downloads it on Windows)
+- SDL3 (`python tools/fetch_sdl.py` downloads it on Windows)
 
 ## Building
 

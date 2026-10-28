@@ -31,7 +31,8 @@ import shlex
 import subprocess
 import sys
 
-DROP_FLAGS = {"-pthread"}
+DROP_FLAGS = {"-pthread", "-mno-align-double", "-malign-double", "-msse2", "-mfpmath=sse",
+              "-mstackrealign", "-m32", "-mno-ms-bitfields", "-mms-bitfields"}
 
 
 def split_command(entry):

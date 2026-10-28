@@ -6,7 +6,8 @@
  */
 
 #define SDL_MAIN_HANDLED
-#include <SDL.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -200,8 +201,7 @@ static void test_window_follows_layout(EidosPlatform *p)
         BW_CHECK_EQ("window turns tall", h > w, 1);
         eidos_platform_set_display(p, EIDOS_DISPLAY_FULLSCREEN, 0, 0);
         BW_CHECK_EQ("no real fullscreen flag",
-                    (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP) ==
-                        SDL_WINDOW_FULLSCREEN, 0);
+                    SDL_GetWindowFullscreenMode(win) != NULL, 0);
         eidos_platform_set_display(p, EIDOS_DISPLAY_WINDOWED, 0, 0);
     }
 }
@@ -306,8 +306,9 @@ static void push_key(int sc, int down)
     SDL_Event ev;
 
     memset(&ev, 0, sizeof(ev));
-    ev.type = down ? SDL_KEYDOWN : SDL_KEYUP;
-    ev.key.keysym.scancode = (SDL_Scancode)sc;
+    ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+    ev.key.down = down != 0;
+    ev.key.scancode = (SDL_Scancode)sc;
     SDL_PushEvent(&ev);
 }
 
@@ -355,20 +356,20 @@ static void test_bindings(EidosPlatform *p)
     /* Pad conflict: south button moves from B to A. */
     BW_CHECK_EQ("pad bind",
                 eidos_settings_set_pad(0, -1, EIDOS_PADBIND_BUTTON,
-                                       SDL_CONTROLLER_BUTTON_A), 0);
+                                       SDL_GAMEPAD_BUTTON_SOUTH), 0);
     eidos_settings_get_pad(1, 0, &kind, &index);
     BW_CHECK_EQ("B lost pad A", kind == -1 ||
                 !(kind == EIDOS_PADBIND_BUTTON &&
-                  index == SDL_CONTROLLER_BUTTON_A), 1);
+                  index == SDL_GAMEPAD_BUTTON_SOUTH), 1);
 
     /* Names are ASCII and non-empty. */
     BW_CHECK_EQ("name Z", strcmp(eidos_scancode_name(SDL_SCANCODE_Z, buf,
                                                      sizeof buf), "Z"), 0);
     BW_CHECK_EQ("name pad", strlen(eidos_pad_control_name(
-        EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_LEFTSHOULDER, buf,
+        EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, buf,
         sizeof buf)) > 0, 1);
     BW_CHECK_EQ("name axis", strcmp(eidos_pad_control_name(
-        EIDOS_PADBIND_AXIS_NEG, SDL_CONTROLLER_AXIS_LEFTY, buf, sizeof buf),
+        EIDOS_PADBIND_AXIS_NEG, SDL_GAMEPAD_AXIS_LEFTY, buf, sizeof buf),
         "Left Stick Up"), 0);
 
     /* Capture a key, then cancel with Escape (which must not quit). */
@@ -390,18 +391,19 @@ static void test_bindings(EidosPlatform *p)
     /* A pad button and an axis. */
     eidos_settings_capture_begin();
     memset(&ev, 0, sizeof(ev));
-    ev.type = SDL_CONTROLLERBUTTONDOWN;
-    ev.cbutton.button = SDL_CONTROLLER_BUTTON_X;
+    ev.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    ev.gbutton.down = true;
+    ev.gbutton.button = SDL_GAMEPAD_BUTTON_WEST;
     SDL_PushEvent(&ev);
     eidos_platform_pump(p);
     BW_CHECK_EQ("captured pad", eidos_settings_capture_poll(&cap),
                 EIDOS_CAPTURE_PAD);
-    BW_CHECK_EQ("pad index", cap.pad_index, SDL_CONTROLLER_BUTTON_X);
+    BW_CHECK_EQ("pad index", cap.pad_index, SDL_GAMEPAD_BUTTON_WEST);
     eidos_settings_capture_begin();
     memset(&ev, 0, sizeof(ev));
-    ev.type = SDL_CONTROLLERAXISMOTION;
-    ev.caxis.axis = SDL_CONTROLLER_AXIS_RIGHTX;
-    ev.caxis.value = -30000;
+    ev.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+    ev.gaxis.axis = SDL_GAMEPAD_AXIS_RIGHTX;
+    ev.gaxis.value = -30000;
     SDL_PushEvent(&ev);
     eidos_platform_pump(p);
     BW_CHECK_EQ("captured axis", eidos_settings_capture_poll(&cap),
@@ -459,7 +461,7 @@ static void test_file(void)
     eidos_settings_set(EIDOS_OPT_LAYOUT_GAP, 12);
     eidos_settings_set(EIDOS_OPT_SOUND_VOLUME, 35);
     eidos_settings_set_key(0, -1, SDL_SCANCODE_J);
-    eidos_settings_set_pad(2, 0, EIDOS_PADBIND_AXIS_POS, SDL_CONTROLLER_AXIS_RIGHTY);
+    eidos_settings_set_pad(2, 0, EIDOS_PADBIND_AXIS_POS, SDL_GAMEPAD_AXIS_RIGHTY);
     BW_CHECK_EQ("dirty", eidos_settings_dirty(), 1);
     BW_CHECK_EQ("commit", eidos_settings_commit(), 0);
     BW_CHECK_EQ("clean after commit", eidos_settings_dirty(), 0);
@@ -561,8 +563,8 @@ int main(void)
     EidosPlatformConfig cfg;
     EidosPlatform *p = NULL;
 
-    SDL_setenv("SDL_VIDEODRIVER", "dummy", 0);
-    SDL_setenv("SDL_AUDIODRIVER", "dummy", 0);
+    SDL_setenv_unsafe("SDL_VIDEODRIVER", "dummy", 0);
+    SDL_setenv_unsafe("SDL_AUDIODRIVER", "dummy", 0);
     test_geometry();
     test_reshape();
     test_gain();

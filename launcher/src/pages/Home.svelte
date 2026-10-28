@@ -33,30 +33,9 @@
   });
   const running = $derived(ov.running.includes(selected));
 
-  // The layout a player used last, kept per profile in this browser.
-  const KEY = (name: string) => `eidos.layout.${name}`;
-  function recall(name: string): Layout {
-    try {
-      return localStorage.getItem(KEY(name)) === "one" ? "one" : "classic";
-    } catch {
-      return "classic";
-    }
-  }
-  let last = $state<Layout>("classic");
-  $effect(() => {
-    last = recall(selected);
-  });
   const canOne = $derived(supportsOneScreen(version));
-  // Without the one-screen layout there is one button, and it is Play.
-  const primaryLayout = $derived<Layout>(canOne ? last : "classic");
 
   async function start(layout: Layout) {
-    if (canOne) {
-      last = layout;
-      try {
-        localStorage.setItem(KEY(selected), layout);
-      } catch {}
-    }
     error = null;
     starting = true;
     try {
@@ -96,14 +75,15 @@
       </div>
       <div class="plays" class:single={!canOne}>
         {#if canOne}
-          {#each [["classic", "Classic", "classic"], ["one", "Widescreen", "widescreen"]] as [layout, label, icon]}
+          <!-- Remaster is the main button; Classic is the DS layout -->
+          {#each [["one", "Remaster", "remaster"], ["classic", "Classic", "classic"]] as [layout, label, icon]}
             <button
               class="play"
-              class:primary={primaryLayout === layout}
+              class:primary={layout === "one"}
               disabled={!version || running || starting}
               onclick={() => start(layout as Layout)}
             >
-              <Icon name={icon} size={20} />
+              <Icon name={icon} size={24} />
               {label}
             </button>
           {/each}
@@ -219,6 +199,11 @@
     justify-content: center;
     font-size: 1.15rem;
     padding: 0.75rem 1.6rem;
+  }
+  /* the icon's middle on the label's capitals, not on its line box */
+  .plays .play :global(svg) {
+    position: relative;
+    top: 1px;
   }
   .plays.single .play {
     flex: none;

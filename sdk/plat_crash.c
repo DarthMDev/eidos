@@ -14,7 +14,7 @@
  * Both exit with status 3 and never return into the faulting code.
  */
 
-#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#if !defined(_WIN32) && !defined(__wasm__) && !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L   /* sigaction, siginfo_t */
 #endif
 
@@ -428,6 +428,81 @@ void bw_plat_backtrace(void)
         bw_crash_print_addr("called", (uintptr_t)frames[i]);
     }
     fflush(stderr);
+}
+
+#elif defined(__wasm__)
+
+#include <stdint.h>
+
+#include "wasm_host.h"
+
+/* The wasm32 build: a fault is a trap, which the host program reports
+ * (host/main.c), and there is no second thread for a watchdog. */
+
+int bw_plat_crash_installed(void)
+{
+    return 0;
+}
+
+void bw_plat_backtrace(void)
+{
+}
+
+void bw_plat_watchdog(unsigned seconds, unsigned long long (*progress)(void))
+{
+    (void)seconds;
+    (void)progress;
+}
+
+void bw_plat_sampler_start(void)
+{
+}
+
+void bw_plat_console_open(void)
+{
+    bw_host_console_open();
+}
+
+void bw_plat_crash_install(void)
+{
+}
+
+static BwCodeResolver bw_code_resolver;
+
+void bw_plat_crash_code_resolver(BwCodeResolver resolve)
+{
+    bw_code_resolver = resolve;
+}
+
+/* A call to a DS code address, the wasm32 way: a function pointer is a
+ * table index, and the host program sends every indirect call whose index
+ * lies in the DS address space here first (host/CMakeLists.txt).  The
+ * answer is the index of the function the build compiled for it, or the
+ * address back when there is none (the call then traps, as before).  The
+ * first call through each address is reported once, as on Win32. */
+__attribute__((export_name("bw_code_index")))
+unsigned int bw_code_index(unsigned int at)
+{
+    static unsigned int reported[256];
+    static unsigned int nreported;
+    const char *name = NULL;
+    void *fn;
+    unsigned int i;
+
+    if (bw_code_resolver == NULL) {
+        return at;
+    }
+    fn = bw_code_resolver(at, &name);
+    if (fn == NULL) {
+        return at;
+    }
+    for (i = 0; i < nreported && reported[i] != at; i++) {
+    }
+    if (i == nreported && nreported < 256) {
+        reported[nreported++] = at;
+        fprintf(stderr, "ds call: 0x%08X -> %s\n", at, name ? name : "?");
+    }
+    return (unsigned int)(uintptr_t)fn;
 }
 
 #else /* POSIX */

@@ -35,63 +35,176 @@ typedef signed short s16;
 
 /* The ARM9 matched files spell some functions sub_<addr>; the generated
  * header of overlay 88 (ovl/boot/include/ov088.h) renames the calls, and so
- * does this list.  The title menu calls all of these. */
+ * does this list (unless the build's gamespell.h already names the
+ * function: its name wins).  The title menu calls all of these. */
+#ifndef func_020056A0
 #define func_020056A0 sub_020056A0
+#endif
+#ifndef func_020061E4
 #define func_020061E4 sub_020061E4
+#endif
+#ifndef func_0201C440
 #define func_0201C440 sub_0201C440
+#endif
+#ifndef func_0201C4C0
 #define func_0201C4C0 sub_0201C4C0
+#endif
+#ifndef func_0201C724
 #define func_0201C724 sub_0201C724
+#endif
+#ifndef func_0201D304
 #define func_0201D304 sub_0201D304
+#endif
+#ifndef func_0203064C
 #define func_0203064C sub_0203064C
+#endif
+#ifndef func_02030EAC
 #define func_02030EAC sub_02030EAC
+#endif
+#ifndef func_0203101C
 #define func_0203101C sub_0203101C
+#endif
+#ifndef func_020310C4
 #define func_020310C4 sub_020310C4
+#endif
+#ifndef func_02031140
 #define func_02031140 sub_02031140
+#endif
+#ifndef func_020315D4
 #define func_020315D4 sub_020315D4
+#endif
+#ifndef func_020362DC
 #define func_020362DC sub_020362DC
+#endif
+#ifndef func_0203633C
 #define func_0203633C sub_0203633C
+#endif
+#ifndef func_02040588
 #define func_02040588 sub_02040588
+#endif
+#ifndef func_020409B4
 #define func_020409B4 sub_020409B4
+#endif
+#ifndef func_02041B6C
 #define func_02041B6C sub_02041B6C
+#endif
+#ifndef func_0204335C
 #define func_0204335C sub_0204335C
+#endif
+#ifndef func_020434DC
 #define func_020434DC sub_020434DC
+#endif
+#ifndef func_02043534
 #define func_02043534 sub_02043534
+#endif
+#ifndef func_02043598
 #define func_02043598 sub_02043598
+#endif
+#ifndef func_020435F4
 #define func_020435F4 sub_020435F4
+#endif
+#ifndef func_02043B5C
 #define func_02043B5C sub_02043B5C
+#endif
+#ifndef func_02045088
 #define func_02045088 sub_02045088
+#endif
+#ifndef func_020450C8
 #define func_020450C8 sub_020450C8
+#endif
+#ifndef func_020450F0
 #define func_020450F0 sub_020450F0
+#endif
+#ifndef func_020452E8
 #define func_020452E8 sub_020452E8
+#endif
+#ifndef func_02045334
 #define func_02045334 sub_02045334
+#endif
+#ifndef func_02045374
 #define func_02045374 sub_02045374
+#endif
+#ifndef func_02045730
 #define func_02045730 sub_02045730
+#endif
+#ifndef func_02045770
 #define func_02045770 sub_02045770
+#endif
+#ifndef func_020457B0
 #define func_020457B0 sub_020457B0
+#endif
+#ifndef func_02045808
 #define func_02045808 sub_02045808
+#endif
+#ifndef func_020490F4
 #define func_020490F4 sub_020490F4
+#endif
+#ifndef func_02049658
 #define func_02049658 sub_02049658
+#endif
+#ifndef func_020498F4
 #define func_020498F4 sub_020498F4
+#endif
+#ifndef func_02049B40
 #define func_02049B40 sub_02049B40
+#endif
+#ifndef func_02049B68
 #define func_02049B68 sub_02049B68
+#endif
+#ifndef func_0204A48C
 #define func_0204A48C sub_0204A48C
+#endif
+#ifndef func_0204A5AC
 #define func_0204A5AC sub_0204A5AC
+#endif
+#ifndef func_0204A6C8
 #define func_0204A6C8 sub_0204A6C8
+#endif
+#ifndef func_0204A8D4
 #define func_0204A8D4 sub_0204A8D4
+#endif
+#ifndef func_0204ABF0
 #define func_0204ABF0 sub_0204ABF0
+#endif
+#ifndef func_0204ADA4
 #define func_0204ADA4 sub_0204ADA4
+#endif
+#ifndef func_0204AF28
 #define func_0204AF28 sub_0204AF28
+#endif
+#ifndef func_0204AFD8
 #define func_0204AFD8 sub_0204AFD8
+#endif
+#ifndef func_0204B100
 #define func_0204B100 sub_0204B100
+#endif
+#ifndef func_0204B1CC
 #define func_0204B1CC sub_0204B1CC
+#endif
+#ifndef func_0204B270
 #define func_0204B270 sub_0204B270
+#endif
+#ifndef func_0204B294
 #define func_0204B294 sub_0204B294
+#endif
+#ifndef func_0204B3B4
 #define func_0204B3B4 sub_0204B3B4
+#endif
+#ifndef func_0204B404
 #define func_0204B404 sub_0204B404
+#endif
+#ifndef func_0204B454
 #define func_0204B454 sub_0204B454
+#endif
+#ifndef func_0204B6F4
 #define func_0204B6F4 sub_0204B6F4
+#endif
+#ifndef func_020434CC
 #define func_020434CC sub_020434CC
+#endif
+#ifndef func_0204B92C
 #define func_0204B92C sub_0204B92C
+#endif
 
 /* ---- the game's functions (ARM9, all matched; see the symbol tables) ---- */
 extern void func_0203064C(u32, u32, u32);

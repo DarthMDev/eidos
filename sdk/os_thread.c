@@ -37,7 +37,8 @@
  *   OSi_RescheduleThread; here host_switch() returns when the token comes
  *   back, and the code after it is the same.  A thread that terminated
  *   never resumes: its host thread longjmps back to its trampoline and
- *   returns.  The launcher thread is the host thread that called
+ *   returns (thread_end; in the wasm32 build, which has no longjmp, the
+ *   thread's fiber ends there instead, sdk/plat_thread.c).  The launcher thread is the host thread that called
  *   bw_os_reset(); it has no trampoline, so if it ever terminates it parks.
  *
  *   Host-only state (the host thread, its saved CPSR, a pending "restart in
@@ -81,7 +82,9 @@
  *   reads either.
  */
 
+#if !defined(__wasm__)
 #include <setjmp.h>
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -163,7 +166,9 @@ typedef struct HostRec {
     u32       cpsr;          /* the thread's CPSR I/F bits while out      */
     int       kept;          /* the caller's: its host thread runs on     */
     int       retired;       /* the thread must not resume                */
+#if !defined(__wasm__)
     jmp_buf   exit_to;
+#endif
 } HostRec;
 
 static BwMutex   *g_mx;
@@ -173,6 +178,23 @@ static HostRec  **g_recs;
 static int        g_nrecs;
 static int        g_caprecs;
 static HostRec   *g_cur;     /* the record running code now (the token's) */
+
+static void thread_over(HostRec *r);
+
+/* Lock not held.  The thread is over: back to its trampoline, which
+ * returns (thread_over); in the wasm32 build its fiber ends here. */
+#if defined(__wasm__)
+static void thread_end(HostRec *r)
+{
+    thread_over(r);
+    bw_thread_exit();
+}
+#else
+static void thread_end(HostRec *r)
+{
+    longjmp(r->exit_to, 1);
+}
+#endif
 
 void bw_os_lock(void)     { bw_mutex_lock(g_mx); }
 void bw_os_unlock(void)   { bw_mutex_unlock(g_mx); }
@@ -191,7 +213,7 @@ void bw_os_wait(void)
 
     if (r != NULL && r->kill && !r->launcher) {
         bw_mutex_unlock(g_mx);
-        longjmp(r->exit_to, 1);
+        thread_end(r);
     }
     bw_cond_wait(g_cv, g_mx);
 }
@@ -308,7 +330,7 @@ static void wait_token(HostRec *r)
     while (g_token != r->thread) {
         if (r->kill && !r->launcher) {
             bw_mutex_unlock(g_mx);
-            longjmp(r->exit_to, 1);
+            thread_end(r);
         }
         if (g_freq && !g_serving && r == g_frame_rec) {
             serve_frame();
@@ -347,15 +369,24 @@ static void trampoline(void *p)
     HostRec *r = (HostRec *)p;
 
     bw_mutex_lock(g_mx);
-    if (setjmp(r->exit_to) == 0) {
-        wait_token(r);
-        bw_mutex_unlock(g_mx);
-        r->cpsr = 0;            /* a new context starts with IRQs enabled */
-        resume(r);
-        r->fn(r->arg);
-        OS_ExitThread();        /* the DS context's lr */
+#if !defined(__wasm__)
+    if (setjmp(r->exit_to) != 0) {
+        thread_over(r);         /* reached by longjmp, lock released */
+        return;
     }
-    /* Reached by longjmp, lock released: the thread is over. */
+#endif
+    wait_token(r);
+    bw_mutex_unlock(g_mx);
+    r->cpsr = 0;                /* a new context starts with IRQs enabled */
+    resume(r);
+    r->fn(r->arg);
+    OS_ExitThread();            /* the DS context's lr */
+    thread_over(r);
+}
+
+/* Lock not held: the thread is over. */
+static void thread_over(HostRec *r)
+{
     bw_mutex_lock(g_mx);
     r->finished = 1;
     /* The token of a thread that dies is handed over: the thread that
@@ -395,7 +426,7 @@ static void host_switch(OSThread *from, OSThread *to)
     if (from->state == OS_THREAD_STATE_TERMINATED) {
         if (!fr->launcher) {
             bw_mutex_unlock(g_mx);
-            longjmp(fr->exit_to, 1);
+            thread_end(fr);
         }
         for (;;) {               /* the launcher has nowhere to return to */
             bw_cond_wait(g_cv, g_mx);
@@ -429,7 +460,7 @@ int bw_os_frame_delegate(BwOsHaltHook hook, void *user)
     while (g_freq) {
         if (me->kill && !me->launcher) {
             bw_mutex_unlock(g_mx);
-            longjmp(me->exit_to, 1);
+            thread_end(me);
         }
         if (me->retired) {
             /* A restart in the frame retired this thread (the launcher):

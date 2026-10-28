@@ -958,6 +958,12 @@ class Model:
             for n, row in sf.symbols.items():
                 if row[1] == "data" and (n in sf.extern_functions or n in sf.extern_objects):
                     used.add(n)
+                # A data row the file uses but declares in its own header
+                # (aletheia's per-file headers: net_save.h's
+                # `extern const ProcData gNetSaveMainProc;`), not here.
+                elif (row[1] == "data" and n in sf.identifiers
+                      and n not in sf.defined_objects and n not in sf.shadowed):
+                    used.add(n)
             for n in used:
                 refs.setdefault(n, []).append(sf)
         self.port_defined = {}     # name -> (addr, size, owner) of a port object

@@ -53,13 +53,12 @@ Play runs the version's program in its own folder with:
 ```
 
 The Home page has two start buttons when the version supports the
-one-screen layout: Classic (the DS layout, two screens) and Widescreen (one
-screen). Widescreen adds `--layout one` after the arguments above and before
-a join link. Classic adds nothing, so it starts as before. The button used
-last is the highlighted one, remembered per profile (in the launcher's local
-storage). A version supports Widescreen when it is at least
-`ONE_SCREEN_MIN_VERSION` in `launcher/src/lib/backend.ts`; the value is null
-until a release has the layout, so only Local build profiles show it. With no
+one-screen layout: Remaster (one screen, the highlighted main button) and
+Classic (the DS layout, two screens). Remaster adds `--layout one` after the
+arguments above and before a join link. Classic adds nothing, so it starts
+as before. A version supports Remaster when it is at least
+`ONE_SCREEN_MIN_VERSION` in `launcher/src/lib/backend.ts` (0.1.6), or is a
+Local build. With no
 support there is one button, Play, as before. The `play` command takes
 `layout` ("classic" or "one"); invite joins always start Classic.
 

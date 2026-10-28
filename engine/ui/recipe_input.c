@@ -799,6 +799,7 @@ static void xt_name(void *entry, char *out, int cap)
 
 static void xt_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
 {
+    (void)in;
     void *cw, *call;
     int cwid = c->canvas->w, ch = c->canvas->h;
     int pw, ph, px, py, x0, x1, y, r, shown = 0, pad = 8;

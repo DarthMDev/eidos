@@ -1395,8 +1395,8 @@
       "name": "FIELD_EVENT_CHECK_CheckGridEvents",
       "region": "ov021",
       "events": [],
-      "prototype": "int FIELD_EVENT_CHECK_CheckGridEvents(void *, void *, void *, void *)",
-      "signature": "int (void *, void *, void *, void *)",
+      "prototype": "void * FIELD_EVENT_CHECK_CheckGridEvents(void *, void *, void *, void *)",
+      "signature": "void * (void *, void *, void *, void *)",
       "aletheia_name": "FIELD_EVENT_CHECK_CheckGridEvents",
       "aliases": []
     },
@@ -1405,8 +1405,8 @@
       "name": "FIELD_EVENT_CHECK_CheckRailEvents",
       "region": "ov021",
       "events": [],
-      "prototype": "int FIELD_EVENT_CHECK_CheckRailEvents(void *, void *)",
-      "signature": "int (void *, void *)",
+      "prototype": "void * FIELD_EVENT_CHECK_CheckRailEvents(void *, void *)",
+      "signature": "void * (void *, void *)",
       "aletheia_name": "FIELD_EVENT_CHECK_CheckRailEvents",
       "aliases": []
     },
@@ -1415,8 +1415,8 @@
       "name": "FIELD_EVENT_CHECK_Run",
       "region": "ov021",
       "events": [],
-      "prototype": "int FIELD_EVENT_CHECK_Run(void *, void *, unsigned int, unsigned int)",
-      "signature": "int (void *, void *, unsigned int, unsigned int)",
+      "prototype": "void * FIELD_EVENT_CHECK_Run(void *, void *)",
+      "signature": "void * (void *, void *)",
       "aletheia_name": "FIELD_EVENT_CHECK_Run",
       "aliases": []
     },
@@ -1427,8 +1427,8 @@
       "events": [
         "player.step"
       ],
-      "prototype": "int FIELD_EVENT_CHECK_CheckStepEvents(void *, void *)",
-      "signature": "int (void *, void *)",
+      "prototype": "void * FIELD_EVENT_CHECK_CheckStepEvents(void *, void *)",
+      "signature": "void * (void *, void *)",
       "aletheia_name": "FIELD_EVENT_CHECK_CheckStepEvents",
       "aliases": []
     },
@@ -1447,8 +1447,8 @@
       "name": "FIELD_EVENT_CHECK_CreateLedgeJumpTask",
       "region": "ov021",
       "events": [],
-      "prototype": "void * FIELD_EVENT_CHECK_CreateLedgeJumpTask(int, void *, void *, int, int)",
-      "signature": "void * (int, void *, void *, int, int)",
+      "prototype": "void * FIELD_EVENT_CHECK_CreateLedgeJumpTask(void *, void *, void *, int, int)",
+      "signature": "void * (void *, void *, void *, int, int)",
       "aletheia_name": "FIELD_EVENT_CHECK_CreateLedgeJumpTask",
       "aliases": []
     },
@@ -1457,8 +1457,8 @@
       "name": "FIELD_EVENT_CHECK_CheckLedgeJump",
       "region": "ov021",
       "events": [],
-      "prototype": "int FIELD_EVENT_CHECK_CheckLedgeJump(void *, void *, void *)",
-      "signature": "int (void *, void *, void *)",
+      "prototype": "void * FIELD_EVENT_CHECK_CheckLedgeJump(void *, void *, void *)",
+      "signature": "void * (void *, void *, void *)",
       "aletheia_name": "FIELD_EVENT_CHECK_CheckLedgeJump",
       "aliases": []
     },
@@ -2910,8 +2910,8 @@
       "events": [
         "mon.nickname"
       ],
-      "prototype": "void * ZUKAN_NICKNAME_Create(unsigned short, unsigned int, unsigned int, unsigned int, unsigned int, void *, void *, void *, void *)",
-      "signature": "void * (unsigned short, unsigned int, unsigned int, unsigned int, unsigned int, void *, void *, void *, void *)",
+      "prototype": "void * ZUKAN_NICKNAME_Create(unsigned short, void *, void *, void *, unsigned int, void *, void *, void *, void *)",
+      "signature": "void * (unsigned short, void *, void *, void *, unsigned int, void *, void *, void *, void *)",
       "aletheia_name": "ZUKAN_NICKNAME_Create",
       "aliases": []
     }

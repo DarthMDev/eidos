@@ -17,7 +17,11 @@
 # sdk/mod_wasm.c.
 set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "")
 
-if(WIN32)
+if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
+    # the wasm32 build: the runtime inside the module (cmake/wamr/wasi)
+    set(WAMR_BUILD_PLATFORM "eidos-wasi")
+    set(SHARED_PLATFORM_CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/wasi/shared_platform.cmake)
+elseif(WIN32)
     set(WAMR_BUILD_PLATFORM "windows")
 elseif(APPLE)
     set(WAMR_BUILD_PLATFORM "darwin")
@@ -46,14 +50,30 @@ set(WAMR_BUILD_MULTI_MODULE 0)
 set(WAMR_BUILD_REF_TYPES 0)
 set(WAMR_BUILD_SIMD 0)
 set(WAMR_BUILD_INVOKE_NATIVE_GENERAL 1)
+# Bounds are checked in software on every target.  The hardware check (64-bit
+# targets only) traps through signals or, on Windows, MSVC's __try, which
+# MinGW does not have, and the port's crash handler owns those signals.
+set(WAMR_DISABLE_HW_BOUND_CHECK 1)
+set(WAMR_DISABLE_STACK_HW_BOUND_CHECK 1)
 
 include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 
+# The Windows platform's clock file serves WASI's clock calls only (off
+# here), and its own NtQueryTimerResolution declaration clashes with the
+# Windows SDK's under cl.exe's 32-bit target.
+if(MSVC)
+    list(FILTER WAMR_RUNTIME_LIB_SOURCE EXCLUDE REGEX "win_clock\\.c$")
+endif()
 add_library(eidos_wamr STATIC ${WAMR_RUNTIME_LIB_SOURCE})
 target_include_directories(eidos_wamr PUBLIC ${WAMR_ROOT_DIR}/core/iwasm/include)
+# A static library: under cl.exe wasm_export.h would mark the API dllimport
+# (its default when COMPILING_WASM_RUNTIME_API is not defined).
+target_compile_definitions(eidos_wamr PUBLIC WASM_RUNTIME_API_EXTERN=)
 # WAMR's own warnings are its own: the port's warning flags stay off it.
 target_compile_options(eidos_wamr PRIVATE -w)
-if(WIN32)
+if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
+    # nothing to link: the platform layer is the module's C library
+elseif(WIN32)
     # Winsock and the native API the Windows platform layer calls; the
     # POSIX clock MinGW provides lives in winpthread.
     target_link_libraries(eidos_wamr PUBLIC ws2_32 ntdll)

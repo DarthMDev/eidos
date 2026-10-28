@@ -334,8 +334,8 @@ open), and it runs one call before `OS_Terminate`.
 
 ## The platform layer
 
-`engine/platform/` is the only part of eidos that includes SDL2 and the only
-optional part of the build (`-DEIDOS_SDL=OFF`, or simply no SDL2 present:
+`engine/platform/` is the only part of eidos that includes SDL3 and the only
+optional part of the build (`-DEIDOS_SDL=OFF`, or simply no SDL3 present:
 the engine library and every other test still build and pass).
 
 **The window** is an integer multiple of the DS layout: two 256x192 screens
@@ -511,7 +511,7 @@ the title screen. The pieces in the tree:
   that runs game code on the whole machine call it rather than the resets;
 - NitroMain (aletheia's `src/matched/arm9/func_02005124.c`, or
   `stubs/reimpl_02005124.c` with an older checkout) and
-  `demo/eidos_boot.c`, its driver (headless, or `--window` with SDL2).
+  `demo/eidos_boot.c`, its driver (headless, or `--window` with SDL3).
 
 ```sh
 cmake -S . -B build -G Ninja -DALETHEIA_ROOT=../bw_decomp -DEIDOS_BOOT=ON

@@ -68,7 +68,9 @@ static int write_text(const char *path, const char *text)
 
 static void path_of(char *out, size_t n, const char *a, const char *b)
 {
-    snprintf(out, n, "%s/%s", a, b);
+    if (snprintf(out, n, "%s/%s", a, b) >= (int)n && n > 0) {
+        out[0] = '\0';
+    }
 }
 
 /* A fake extraction: a manifest of `version` and `sha`, and, if asked,

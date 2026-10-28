@@ -336,7 +336,7 @@ static const ValueName k_choice_names[] = {
 static void put(char *dst, int n, const char *s)
 {
     if (n > 0) {
-        snprintf(dst, (size_t)n, "%s", s);
+        snprintf(dst, (size_t)n, "%.*s", n - 1, s);
     }
 }
 

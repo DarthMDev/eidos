@@ -974,9 +974,17 @@ def analyse(src: str):
     return rewrites, residue
 
 
+# aletheia's src/game/sdk_ioreg.h spells a register address
+# IOREG_ADDR(0x04000280): the plain number on the DS, a pointer-sized
+# integer on a host.  Here it is the number again, so the address is seen
+# (and translated) like any other fixed address.
+_IOREG_ADDR_RE = re.compile(r"\bIOREG_ADDR\(\s*(0[xX][0-9A-Fa-f]+[uUlL]*)\s*\)")
+
+
 def rewrite(src: str, name: str):
     """The rewritten text of `src` (identical when there is nothing to
     rewrite) and the analysis behind it."""
+    src = _IOREG_ADDR_RE.sub(r"\1", src)
     rewrites, residue = analyse(src)
     if not rewrites:
         return src, rewrites, residue
@@ -1643,7 +1651,7 @@ def _header_defines(path, seen):
         if hp in seen or not os.path.isfile(hp):
             continue
         seen.add(hp)
-        text = _read(hp)
+        text = _IOREG_ADDR_RE.sub(r"\1", _read(hp))
         out.extend(m.group(0) for m in _NUM_DEFINE_RE.finditer(text))
         out.extend(_header_defines(hp, seen))
     return out

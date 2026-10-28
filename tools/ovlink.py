@@ -710,7 +710,57 @@ def read_list(path):
     return out
 
 
+def _word_aggregate_defs(text):
+    """The bw_word_<Name> types `text` uses, defined: the real struct or
+    union under wasm32 (WordAggregate), unsigned int elsewhere."""
+    used = sorted(set(re.findall(r"\bbw_word_(\w+)", text)) & set(WORD_AGGREGATES))
+    if not used:
+        return ""
+    out = ["/* One-word structs and unions by value (tools/ovlink.py, WordAggregate). */"]
+    for n in used:
+        body = " ".join(WORD_AGGREGATES[n].split())
+        body = body[body.find("{"):body.rfind("}") + 1]
+        kind = "union" if re.match(r"^\s*typedef\s+union\b", WORD_AGGREGATES[n]) else "struct"
+        out += ["#ifndef BW_WORD_%s" % n,
+                "#define BW_WORD_%s" % n,
+                "#if defined(__wasm__)",
+                "typedef %s %s bw_word_%s;" % (kind, body, n),
+                "static inline unsigned int bw_word_%s_bits(bw_word_%s v)" % (n, n),
+                "{ unsigned int w; __builtin_memcpy(&w, &v, 4); return w; }",
+                "static inline bw_word_%s bw_word_%s_of(unsigned int w)" % (n, n),
+                "{ bw_word_%s v; __builtin_memcpy(&v, &w, 4); return v; }" % n,
+                "#else",
+                "typedef unsigned int bw_word_%s;" % n,
+                "#define bw_word_%s_bits(v) (v)" % n,
+                "#define bw_word_%s_of(w) (w)" % n,
+                "#endif",
+                "#endif"]
+    return "\n".join(out) + "\n"
+
+
 def write_if_changed(path, text):
+    defs = _word_aggregate_defs(text)
+    if defs:
+        # after the file's last #include, before anything uses them; an
+        # #include inside an #if block counts as the block's #endif, so the
+        # definitions never land inside a conditional
+        lines = text.split("\n")
+        at, depth, inner = -1, 0, False
+        for k, l in enumerate(lines):
+            d = l.lstrip()
+            if d.startswith("#if"):
+                depth += 1
+            elif d.startswith("#endif") and depth > 0:
+                depth -= 1
+                if depth == 0 and inner:
+                    at, inner = k, False
+            elif d.startswith("#include"):
+                if depth == 0:
+                    at, inner = k, False
+                else:
+                    inner = True
+        lines.insert(at + 1, defs)
+        text = "\n".join(lines)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     if os.path.exists(path):
         with open(path, encoding="utf-8", newline="") as fh:
@@ -848,6 +898,55 @@ def _word_aggregate(body):
     return has_word
 
 
+class WordAggregate(str):
+    """A one-word struct or union by value, normalised: it compares as
+    "unsigned int" (what i686 and ARM pass and return it as, so every rule
+    below treats it as one), but prints as bw_word_<Name>, which
+    write_if_changed defines.  The wasm32 C ABI passes and returns an
+    aggregate through memory, not as a word, so there the generated code
+    must use the real type for its calls to agree with the game's."""
+
+    def __new__(cls, name, body):
+        o = str.__new__(cls, "unsigned int")
+        o.name = name
+        o.body = body
+        WORD_AGGREGATES[name] = body
+        return o
+
+    def __str__(self):
+        return "bw_word_%s" % self.name
+
+    def __format__(self, spec):
+        return format(str(self), spec)
+
+
+# name -> the typedef text of every WordAggregate made
+WORD_AGGREGATES = {}
+
+
+def zero_of(t):
+    """A zero of normalised type `t`, as an expression."""
+    if isinstance(t, WordAggregate):
+        return "bw_word_%s_of(0u)" % t.name
+    return "0"
+
+
+def word_bits(t, expr):
+    """`expr`, of normalised type `t`, as the unsigned int a cast can take:
+    a WordAggregate's 32 bits, anything else as it is."""
+    if isinstance(t, WordAggregate):
+        return "bw_word_%s_bits(%s)" % (t.name, expr)
+    return expr
+
+
+def word_cast(t, expr):
+    """`(t)expr` for a word `expr`; a WordAggregate is rebuilt from its
+    bits (C has no cast to a struct or union)."""
+    if isinstance(t, WordAggregate):
+        return "bw_word_%s_of((unsigned int)(%s))" % (t.name, expr)
+    return "(%s)%s" % (t, expr)
+
+
 def _norm_type(text, typedefs, depth=0):
     """C type text (no declarator name) -> normalised spelling, or None.
 
@@ -872,7 +971,7 @@ def _norm_type(text, typedefs, depth=0):
             for td in typedefs.values():
                 if re.match(r"^\s*typedef\s+%s\s+%s\s*\{" % (words[0], re.escape(words[1])), td) \
                         and _word_aggregate(td):
-                    return "unsigned int"
+                    return WordAggregate(words[1], td)
         return None
     if all(w in BASE_WORDS for w in words):
         s = set(words)
@@ -903,7 +1002,7 @@ def _norm_type(text, typedefs, depth=0):
             if re.match(r"^\s*typedef\s+(?:struct|union)\b", td) and "{" in td:
                 if not _word_aggregate(td):
                     return None
-                return "unsigned int"
+                return WordAggregate(w, td)
             m = re.match(r"^\s*typedef\s+(.*?)\b" + re.escape(w) + r"\s*$", " ".join(td.split()))
             if m:
                 r = _norm_type(m.group(1), typedefs, depth + 1)
@@ -912,7 +1011,7 @@ def _norm_type(text, typedefs, depth=0):
             if re.search(r"\(\s*\*\s*" + re.escape(w) + r"\s*\)", td):
                 return "void *"
             if re.match(r"^\s*typedef\s+(?:struct|union)\b[^{;]*\{", td) and _word_aggregate(td):
-                return "unsigned int"
+                return WordAggregate(w, td)
         return None
     return None
 
@@ -1042,7 +1141,7 @@ def proto(ret, name, params):
 
 
 def proto_decl(ret, name, params):
-    plist = ", ".join(params) or "void"
+    plist = ", ".join(str(t) for t in params) or "void"
     sep = "" if ret.endswith("*") else " "
     return "%s%s%s(%s);" % (ret, sep, name, plist)
 
@@ -1050,7 +1149,7 @@ def proto_decl(ret, name, params):
 def proto_text(sig):
     """A normalised signature as the report spells it."""
     ret, params = sig
-    return "%s (%s)" % (ret, ", ".join(params) or "void")
+    return "%s (%s)" % (ret, ", ".join(map(str, params)) or "void")
 
 
 # The event layer's limit: how many arguments a bound game function may
@@ -1063,7 +1162,7 @@ BW_EVENT_ARGS_MAX = 16
 def event_call_init(params):
     """The BwEventCall initialiser for a slot's parameters: the arguments
     as words, and their count (sdk/mod_event.h)."""
-    init = ", ".join("(uintptr_t)a%d" % k for k in range(len(params)))
+    init = ", ".join("(uintptr_t)%s" % word_bits(params[k], "a%d" % k) for k in range(len(params)))
     return "{ { %s }, %du, 0 }" % (init or "0", len(params))
 
 
@@ -1072,23 +1171,23 @@ def event_call_args(params):
     types: the original is called with these, not with the incoming
     arguments, so a handler's change to an argument reaches the game
     (docs/mod-implementation.md, section 1)."""
-    return ", ".join("(%s)call.a[%d]" % (params[k], k) for k in range(len(params)))
+    return ", ".join(word_cast(params[k], "call.a[%d]" % k) for k in range(len(params)))
 
 
 def event_result(ret, expr):
     """`expr`, the result of a call, as the call's s64 result."""
-    if expr == "0":
+    if expr == "0" or expr == zero_of(ret):
         return "(s64)0"
     if ret.endswith("*"):
         return "(s64)(uintptr_t)%s" % expr
-    return "(s64)%s" % expr
+    return "(s64)%s" % word_bits(ret, expr)
 
 
 def event_value(ret):
     """The call's result as the slot's own return type."""
     if ret.endswith("*"):
         return "(void *)(uintptr_t)call.ret"
-    return "(%s)call.ret" % ret
+    return word_cast(ret, "call.ret")
 
 
 def slot_function(region_expr, addr, slot):
@@ -1113,7 +1212,7 @@ def slot_function(region_expr, addr, slot):
     name = slot["name"]
     events = slot.get("events") or []
     args = ", ".join("a%d" % k for k in range(len(params)))
-    cast = "%s (*)(%s)" % (ret, ", ".join(params) or "void")
+    cast = "%s (*)(%s)" % (ret, ", ".join(map(str, params)) or "void")
     key = "0x%08Xu" % addr
     out = [proto(ret, name, params), "{"]
     if events:
@@ -3076,14 +3175,18 @@ def write_dispatch(link, path, set_name):
             w(proto(ret, private, params))
             w("{")
             call = ", ".join(
-                ("(%s)a%d" % (t, k)) if k < len(params) else "(%s)0" % t
+                (("a%d" % k) if t == params[k] and str(t) == str(params[k])
+                 else word_cast(t, word_bits(params[k], "a%d" % k)))
+                if k < len(params) else zero_of(t)
                 for k, t in enumerate(tparams))
             if ret == "void" or tret == "void":
                 w("    %s(%s);" % (target, call))
                 if ret != "void":
-                    w("    return 0;")
+                    w("    return %s;" % zero_of(ret))
+            elif str(ret) == str(tret):
+                w("    return %s(%s);" % (target, call))
             else:
-                w("    return (%s)%s(%s);" % (ret, target, call))
+                w("    return %s;" % word_cast(ret, word_bits(tret, "%s(%s)" % (target, call))))
             w("}")
             w("")
     declared = {}
@@ -3199,11 +3302,11 @@ def write_dispatch(link, path, set_name):
             body.append("    if (h != NULL) {")
             if ret == "void":
                 body.append("        ((void (*)(%s))h)(%s);"
-                            % (", ".join(params) or "void", cargs))
+                            % (", ".join(map(str, params)) or "void", cargs))
                 body += leave(None, 8)
             else:
                 body += leave("((%s (*)(%s))h)(%s)"
-                              % (ret, ", ".join(params) or "void", cargs), 8)
+                              % (ret, ", ".join(map(str, params)) or "void", cargs), 8)
             body.append("    }")
         body.append("    int ov = bw_ovl_resident_at(%s);" % key)
         for c, sym, s in targets:
@@ -3226,12 +3329,17 @@ def write_dispatch(link, path, set_name):
                 if sym not in declared:
                     declared[sym] = proto_decl(s[0], sym, s[1])
                 wargs = ", ".join(
-                    ("(%s)(uintptr_t)a%d" % (t, k)) if k < len(params) else "(%s)0" % t
+                    (word_cast(t, "(uintptr_t)%s" % word_bits(params[k], "a%d" % k))
+                     if not isinstance(t, WordAggregate)
+                     else word_cast(t, word_bits(params[k], "a%d" % k)))
+                    if k < len(params) else zero_of(t)
                     for k, t in enumerate(s[1]))
                 body.append("    if (ov == %d) {" % c)
                 if ret == "void" or s[0] == "void":
                     body.append("        %s(%s);" % (sym, wargs))
-                    body += leave(None if ret == "void" else "0", 8)
+                    body += leave(None if ret == "void" else zero_of(ret), 8)
+                elif isinstance(ret, WordAggregate) or isinstance(s[0], WordAggregate):
+                    body += leave(word_cast(ret, word_bits(s[0], "%s(%s)" % (sym, wargs))), 8)
                 else:
                     body += leave("(%s)(uintptr_t)%s(%s)" % (ret, sym, wargs), 8)
                 body.append("    }")
@@ -3259,9 +3367,9 @@ def write_dispatch(link, path, set_name):
             # A plain trampoline: the dispatch failed, and there is no scope
             # and no event to leave.
             if ret != "void":
-                body.append("    return 0;")
+                body.append("    return %s;" % zero_of(ret))
         else:
-            body += leave("0" if ret != "void" else None, 4)
+            body += leave(zero_of(ret) if ret != "void" else None, 4)
         body.append("}")
         body.append("")
     if declared:

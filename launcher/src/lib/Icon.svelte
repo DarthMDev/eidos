@@ -17,9 +17,26 @@
     check: "M5 12.5l4.5 4.5L19 7.5",
     edit: "M4 20h4L19 9l-4-4L4 16zM14 6l4 4",
     link: "M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1",
-    classic: "M7 3h10a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2M7 12h10a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2",
-    widescreen: "M5 6.5h14a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-5a3 3 0 0 1 3-3",
     upload: "M12 21V9M7 14l5-5 5 5M5 3h14",
+  };
+
+  // Icons drawn on their own grid: a 1.5 px line, solid screens 1.5 px in
+  // from each frame, 2.25 px outer corners.
+  const ART: Record<string, string> = {
+    // an open DS: two equal shells, a screen in each, the D-pad and buttons
+    classic: `
+      <rect x="3.75" y="1.25" width="16.5" height="9.25" rx="2.25"/>
+      <rect x="7.5" y="3.5" width="9" height="4.75" rx=".5" fill="currentColor" stroke="none"/>
+      <rect x="3.75" y="13.5" width="16.5" height="9.25" rx="2.25"/>
+      <rect x="7.5" y="15.75" width="9" height="4.75" rx=".5" fill="currentColor" stroke="none"/>
+      <circle cx="6" cy="18.125" r=".75" fill="currentColor" stroke="none"/>
+      <circle cx="18" cy="18.125" r=".75" fill="currentColor" stroke="none"/>`,
+    // a wide monitor, a spark at its corner
+    remaster: `<g transform="translate(0 1)">
+      <path d="M16.25 4.75H4.5a2.25 2.25 0 0 0-2.25 2.25v8.5a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25V8.25"/>
+      <rect x="4.5" y="7" width="15" height="8.5" rx=".5" fill="currentColor" stroke="none"/>
+      <path d="M12 17.75v3.25M8.5 21h7"/>
+      <path d="M20.25 .75l.9 1.6 1.6.9-1.6.9-.9 1.6-.9-1.6-1.6-.9 1.6-.9z" fill="currentColor" stroke="none"/></g>`,
   };
 </script>
 
@@ -32,4 +49,8 @@
   stroke-width="2"
   stroke-linecap="round"
   stroke-linejoin="round"
-  aria-hidden="true"><path d={PATHS[name] ?? ""} /></svg>
+  aria-hidden="true"
+  >{#if ART[name]}<g stroke-width="1.5">{@html ART[name]}</g>{:else}<path
+      d={PATHS[name] ?? ""}
+    />{/if}</svg
+>

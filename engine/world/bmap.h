@@ -30,6 +30,15 @@ typedef struct BmapTexture {
     unsigned char repeat_s, repeat_t, flip_s, flip_t;
 } BmapTexture;
 
+/* A texture-coordinate animation (a placed model's BTA0 texture SRT
+ * animation: Route 1's falling petals and leaves, a fountain's water), played
+ * the way the field plays it, one frame a field frame, looping: per frame,
+ * u' = m[0] u + m[1] v + m[2], v' = m[3] u + m[4] v + m[5]. */
+typedef struct BmapUvAnim {
+    unsigned frames;
+    float *m;               /* 6 floats a frame                                  */
+} BmapUvAnim;
+
 typedef struct BmapDraw {
     int tex;                /* index into textures, -1 untextured                */
     unsigned first, count;  /* triangles: vertices [first, first+count), 3 per tri */
@@ -43,6 +52,7 @@ typedef struct BmapDraw {
                                   the GL pass may fog it                            */
     unsigned char grass;       /* a tall-grass tuft (bmap_place): drawn again over the
                                   Pokemon it stands in front of                     */
+    unsigned short uvanim;     /* 1 + its index in BmapScene.uva; 0 none            */
 } BmapDraw;
 
 /* A place's own intro camera (the intro's and the send-out's, the cameras
@@ -81,8 +91,10 @@ typedef struct BmapScene {
                                game's (battle units: up, back)                */
     BmapIntro intro;        /* bmap_place: the far cameras' own settings
                                (bmap_camera_intro)                             */
-    int shared;             /* a copy (bmap_copy): textures and the ground index
-                               belong to the original, which must outlive it  */
+    BmapUvAnim *uva; unsigned nuva; /* the texture-coordinate animations     */
+    int shared;             /* a copy (bmap_copy): textures, the animations and
+                               the ground index belong to the original, which
+                               must outlive it                                */
 } BmapScene;
 
 /* Build the map around (px, pz) (map world units, matrix-absolute, as GameData's

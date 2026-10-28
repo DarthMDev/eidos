@@ -1774,6 +1774,7 @@ static Modal modal_rect(const EidosUiCtx *c, int pw, int minw, int maxw, int ph,
 /* Right click, or a click outside the modal, is B. */
 static void modal_back(EidosUiCtx *c, const Modal *m, const EidosUiFrame *in, int allowed)
 {
+    (void)in;
     int outside = hit(c, 0, 0, c->canvas->w, c->canvas->h - 17) & EIDOS_UI_CLICK;
     int inside = hit(c, m->x, m->y, m->w, m->h) & EIDOS_UI_HOVER;
 
@@ -1897,12 +1898,16 @@ static const char *pocket_name(int pocket, char *buf, int cap)
 
     switch (pocket) {
     case 0:
-        snprintf(buf, (size_t)cap, "%s %s", label(MSG_BAG_UI, 22, "HP/PP", a, sizeof(a)),
-                 label(MSG_BAG_UI, 23, "RESTORE", d, sizeof(d)));
+        if (snprintf(buf, (size_t)cap, "%s %s", label(MSG_BAG_UI, 22, "HP/PP", a, sizeof(a)),
+                     label(MSG_BAG_UI, 23, "RESTORE", d, sizeof(d))) >= cap) {
+            buf[cap - 1] = '\0';     /* cut to the buffer; the text stays terminated */
+        }
         return buf;
     case 1:
-        snprintf(buf, (size_t)cap, "%s %s", label(MSG_BAG_UI, 24, "STATUS", a, sizeof(a)),
-                 label(MSG_BAG_UI, 25, "RESTORE", d, sizeof(d)));
+        if (snprintf(buf, (size_t)cap, "%s %s", label(MSG_BAG_UI, 24, "STATUS", a, sizeof(a)),
+                     label(MSG_BAG_UI, 25, "RESTORE", d, sizeof(d))) >= cap) {
+            buf[cap - 1] = '\0';     /* cut to the buffer; the text stays terminated */
+        }
         return buf;
     case 2:
         return label(MSG_BAG_UI, 26, "POK\xC3\x89 BALLS", buf, cap);
