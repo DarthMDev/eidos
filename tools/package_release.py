@@ -285,7 +285,7 @@ def package_linux(args, scratch):
         os.makedirs(os.path.join(appdir, sub))
     shutil.copy2(exe, os.path.join(appdir, "usr/bin/eidos"))
     os.chmod(os.path.join(appdir, "usr/bin/eidos"), 0o755)
-    icon = os.path.join(ROOT, "assets", "icon.png")
+    icon = os.path.join(ROOT, "assets", "icon-256.png")     # tools/mkicon.py
     check_name("eidos.png")
     shutil.copy2(icon, os.path.join(appdir, "eidos.png"))
     shutil.copy2(icon, os.path.join(appdir, "usr/share/icons/hicolor/256x256/apps/eidos.png"))

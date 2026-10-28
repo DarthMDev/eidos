@@ -2,6 +2,8 @@
 """Build the application icon files from assets/icon.png.
 
 assets/icon.ico      the Windows executable icon (eidos.rc), 16 to 256 px
+assets/icon-256.png  the Linux AppImage icon (tools/package_release.py), whose
+                     tools take only the standard sizes
 engine/platform/icon_rgba.h
                      a 64x64 RGBA copy for SDL_SetWindowIcon (every platform)
 
@@ -17,6 +19,7 @@ from PIL import Image
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "assets", "icon.png")
 ICO = os.path.join(ROOT, "assets", "icon.ico")
+PNG256 = os.path.join(ROOT, "assets", "icon-256.png")
 HDR = os.path.join(ROOT, "engine", "platform", "icon_rgba.h")
 SIDE = 64
 
@@ -24,6 +27,7 @@ SIDE = 64
 def main():
     im = Image.open(SRC).convert("RGBA")
     im.save(ICO, sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
+    im.resize((256, 256), Image.LANCZOS).save(PNG256, optimize=True)
     small = im.resize((SIDE, SIDE), Image.LANCZOS)
     data = small.tobytes()
     lines = [
