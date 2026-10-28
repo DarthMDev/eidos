@@ -90,10 +90,12 @@ Source and updates: https://github.com/Project-Holon/eidos
 """
 
 MAC_NOTE = """
-This build is not signed. macOS may refuse to open it the first time. Open
-Terminal in this folder and run:
+This build is not signed by Apple, so macOS blocks it the first time and
+says it cannot be opened. Open Terminal, go to this folder (type cd and a
+space, drag the folder onto the Terminal window, press Return), then run:
   xattr -dr com.apple.quarantine .
-or right-click the file and choose Open, then confirm.
+This removes the "downloaded from the internet" mark from these files
+only. You do not need to turn off Gatekeeper.
 """
 
 

@@ -26,15 +26,15 @@ DOWNLOADS = [
      "Windows: the launcher. It installs and updates eidos and keeps your "
      "profiles and mods. Start here."),
     ("eidos-launcher-macos.dmg",
-     "macOS (Apple silicon): the launcher. Drag it to Applications. The "
-     "build is not signed: right-click it and choose Open the first time."),
+     "macOS (Apple silicon): the launcher. Not signed by Apple: open "
+     "`READ ME FIRST.txt` inside it for the one Terminal line it needs."),
     ("eidos-launcher-linux-x86_64.AppImage",
      "Linux: the launcher. Make it executable and run it."),
     ("eidos-{ver}-windows.zip",
      "Windows: eidos on its own. Unzip it anywhere and run `eidos.exe`."),
     ("eidos-{ver}-macos.zip",
-     "macOS (Apple silicon): eidos on its own. The build is not signed: "
-     "right-click `eidos` and choose Open the first time."),
+     "macOS (Apple silicon): eidos on its own. Not signed by Apple: "
+     "`README.txt` inside it has the one Terminal line it needs."),
     ("eidos-{ver}-linux-x86_64.AppImage",
      "Linux: eidos on its own. Make it executable and run it."),
 ]

@@ -391,7 +391,7 @@ jobs:
             bundles: appimage
           - os: macos
             runner: macos-14
-            bundles: app,dmg
+            bundles: app
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -461,7 +461,14 @@ jobs:
             sig=$(ls $b/appimage/*.AppImage.sig 2>/dev/null | head -1)
             platform=linux-x86_64
           else
-            cp $b/dmg/*.dmg out/eidos-launcher-macos.dmg
+            # the disk image by hand: Tauri's cannot hold other files, and
+            # this one carries the first-start steps (launcher/dmg)
+            stage=$(mktemp -d)
+            ditto $b/macos/*.app "$stage/$(basename $b/macos/*.app)"
+            ln -s /Applications "$stage/Applications"
+            cp "launcher/dmg/READ ME FIRST.txt" "$stage/"
+            hdiutil create -volname "eidos launcher" -srcfolder "$stage" \
+              -fs HFS+ -format UDZO -ov out/eidos-launcher-macos.dmg
             # what a running launcher updates itself from (latest.json)
             name="eidos-launcher-macos.app.tar.gz"
             sig=$(ls $b/macos/*.app.tar.gz.sig 2>/dev/null | head -1)

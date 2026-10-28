@@ -59,12 +59,12 @@ the games keep the version, which installed launchers look for
 | File | Contents |
 |---|---|
 | `eidos-launcher-windows-setup.exe` | The launcher's installer for Windows. |
-| `eidos-launcher-macos.dmg` | The launcher for macOS (Apple silicon): a disk image to drag to Applications. Unsigned. |
+| `eidos-launcher-macos.dmg` | The launcher for macOS (Apple silicon): the app, an Applications shortcut and `READ ME FIRST.txt` (`launcher/dmg`), whose `xattr` line lets macOS open the unsigned app. Made with `hdiutil` in the workflow. |
 | `eidos-launcher-linux-x86_64.AppImage` | The launcher for Linux. |
 | `eidos-launcher-macos.app.tar.gz` | The macOS launcher packed for its own updates (`latest.json` points at it); players do not open it. |
 | `latest.json` | What a running launcher reads to update itself: the version and, per platform, the file and its signature. |
 | `eidos-<version>-windows.zip` | `eidos.exe` (`tools/build64.py`'s program), `SDL3.dll`, `LICENSE`, `LEGAL.md`, `README.txt`. Files sit at the top of the zip. |
-| `eidos-<version>-macos.zip` | `eidos`, `libSDL3.0.dylib` (its load path points at the executable's folder), `LICENSE`, `LEGAL.md`, `README.txt`. Unsigned: the notes tell the player to run `xattr -dr com.apple.quarantine .` or right-click and choose Open. |
+| `eidos-<version>-macos.zip` | `eidos`, `libSDL3.0.dylib` (its load path points at the executable's folder), `LICENSE`, `LEGAL.md`, `README.txt`. Not signed by Apple: `README.txt` tells the player to run `xattr -dr com.apple.quarantine .` in the folder. |
 | `eidos-<version>-linux-x86_64.AppImage` | One file: `eidos`, the shared libraries linuxdeploy found, a desktop file and the icon. License files are under `usr/share/doc/eidos`. |
 | `SHA256SUMS` | The SHA-256 of each `eidos-*` file. The launcher checks each game it installs against it. |
 

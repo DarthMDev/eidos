@@ -17,8 +17,9 @@ A native PC port of Pokémon Black, built from the
 Click your system to download the launcher. It installs eidos and keeps it
 up to date. You need your own copy of Pokémon Black or White. The builds
 are not signed: on Windows, choose "More info" then "Run anyway"; on macOS
-(Apple silicon), drag eidos to Applications, then right-click it and choose
-Open the first time; on Linux, make the AppImage executable and run it.
+(Apple silicon), open `READ ME FIRST.txt` in the disk image, which has the
+one Terminal line macOS needs before it opens the launcher; on Linux, make
+the AppImage executable and run it.
 
 ## Status
 
