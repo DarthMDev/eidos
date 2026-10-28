@@ -345,6 +345,295 @@ static int sock_would_block(void)
             err == WSAEINPROGRESS || err == WSAEINTR) ? 1 : 0;
 }
 
+#elif defined(__wasm__)
+
+/*
+ * The wasm32 build: the host program's sockets (sdk/wasm_host.h, sock_*).
+ * A socket is the host's number for it.  The host's sockets never block:
+ * the game's threads are fibers of one host thread, so a wait here gives
+ * the other fibers their turn (bw_thread_sleep_ns) and asks again, and a
+ * blocking socket's send or receive is that wait plus the timeout
+ * sock_set_timeouts asked for.  select is only ever asked about one socket
+ * (sock_wait).
+ */
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <errno.h>
+#include <time.h>
+
+#include <unistd.h>
+
+#include "wasm_host.h"
+
+typedef int       BwSock;
+typedef socklen_t BwSockLen;
+typedef socklen_t BwOptLen;
+
+struct hostent { char *h_name; char **h_aliases; int h_addrtype; int h_length; char **h_addr_list; };
+
+#ifndef SO_REUSEADDR
+#define SO_REUSEADDR 2
+#endif
+#ifndef SO_ERROR
+#define SO_ERROR 4
+#endif
+#ifndef SO_SNDTIMEO
+#define SO_SNDTIMEO 21
+#endif
+#ifndef SO_RCVTIMEO
+#define SO_RCVTIMEO 20
+#endif
+
+#define BW_SOCK_INVALID (-1)
+#define BW_SOCKET_ERROR (-1)
+#define WSOCK_MAX       64
+
+/* What the module keeps of each socket: its mode and timeout, and the
+ * port a bind named (the host binds when listen comes). */
+static struct {
+    int nonblock;
+    int timeout_ms;
+    u16 port;
+} g_wsock[WSOCK_MAX];
+
+static int wsock_ok(int s)
+{
+    return s >= 0 && s < WSOCK_MAX;
+}
+
+/* One turn for the other fibers, then the time that passed. */
+static void wsock_yield(void)
+{
+    bw_thread_sleep_ns(1000000ull);         /* 1 ms */
+}
+
+static int wsock_socket(void)
+{
+    int s = bw_host_sock_open();
+
+    if (s >= 0 && !wsock_ok(s)) {
+        bw_host_sock_close(s);          /* past the module's table */
+        return -1;
+    }
+    if (wsock_ok(s)) {
+        g_wsock[s].nonblock = 0;
+        g_wsock[s].timeout_ms = 0;
+        g_wsock[s].port = 0;
+    }
+    return wsock_ok(s) ? s : -1;
+}
+
+static int wsock_connect(int s, const struct sockaddr *a)
+{
+    const struct sockaddr_in *in = (const struct sockaddr_in *)a;
+    int rc = bw_host_sock_connect(s, in->sin_addr.s_addr, ntohs(in->sin_port));
+
+    if (rc == 0) {
+        return 0;
+    }
+    errno = rc > 0 ? EINPROGRESS : ECONNREFUSED;
+    return -1;
+}
+
+/* Wait until `s` is ready, the timeout runs out (0: none, -1: no limit),
+ * or an error.  1, 0, -1. */
+static int wsock_wait(int s, int for_write, int timeout_ms)
+{
+    unsigned long long end = bw_clock_ns() + (unsigned long long)timeout_ms * 1000000ull;
+
+    for (;;) {
+        int rc = bw_host_sock_poll(s, for_write);
+
+        if (rc != 0) {
+            return rc;
+        }
+        if (timeout_ms == 0 || (timeout_ms > 0 && bw_clock_ns() >= end)) {
+            return 0;
+        }
+        wsock_yield();
+    }
+}
+
+static int wsock_select(int nfds, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
+{
+    fd_set *set = w != NULL ? w : r;
+    int s, ms = tv != NULL ? (int)(tv->tv_sec * 1000 + tv->tv_usec / 1000) : -1, rc;
+
+    (void)e;
+    for (s = 0; s < nfds; s++) {
+        if (set != NULL && FD_ISSET(s, set)) {
+            break;
+        }
+    }
+    if (s == nfds) {
+        errno = EINVAL;
+        return -1;
+    }
+    rc = wsock_wait(s, w != NULL, ms);
+    if (rc <= 0) {
+        FD_CLR(s, set);
+    }
+    if (rc < 0) {
+        errno = EIO;
+    }
+    return rc;
+}
+
+static int wsock_send(int s, const void *b, int n)
+{
+    for (;;) {
+        int rc = bw_host_sock_send(s, b, (unsigned)n);
+
+        if (rc >= 0) {
+            return rc;
+        }
+        if (rc != -2) {
+            errno = EPIPE;
+            return -1;
+        }
+        if (!wsock_ok(s) || g_wsock[s].nonblock
+            || wsock_wait(s, 1, g_wsock[s].timeout_ms > 0 ? g_wsock[s].timeout_ms : -1) != 1) {
+            errno = EAGAIN;
+            return -1;
+        }
+    }
+}
+
+static int wsock_recv(int s, void *b, int n)
+{
+    for (;;) {
+        int rc = bw_host_sock_recv(s, b, (unsigned)n);
+
+        if (rc >= 0) {
+            return rc;
+        }
+        if (rc != -2) {
+            errno = ECONNRESET;
+            return -1;
+        }
+        if (!wsock_ok(s) || g_wsock[s].nonblock
+            || wsock_wait(s, 0, g_wsock[s].timeout_ms > 0 ? g_wsock[s].timeout_ms : -1) != 1) {
+            errno = EAGAIN;
+            return -1;
+        }
+    }
+}
+
+static int wsock_setsockopt(int s, int opt, const void *v)
+{
+    if (!wsock_ok(s)) {
+        return -1;
+    }
+    if (opt == SO_SNDTIMEO || opt == SO_RCVTIMEO) {
+        const struct timeval *tv = (const struct timeval *)v;
+
+        g_wsock[s].timeout_ms = (int)(tv->tv_sec * 1000 + tv->tv_usec / 1000);
+    }
+    return 0;                           /* SO_REUSEADDR: the host sets it */
+}
+
+static int wsock_getsockopt(int s, int opt, void *v)
+{
+    if (opt != SO_ERROR) {
+        return -1;
+    }
+    *(int *)v = bw_host_sock_error(s);
+    return 0;
+}
+
+static int wsock_bind(int s, const struct sockaddr *a)
+{
+    if (!wsock_ok(s)) {
+        return -1;
+    }
+    g_wsock[s].port = ntohs(((const struct sockaddr_in *)a)->sin_port);
+    return 0;
+}
+
+static int wsock_listen(int s)
+{
+    return wsock_ok(s) ? bw_host_sock_listen_loopback(s, g_wsock[s].port) : -1;
+}
+
+static int wsock_accept(int s)
+{
+    int c = bw_host_sock_accept(s);
+
+    if (c >= 0 && !wsock_ok(c)) {
+        bw_host_sock_close(c);          /* past the module's table */
+    }
+    if (!wsock_ok(c)) {
+        errno = EAGAIN;
+        return -1;
+    }
+    g_wsock[c].nonblock = 0;
+    g_wsock[c].timeout_ms = 0;
+    g_wsock[c].port = 0;
+    return c;
+}
+
+static struct hostent *wsock_gethostbyname(const char *name)
+{
+    static u32 addr;
+    static char *list[2];
+    static struct hostent he;
+
+    if (bw_host_sock_resolve(name, &addr) != 0) {
+        return NULL;
+    }
+    list[0] = (char *)&addr;
+    list[1] = NULL;
+    he.h_name = (char *)name;
+    he.h_addrtype = AF_INET;
+    he.h_length = 4;
+    he.h_addr_list = list;
+    return &he;
+}
+
+/* A dotted address, network order; 0xFFFFFFFF when `h` is not one. */
+static in_addr_t wsock_inet_addr(const char *h)
+{
+    unsigned v[4], k;
+    char tail;
+
+    if (sscanf(h, "%u.%u.%u.%u%c", &v[0], &v[1], &v[2], &v[3], &tail) != 4) {
+        return (in_addr_t)0xFFFFFFFFu;
+    }
+    for (k = 0; k < 4; k++) {
+        if (v[k] > 255) {
+            return (in_addr_t)0xFFFFFFFFu;
+        }
+    }
+    return htonl((v[0] << 24) | (v[1] << 16) | (v[2] << 8) | v[3]);
+}
+
+#define SOCK_SOCKET(a, b, c)            ((void)(a), (void)(b), (void)(c), wsock_socket())
+#define SOCK_CONNECT(s, a, l)           ((void)(l), wsock_connect((s), (a)))
+#define SOCK_BIND(s, a, l)              ((void)(l), wsock_bind((s), (a)))
+#define SOCK_LISTEN(s, n)               ((void)(n), wsock_listen(s))
+#define SOCK_ACCEPT(s, a, l)            ((void)(a), (void)(l), wsock_accept(s))
+#define SOCK_SEND(s, b, n, f)           ((void)(f), wsock_send((s), (b), (n)))
+#define SOCK_RECV(s, b, n, f)           ((void)(f), wsock_recv((s), (b), (n)))
+#define SOCK_CLOSE(s)                   (bw_host_sock_close(s), 0)
+#define SOCK_SETSOCKOPT(s, l, o, v, n)  ((void)(l), (void)(n), wsock_setsockopt((s), (o), (v)))
+#define SOCK_GETSOCKOPT(s, l, o, v, n)  ((void)(l), (void)(n), wsock_getsockopt((s), (o), (v)))
+#define SOCK_SELECT(n, r, w, e, t)      wsock_select((n), (r), (w), (e), (t))
+#define SOCK_GETHOSTBYNAME(h)           wsock_gethostbyname(h)
+#define SOCK_INET_ADDR(h)               wsock_inet_addr(h)
+#define SOCK_HTONS                      htons
+#define SOCK_HTONL                      htonl
+#define SOCK_LAST_ERROR                 (errno)
+#define SOCK_OPT_VALUE                  (const void *)
+#define SOCK_OPT_BACK                   (void *)
+
+static int sock_would_block(void)
+{
+    return errno == EAGAIN || errno == EINPROGRESS;
+}
+
 #else /* POSIX */
 
 #include <sys/types.h>
@@ -528,6 +817,12 @@ static int sock_set_nonblock(BwSock s, int on)
     if (g_ws.ioctlsocket(s, (long)FIONBIO, &mode) == BW_SOCKET_ERROR) {
         return -1;
     }
+    return 0;
+#elif defined(__wasm__)
+    if (!wsock_ok(s)) {
+        return -1;
+    }
+    g_wsock[s].nonblock = on;
     return 0;
 #else
     int flags = fcntl(s, F_GETFL, 0);
@@ -718,6 +1013,9 @@ static void net_sleep_ms(unsigned ms)
 {
 #ifdef _WIN32
     Sleep((DWORD)ms);
+#elif defined(__wasm__)
+    /* the other fibers run meanwhile (a libc sleep would stop them all) */
+    bw_thread_sleep_ns((unsigned long long)ms * 1000000ull);
 #else
     struct timespec ts;
 
@@ -1262,6 +1560,40 @@ static int g_relay_tls;             /* the relay's address said tls:// */
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
+
+#if defined(__wasm__)
+#include <unistd.h>
+
+#include "mbedtls/entropy.h"
+#include "mbedtls/platform_time.h"
+
+/* The random bytes Mbed TLS asks for (cmake/mbedtls_wasm.h): WASI's
+ * random_get, the platform's own generator on the host's side. */
+int mbedtls_hardware_poll(void *data, unsigned char *out, size_t len, size_t *olen);
+int mbedtls_hardware_poll(void *data, unsigned char *out, size_t len, size_t *olen)
+{
+    size_t done = 0;
+
+    (void)data;
+    while (done < len) {
+        size_t n = len - done > 256 ? 256 : len - done;
+
+        if (getentropy(out + done, n) != 0) {
+            return MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
+        }
+        done += n;
+    }
+    *olen = len;
+    return 0;
+}
+
+/* Mbed TLS's millisecond clock (MBEDTLS_PLATFORM_MS_TIME_ALT): it knows
+ * none for WASI. */
+mbedtls_ms_time_t mbedtls_ms_time(void)
+{
+    return (mbedtls_ms_time_t)(bw_clock_ns() / 1000000ull);
+}
+#endif
 #include "psa/crypto.h"
 #include "tls_roots.h"
 
@@ -1717,6 +2049,9 @@ static int os_random(u8 *out, u32 n)
     }
     /* 2 is BCRYPT_USE_SYSTEM_PREFERRED_RNG. */
     return (gen != NULL && gen(NULL, out, n, 2u) == 0) ? 0 : -1;
+#elif defined(__wasm__)
+    /* WASI's random_get, the platform's generator on the host's side */
+    return getentropy(out, n) == 0 ? 0 : -1;
 #else
     FILE *f = fopen("/dev/urandom", "rb");
     size_t got;

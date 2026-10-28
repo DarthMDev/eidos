@@ -1,0 +1,22 @@
+eidos launcher for macOS (Apple silicon)
+
+1. Drag "eidos launcher" onto the Applications folder in this window.
+
+2. Open Terminal (in Applications, Utilities), paste this line and press
+   Return:
+
+   xattr -dr com.apple.quarantine "/Applications/eidos launcher.app"
+
+3. Open eidos launcher from Applications.
+
+Why step 2: the launcher is not signed by Apple, so macOS blocks it the
+first time and says it cannot be opened. The command removes the
+"downloaded from the internet" mark from this one app only. You do not
+need to turn off Gatekeeper, and you do this once: the launcher updates
+itself after that.
+
+eidos is an unofficial fan project, not affiliated with or endorsed by
+Nintendo, Game Freak, Creatures Inc. or The Pokemon Company. It contains no
+game data: you need your own copy of Pokemon Black or White.
+
+https://github.com/Project-Holon/eidos

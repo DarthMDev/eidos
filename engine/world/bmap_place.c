@@ -1101,8 +1101,9 @@ static void stand_cards(BmapScene *s)
         const BmapTexture *t;
         unsigned first;
 
-        if (d->billboard != 0 || d->count < 3 || d->first + d->count > s->nv || d->tex < 0 || (unsigned)d->tex >= s->nt) {
-            continue;
+        if (d->billboard != 0 || d->count < 3 || d->first + d->count > s->nv || d->tex < 0 || (unsigned)d->tex >= s->nt
+            || d->uvanim != 0) {
+            continue;                   /* (an animated sheet: stand_drift) */
         }
         t = &s->t[d->tex];
         /* the draw holds every object with this material: one object a run
@@ -1139,12 +1140,14 @@ static void stand_cards(BmapScene *s)
                     continue;
                 }
                 if (ncard == cap) {
-                    Card *nc = (Card *)realloc(card, (cap = cap ? cap * 2 : 16) * sizeof *card);
+                    unsigned ncap = cap ? cap * 2 : 16;
+                    Card *nc = (Card *)realloc(card, ncap * sizeof *card);
 
                     if (nc == NULL) {
                         break;
                     }
                     card = nc;
+                    cap = ncap;
                 }
                 if (stand_card(s, t, &c, n)) {
                     for (b = 0; b < c.ntri; b++) {
@@ -1262,6 +1265,166 @@ static int tri_y_cmp(const void *a, const void *b)
     return ya < yb ? -1 : ya > yb;
 }
 
+/*
+ * Falling petals and leaves (Route 1's, a placed model's BTA0): the field
+ * draws them as level sheets stacked in the air, a petal picture sliding
+ * across each, seen from above.  From the battle's low camera a level sheet
+ * is a line.  Each sheet (a run of level triangles of one object at one
+ * height) is stood up after the placement, turned about the battle's x axis
+ * so it faces +z, its lower edge where it lay: the way its picture slides
+ * toward +z becomes downward, so the petals fall.  Each sheet is then a draw
+ * of its own that turns about y to the camera every frame (billboard 2,
+ * pivot at its centre), so no camera sees it edge on.  In battle space.
+ */
+static void stand_drift(BmapScene *s)
+{
+    unsigned i, nd0 = s->nd, nsheet = 0, cap = 0;
+    struct { unsigned draw, first, count; float pivot[3]; } *sheet = NULL;
+
+    for (i = 0; i < nd0; i++) {
+        BmapDraw *d = &s->d[i];
+        const BmapUvAnim *ua;
+        float du, dv;
+        unsigned a, e;
+
+        if (d->uvanim == 0 || d->uvanim > s->nuva || d->billboard || d->first % 3 || d->first + d->count > s->nv) {
+            continue;
+        }
+        ua = &s->uva[d->uvanim - 1];
+        if (ua->frames < 2) {
+            continue;
+        }
+        {
+            /* how far the picture slides a frame (over the first few) */
+            unsigned f1 = ua->frames > 8 ? 8 : ua->frames - 1;
+
+            du = (ua->m[f1 * 6 + 2] - ua->m[2]) / (float)f1;
+            dv = (ua->m[f1 * 6 + 5] - ua->m[5]) / (float)f1;
+        }
+        for (a = d->first; a + 3 <= d->first + d->count; a = e) {
+            float cy = s->v[a].y, cz = 0.0f, mz = 0.0f, lo = 1e30f, sgn;
+            unsigned j, n = 0;
+
+            /* the sheet: the level triangles of this object at this height */
+            for (e = a; e + 3 <= d->first + d->count; e += 3) {
+                const BmapVertex *p = &s->v[e];
+
+                if (p[0].obj != s->v[a].obj || fabsf(p[0].y - cy) > 0.2f || fabsf(p[1].y - cy) > 0.2f ||
+                    fabsf(p[2].y - cy) > 0.2f) {
+                    break;
+                }
+                {
+                    /* the world motion of the picture: minus the slide, in
+                     * the triangle's own uv frame */
+                    float e1x = p[1].x - p[0].x, e1z = p[1].z - p[0].z, e2x = p[2].x - p[0].x, e2z = p[2].z - p[0].z;
+                    float u1 = p[1].u - p[0].u, v1 = p[1].v - p[0].v, u2 = p[2].u - p[0].u, v2 = p[2].v - p[0].v;
+                    float det = u1 * v2 - u2 * v1;
+
+                    if (fabsf(det) > 1e-8f) {
+                        float dzdu = (e1z * v2 - e2z * v1) / det, dzdv = (e2z * u1 - e1z * u2) / det;
+
+                        mz -= du * dzdu + dv * dzdv;
+                    }
+                    (void)e1x;
+                    (void)e2x;
+                }
+                for (j = 0; j < 3; j++) {
+                    cz += p[j].z;
+                }
+                n += 3;
+            }
+            if (e == a) {
+                e = a + 3;              /* not level: left as it is */
+                continue;
+            }
+            cz /= (float)n;
+            sgn = mz >= 0.0f ? 1.0f : -1.0f;    /* toward the camera: downward */
+            for (j = a; j < e; j++) {
+                float y = cy - sgn * (s->v[j].z - cz);
+
+                lo = fminf(lo, y);
+            }
+            {
+                float x0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+
+                for (j = a; j < e; j++) {
+                    BmapVertex *v = &s->v[j];
+
+                    v->y = cy + (cy - sgn * (v->z - cz)) - lo;
+                    v->z = cz;
+                    x0 = fminf(x0, v->x);
+                    x1 = fmaxf(x1, v->x);
+                    y1 = fmaxf(y1, v->y);
+                }
+                if (nsheet == cap) {
+                    unsigned ncap = cap ? cap * 2 : 16;
+                    void *ns = realloc(sheet, ncap * sizeof *sheet);
+
+                    if (ns == NULL) {
+                        continue;
+                    }
+                    sheet = ns;
+                    cap = ncap;
+                }
+                sheet[nsheet].draw = i;
+                sheet[nsheet].first = a;
+                sheet[nsheet].count = e - a;
+                sheet[nsheet].pivot[0] = 0.5f * (x0 + x1);
+                sheet[nsheet].pivot[1] = 0.5f * (cy + y1);
+                sheet[nsheet].pivot[2] = cz;
+                nsheet++;
+            }
+        }
+    }
+    if (nsheet > 0) {
+        /* the sheets' draws (turned to the camera), and the rest of each
+         * draw they came from as draws of its own (the old draw is emptied) */
+        BmapDraw *nd = (BmapDraw *)realloc(s->d, (s->nd + 2 * nsheet + nd0) * sizeof *nd);
+
+        if (nd != NULL) {
+            unsigned k = 0;
+
+            s->d = nd;
+            while (k < nsheet) {
+                unsigned di = sheet[k].draw, at = s->d[di].first, end = s->d[di].first + s->d[di].count;
+                BmapDraw o = s->d[di];
+
+                for (; k < nsheet && sheet[k].draw == di; k++) {
+                    BmapDraw *n;
+
+                    if (sheet[k].first > at) {
+                        n = &s->d[s->nd++];
+                        *n = o;
+                        n->first = at;
+                        n->count = sheet[k].first - at;
+                    }
+                    n = &s->d[s->nd++];
+                    *n = o;
+                    n->first = sheet[k].first;
+                    n->count = sheet[k].count;
+                    n->billboard = 2;
+                    memcpy(n->pivot, sheet[k].pivot, sizeof n->pivot);
+                    at = sheet[k].first + sheet[k].count;
+                }
+                if (end > at) {
+                    BmapDraw *n = &s->d[s->nd++];
+
+                    *n = o;
+                    n->first = at;
+                    n->count = end - at;
+                }
+                s->d[di].count = 0;
+            }
+        }
+    }
+    if (getenv("BMAP_PLACE_LOG") != NULL) {
+        for (i = 0; i < nsheet; i++) {
+            fprintf(stderr, "bmap: drift sheet %u draw %u tris %u at %.1f %.1f %.1f\n", i, sheet[i].draw, sheet[i].count / 3, sheet[i].pivot[0], sheet[i].pivot[1], sheet[i].pivot[2]);
+        }
+    }
+    free(sheet);
+}
+
 static void lay_decals(BmapScene *s, const unsigned char *grass, unsigned ngrass)
 {
     unsigned ntri = s->nv / 3, t, nk = 0, i, nlaid = 0, norder = 0, *order = NULL;
@@ -1278,7 +1441,7 @@ static void lay_decals(BmapScene *s, const unsigned char *grass, unsigned ngrass
     for (i = 0; i < s->nd; i++) {
         const BmapDraw *d = &s->d[i];
 
-        if (d->billboard == 0 && d->tex >= 0 && !d->translucent && d->first % 3 == 0 && d->first + d->count <= s->nv
+        if (d->billboard == 0 && d->tex >= 0 && !d->translucent && d->uvanim == 0 && d->first % 3 == 0 && d->first + d->count <= s->nv
             && !(grass != NULL && i < ngrass && grass[i])) {
             for (t = d->first / 3; t < (d->first + d->count) / 3; t++) {
                 textured[t] = 1;
@@ -1770,6 +1933,9 @@ void bmap_place_spec(BmapScene *s, const BmapPlaceSpec *sp)
         v->y = GROUND_Y + k * (my - gy) - GROUND_LIFT;
     }
     free(done);
+    if (!sp->field) {
+        stand_drift(s);
+    }
     topview_dump(s, nd0, 1, th);
     if (grass != NULL) {
         grass_grow_fixed(s, grass, nd0, 16.0f * k);

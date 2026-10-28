@@ -2,11 +2,10 @@
  * install/picker.h -- the platform's own "open file" dialog, for choosing
  * the ROM.
  *
- * SDL2 has no file dialog (SDL 3's SDL_ShowOpenFileDialog is the
- * replacement once the platform layer moves; docs/installer.md), and a
- * dialog drawn by eidos itself would know nothing of the player's
- * bookmarks, cloud folders or sandbox grants.  So each platform's native
- * picker is called here, behind one function:
+ * SDL3's SDL_ShowOpenFileDialog answers on a callback, after the call
+ * returns, and a dialog drawn by eidos itself would know nothing of the
+ * player's bookmarks, cloud folders or sandbox grants.  So each platform's
+ * native picker is called here, behind one blocking function:
  *
  *   Windows  IFileOpenDialog (COM), falling back to GetOpenFileNameW
  *   macOS    NSOpenPanel (install/picker_mac.m, compiled only on Apple)
@@ -16,7 +15,7 @@
  *   Android, iOS: not yet (BW_PICK_UNAVAILABLE); the plan is in
  *            docs/installer.md
  *
- * Every platform also has drag and drop onto the window (SDL_DROPFILE),
+ * Every platform also has drag and drop onto the window (SDL_EVENT_DROP_FILE),
  * which the wizard offers beside the button, and the --rom option; so
  * BW_PICK_UNAVAILABLE is a message, never a dead end.
  *

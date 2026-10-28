@@ -20,6 +20,11 @@
  *                area id; textures in a/1/7/7 or a/1/7/6, same member
  *   light        a/0/6/1 member lightType: 0x34-byte keyframes, the first
  *                whose time lies after "now" (FIELD_LIGHT_Create)
+ *   animations   a building's definition (the member's first table) holds
+ *                its animations at +0x10: u8 kind, then four s32 offsets
+ *                from there (-1: none).  Kind 1 plays every one, looping
+ *                (FIELD_BUILDMODEL_InitAnimSetAll); a BTA0 among them moves
+ *                its materials' texture coordinates (BmapUvAnim)
  *
  * The BMD0 reader is its own (engine/g3d/nsbmd.c guesses materials and
  * palettes; this one reads the material, texture pairing and palette
@@ -446,6 +451,7 @@ static int decode_in(Buf data, const char *name, const char *palname, Image *img
 /* ------------------------------------------------------------------ */
 
 typedef struct {
+    char name[17];
     char tex[17], pal[17];
     int has_tex, has_pal;
     unsigned alpha, cullbits;
@@ -736,6 +742,7 @@ static int parse_materials(Model *md)
         u32 poly = rd32(b, a + 0x0C), tex = rd32(b, a + 0x14);
         Mat *mt = &md->mats[i];
 
+        dict_name(&d, i, mt->name);
         mt->cullbits = (poly >> 6) & 3u;
         mt->alpha = (poly >> 16) & 31u;
         mt->vertex_color = (diff_amb & 0x8000u) != 0u;
@@ -1073,6 +1080,9 @@ static void blob_free(Blob *b)
     b->n = 0;
 }
 
+/* A building's looping texture animations (BTA0 files, up to four). */
+typedef struct { Buf bta[4]; unsigned n; } BldAnim;
+
 typedef struct Area {
     unsigned id;
     int loaded, indoor;
@@ -1081,6 +1091,7 @@ typedef struct Area {
     Blob bfile;                 /* building member */
     Model *bmodels;
     unsigned *bids;
+    BldAnim *banims;
     unsigned nb;
 } Area;
 
@@ -1095,7 +1106,7 @@ typedef struct { float p[3][3]; u8 water, placed; } GTri;
 /* One chunk's walk grid (bmap_tile): a class per tile, BMAP_TILE_*. */
 typedef struct { int cx, cz; u8 cls[32 * 32]; } WalkChunk;
 
-typedef struct { int tex; u8 alpha, cull, translucent; int bb; float pivot[3]; u8 far; } TriTag;
+typedef struct { int tex; u8 alpha, cull, translucent; int bb; float pivot[3]; u8 far; unsigned short uvanim; } TriTag;
 
 typedef struct {
     ArcSlot arcs[16];
@@ -1122,6 +1133,9 @@ typedef struct {
     WalkChunk *walk;            /* the near chunks' walk grids               */
     size_t nwalk, walk_cap;
     unsigned obj;           /* the object add_model is adding (0: ground)  */
+    BmapUvAnim *uva;        /* the texture animations, and what each is of */
+    const u8 **uva_key;
+    size_t nuva, uva_cap;
 } Ctx;
 
 static ArcSlot *arc_get(Ctx *c, const char *path)
@@ -1403,7 +1417,8 @@ static Area *area_get(Ctx *c, unsigned area)
     n = m.n > 2u ? m.p[2] / 2u : 0u;
     a->bmodels = (Model *)calloc(n ? n : 1u, sizeof(Model));
     a->bids = (unsigned *)calloc(n ? n : 1u, sizeof(unsigned));
-    if (a->bmodels == NULL || a->bids == NULL) {
+    a->banims = (BldAnim *)calloc(n ? n : 1u, sizeof(BldAnim));
+    if (a->bmodels == NULL || a->bids == NULL || a->banims == NULL) {
         return a;
     }
     for (k = 0; k < n; k++) {
@@ -1411,8 +1426,22 @@ static Area *area_get(Ctx *c, unsigned area)
         Model md;
 
         if (file < m.n && model_parse(sub(m, file), &md) == 0) {
+            BldAnim *an = &a->banims[a->nb];
+            size_t at = def + 0x10u;
+            unsigned j;
+
             a->bmodels[a->nb] = md;
             a->bids[a->nb] = rd16(m, def);
+            if (at < m.n && m.p[at] == 1u) {        /* kind 1: every one, looping */
+                for (j = 0; j < 4u; j++) {
+                    int off = rds32(m, at + 4u + j * 4u);
+
+                    if (off != -1 && at + (size_t)off + 4u <= m.n &&
+                        memcmp(m.p + at + off, "BTA0", 4) == 0) {
+                        an->bta[an->n++] = sub(m, at + (size_t)off);
+                    }
+                }
+            }
             a->nb++;
         }
     }
@@ -1428,6 +1457,7 @@ static void area_free(Area *a)
     }
     free(a->bmodels);
     free(a->bids);
+    free(a->banims);
     blob_free(&a->btex);
     blob_free(&a->bfile);
 }
@@ -1519,6 +1549,180 @@ static int tex_ref(Ctx *c, int ent, const Mat *mt)
     return (int)c->ntex++;
 }
 
+/* A texture SRT track at a whole frame (NNSi_G3dAnmGetTexSRTScalarData,
+ * NNSi_G3dAnmGetTexSRTRotData): bit 29 an inline value, bits 31:30 every
+ * key, every second or every fourth frame (the frames between the mean of
+ * two keys or a 3:1 blend, up to the last interpolated frame in bits 15:0),
+ * bit 28 s16 keys.  The keys lie at `off` from the animation.  A rotation
+ * key is a (sin, cos) pair of s16 in one word; `rot` takes those. */
+static void srt_keys(Buf a, u32 info, u32 off, unsigned f, int rot, int *k0, int *k1, int *w)
+{
+    unsigned last = info & 0xFFFFu, q;
+
+    (void)a;
+    (void)off;
+    (void)rot;
+    *w = 4;
+    *k0 = *k1 = (int)f;
+    if ((info & 0xC0000000u) == 0u) {
+        return;
+    }
+    if (info & 0x40000000u) {                   /* every second */
+        if ((f & 1u) == 0u) {
+            *k0 = *k1 = (int)(f >> 1);
+        } else if (f > last) {
+            *k0 = *k1 = (int)((last >> 1) + 1u);
+        } else {
+            *k0 = (int)(f >> 1);
+            *k1 = *k0 + 1;
+            *w = 2;
+        }
+        return;
+    }
+    q = f & 3u;                                 /* every fourth */
+    if (q == 0u) {
+        *k0 = *k1 = (int)(f >> 2);
+    } else if (f > last) {
+        *k0 = *k1 = (int)(q + (last >> 2));
+    } else if (q == 2u) {
+        *k0 = (int)(f >> 2);
+        *k1 = *k0 + 1;
+        *w = 2;
+    } else if (q == 1u) {
+        *k0 = (int)(f >> 2);
+        *k1 = *k0 + 1;
+        *w = 3;                                 /* 3:1 toward the first */
+    } else {
+        *k0 = (int)(f >> 2) + 1;
+        *k1 = (int)(f >> 2);
+        *w = 3;                                 /* 3:1 toward the next */
+    }
+}
+
+static int srt_blend(int v0, int v1, int w)
+{
+    return w == 4 ? v0 : w == 2 ? (v0 + v1) >> 1 : (v0 * 3 + v1) >> 2;
+}
+
+static float srt_scalar(Buf a, u32 info, u32 off, unsigned f)
+{
+    int k0, k1, w;
+
+    if (info & 0x20000000u) {
+        return (float)(int)off / 4096.0f;
+    }
+    srt_keys(a, info, off, f, 0, &k0, &k1, &w);
+    if (info & 0x10000000u) {
+        return (float)srt_blend(rds16(a, off + (size_t)k0 * 2u), rds16(a, off + (size_t)k1 * 2u), w) / 4096.0f;
+    }
+    return (float)srt_blend(rds32(a, off + (size_t)k0 * 4u), rds32(a, off + (size_t)k1 * 4u), w) / 4096.0f;
+}
+
+static void srt_rot(Buf a, u32 info, u32 off, unsigned f, float *sn, float *cs)
+{
+    int k0, k1, w;
+
+    if (info & 0x20000000u) {
+        *sn = (float)(short)(off & 0xFFFFu) / 4096.0f;
+        *cs = (float)(short)(off >> 16) / 4096.0f;
+        return;
+    }
+    srt_keys(a, info, off, f, 1, &k0, &k1, &w);
+    *sn = (float)srt_blend(rds16(a, off + (size_t)k0 * 4u), rds16(a, off + (size_t)k1 * 4u), w) / 4096.0f;
+    *cs = (float)srt_blend(rds16(a, off + (size_t)k0 * 4u + 2u), rds16(a, off + (size_t)k1 * 4u + 2u), w) / 4096.0f;
+}
+
+/* The texture animation of material `name` in a building's BTA0 files, as
+ * 1 + its index in c->uva (made once per material and file), or 0.  The
+ * matrix is the one the hardware gets (NNSi_G3dTexMtxScaleRotTrans4x4 and
+ * its cheaper siblings, which are the same formula with a term left out),
+ * in coordinates over the texture's size, which is what the vertices hold. */
+static unsigned short uv_anim(Ctx *c, const BldAnim *an, const char *name)
+{
+    unsigned bi;
+
+    for (bi = 0; an != NULL && bi < an->n; bi++) {
+        Buf f = an->bta[bi];
+        size_t blk = rd32(f, 16);
+        Dict anims, mats;
+        unsigned ai, mi;
+
+        if (blk + 8u > f.n || memcmp(f.p + blk, "SRT0", 4) != 0 || dict_parse(f, blk + 8u, &anims) != 0) {
+            continue;
+        }
+        for (ai = 0; ai < anims.count; ai++) {
+            Buf a = sub(f, blk + dict_off(&anims, ai));
+            unsigned frames = rd16(a, 4);
+
+            if (frames == 0u || dict_parse(a, 8, &mats) != 0 || mats.entry < 40u) {
+                continue;
+            }
+            for (mi = 0; mi < mats.count; mi++) {
+                char nm[17];
+                size_t r = mats.rec + (size_t)mi * mats.entry, k;
+                BmapUvAnim *ua;
+                float *m;
+                unsigned fr;
+
+                dict_name(&mats, mi, nm);
+                if (strcmp(nm, name) != 0) {
+                    continue;
+                }
+                for (k = 0; k < c->nuva; k++) {
+                    if (c->uva_key[k] == a.p + r) {
+                        return (unsigned short)(k + 1u);
+                    }
+                }
+                if (c->nuva >= 0xFFFEu) {
+                    return 0;
+                }
+                if (c->nuva == c->uva_cap) {
+                    size_t cap = c->uva_cap ? c->uva_cap * 2u : 8u;
+                    BmapUvAnim *nu = (BmapUvAnim *)realloc(c->uva, cap * sizeof *nu);
+                    const u8 **nk;
+
+                    if (nu == NULL) {
+                        return 0;
+                    }
+                    c->uva = nu;
+                    nk = (const u8 **)realloc((void *)c->uva_key, cap * sizeof *nk);
+                    if (nk == NULL) {
+                        return 0;
+                    }
+                    c->uva_key = nk;
+                    c->uva_cap = cap;
+                }
+                m = (float *)malloc((size_t)frames * 6u * sizeof *m);
+                if (m == NULL) {
+                    return 0;
+                }
+                for (fr = 0; fr < frames; fr++) {
+                    float ss = srt_scalar(a, rd32(a, r + 0), rd32(a, r + 4), fr);
+                    float st = srt_scalar(a, rd32(a, r + 8), rd32(a, r + 12), fr);
+                    float ts = srt_scalar(a, rd32(a, r + 24), rd32(a, r + 28), fr);
+                    float tt = srt_scalar(a, rd32(a, r + 32), rd32(a, r + 36), fr);
+                    float sn, cs;
+                    float *o = m + (size_t)fr * 6u;
+
+                    srt_rot(a, rd32(a, r + 16), rd32(a, r + 20), fr, &sn, &cs);
+                    o[0] = ss * cs;
+                    o[1] = ss * sn;
+                    o[2] = ss * (1.0f - sn - cs) * 0.5f - ss * ts;
+                    o[3] = -st * sn;
+                    o[4] = st * cs;
+                    o[5] = (2.0f + st * sn - st * cs - st) * 0.5f + st * tt;
+                }
+                ua = &c->uva[c->nuva];
+                ua->frames = frames;
+                ua->m = m;
+                c->uva_key[c->nuva++] = a.p + r;
+                return (unsigned short)c->nuva;
+            }
+        }
+    }
+    return 0;
+}
+
 static int add_tri(Ctx *c, const BmapVertex t[3], const TriTag *tag, const float pos[3][3], int ground, int level_ok)
 {
     BmapVertex *nv;
@@ -1555,7 +1759,8 @@ static int add_tri(Ctx *c, const BmapVertex t[3], const TriTag *tag, const float
     return 0;
 }
 
-static int add_model(Ctx *c, Model *md, const char *setkey, Buf set, const Aff *base, int ground)
+static int add_model(Ctx *c, Model *md, const char *setkey, Buf set, const Aff *base, int ground,
+                     const BldAnim *anim)
 {
     unsigned di;
 
@@ -1590,6 +1795,7 @@ static int add_model(Ctx *c, Model *md, const char *setkey, Buf set, const Aff *
         tag.translucent = (u8)translucent;
         tag.bb = dc->bb;
         tag.far = c->cur_far;
+        tag.uvanim = anim != NULL ? uv_anim(c, anim, mt->name) : 0;
         if (dc->bb) {
             static const float zero[3] = { 0, 0, 0 };
 
@@ -1759,7 +1965,7 @@ static int add_chunk(Ctx *c, Area *ar, unsigned chunk, int cx, int cz)
     snprintf(setkey, sizeof setkey, "g%u", ar->texset);
     bmd = rd32(bb, 4);
     if (bmd < bb.n && gs != NULL && model_parse(sub(bb, bmd), &md) == 0) {
-        rc = add_model(c, &md, setkey, bb_of(gs), &base, 1);
+        rc = add_model(c, &md, setkey, bb_of(gs), &base, 1, NULL);
         model_free(&md);
     }
     if (rc != 0) {
@@ -1801,7 +2007,8 @@ static int add_chunk(Ctx *c, Area *ar, unsigned chunk, int cx, int cz)
             t[2] = center[2] - (float)rds32(bb, at + 8) / 4096.0f;
             place = aff_yaw((float)rd16(bb, at + 12) / 65536.0f, t);
             c->obj++;
-            rc = add_model(c, &ar->bmodels[mi], bkey, bb_of(&ar->btex), &place, 2);   /* placed */
+            rc = add_model(c, &ar->bmodels[mi], bkey, bb_of(&ar->btex), &place, 2,
+                           &ar->banims[mi]);   /* placed */
             if (rc != 0) {
                 break;
             }
@@ -2130,7 +2337,7 @@ static int add_gimmicks(Ctx *c, unsigned zone, float px, float pz)
         c->cur_far = (u8)(fabsf(gm[i].x - px) > NEAR_REACH || fabsf(gm[i].z - pz) > NEAR_REACH);
         c->obj++;
         /* The textures are the model's own unless a separate set is named. */
-        rc = add_model(c, &md, setkey, bb_of(tb.p != NULL ? &tb : &mb), &place, 2);   /* placed */
+        rc = add_model(c, &md, setkey, bb_of(tb.p != NULL ? &tb : &mb), &place, 2, NULL);   /* placed */
         model_free(&md);
         blob_free(&tb);
         blob_free(&mb);
@@ -2494,6 +2701,7 @@ static int key_cmp(const TriTag *x, const TriTag *y)
     if (x->cull != y->cull) return (int)x->cull - (int)y->cull;
     if (x->far != y->far) return (int)x->far - (int)y->far;
     if (x->bb != y->bb) return x->bb - y->bb;
+    if (x->uvanim != y->uvanim) return (int)x->uvanim - (int)y->uvanim;
     if (x->bb) {
         int k;
 
@@ -2550,6 +2758,7 @@ static int finish(Ctx *c, BmapScene *s)
             d->translucent = t->translucent;
             d->billboard = (unsigned char)t->bb;
             d->far = t->far;
+            d->uvanim = t->uvanim;
             memcpy(d->pivot, t->pivot, sizeof d->pivot);
         }
         d->count += 3u;
@@ -2649,6 +2858,10 @@ int bmap_build(BmapScene *s, unsigned zone, float px, float pz, int season, int 
     s->t = c->tex;
     s->nt = (unsigned)c->ntex;
     c->tex = NULL;
+    s->uva = c->uva;
+    s->nuva = (unsigned)c->nuva;
+    c->uva = NULL;
+    c->nuva = 0;
     if (s->clear[0] < 24u && s->clear[1] < 24u && s->clear[2] < 24u) {
         /* A room or a cave has a black "sky": nothing is drawn beyond its
          * walls.  In battle the camera sees over them, so the space around
@@ -2729,6 +2942,11 @@ out:
     free(c->tag);
     free(c->gt);
     free(c->walk);
+    for (i = 0; i < c->nuva; i++) {
+        free(c->uva[i].m);
+    }
+    free(c->uva);
+    free((void *)c->uva_key);
     blob_free(&c->area_file);
     blob_free(&headers);
     blob_free(&matrix);
@@ -2754,6 +2972,10 @@ void bmap_free(BmapScene *s)
         free(s->t[i].rgba);
     }
     free(s->t);
+    for (i = 0; i < s->nuva; i++) {
+        free(s->uva[i].m);
+    }
+    free(s->uva);
     if (g != NULL) {
         free(g->tri);
         free(g->start);
@@ -2880,7 +3102,7 @@ int bmap_add_bmd(BmapScene *s, const unsigned char *bmd, size_t bmd_n,
     }
     tr[0] = x; tr[1] = y; tr[2] = z;
     base = aff_yaw(turns, tr);
-    if (add_model(c, &md, key, set, &base, 0) == 0 && c->ntag > 0 && finish(c, &t) == 0) {
+    if (add_model(c, &md, key, set, &base, 0, NULL) == 0 && c->ntag > 0 && finish(c, &t) == 0) {
         nv = (BmapVertex *)realloc(s->v, (s->nv + t.nv) * sizeof *nv);
         if (nv != NULL) {
             s->v = nv;

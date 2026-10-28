@@ -1267,8 +1267,15 @@ typedef struct BwModHost {
  *
  * eidos_mod_stop runs when the port unloads the mod or exits.
  */
-int  eidos_mod_start(const BwModHost *host, void **mod_state);
-void eidos_mod_stop(void *mod_state);
+#if defined(_WIN32) && defined(BW_MOD_LIBRARY)
+/* a mod's own build (BW_MOD_LIBRARY): the two entry points are its exports,
+ * and cl.exe wants the declaration to say so as the definition does */
+#define BW_MOD_ENTRY __declspec(dllexport)
+#else
+#define BW_MOD_ENTRY
+#endif
+BW_MOD_ENTRY int  eidos_mod_start(const BwModHost *host, void **mod_state);
+BW_MOD_ENTRY void eidos_mod_stop(void *mod_state);
 
 #ifdef __cplusplus
 }

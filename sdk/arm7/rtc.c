@@ -30,11 +30,14 @@
  * read back.
  */
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include "arm7.h"
 #include "dsmem.h"
+#include "plat_thread.h"
 #include "pxi.h"
 
 #define RTC_RAW_BLOCK   0x02FFFDE8u
@@ -46,6 +49,7 @@
 
 static struct {
     int        fixed;
+    int        env_read;        /* EIDOS_RTC looked at                     */
     BwArm7Time fixed_time;
     u16        status1;
     u16        status2;
@@ -73,14 +77,36 @@ static u32 bcd(int v)
 static void now(BwArm7Time *out)
 {
     time_t t;
-    struct tm *lt;
+    struct tm ltm, *lt;
 
     if (g_rtc.fixed) {
         *out = g_rtc.fixed_time;
         return;
     }
+    if (!g_rtc.env_read) {
+        const char *e = getenv("EIDOS_RTC");
+        BwArm7Time f;
+
+        g_rtc.env_read = 1;
+        memset(&f, 0, sizeof f);
+        if (e != NULL && sscanf(e, "%d-%d-%d %d:%d:%d", &f.year, &f.month, &f.day,
+                                &f.hour, &f.minute, &f.second) == 6) {
+            struct tm d;
+
+            memset(&d, 0, sizeof d);
+            d.tm_year = f.year - 1900;
+            d.tm_mon = f.month - 1;
+            d.tm_mday = f.day;
+            d.tm_hour = 12;
+            mktime(&d);                 /* the weekday */
+            f.week = d.tm_wday;
+            bw_arm7_rtc_fix_time(&f);
+            *out = g_rtc.fixed_time;
+            return;
+        }
+    }
     t = time(NULL);
-    lt = localtime(&t);
+    lt = bw_localtime((long long)t, &ltm) == 0 ? &ltm : NULL;
     if (!lt) {
         memset(out, 0, sizeof *out);
         out->year = 2000;

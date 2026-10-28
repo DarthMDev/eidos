@@ -514,11 +514,6 @@ static int imin(int a, int b) { return a < b ? a : b; }
 static int imax(int a, int b) { return a > b ? a : b; }
 static int iclamp(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-static int inside(int x, int y, int w, int h, int px, int py)
-{
-    return px >= x && py >= y && px < x + w && py < y + h;
-}
-
 static EidosUiRect rect(int x, int y, int w, int h)
 {
     EidosUiRect r;

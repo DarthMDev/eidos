@@ -586,8 +586,10 @@ static void t_sleep_ms(unsigned ms)
 #endif
 }
 
-/* How long a wait may take before the test gives up. */
-#define T_WAIT_NS 2000000000ull
+/* How long a wait may take before the test gives up: long, as a busy CI
+ * runner (ctest -j) can hold the listener thread back for seconds; a wait
+ * that succeeds returns at once. */
+#define T_WAIT_NS 10000000000ull
 
 /* Wait until the port's own count of the peers is `want`. */
 static int wait_peers(u32 want)

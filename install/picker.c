@@ -17,7 +17,7 @@
 #include <TargetConditionals.h>
 #endif
 
-#if !defined(__APPLE__) || TARGET_OS_IPHONE
+#if (!defined(__APPLE__) || TARGET_OS_IPHONE) && !defined(__wasm__)
 static void put(char *out, size_t n, const char *s)
 {
     if (n > 0) {
@@ -163,6 +163,20 @@ int bw_pick_rom_mac(void *parent, const char *title, char *out, size_t n);
 int bw_pick_rom(void *parent, const char *title, char *out, size_t n)
 {
     return bw_pick_rom_mac(parent, title, out, n);
+}
+
+#elif defined(__wasm__)
+
+/* ------------------------------------------------------------------ */
+/* The wasm32 build: the host program's own dialog (sdk/wasm_host.h)    */
+/* ------------------------------------------------------------------ */
+
+#include "wasm_host.h"
+
+int bw_pick_rom(void *parent, const char *title, char *out, size_t n)
+{
+    (void)parent;
+    return bw_host_pick_rom(title, out, (unsigned)n);
 }
 
 #elif defined(__ANDROID__) || defined(__APPLE__)

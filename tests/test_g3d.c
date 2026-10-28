@@ -1272,7 +1272,9 @@ int main(int argc, char **argv)
         printf("%s (%s#%u, %u shapes):\n", spec->name, spec->archive,
                spec->index, spec->n_shapes);
 
-        snprintf(path, sizeof(path), "%s/%s.obj", oracle_dir, spec->name);
+        if (snprintf(path, sizeof(path), "%s/%s.obj", oracle_dir, spec->name) >= (int)sizeof(path)) {
+            path[0] = '\0';
+        }
         bw_checks++;
         if (obj_load(&obj, path) != 0) {
             printf("  FAIL cannot read %s\n", path);

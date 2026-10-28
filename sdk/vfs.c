@@ -419,7 +419,9 @@ static int join(char *out, size_t out_size, const char *root, const char *rel)
      * A forward slash is a valid separator on every host this targets,
      * Windows included, so the NitroFS spelling is used verbatim.
      */
-    sprintf(out, "%s/%s", root, rel);
+    if (snprintf(out, out_size, "%s/%s", root, rel) >= (int)out_size) {
+        return -1;
+    }
     return 0;
 }
 

@@ -22,7 +22,7 @@ The configurations:
     clang-ilp32   clang with the ILP32 toolchain file
     asan-lp64     AddressSanitizer + UBSan, 64-bit
     asan-ilp32    the same, 32-bit
-    nosdl-lp64    -DEIDOS_SDL=OFF: the build a machine without SDL2 gets
+    nosdl-lp64    -DEIDOS_SDL=OFF: the build a machine without SDL3 gets
     mingw-x64     Windows x64 with MinGW-w64, tests under wine64 if present
     mingw-x86     Windows x86, the same, tests under a 32-bit wine if present
     msvc-x64      Visual Studio's cl.exe, x64 (LLP64), Windows only
@@ -35,11 +35,11 @@ and build with Ninja.  They are skipped, with the reason, on a host that is
 not Windows, has no Visual Studio, or has Visual Studio without the C++
 build tools.
 
-The Windows configurations (mingw-*, msvc-*, clangcl-*) build the SDL2
+The Windows configurations (mingw-*, msvc-*, clangcl-*) build the SDL3
 platform layer and run test_view with it: they configure with
--DEIDOS_SDL_FETCH=ON, so tools/fetch_sdl.py fetches the official SDL2
+-DEIDOS_SDL_FETCH=ON, so tools/fetch_sdl.py fetches the official SDL3
 package for that toolchain (MinGW or VC) into its per-user cache on first
-use, and a configuration that still ends up without SDL2 fails rather than
+use, and a configuration that still ends up without SDL3 fails rather than
 quietly building less.  On a Windows host the MinGW configurations are
 native builds and run their tests directly; elsewhere they cross-compile and
 need Wine to run them.
@@ -51,6 +51,7 @@ reported in the count; pass --data-root to run them.  Standard library only.
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import re
 import shutil
@@ -102,7 +103,7 @@ CONFIGS = {
     # with 0xCD, the closest thing to a sanitizer these configurations have.
     # Its report windows are turned off in every executable
     # (sdk/plat_nodialog.c), so it cannot stall the run.
-    # SDL2 is the official VC development package (tools/fetch_sdl.py).
+    # SDL3 is the official VC development package (tools/fetch_sdl.py).
     "msvc-x64":    dict(cc="cl", vcvars="x64", sdl=True,
                         args=["-DEIDOS_SDL_FETCH=ON", "-DCMAKE_BUILD_TYPE=Debug"]),
     "msvc-x86":    dict(cc="cl", vcvars="x64_x86", sdl=True,
@@ -224,6 +225,15 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
         cmd += ["-G", generator]
     if cfg["cc"]:
         cmd.append("-DCMAKE_C_COMPILER=" + cfg["cc"])
+    elif os.name == "nt" and shutil.which("gcc"):
+        # A MinGW-w64 driver named plain `gcc` has only the prefixed windres
+        # beside it; CMake would look for a plain one.
+        bindir = os.path.dirname(shutil.which("gcc"))
+        triplet = subprocess.run(["gcc", "-dumpmachine"], capture_output=True,
+                                 text=True).stdout.strip()
+        rc = os.path.join(bindir, triplet + "-windres.exe")
+        if os.path.exists(rc):
+            cmd.append("-DCMAKE_RC_COMPILER=" + rc)
     if data_root:
         cmd.append("-DBW_DATA_ROOT=" + os.path.abspath(data_root))
     if cross:
@@ -243,18 +253,24 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
         # it here once hid a toolchain bug as a skip.
         if "ilp32" in name and "is not able to compile" in text:
             res.update(status="skip", note="no 32-bit runtime (gcc-multilib?)")
+        elif name.startswith("asan") and "is not able to compile" in text:
+            # MinGW-w64's GCC has no sanitizer runtime
+            res.update(status="skip", note="no sanitizer runtime for this compiler")
         else:
             res["note"] = "configure failed, see " + cfg_log
             print(text)
         return res
 
     with open(cfg_log, encoding="utf-8", errors="replace") as fh:
-        m = re.search(r"^-- SDL2: (.*)$", fh.read(), re.M)
+        # the last SDL3 line: a first look that fetched prints "not found,
+        # running tools/fetch_sdl.py" and then what the fetch gave
+        ms = list(re.finditer(r"^-- SDL3: (.*)$", fh.read(), re.M))
+    m = ms[-1] if ms else None
     found = bool(m) and not m.group(1).startswith(("not found", "off"))
     res["sdl"] = "yes" if found else "no"
     if cfg.get("sdl") and not found:
-        res["note"] = ("SDL2 required but not found (%s), see %s"
-                       % (m.group(1) if m else "no SDL2 line", cfg_log))
+        res["note"] = ("SDL3 required but not found (%s), see %s"
+                       % (m.group(1) if m else "no SDL3 line", cfg_log))
         return res
 
     build_log = os.path.join(bdir, "check-build.log")
@@ -270,6 +286,14 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
     if cross and not wine:
         res["status"] = "ok" if res["warnings"] == 0 else "FAIL"
         res["note"] = "built only: no %s to run the tests" % cross
+        return res
+    # The game's code runs with 4-byte pointers only (docs/lp64.md: the
+    # 64-bit release is the wasm32 build); a native 64-bit build is the
+    # port's own portability check, compiled and linked, not run.
+    if pointer_size(bdir) == 8:
+        res["status"] = "ok" if res["warnings"] == 0 else "FAIL"
+        res["note"] = ("built only: the game's code needs 4-byte pointers "
+                       "(docs/lp64.md)")
         return res
 
     test_log = os.path.join(bdir, "check-test.log")
@@ -295,6 +319,17 @@ def check_one(name, cfg, build_root, aletheia, data_root, generator):
         return res
     res["status"] = "ok"
     return res
+
+
+def pointer_size(bdir):
+    """The C pointer size CMake measured for a configured build directory
+    (CMakeFiles/<version>/CMakeCCompiler.cmake), or 0."""
+    for path in glob.glob(os.path.join(bdir, "CMakeFiles", "*", "CMakeCCompiler.cmake")):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            m = re.search(r'CMAKE_C_SIZEOF_DATA_PTR "(\d+)"', fh.read())
+        if m:
+            return int(m.group(1))
+    return 0
 
 
 def no_error_dialogs():

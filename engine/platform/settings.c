@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include "input.h"
 #include "mod_net.h"
@@ -1264,7 +1264,7 @@ const char *eidos_settings_net_relay_in_use(void)
 
 int eidos_settings_clipboard_set(const char *text)
 {
-    return SDL_SetClipboardText(text != NULL ? text : "") == 0 ? 0 : -1;
+    return SDL_SetClipboardText(text != NULL ? text : "") ? 0 : -1;
 }
 
 /* The relay and the name the port's own settings hold. */
@@ -1512,7 +1512,7 @@ int eidos_settings_set_key(int button, int slot, int scancode)
     if (slot < 0) {
         return -1;
     }
-    if (scancode < 0 || scancode >= SDL_NUM_SCANCODES) {
+    if (scancode < 0 || scancode >= SDL_SCANCODE_COUNT) {
         return -1;
     }
     if (scancode == SDL_SCANCODE_ESCAPE || scancode == SDL_SCANCODE_F12) {
@@ -1621,7 +1621,7 @@ const char *eidos_scancode_name(int scancode, char *buf, size_t n)
     if (buf == NULL || n == 0) {
         return "";
     }
-    nm = scancode > 0 && scancode < SDL_NUM_SCANCODES
+    nm = scancode > 0 && scancode < SDL_SCANCODE_COUNT
          ? SDL_GetScancodeName((SDL_Scancode)scancode) : "";
     if (scancode == 0) {
         snprintf(buf, n, "None");
@@ -1729,7 +1729,7 @@ void eidos_settings_set_path(const char *path)
  * same scancode, else "sc:N". */
 static void key_token(int sc, char *buf, size_t n)
 {
-    const char *nm = sc > 0 && sc < SDL_NUM_SCANCODES
+    const char *nm = sc > 0 && sc < SDL_SCANCODE_COUNT
                      ? SDL_GetScancodeName((SDL_Scancode)sc) : "";
 
     if (is_ascii_name(nm) && strchr(nm, '|') == NULL &&
@@ -1743,8 +1743,8 @@ static void key_token(int sc, char *buf, size_t n)
 static void pad_token(const PadCtl *c, char *buf, size_t n)
 {
     if (c->kind == EIDOS_PADBIND_BUTTON) {
-        const char *nm = SDL_GameControllerGetStringForButton(
-            (SDL_GameControllerButton)c->index);
+        const char *nm = SDL_GetGamepadStringForButton(
+            (SDL_GamepadButton)c->index);
 
         if (nm != NULL) {
             snprintf(buf, n, "%s", nm);
@@ -1752,8 +1752,8 @@ static void pad_token(const PadCtl *c, char *buf, size_t n)
             snprintf(buf, n, "button:%d", c->index);
         }
     } else {
-        const char *nm = SDL_GameControllerGetStringForAxis(
-            (SDL_GameControllerAxis)c->index);
+        const char *nm = SDL_GetGamepadStringForAxis(
+            (SDL_GamepadAxis)c->index);
         char sign = c->kind == EIDOS_PADBIND_AXIS_POS ? '+' : '-';
 
         if (nm != NULL) {
@@ -1792,16 +1792,16 @@ static int parse_pad_token(const char *t, PadCtl *out)
         }
         memcpy(nm, t, len - 1);
         nm[len - 1] = '\0';
-        v = (int)SDL_GameControllerGetAxisFromString(nm);
-        if (v == (int)SDL_CONTROLLER_AXIS_INVALID) {
+        v = (int)SDL_GetGamepadAxisFromString(nm);
+        if (v == (int)SDL_GAMEPAD_AXIS_INVALID) {
             return -1;
         }
         out->kind = kind;
         out->index = v;
         return 0;
     }
-    v = (int)SDL_GameControllerGetButtonFromString(t);
-    if (v == (int)SDL_CONTROLLER_BUTTON_INVALID) {
+    v = (int)SDL_GetGamepadButtonFromString(t);
+    if (v == (int)SDL_GAMEPAD_BUTTON_INVALID) {
         return -1;
     }
     out->kind = EIDOS_PADBIND_BUTTON;
@@ -1913,7 +1913,7 @@ static int parse_key_token(const char *t)
     } else {
         sc = (int)SDL_GetScancodeFromName(t);
     }
-    if (sc <= 0 || sc >= SDL_NUM_SCANCODES || sc == SDL_SCANCODE_ESCAPE ||
+    if (sc <= 0 || sc >= SDL_SCANCODE_COUNT || sc == SDL_SCANCODE_ESCAPE ||
         sc == SDL_SCANCODE_F12) {
         return 0;
     }
@@ -2279,7 +2279,10 @@ static int save_model(const Model *out)
         fprintf(stderr, "eidos: no settings location; changes last this run\n");
         return -1;
     }
-    snprintf(dir, sizeof(dir), "%s", path);
+    if (snprintf(dir, sizeof(dir), "%s", path) >= (int)sizeof(dir)) {
+        fprintf(stderr, "eidos: settings path too long; changes last this run\n");
+        return -1;
+    }
     sep = strrchr(dir, '/');
     if (sep == NULL) {
         sep = strrchr(dir, '\\');
@@ -2288,7 +2291,10 @@ static int save_model(const Model *out)
         *sep = '\0';
         (void)bw_mkdirs_utf8(dir);
     }
-    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) {
+        fprintf(stderr, "eidos: settings path too long; changes last this run\n");
+        return -1;
+    }
     fp = bw_fopen_utf8(tmp, "wb");
     if (fp == NULL) {
         fprintf(stderr, "eidos: cannot write %s\n", tmp);

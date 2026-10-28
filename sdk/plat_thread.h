@@ -41,11 +41,25 @@ BwThread *bw_thread_start(void (*fn)(void *arg), void *arg);
 /* Wait for the thread to return, then release the handle.                 */
 void      bw_thread_join(BwThread *t);
 
+#if defined(__wasm__)
+/* The wasm32 build's threads take turns on one host thread: a thread that
+ * waits for time sleeps here, and the others run meanwhile.              */
+void      bw_thread_sleep_ns(unsigned long long ns);
+/* End the calling thread here (its joiner wakes); never returns.          */
+void      bw_thread_exit(void) __attribute__((noreturn));
+#endif
+
 /* The number of hardware threads (at least 1). */
 unsigned bw_cpu_count(void);
 
 /* A monotonic clock in nanoseconds (the frame profiler's). */
 unsigned long long bw_clock_ns(void);
+
+/* localtime(&t) in the player's time zone, into *out; 0 on success.  The
+ * wasm32 build's C library knows no time zone (UTC), so its offset comes
+ * from the host program (sdk/wasm_host.h, tz_offset). */
+struct tm;
+int bw_localtime(long long t, struct tm *out);
 
 #ifdef __cplusplus
 }

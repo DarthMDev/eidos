@@ -449,7 +449,9 @@ static int collect(const char *rel, int layer, Collect *c)
         if (strlen(root) + 1 + strlen(rel) + 1 > sizeof(dir)) {
             continue;
         }
-        sprintf(dir, "%s/%s", root, rel);
+        if (snprintf(dir, sizeof(dir), "%s/%s", root, rel) >= (int)sizeof(dir)) {
+            continue;
+        }
         if (bw_plat_path_kind(dir) != BW_PATH_DIR) {
             continue;
         }
@@ -628,8 +630,10 @@ static int build_sdat(const char *rel, int layer, u8 **out, u32 *out_size)
         if (strlen(root) + 1 + strlen(rel) + 16 > sizeof(dir)) {
             continue;
         }
-        sprintf(dir, "%s/%s", root, rel);
-        sprintf(path, "%s/sdat.txt", dir);
+        if (snprintf(dir, sizeof(dir), "%s/%s", root, rel) >= (int)sizeof(dir) ||
+            snprintf(path, sizeof(path), "%s/sdat.txt", dir) >= (int)sizeof(path)) {
+            continue;
+        }
         if (bw_plat_path_kind(path) != BW_PATH_FILE) {
             continue;
         }

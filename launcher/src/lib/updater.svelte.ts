@@ -13,7 +13,9 @@ import { relaunch } from "@tauri-apps/plugin-process";
 
 const AUTO_KEY = "eidos-launcher.auto-update";
 const FAIL_KEY = "eidos-launcher.update-failures";
-const CHECK_TIMEOUT_MS = 10000;
+// GitHub's download host can take 20 s or more to answer a first request;
+// the check runs in the background, so a long wait blocks nothing.
+const CHECK_TIMEOUT_MS = 60000;
 const RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
 
 export type UpdateState =

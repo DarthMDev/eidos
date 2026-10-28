@@ -300,7 +300,7 @@ synced and swapped in, so a crash leaves the old file or the new one:
 
 ### Picking the ROM, per platform
 
-SDL2 has no file dialog, so `install/picker.c` calls each platform's own,
+SDL3's file dialog answers on a callback, so `install/picker.c` calls each platform's own,
 behind `bw_pick_rom` (filtered to `.nds`, with "All files" offered, since
 dumps arrive with other extensions). Every platform also takes the file
 dropped on the window (`SDL_DROPFILE`) and `--rom`, so a missing dialog is

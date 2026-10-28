@@ -26,7 +26,8 @@
  */
 
 #define SDL_MAIN_HANDLED
-#include <SDL.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,10 +62,12 @@ static char g_synth[600];
 static void push_drop(const char *path)
 {
     SDL_Event e;
+    static char file[1024];     /* SDL3 events point at their text */
 
     memset(&e, 0, sizeof(e));
-    e.type = SDL_DROPFILE;
-    e.drop.file = SDL_strdup(path);
+    e.type = SDL_EVENT_DROP_FILE;
+    SDL_strlcpy(file, path, sizeof(file));
+    e.drop.data = file;
     SDL_PushEvent(&e);
 }
 
@@ -73,9 +76,9 @@ static void push_key(SDL_Keycode k)
     SDL_Event e;
 
     memset(&e, 0, sizeof(e));
-    e.type = SDL_KEYDOWN;
-    e.key.state = SDL_PRESSED;
-    e.key.keysym.sym = k;
+    e.type = SDL_EVENT_KEY_DOWN;
+    e.key.down = true;
+    e.key.key = k;
     SDL_PushEvent(&e);
 }
 
@@ -86,19 +89,19 @@ static void push_click(const EidosWizardButton *b)
     int y = b->y + b->h / 2;
 
     memset(&e, 0, sizeof(e));
-    e.type = SDL_MOUSEMOTION;
-    e.motion.x = x;
-    e.motion.y = y;
+    e.type = SDL_EVENT_MOUSE_MOTION;
+    e.motion.x = (float)x;
+    e.motion.y = (float)y;
     SDL_PushEvent(&e);
     memset(&e, 0, sizeof(e));
-    e.type = SDL_MOUSEBUTTONDOWN;
+    e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
     e.button.button = SDL_BUTTON_LEFT;
-    e.button.state = SDL_PRESSED;
-    e.button.x = x;
-    e.button.y = y;
+    e.button.down = true;
+    e.button.x = (float)x;
+    e.button.y = (float)y;
     SDL_PushEvent(&e);
-    e.type = SDL_MOUSEBUTTONUP;
-    e.button.state = SDL_RELEASED;
+    e.type = SDL_EVENT_MOUSE_BUTTON_UP;
+    e.button.down = false;
     SDL_PushEvent(&e);
 }
 
@@ -107,7 +110,7 @@ static void push_quit(void)
     SDL_Event e;
 
     memset(&e, 0, sizeof(e));
-    e.type = SDL_QUIT;
+    e.type = SDL_EVENT_QUIT;
     SDL_PushEvent(&e);
 }
 
@@ -116,8 +119,7 @@ static void push_close(void)
     SDL_Event e;
 
     memset(&e, 0, sizeof(e));
-    e.type = SDL_WINDOWEVENT;
-    e.window.event = SDL_WINDOWEVENT_CLOSE;
+    e.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
     SDL_PushEvent(&e);
 }
 
@@ -202,7 +204,7 @@ static void script(void *user, const EidosWizardView *v)
         break;
     case 4:
         if (s->step == 0 && v->screen == EIDOS_WIZARD_WELCOME) {
-            push_key(SDLK_o);
+            push_key(SDLK_O);
             s->step = 1;
         } else if (s->step == 1 && v->note[0] != '\0') {
             push_quit();

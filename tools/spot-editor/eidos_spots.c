@@ -25,7 +25,8 @@
  */
 
 #define SDL_MAIN_HANDLED    /* main() is ours */
-#include <SDL.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #ifdef _WIN32
 #include <direct.h>
 #include <process.h>
@@ -2223,25 +2224,25 @@ static void nudge(float dx, float dz)
 static void on_key(const SDL_KeyboardEvent *k)
 {
     BmapSpot *r = cur();
-    float step = (k->keysym.mod & KMOD_SHIFT) ? 16.0f : 4.0f;
+    float step = (k->mod & SDL_KMOD_SHIFT) ? 16.0f : 4.0f;
     int p = vis_pos(A.row);
 
     if (A.edit != 0) {
         /* typing a number: Enter takes it, Esc gives up */
-        if (k->keysym.sym == SDLK_RETURN || k->keysym.sym == SDLK_KP_ENTER) {
+        if (k->key == SDLK_RETURN || k->key == SDLK_KP_ENTER) {
             A.edit_done = 1;
-        } else if (k->keysym.sym == SDLK_ESCAPE) {
+        } else if (k->key == SDLK_ESCAPE) {
             A.edit = 0;
-        } else if (k->keysym.sym == SDLK_BACKSPACE && A.edit_buf[0] != '\0') {
+        } else if (k->key == SDLK_BACKSPACE && A.edit_buf[0] != '\0') {
             A.edit_buf[strlen(A.edit_buf) - 1] = '\0';
         }
         return;
     }
-    if ((k->keysym.mod & KMOD_CTRL) && k->keysym.sym == SDLK_z) {
+    if ((k->mod & SDL_KMOD_CTRL) && k->key == SDLK_Z) {
         undo();
         return;
     }
-    switch (k->keysym.sym) {
+    switch (k->key) {
     case SDLK_ESCAPE:
         A.search[0] = '\0';
         refilter();
@@ -2293,21 +2294,17 @@ static void pump(void)
     A.pressed = A.released = A.rpressed = A.wheel = 0;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
-        case SDL_QUIT:
+        case SDL_EVENT_QUIT:
+        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
             A.quit = 1;
             break;
-        case SDL_WINDOWEVENT:
-            if (ev.window.event == SDL_WINDOWEVENT_CLOSE) {
-                A.quit = 1;
-            }
+        case SDL_EVENT_MOUSE_MOTION:
+            A.mx = (int)ev.motion.x;
+            A.my = (int)ev.motion.y;
             break;
-        case SDL_MOUSEMOTION:
-            A.mx = ev.motion.x;
-            A.my = ev.motion.y;
-            break;
-        case SDL_MOUSEBUTTONDOWN:
-            A.mx = ev.button.x;
-            A.my = ev.button.y;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            A.mx = (int)ev.button.x;
+            A.my = (int)ev.button.y;
             if (ev.button.button == SDL_BUTTON_LEFT) {
                 A.down = 1;
                 A.pressed = 1;
@@ -2318,7 +2315,7 @@ static void pump(void)
                 A.mdown = 1;
             }
             break;
-        case SDL_MOUSEBUTTONUP:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
             if (ev.button.button == SDL_BUTTON_LEFT) {
                 A.down = 0;
                 A.released = 1;
@@ -2328,10 +2325,10 @@ static void pump(void)
                 A.mdown = 0;
             }
             break;
-        case SDL_MOUSEWHEEL:
-            A.wheel += ev.wheel.y;
+        case SDL_EVENT_MOUSE_WHEEL:
+            A.wheel += ev.wheel.integer_y;
             break;
-        case SDL_TEXTINPUT:
+        case SDL_EVENT_TEXT_INPUT:
             if (A.edit != 0) {
                 if (strlen(A.edit_buf) + strlen(ev.text.text) < sizeof A.edit_buf - 1) {
                     strcat(A.edit_buf, ev.text.text);
@@ -2342,7 +2339,7 @@ static void pump(void)
                 refilter();
             }
             break;
-        case SDL_KEYDOWN:
+        case SDL_EVENT_KEY_DOWN:
             on_key(&ev.key);
             break;
         default:
@@ -2352,8 +2349,8 @@ static void pump(void)
     {
         SDL_Keymod m = SDL_GetModState();
 
-        A.shift = (m & KMOD_SHIFT) != 0;
-        A.ctrl = (m & KMOD_CTRL) != 0;
+        A.shift = (m & SDL_KMOD_SHIFT) != 0;
+        A.ctrl = (m & SDL_KMOD_CTRL) != 0;
     }
 }
 
@@ -2374,13 +2371,13 @@ static void frame(void)
     draw_right(L);
     draw_left(L);
     dst = SDL_GetWindowSurface(A.win);
-    src = SDL_CreateRGBSurfaceWithFormatFrom(A.canvas.rgba, A.W, A.H, 32, A.W * 4, SDL_PIXELFORMAT_RGBA32);
+    src = SDL_CreateSurfaceFrom(A.W, A.H, SDL_PIXELFORMAT_RGBA32, A.canvas.rgba, A.W * 4);
     if (dst != NULL && src != NULL) {
         SDL_SetSurfaceBlendMode(src, SDL_BLENDMODE_NONE);
         SDL_BlitSurface(src, NULL, dst, NULL);
         SDL_UpdateWindowSurface(A.win);
     }
-    SDL_FreeSurface(src);
+    SDL_DestroySurface(src);
 }
 
 /* --script FILE (tests): one step a line, each followed by frames:
@@ -2393,8 +2390,9 @@ static void push_button(int type, int button, int x, int y)
     memset(&ev, 0, sizeof ev);
     ev.type = (Uint32)type;
     ev.button.button = (Uint8)button;
-    ev.button.x = x;
-    ev.button.y = y;
+    ev.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+    ev.button.x = (float)x;
+    ev.button.y = (float)y;
     ev.button.windowID = SDL_GetWindowID(A.win);
     SDL_PushEvent(&ev);
 }
@@ -2404,9 +2402,9 @@ static void push_motion(int x, int y)
     SDL_Event ev;
 
     memset(&ev, 0, sizeof ev);
-    ev.type = SDL_MOUSEMOTION;
-    ev.motion.x = x;
-    ev.motion.y = y;
+    ev.type = SDL_EVENT_MOUSE_MOTION;
+    ev.motion.x = (float)x;
+    ev.motion.y = (float)y;
     SDL_PushEvent(&ev);
 }
 
@@ -2433,37 +2431,40 @@ static void run_script(const char *path)
             int b = right ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT;
 
             push_motion(x1, y1);
-            push_button(SDL_MOUSEBUTTONDOWN, b, x1, y1);
+            push_button(SDL_EVENT_MOUSE_BUTTON_DOWN, b, x1, y1);
             step();
-            push_button(SDL_MOUSEBUTTONUP, b, x1, y1);
+            push_button(SDL_EVENT_MOUSE_BUTTON_UP, b, x1, y1);
             step();
         } else if (sscanf(line, "drag %d %d %d %d", &x1, &y1, &x2, &y2) == 4
                    || (right = sscanf(line, "rdrag %d %d %d %d", &x1, &y1, &x2, &y2) == 4)) {
             int b = right ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT, i;
 
             push_motion(x1, y1);
-            push_button(SDL_MOUSEBUTTONDOWN, b, x1, y1);
+            push_button(SDL_EVENT_MOUSE_BUTTON_DOWN, b, x1, y1);
             step();
             for (i = 1; i <= 4; i++) {
                 push_motion(x1 + (x2 - x1) * i / 4, y1 + (y2 - y1) * i / 4);
                 step();
             }
-            push_button(SDL_MOUSEBUTTONUP, b, x2, y2);
+            push_button(SDL_EVENT_MOUSE_BUTTON_UP, b, x2, y2);
             step();
         } else if (sscanf(line, "key %199s", arg) == 1) {
             SDL_Event ev;
 
             memset(&ev, 0, sizeof ev);
-            ev.type = SDL_KEYDOWN;
-            ev.key.keysym.sym = SDL_GetKeyFromName(arg);
+            ev.type = SDL_EVENT_KEY_DOWN;
+            ev.key.down = true;
+            ev.key.key = SDL_GetKeyFromName(arg);
             SDL_PushEvent(&ev);
             step();
         } else if (sscanf(line, "text %199s", arg) == 1) {
             SDL_Event ev;
+            static char text[200];      /* SDL3 events point at their text */
 
             memset(&ev, 0, sizeof ev);
-            ev.type = SDL_TEXTINPUT;
-            snprintf(ev.text.text, sizeof ev.text.text, "%.31s", arg);
+            ev.type = SDL_EVENT_TEXT_INPUT;
+            snprintf(text, sizeof text, "%s", arg);
+            ev.text.text = text;
             SDL_PushEvent(&ev);
             step();
         } else if (sscanf(line, "wait %d", &x1) == 1) {
@@ -2691,10 +2692,9 @@ static void preview_in_game(void)
     _putenv_s("BW_SAVE_DIR", tmp);
     /* eidos_boot beside this program */
     {
-        char *self = SDL_GetBasePath();      /* this program's folder, with its slash */
+        const char *self = SDL_GetBasePath();   /* this program's folder, with its slash */
 
         snprintf(exe, sizeof exe, "%seidos_boot.exe", self != NULL ? self : "");
-        SDL_free(self);
     }
     if (_spawnl(_P_NOWAIT, exe, "\"eidos_boot.exe\"", "--layout", "one", "--window", "--input", input, NULL) < 0) {
         say("Could not start %s", exe);
@@ -2899,23 +2899,23 @@ int main(int argc, char **argv)
         }
     }
     SDL_SetMainReady();
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "eidos_spots: %s\n", SDL_GetError());
         return 1;
     }
-    A.glwin = SDL_CreateWindow("eidos spots gl", 0, 0, 64, 64, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    A.glwin = SDL_CreateWindow("eidos spots gl", 64, 64, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
     A.gl = A.glwin != NULL ? eidos_gl_create(A.glwin) : NULL;
     if (A.gl == NULL) {
         fprintf(stderr, "eidos_spots: no OpenGL 3.3: %s\n", SDL_GetError());
         return 1;
     }
-    A.win = SDL_CreateWindow("eidos battle spots", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1680, 960,
+    A.win = SDL_CreateWindow("eidos battle spots", 1680, 960,
                              SDL_WINDOW_RESIZABLE | (shot != NULL ? SDL_WINDOW_HIDDEN : SDL_WINDOW_MAXIMIZED));
     if (A.win == NULL) {
         fprintf(stderr, "eidos_spots: %s\n", SDL_GetError());
         return 1;
     }
-    SDL_StartTextInput();
+    SDL_StartTextInput(A.win);
     A.zoom = 10.0f;
     A.follow = 1;
     A.hour = 1;

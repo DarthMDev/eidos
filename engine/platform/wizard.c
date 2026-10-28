@@ -20,8 +20,8 @@
  */
 
 #define SDL_MAIN_HANDLED
-#include <SDL.h>
-#include <SDL_syswm.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +29,7 @@
 
 #include "font.h"
 #include "picker.h"
+#include "plat_thread.h"
 #include "wizard.h"
 
 #define W EIDOS_WIZARD_WIDTH
@@ -63,11 +64,11 @@ typedef struct Job {
     char rom[BW_SETUP_PATH_MAX];
     char dest[BW_SETUP_PATH_MAX];
     int allow_unverified;
-    SDL_atomic_t hashing;       /* 1 while hashing, 0 while writing */
-    SDL_atomic_t done;
-    SDL_atomic_t total;
-    SDL_atomic_t cancel;
-    SDL_atomic_t finished;
+    SDL_AtomicInt hashing;       /* 1 while hashing, 0 while writing */
+    SDL_AtomicInt done;
+    SDL_AtomicInt total;
+    SDL_AtomicInt cancel;
+    SDL_AtomicInt finished;
     /* Read only once `finished` is set. */
     int rc;
     BwSetupOutcome outcome;
@@ -78,20 +79,35 @@ static int job_progress(void *ctx, u32 done, u32 total, const char *what)
 {
     Job *j = (Job *)ctx;
 
-    SDL_AtomicSet(&j->hashing, strcmp(what, "hashing") == 0);
-    SDL_AtomicSet(&j->total, (int)total);
-    SDL_AtomicSet(&j->done, (int)done);
-    return SDL_AtomicGet(&j->cancel);
+    SDL_SetAtomicInt(&j->hashing, strcmp(what, "hashing") == 0);
+    SDL_SetAtomicInt(&j->total, (int)total);
+    SDL_SetAtomicInt(&j->done, (int)done);
+#if defined(__wasm__)
+    /* The fibers take turns (sdk/plat_thread.c) and the install never
+     * blocks: give the window a turn every frame or so, so the progress
+     * shows and Cancel is read. */
+    {
+        static unsigned long long last;
+        unsigned long long now = bw_clock_ns();
+
+        if (now - last >= 16000000ull) {
+            last = now;
+            bw_thread_sleep_ns(0);
+        }
+    }
+#endif
+    return SDL_GetAtomicInt(&j->cancel);
 }
 
-static int SDLCALL job_main(void *arg)
+/* The port's own thread (sdk/plat_thread.h), so the wasm32 build runs it
+ * as one of its fibers. */
+static void job_main(void *arg)
 {
     Job *j = (Job *)arg;
 
     j->rc = bw_setup_install(j->rom, j->dest, j->allow_unverified, 0,
                              job_progress, j, &j->outcome, j->msg, sizeof(j->msg));
-    SDL_AtomicSet(&j->finished, 1);
-    return 0;
+    SDL_SetAtomicInt(&j->finished, 1);
 }
 
 /* ------------------------------------------------------------------ */
@@ -124,7 +140,7 @@ typedef struct Wiz {
     int hover;
 
     Job *job;
-    SDL_Thread *thread;
+    BwThread *thread;
 
     u32 frame;
     u32 shots;                  /* screens already written, one bit each */
@@ -271,8 +287,8 @@ static int progress_permille(const Wiz *z)
     if (z->job == NULL) {
         return 0;
     }
-    done = SDL_AtomicGet(&z->job->done);
-    total = SDL_AtomicGet(&z->job->total);
+    done = SDL_GetAtomicInt(&z->job->done);
+    total = SDL_GetAtomicInt(&z->job->total);
     if (total <= 0) {
         return 0;
     }
@@ -325,7 +341,7 @@ static void present(Wiz *z)
     }
     SDL_UpdateTexture(z->tex, NULL, z->fb, W * 4);
     SDL_RenderClear(z->ren);
-    SDL_RenderCopy(z->ren, z->tex, NULL, NULL);
+    SDL_RenderTexture(z->ren, z->tex, NULL, NULL);
     SDL_RenderPresent(z->ren);
 }
 
@@ -346,13 +362,12 @@ static void shot(Wiz *z)
     }
     z->shots |= 1u << z->screen;
     snprintf(path, sizeof(path), "%s-%s.bmp", z->cfg->shot_prefix, screen_name(z->screen));
-    surf = SDL_CreateRGBSurfaceWithFormatFrom(z->fb, W, H, 32, W * 4,
-                                              SDL_PIXELFORMAT_ARGB8888);
+    surf = SDL_CreateSurfaceFrom(W, H, SDL_PIXELFORMAT_ARGB8888, z->fb, W * 4);
     if (surf != NULL) {
-        if (SDL_SaveBMP(surf, path) != 0) {
+        if (!SDL_SaveBMP(surf, path)) {
             fprintf(stderr, "eidos: cannot write %s: %s\n", path, SDL_GetError());
         }
-        SDL_FreeSurface(surf);
+        SDL_DestroySurface(surf);
     }
 }
 
@@ -410,14 +425,9 @@ static void start_job(Wiz *z, const char *rom)
     snprintf(j->rom, sizeof(j->rom), "%s", rom);
     snprintf(j->dest, sizeof(j->dest), "%s", z->cfg->extract_dir);
     j->allow_unverified = z->cfg->allow_unverified;
-    SDL_AtomicSet(&j->hashing, 1);
+    SDL_SetAtomicInt(&j->hashing, 1);
     z->job = j;
-    z->thread = SDL_CreateThread(job_main, "eidos-install", j);
-    if (z->thread == NULL) {
-        /* No thread: run it here.  The window does not redraw meanwhile,
-         * but the result is the same. */
-        job_main(j);
-    }
+    z->thread = bw_thread_start(job_main, j);
     z->screen = EIDOS_WIZARD_CHECKING;
     snprintf(z->heading, sizeof(z->heading), "Checking your ROM");
     snprintf(z->body, sizeof(z->body), "Reading\n>%s\nto make sure it is the "
@@ -464,7 +474,7 @@ static void finish_job(Wiz *z)
     Job *j = z->job;
 
     if (z->thread != NULL) {
-        SDL_WaitThread(z->thread, NULL);
+        bw_thread_join(z->thread);
         z->thread = NULL;
     }
     if (j->rc == 0) {
@@ -501,23 +511,18 @@ static void finish_job(Wiz *z)
 
 static void *native_parent(Wiz *z)
 {
-    SDL_SysWMinfo info;
+    SDL_PropertiesID props;
+    void *w;
 
-    SDL_VERSION(&info.version);
-    if (z->win == NULL || !SDL_GetWindowWMInfo(z->win, &info)) {
+    if (z->win == NULL) {
         return NULL;
     }
-#if defined(SDL_VIDEO_DRIVER_WINDOWS)
-    if (info.subsystem == SDL_SYSWM_WINDOWS) {
-        return (void *)info.info.win.window;
+    props = SDL_GetWindowProperties(z->win);
+    w = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+    if (w == NULL) {
+        w = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
     }
-#endif
-#if defined(SDL_VIDEO_DRIVER_COCOA)
-    if (info.subsystem == SDL_SYSWM_COCOA) {
-        return (void *)info.info.cocoa.window;
-    }
-#endif
-    return NULL;
+    return w;
 }
 
 static void choose(Wiz *z)
@@ -543,7 +548,7 @@ static void choose(Wiz *z)
 static void cancel(Wiz *z)
 {
     if (z->job != NULL) {
-        SDL_AtomicSet(&z->job->cancel, 1);
+        SDL_SetAtomicInt(&z->job->cancel, 1);
     }
 }
 
@@ -597,22 +602,17 @@ static int wants_file(const Wiz *z)
 static void handle(Wiz *z, const SDL_Event *e)
 {
     switch (e->type) {
-    case SDL_QUIT:
+    case SDL_EVENT_QUIT:
+    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
         z->result = EIDOS_WIZARD_QUIT;
         break;
-    case SDL_WINDOWEVENT:
-        if (e->window.event == SDL_WINDOWEVENT_CLOSE) {
-            z->result = EIDOS_WIZARD_QUIT;
+    case SDL_EVENT_DROP_FILE:
+        if (wants_file(z) && e->drop.data != NULL) {
+            start_job(z, e->drop.data);
         }
         break;
-    case SDL_DROPFILE:
-        if (wants_file(z) && e->drop.file != NULL) {
-            start_job(z, e->drop.file);
-        }
-        SDL_free(e->drop.file);
-        break;
-    case SDL_KEYDOWN:
-        switch (e->key.keysym.sym) {
+    case SDL_EVENT_KEY_DOWN:
+        switch (e->key.key) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
         case SDLK_SPACE:
@@ -634,7 +634,7 @@ static void handle(Wiz *z, const SDL_Event *e)
                 z->focus = (z->focus + 1) % z->nbuttons;
             }
             break;
-        case SDLK_o:
+        case SDLK_O:
             if (wants_file(z)) {
                 choose(z);
             }
@@ -643,12 +643,12 @@ static void handle(Wiz *z, const SDL_Event *e)
             break;
         }
         break;
-    case SDL_MOUSEMOTION:
-        z->hover = button_at(z, e->motion.x, e->motion.y);
+    case SDL_EVENT_MOUSE_MOTION:
+        z->hover = button_at(z, (int)e->motion.x, (int)e->motion.y);
         break;
-    case SDL_MOUSEBUTTONUP:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
         if (e->button.button == SDL_BUTTON_LEFT) {
-            int b = button_at(z, e->button.x, e->button.y);
+            int b = button_at(z, (int)e->button.x, (int)e->button.y);
             if (b >= 0) {
                 z->focus = b;
                 act(z, z->button[b].action);
@@ -672,7 +672,7 @@ static int pick_scale(const EidosWizardConfig *cfg)
     if (cfg->scale > 0) {
         return cfg->scale;
     }
-    if (SDL_GetDisplayUsableBounds(0, &r) != 0) {
+    if (!SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &r)) {
         return 2;
     }
     s = r.w / W < r.h / H ? r.w / W : r.h / H;
@@ -719,7 +719,7 @@ int eidos_wizard_run(const EidosWizardConfig *cfg, char *rom_out, size_t n)
 
     SDL_SetMainReady();
     if (!SDL_WasInit(SDL_INIT_VIDEO)) {
-        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+        if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
             fprintf(stderr, "eidos: no window for setup: %s\n", SDL_GetError());
             free(z.fb);
             return EIDOS_WIZARD_NO_WINDOW;
@@ -727,8 +727,7 @@ int eidos_wizard_run(const EidosWizardConfig *cfg, char *rom_out, size_t n)
         own_video = 1;
     }
     z.scale = pick_scale(cfg);
-    z.win = SDL_CreateWindow("eidos setup", SDL_WINDOWPOS_CENTERED,
-                             SDL_WINDOWPOS_CENTERED, W * z.scale, H * z.scale, 0);
+    z.win = SDL_CreateWindow("eidos setup", W * z.scale, H * z.scale, 0);
     if (z.win == NULL) {
         fprintf(stderr, "eidos: no window for setup: %s\n", SDL_GetError());
         if (own_video) {
@@ -737,18 +736,21 @@ int eidos_wizard_run(const EidosWizardConfig *cfg, char *rom_out, size_t n)
         free(z.fb);
         return EIDOS_WIZARD_NO_WINDOW;
     }
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
-    z.ren = SDL_CreateRenderer(z.win, -1, 0);
+    z.ren = SDL_CreateRenderer(z.win, NULL);
     if (z.ren != NULL) {
         z.tex = SDL_CreateTexture(z.ren, SDL_PIXELFORMAT_ARGB8888,
                                   SDL_TEXTUREACCESS_STREAMING, W, H);
+        if (z.tex != NULL) {
+            /* the window is a whole multiple of the picture: nearest */
+            (void)SDL_SetTextureScaleMode(z.tex, SDL_SCALEMODE_NEAREST);
+        }
     }
     if (z.ren == NULL || z.tex == NULL) {
         /* The window still opens and takes events; it just shows nothing.
          * Reported, since a player would see a blank window. */
         fprintf(stderr, "eidos: setup window has no renderer: %s\n", SDL_GetError());
     }
-    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
+    SDL_SetEventEnabled(SDL_EVENT_DROP_FILE, true);
 
     if (cfg->rom != NULL && cfg->rom[0] != '\0') {
         start_job(&z, cfg->rom);
@@ -761,10 +763,10 @@ int eidos_wizard_run(const EidosWizardConfig *cfg, char *rom_out, size_t n)
         EidosWizardView v;
 
         if (z.job != NULL) {
-            if (SDL_AtomicGet(&z.job->finished)) {
+            if (SDL_GetAtomicInt(&z.job->finished)) {
                 finish_job(&z);
             } else if (z.screen == EIDOS_WIZARD_CHECKING
-                       && !SDL_AtomicGet(&z.job->hashing)) {
+                       && !SDL_GetAtomicInt(&z.job->hashing)) {
                 show_writing(&z);
             }
         }
@@ -776,7 +778,14 @@ int eidos_wizard_run(const EidosWizardConfig *cfg, char *rom_out, size_t n)
             cfg->script(cfg->user, &v);
         }
         z.frame++;
+#if defined(__wasm__)
+        /* the wasm32 build's threads take turns: the install job runs
+         * while this one sleeps */
+        bw_thread_sleep_ns(30000000ull);
+        if (SDL_PollEvent(&e)) {
+#else
         if (SDL_WaitEventTimeout(&e, 30)) {
+#endif
             handle(&z, &e);
             while (z.result == -2 && SDL_PollEvent(&e)) {
                 handle(&z, &e);
@@ -787,7 +796,7 @@ int eidos_wizard_run(const EidosWizardConfig *cfg, char *rom_out, size_t n)
     if (z.job != NULL) {
         cancel(&z);
         if (z.thread != NULL) {
-            SDL_WaitThread(z.thread, NULL);
+            bw_thread_join(z.thread);
         }
         free(z.job);
     }

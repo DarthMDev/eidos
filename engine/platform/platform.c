@@ -1,5 +1,5 @@
 /*
- * engine/platform/platform.c -- SDL2 window, keyboard, gamepads, the mouse
+ * engine/platform/platform.c -- SDL3 window, keyboard, gamepads, the mouse
  * as the stylus, frame pacer, audio device.
  *
  * See platform.h for the contract and for where the numbers come from.
@@ -10,8 +10,9 @@
  * back out of the renderer.
  */
 
-#define SDL_MAIN_HANDLED   /* eidos owns main(); no SDL2main, no #define main */
-#include <SDL.h>
+#define SDL_MAIN_HANDLED   /* eidos owns main(); SDL_main.h defines no main */
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +23,7 @@
 #include "mod_panel_draw.h"
 #include "platform.h"
 #include "plat_gl.h"
+#include "plat_thread.h"
 #include "settings.h"
 #include "ui.h"
 
@@ -80,7 +82,7 @@ struct EidosPlatform {
     int win_x, win_y;               /* windowed position, kept across fullscreen */
     int presented;                  /* a frame has been drawn at least once  */
     int arr_w, arr_h;               /* the arrangement's size last seen      */
-    SDL_threadID owner;             /* the thread that made the window and GL context */
+    SDL_ThreadID owner;             /* the thread that made the window and GL context */
     int pend_display, pend_layout;  /* a change asked for from another thread  */
     int pd_mode, pd_w, pd_h, pl_layout, pl_swap, pl_gap;
     EidosKeyBinding *keymap_own;    /* set by eidos_platform_set_bindings    */
@@ -99,8 +101,8 @@ struct EidosPlatform {
     u32   keymap_count;
     const EidosPadBinding *padmap;
     u32   padmap_count;
-    SDL_GameController *pads[MAX_PADS];
-    int   pad_subsystem;            /* SDL_INIT_GAMECONTROLLER is up         */
+    SDL_Gamepad *pads[MAX_PADS];
+    int   pad_subsystem;            /* SDL_INIT_GAMEPAD is up                */
 
     int touch_down;                 /* the stylus, bottom-screen pixels      */
     int touch_x, touch_y;
@@ -121,7 +123,7 @@ struct EidosPlatform {
     u32 lag_frames;      /* whole frames the schedule lagged at the last wait */
 
     /* audio */
-    SDL_AudioDeviceID audio_dev;
+    SDL_AudioStream  *audio_dev;    /* the stream bound to the device        */
     EidosAudioFn      audio_fn;
     void             *audio_user;
     u64               audio_frames;
@@ -178,7 +180,7 @@ const EidosKeyBinding *eidos_default_keymap(u32 *count)
  */
 static u32 read_keyboard(const EidosPlatform *p)
 {
-    const Uint8 *keys = SDL_GetKeyboardState(NULL);
+    const bool *keys = SDL_GetKeyboardState(NULL);
     u32 word = 0;
     u32 i;
 
@@ -194,7 +196,7 @@ static u32 read_keyboard(const EidosPlatform *p)
             sc != SDL_SCANCODE_LEFT && sc != SDL_SCANCODE_RIGHT) {
             continue;               /* typing: the letters are text */
         }
-        if (sc > 0 && sc < SDL_NUM_SCANCODES && keys[sc]) {
+        if (sc > 0 && sc < SDL_SCANCODE_COUNT && keys[sc]) {
             word |= p->keymap[i].button;
         }
     }
@@ -206,31 +208,30 @@ static u32 read_keyboard(const EidosPlatform *p)
 /* ------------------------------------------------------------------ */
 
 /*
- * Positional: SDL's A/B/X/Y are south/east/west/north on every pad once
- * SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS is off (set in init), and the
- * DS's A/B/X/Y are east/south/north/west, so each DS button lands where it
- * sits on a DS.  The left stick doubles the d-pad and the triggers double
+ * Positional: SDL's face buttons are named by position (south, east, west,
+ * north) on every pad, and the DS's A/B/X/Y are east/south/north/west, so
+ * each DS button lands where it sits on a DS.  The left stick doubles the d-pad and the triggers double
  * the shoulders, past half their travel.
  */
 static const EidosPadBinding k_default_padmap[] = {
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_B,             EIDOS_PAD_A },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_A,             EIDOS_PAD_B },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_Y,             EIDOS_PAD_X },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_X,             EIDOS_PAD_Y },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_LEFTSHOULDER,  EIDOS_PAD_L },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, EIDOS_PAD_R },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_START,         EIDOS_PAD_START },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_BACK,          EIDOS_PAD_SELECT },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_DPAD_UP,       EIDOS_PAD_UP },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_DPAD_DOWN,     EIDOS_PAD_DOWN },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_DPAD_LEFT,     EIDOS_PAD_LEFT },
-    { EIDOS_PADBIND_BUTTON, SDL_CONTROLLER_BUTTON_DPAD_RIGHT,    EIDOS_PAD_RIGHT },
-    { EIDOS_PADBIND_AXIS_NEG, SDL_CONTROLLER_AXIS_LEFTY,         EIDOS_PAD_UP },
-    { EIDOS_PADBIND_AXIS_POS, SDL_CONTROLLER_AXIS_LEFTY,         EIDOS_PAD_DOWN },
-    { EIDOS_PADBIND_AXIS_NEG, SDL_CONTROLLER_AXIS_LEFTX,         EIDOS_PAD_LEFT },
-    { EIDOS_PADBIND_AXIS_POS, SDL_CONTROLLER_AXIS_LEFTX,         EIDOS_PAD_RIGHT },
-    { EIDOS_PADBIND_AXIS_POS, SDL_CONTROLLER_AXIS_TRIGGERLEFT,   EIDOS_PAD_L },
-    { EIDOS_PADBIND_AXIS_POS, SDL_CONTROLLER_AXIS_TRIGGERRIGHT,  EIDOS_PAD_R },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_EAST,            EIDOS_PAD_A },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_SOUTH,           EIDOS_PAD_B },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_NORTH,           EIDOS_PAD_X },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_WEST,            EIDOS_PAD_Y },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,  EIDOS_PAD_L },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, EIDOS_PAD_R },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_START,         EIDOS_PAD_START },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_BACK,          EIDOS_PAD_SELECT },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_DPAD_UP,       EIDOS_PAD_UP },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_DPAD_DOWN,     EIDOS_PAD_DOWN },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_DPAD_LEFT,     EIDOS_PAD_LEFT },
+    { EIDOS_PADBIND_BUTTON, SDL_GAMEPAD_BUTTON_DPAD_RIGHT,    EIDOS_PAD_RIGHT },
+    { EIDOS_PADBIND_AXIS_NEG, SDL_GAMEPAD_AXIS_LEFTY,         EIDOS_PAD_UP },
+    { EIDOS_PADBIND_AXIS_POS, SDL_GAMEPAD_AXIS_LEFTY,         EIDOS_PAD_DOWN },
+    { EIDOS_PADBIND_AXIS_NEG, SDL_GAMEPAD_AXIS_LEFTX,         EIDOS_PAD_LEFT },
+    { EIDOS_PADBIND_AXIS_POS, SDL_GAMEPAD_AXIS_LEFTX,         EIDOS_PAD_RIGHT },
+    { EIDOS_PADBIND_AXIS_POS, SDL_GAMEPAD_AXIS_LEFT_TRIGGER,   EIDOS_PAD_L },
+    { EIDOS_PADBIND_AXIS_POS, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,  EIDOS_PAD_R },
 };
 
 /* Half an axis's travel (SDL axes run -32768..32767, triggers 0..32767). */
@@ -244,21 +245,19 @@ const EidosPadBinding *eidos_default_padmap(u32 *count)
     return k_default_padmap;
 }
 
-static SDL_JoystickID pad_id(SDL_GameController *gc)
+static SDL_JoystickID pad_id(SDL_Gamepad *gc)
 {
-    return SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gc));
+    return SDL_GetGamepadID(gc);
 }
 
-static void pad_open(EidosPlatform *p, int device_index)
+static void pad_open(EidosPlatform *p, SDL_JoystickID id)
 {
-    SDL_GameController *gc;
-    SDL_JoystickID id;
+    SDL_Gamepad *gc;
     int i, slot = -1;
 
-    if (!SDL_IsGameController(device_index)) {
+    if (!SDL_IsGamepad(id)) {
         return;
     }
-    id = SDL_JoystickGetDeviceInstanceID(device_index);
     for (i = 0; i < MAX_PADS; i++) {
         if (p->pads[i] == NULL) {
             if (slot < 0) {
@@ -271,7 +270,7 @@ static void pad_open(EidosPlatform *p, int device_index)
     if (slot < 0) {
         return;
     }
-    gc = SDL_GameControllerOpen(device_index);
+    gc = SDL_OpenGamepad(id);
     if (gc != NULL) {
         p->pads[slot] = gc;
     }
@@ -283,7 +282,7 @@ static void pad_close(EidosPlatform *p, SDL_JoystickID id)
 
     for (i = 0; i < MAX_PADS; i++) {
         if (p->pads[i] != NULL && pad_id(p->pads[i]) == id) {
-            SDL_GameControllerClose(p->pads[i]);
+            SDL_CloseGamepad(p->pads[i]);
             p->pads[i] = NULL;
         }
     }
@@ -302,19 +301,18 @@ int eidos_platform_pads(const EidosPlatform *p)
     return n;
 }
 
-static int pad_binding_held(SDL_GameController *gc, const EidosPadBinding *b)
+static int pad_binding_held(SDL_Gamepad *gc, const EidosPadBinding *b)
 {
     int v;
 
     if (b->kind == EIDOS_PADBIND_BUTTON) {
-        return b->index >= 0 && b->index < SDL_CONTROLLER_BUTTON_MAX &&
-               SDL_GameControllerGetButton(
-                   gc, (SDL_GameControllerButton)b->index) != 0;
+        return b->index >= 0 && b->index < SDL_GAMEPAD_BUTTON_COUNT &&
+               SDL_GetGamepadButton(gc, (SDL_GamepadButton)b->index);
     }
-    if (b->index < 0 || b->index >= SDL_CONTROLLER_AXIS_MAX) {
+    if (b->index < 0 || b->index >= SDL_GAMEPAD_AXIS_COUNT) {
         return 0;
     }
-    v = SDL_GameControllerGetAxis(gc, (SDL_GameControllerAxis)b->index);
+    v = SDL_GetGamepadAxis(gc, (SDL_GamepadAxis)b->index);
     if (b->kind == EIDOS_PADBIND_AXIS_POS) {
         return v >= PAD_AXIS_THRESHOLD;
     }
@@ -371,10 +369,11 @@ static void default_window_size(const EidosPlatform *p, int *w, int *h)
 {
     EidosScreenPlacement pl;
     SDL_Rect area;
-    int idx = p->window != NULL ? SDL_GetWindowDisplayIndex(p->window) : 0;
+    SDL_DisplayID idx = p->window != NULL ? SDL_GetDisplayForWindow(p->window)
+                                          : SDL_GetPrimaryDisplay();
 
     place(p, &pl);
-    if (idx < 0 || SDL_GetDisplayUsableBounds(idx, &area) != 0) {
+    if (idx == 0 || !SDL_GetDisplayUsableBounds(idx, &area)) {
         area.w = area.h = 0;
     }
     eidos_first_window_size(&pl, area.w, area.h, EIDOS_FIRST_WINDOW_PERCENT, w, h);
@@ -384,9 +383,9 @@ static void out_size(const EidosPlatform *p, int *w, int *h)
 {
     *w = *h = 0;
     if (p->gl != NULL) {
-        SDL_GL_GetDrawableSize(p->window, w, h);
+        SDL_GetWindowSizeInPixels(p->window, w, h);
     } else if (p->renderer == NULL ||
-               SDL_GetRendererOutputSize(p->renderer, w, h) != 0) {
+               !SDL_GetCurrentRenderOutputSize(p->renderer, w, h)) {
         if (p->window != NULL) {
             SDL_GetWindowSize(p->window, w, h);
         }
@@ -432,10 +431,11 @@ static int world_active(const EidosPlatform *p)
 
 static void read_stylus(EidosPlatform *p)
 {
-    int mx = 0, my = 0, ww = 0, wh = 0, x = 0, y = 0, inside;
-    Uint32 buttons = SDL_GetMouseState(&mx, &my);
+    float fx = 0.0f, fy = 0.0f;
+    SDL_MouseButtonFlags buttons = SDL_GetMouseState(&fx, &fy);
+    int mx = (int)fx, my = (int)fy, ww = 0, wh = 0, x = 0, y = 0, inside;
 
-    if (!(buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) || p->window == NULL ||
+    if (!(buttons & SDL_BUTTON_MASK(SDL_BUTTON_LEFT)) || p->window == NULL ||
         world_active(p)) {
         /* In the world view the mouse belongs to the interface layer
          * (eidos_platform_mouse); the stylus is only the fallback's. */
@@ -525,7 +525,7 @@ void eidos_platform_fast_forward_lock(int locked)
 
 int eidos_platform_fast_forward(const EidosPlatform *p)
 {
-    const Uint8 *keys;
+    const bool *keys;
 
     if (p == NULL || p->window == NULL) {
         return 0;
@@ -569,6 +569,18 @@ int eidos_platform_fast_forward(const EidosPlatform *p)
         }
         return env;
     }
+}
+
+/* A sleep of the frame thread.  In the wasm32 build the program's threads
+ * take turns on one host thread (sdk/plat_thread.h): the others run while
+ * this one waits. */
+static void eidos_delay_ms(Uint32 ms)
+{
+#if defined(__wasm__)
+    bw_thread_sleep_ns(ms > 0 ? (unsigned long long)ms * 1000000ull : 100000ull);
+#else
+    SDL_Delay(ms);
+#endif
 }
 
 void eidos_platform_wait_frame(EidosPlatform *p)
@@ -639,10 +651,10 @@ void eidos_platform_wait_frame(EidosPlatform *p)
         if (left > 2500000ull) {
             /* Sleep the bulk, but leave about 2 ms: SDL_Delay may overshoot
              * by the host scheduler's resolution (1 ms at best). */
-            SDL_Delay((Uint32)((left - 2000000ull) / 1000000ull));
+            eidos_delay_ms((Uint32)((left - 2000000ull) / 1000000ull));
         } else {
             /* The last stretch: yield the core instead of burning it. */
-            SDL_Delay(0);
+            eidos_delay_ms(0);
         }
     }
 }
@@ -668,7 +680,7 @@ void eidos_platform_set_pixel_scale(EidosPlatform *p, int scale)
         return;
     }
     p->pixel_scale = scale < 0 ? 0 : scale;
-    if (p->presented && (p->owner == 0 || SDL_ThreadID() == p->owner)) {
+    if (p->presented && (p->owner == 0 || SDL_GetCurrentThreadID() == p->owner)) {
         render(p);
     }
 }
@@ -680,23 +692,36 @@ void eidos_platform_set_volume(EidosPlatform *p, int percent)
     }
 }
 
-static void audio_callback(void *user, Uint8 *stream, int len)
+/* SDL asks for `additional` more bytes; they are made in 1024-frame pieces. */
+static void audio_callback(void *user, SDL_AudioStream *stream, int additional,
+                           int total)
 {
     EidosPlatform *p = (EidosPlatform *)user;
-    u32 frames = (u32)len / (sizeof(s16) * EIDOS_AUDIO_CHANNELS);
+    s16 buf[1024 * EIDOS_AUDIO_CHANNELS];
 
-    if (p->audio_fn != NULL) {
-        p->audio_fn(p->audio_user, (s16 *)stream, frames);
-    } else {
-        memset(stream, 0, (size_t)len);
-    }
-    p->audio_frames += frames;
-    if (p->volume != 100) {
-        s16 *sm = (s16 *)stream;
-        u32 n;
-        for (n = 0; n < frames * 2u; n++) {
-            sm[n] = eidos_audio_gain(sm[n], p->volume);
+    (void)total;
+    while (additional > 0) {
+        int len = additional < (int)sizeof(buf) ? additional : (int)sizeof(buf);
+        u32 frames = (u32)len / (sizeof(s16) * EIDOS_AUDIO_CHANNELS);
+
+        if (frames == 0) {
+            break;
         }
+        if (p->audio_fn != NULL) {
+            p->audio_fn(p->audio_user, buf, frames);
+        } else {
+            memset(buf, 0, sizeof(buf));
+        }
+        p->audio_frames += frames;
+        if (p->volume != 100) {
+            u32 n;
+            for (n = 0; n < frames * 2u; n++) {
+                buf[n] = eidos_audio_gain(buf[n], p->volume);
+            }
+        }
+        SDL_PutAudioStreamData(stream, buf,
+                               (int)(frames * sizeof(s16) * EIDOS_AUDIO_CHANNELS));
+        additional -= (int)(frames * sizeof(s16) * EIDOS_AUDIO_CHANNELS);
     }
 }
 
@@ -705,13 +730,13 @@ void eidos_platform_set_audio(EidosPlatform *p, EidosAudioFn fn, void *user)
     if (p == NULL) {
         return;
     }
-    if (p->audio_dev != 0) {
-        SDL_LockAudioDevice(p->audio_dev);
+    if (p->audio_dev != NULL) {
+        SDL_LockAudioStream(p->audio_dev);
     }
     p->audio_fn = fn;
     p->audio_user = user;
-    if (p->audio_dev != 0) {
-        SDL_UnlockAudioDevice(p->audio_dev);
+    if (p->audio_dev != NULL) {
+        SDL_UnlockAudioStream(p->audio_dev);
     }
 }
 
@@ -735,14 +760,14 @@ void eidos_platform_queue_audio(EidosPlatform *p, const s16 *in, u32 frames)
 {
     static s16 out[2u * 4096u];
 
-    if (p == NULL || p->audio_dev == 0 || !p->audio_push || frames == 0) {
+    if (p == NULL || p->audio_dev == NULL || !p->audio_push || frames == 0) {
         return;
     }
     p->audio_frames += frames;
     if (p->dev_rate == EIDOS_AUDIO_RATE) {
         if (p->volume == 100) {
-            SDL_QueueAudio(p->audio_dev, in,
-                           frames * (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS));
+            SDL_PutAudioStreamData(p->audio_dev, in,
+                                   (int)(frames * (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS)));
         } else {
             u32 done = 0;
             while (done < frames) {
@@ -750,7 +775,7 @@ void eidos_platform_queue_audio(EidosPlatform *p, const s16 *in, u32 frames)
                 for (k = 0; k < n * 2u; k++) {
                     out[k] = eidos_audio_gain(in[done * 2u + k], p->volume);
                 }
-                SDL_QueueAudio(p->audio_dev, out, n * 4u);
+                SDL_PutAudioStreamData(p->audio_dev, out, (int)(n * 4u));
                 done += n;
             }
         }
@@ -787,14 +812,14 @@ void eidos_platform_queue_audio(EidosPlatform *p, const s16 *in, u32 frames)
             n++;
             pos += step;
             if (n == 4096u) {
-                SDL_QueueAudio(p->audio_dev, out, n * 4u);
+                SDL_PutAudioStreamData(p->audio_dev, out, (int)(n * 4u));
                 n = 0;
             }
         }
 flush:
         p->rs_pos = pos;
         if (n != 0) {
-            SDL_QueueAudio(p->audio_dev, out, n * 4u);
+            SDL_PutAudioStreamData(p->audio_dev, out, (int)(n * 4u));
         }
     }
 }
@@ -804,16 +829,16 @@ u32 eidos_platform_audio_queued(const EidosPlatform *p)
 {
     u64 dev;
 
-    if (p == NULL || p->audio_dev == 0 || !p->audio_push) {
+    if (p == NULL || p->audio_dev == NULL || !p->audio_push) {
         return 0;
     }
-    dev = SDL_GetQueuedAudioSize(p->audio_dev) / (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS);
+    dev = (u64)SDL_GetAudioStreamQueued(p->audio_dev) / (u32)(sizeof(s16) * EIDOS_AUDIO_CHANNELS);
     return (u32)(dev * EIDOS_AUDIO_RATE / (u64)p->dev_rate);
 }
 
 int eidos_platform_audio_open(const EidosPlatform *p)
 {
-    return p != NULL && p->audio_dev != 0;
+    return p != NULL && p->audio_dev != NULL;
 }
 
 u64 eidos_platform_audio_frames(const EidosPlatform *p)
@@ -823,39 +848,41 @@ u64 eidos_platform_audio_frames(const EidosPlatform *p)
 
 static void open_audio(EidosPlatform *p)
 {
-    SDL_AudioSpec want, have;
+    SDL_AudioSpec want, dev;
 
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         fprintf(stderr, "eidos: no audio subsystem (%s); running silent\n",
                 SDL_GetError());
         return;
     }
-    memset(&want, 0, sizeof(want));
-    want.freq = EIDOS_AUDIO_RATE;
-    want.format = AUDIO_S16SYS;
-    want.channels = EIDOS_AUDIO_CHANNELS;
     /* 1024 frames is 31 ms at 32768 Hz, under two DS frames: short enough
      * that a sound effect started this frame is not audibly late, long
      * enough that the callback is not called twice per frame. */
-    want.samples = 1024;
-    want.callback = p->audio_push ? NULL : audio_callback;
-    want.userdata = p->audio_push ? NULL : p;
-
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");
+    memset(&want, 0, sizeof(want));
+    want.freq = EIDOS_AUDIO_RATE;
+    want.format = SDL_AUDIO_S16;
+    want.channels = EIDOS_AUDIO_CHANNELS;
     /* Push mode takes the device's own rate and resamples once itself
      * (queue_audio); callback mode lets SDL convert. */
-    if (p->audio_push) {
-        want.samples = 1024;
+    p->dev_rate = EIDOS_AUDIO_RATE;
+    if (p->audio_push &&
+        SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &dev, NULL) &&
+        dev.freq > 0) {
+        p->dev_rate = dev.freq;
+        want.freq = dev.freq;
     }
-    p->audio_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have,
-                                       p->audio_push ? SDL_AUDIO_ALLOW_FREQUENCY_CHANGE : 0);
-    if (p->audio_dev == 0) {
+    p->audio_dev = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+                                             &want,
+                                             p->audio_push ? NULL : audio_callback,
+                                             p->audio_push ? NULL : p);
+    if (p->audio_dev == NULL) {
         fprintf(stderr, "eidos: no audio device (%s); running silent\n",
                 SDL_GetError());
         return;
     }
-    p->dev_rate = p->audio_push && have.freq > 0 ? have.freq : EIDOS_AUDIO_RATE;
     p->rs_pos = 1.0;
-    SDL_PauseAudioDevice(p->audio_dev, 0);
+    SDL_ResumeAudioStreamDevice(p->audio_dev);
 }
 
 /* ------------------------------------------------------------------ */
@@ -871,21 +898,22 @@ static void layout_size(const EidosPlatform *p, u32 *w, u32 *h)
     *h = (u32)pl.height;
 }
 
-#if SDL_VERSION_ATLEAST(2, 0, 12)
-#define HAVE_SCALE_MODE 1
-#else
-#define HAVE_SCALE_MODE 0
-#endif
-
 static void set_filter(SDL_Texture *t, int linear)
 {
-#if HAVE_SCALE_MODE
-    (void)SDL_SetTextureScaleMode(t, linear ? SDL_ScaleModeLinear
-                                            : SDL_ScaleModeNearest);
-#else
-    (void)t;
-    (void)linear;
-#endif
+    (void)SDL_SetTextureScaleMode(t, linear ? SDL_SCALEMODE_LINEAR
+                                            : SDL_SCALEMODE_NEAREST);
+}
+
+/* The renderer takes float rectangles. */
+static SDL_FRect frect(const SDL_Rect *r)
+{
+    SDL_FRect f;
+
+    f.x = (float)r->x;
+    f.y = (float)r->y;
+    f.w = (float)r->w;
+    f.h = (float)r->h;
+    return f;
 }
 
 #define PRE_MAX_SIDE 8192
@@ -896,10 +924,9 @@ static void set_filter(SDL_Texture *t, int linear)
 
 static int renderer_is_software(const EidosPlatform *p)
 {
-    SDL_RendererInfo ri;
+    const char *name = SDL_GetRendererName(p->renderer);
 
-    return SDL_GetRendererInfo(p->renderer, &ri) == 0 &&
-           (ri.flags & SDL_RENDERER_SOFTWARE) != 0;
+    return name != NULL && strcmp(name, SDL_SOFTWARE_RENDERER) == 0;
 }
 
 /* Draw screen i's texture into dst, choosing the filter (see platform.h). */
@@ -907,6 +934,7 @@ static void draw_screen(EidosPlatform *p, int i, const SDL_Rect *dst)
 {
     const int tw = (int)SCREEN_W * p->tex_n[i], th = (int)SCREEN_H * p->tex_n[i];
     SDL_Texture *src = p->tex[i];
+    SDL_FRect fdst = frect(dst);
 
     if (dst->w < tw || dst->h < th) {
         set_filter(src, 1);                       /* downscale */
@@ -920,7 +948,6 @@ static void draw_screen(EidosPlatform *p, int i, const SDL_Rect *dst)
             k = kh;
         }
         set_filter(src, 0);
-#if HAVE_SCALE_MODE
         if (k * tw <= PRE_MAX_SIDE && k * th <= PRE_MAX_SIDE &&
             (s64)k * tw * k * th <= PRE_MAX_PIXELS && !renderer_is_software(p)) {
             if (p->pre[i] == NULL || p->pre_w[i] != k * tw ||
@@ -939,18 +966,17 @@ static void draw_screen(EidosPlatform *p, int i, const SDL_Rect *dst)
                 }
             }
             if (p->pre[i] != NULL &&
-                SDL_SetRenderTarget(p->renderer, p->pre[i]) == 0) {
-                SDL_RenderCopy(p->renderer, src, NULL, NULL);
+                SDL_SetRenderTarget(p->renderer, p->pre[i])) {
+                SDL_RenderTexture(p->renderer, src, NULL, NULL);
                 SDL_SetRenderTarget(p->renderer, NULL);
-                SDL_RenderCopy(p->renderer, p->pre[i], NULL, dst);
+                SDL_RenderTexture(p->renderer, p->pre[i], NULL, &fdst);
                 return;
             }
             SDL_SetRenderTarget(p->renderer, NULL);
         }
-#endif
         set_filter(src, 1);                       /* plain linear */
     }
-    SDL_RenderCopy(p->renderer, src, NULL, dst);
+    SDL_RenderTexture(p->renderer, src, NULL, &fdst);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1121,13 +1147,13 @@ static void render(EidosPlatform *p)
     /* The panel's picture, in the room the arrangement reserved for it. */
     if (have_panel && p->panel_tex != NULL && view.dst.w > 0 &&
         view.dst.h > 0) {
-        SDL_Rect dst;
+        SDL_FRect dst;
 
-        dst.x = view.dst.x;
-        dst.y = view.dst.y;
-        dst.w = view.dst.w;
-        dst.h = view.dst.h;
-        SDL_RenderCopy(p->renderer, p->panel_tex, NULL, &dst);
+        dst.x = (float)view.dst.x;
+        dst.y = (float)view.dst.y;
+        dst.w = (float)view.dst.w;
+        dst.h = (float)view.dst.h;
+        SDL_RenderTexture(p->renderer, p->panel_tex, NULL, &dst);
     }
     SDL_RenderPresent(p->renderer);
 }
@@ -1174,16 +1200,16 @@ static void reshape_window(EidosPlatform *p)
 {
     EidosScreenPlacement pl;
     SDL_Rect area;
-    int cw = 0, ch = 0, nw, nh, mw = 0, mh = 0, idx;
+    int cw = 0, ch = 0, nw, nh, mw = 0, mh = 0;
+    SDL_DisplayID idx;
 
     if (p->display_mode != EIDOS_DISPLAY_WINDOWED ||
         (SDL_GetWindowFlags(p->window) &
-         (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED |
-          SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP))) {
+         (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED | SDL_WINDOW_FULLSCREEN))) {
         return;
     }
-    idx = SDL_GetWindowDisplayIndex(p->window);
-    if (idx >= 0 && SDL_GetDisplayUsableBounds(idx, &area) == 0) {
+    idx = SDL_GetDisplayForWindow(p->window);
+    if (idx != 0 && SDL_GetDisplayUsableBounds(idx, &area)) {
         mw = area.w;
         mh = area.h;
     }
@@ -1214,14 +1240,14 @@ static int set_display_now(EidosPlatform *p, int mode, int win_w,
     layout_size(p, &w, &h);
 
     if (mode == EIDOS_DISPLAY_FULLSCREEN || mode == EIDOS_DISPLAY_BORDERLESS) {
-        /* Desktop-resolution fullscreen for both: SDL never switches the OS
-         * video mode with FULLSCREEN_DESKTOP, and the presenter scales the
-         * picture.  Plain SDL_WINDOW_FULLSCREEN would change it. */
+        /* Desktop-resolution fullscreen for both: with no fullscreen mode set
+         * (SDL_SetWindowFullscreenMode's default) SDL never switches the OS
+         * video mode, and the presenter scales the picture. */
         if (!was_full) {
             SDL_GetWindowPosition(p->window, &p->win_x, &p->win_y);
         }
-        if (SDL_SetWindowFullscreen(p->window,
-                                    SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
+        (void)SDL_SetWindowFullscreenMode(p->window, NULL);
+        if (!SDL_SetWindowFullscreen(p->window, true)) {
             fprintf(stderr, "eidos: fullscreen refused (%s)\n",
                     SDL_GetError());
             rc = -1;
@@ -1231,8 +1257,8 @@ static int set_display_now(EidosPlatform *p, int mode, int win_w,
     } else {
         int cw = 0, ch = 0;
 
-        SDL_SetWindowFullscreen(p->window, 0);
-        SDL_SetWindowBordered(p->window, SDL_TRUE);
+        SDL_SetWindowFullscreen(p->window, false);
+        SDL_SetWindowBordered(p->window, true);
         SDL_GetWindowSize(p->window, &cw, &ch);
         if (win_w > 0 && win_h > 0) {
             if (was_full || win_w != cw || win_h != ch) {
@@ -1297,7 +1323,7 @@ int eidos_platform_set_display(EidosPlatform *p, int mode, int win_w,
     if (p == NULL || p->window == NULL) {
         return -1;
     }
-    if (p->owner != 0 && SDL_ThreadID() != p->owner) {
+    if (p->owner != 0 && SDL_GetCurrentThreadID() != p->owner) {
         p->pd_mode = mode;
         p->pd_w = win_w;
         p->pd_h = win_h;
@@ -1312,7 +1338,7 @@ int eidos_platform_set_layout(EidosPlatform *p, int layout, int swap, int gap)
     if (p == NULL) {
         return -1;
     }
-    if (p->owner != 0 && SDL_ThreadID() != p->owner) {
+    if (p->owner != 0 && SDL_GetCurrentThreadID() != p->owner) {
         p->pl_layout = layout;
         p->pl_swap = swap;
         p->pl_gap = gap;
@@ -1377,7 +1403,7 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     if (p == NULL) {
         return -1;
     }
-    p->owner = SDL_ThreadID();
+    p->owner = SDL_GetCurrentThreadID();
     p->tex_n[0] = p->tex_n[1] = 1;
     p->layout = cfg->layout == EIDOS_LAYOUT_SIDE_BY_SIDE
                 ? EIDOS_LAYOUT_SIDE_BY_SIDE
@@ -1402,24 +1428,16 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
 
     SDL_SetMainReady();
     /*
-     * Windows: without DPI awareness the system stretches the finished window
-     * bitmap (150 percent on a common laptop or 1440p display), which blurs
-     * the sharp picture the presenter draws.  DPI scaling makes SDL declare
-     * per-monitor awareness and measure windows in DPI-scaled points, so a
-     * 256x384 request is still the size it looks like, drawn at the display's
-     * real pixels (the drawable size, which the presenter uses).  Must be set
-     * before the video subsystem starts; a user's own setting wins.
+     * SDL3 declares per-monitor DPI awareness itself, so the system never
+     * stretches the finished window bitmap (which would blur the sharp
+     * picture the presenter draws); the presenter draws at the window's
+     * real pixels (SDL_GetWindowSizeInPixels).
      */
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_SCALING, "1");
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "eidos: SDL_Init failed: %s\n", SDL_GetError());
         free(p);
         return -1;
     }
-
-    /* Nearest by default (the hint is read when a texture is created); the
-     * filter is then chosen per draw (draw_screen), where SDL has it. */
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
 
     layout_size(p, &w, &h);
     p->arr_w = (int)w;
@@ -1433,7 +1451,7 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     if (cfg->win_w >= (int)w && cfg->win_h >= (int)h) {
         SDL_Rect area;
 
-        if (SDL_GetDisplayUsableBounds(0, &area) != 0
+        if (!SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &area)
             || (cfg->win_w <= area.w && cfg->win_h <= area.h)) {
             init_w = cfg->win_w;
             init_h = cfg->win_h;
@@ -1460,23 +1478,22 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
         const char *want = getenv("EIDOS_RENDERER");
         int try_gl = !(drv != NULL && strcmp(drv, "dummy") == 0) &&
                      !(want != NULL && strcmp(want, "sdl") == 0);
-        Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE |
-                       SDL_WINDOW_ALLOW_HIGHDPI;
+        SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE |
+                                SDL_WINDOW_HIGH_PIXEL_DENSITY;
         const char *title = cfg->title != NULL ? cfg->title : "eidos";
 
         if (getenv("EIDOS_WINDOW_HIDDEN") != NULL) {
             /* For unattended checks: a real window system and GPU, no window
              * on the desktop. */
-            flags = (flags & ~(Uint32)SDL_WINDOW_SHOWN) | SDL_WINDOW_HIDDEN;
+            flags |= SDL_WINDOW_HIDDEN;
         } else if (cfg->maximized
                    && cfg->display_mode == EIDOS_DISPLAY_WINDOWED) {
             flags |= SDL_WINDOW_MAXIMIZED;   /* as the player left it */
         }
 
         if (try_gl) {
-            p->window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED,
-                                         SDL_WINDOWPOS_CENTERED, init_w,
-                                         init_h, flags | SDL_WINDOW_OPENGL);
+            p->window = SDL_CreateWindow(title, init_w, init_h,
+                                         flags | SDL_WINDOW_OPENGL);
             if (p->window != NULL) {
                 p->gl = eidos_gl_create(p->window);
                 if (p->gl == NULL) {
@@ -1486,9 +1503,11 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
             }
         }
         if (p->window == NULL) {
-            p->window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED,
-                                         SDL_WINDOWPOS_CENTERED, init_w,
-                                         init_h, flags);
+            p->window = SDL_CreateWindow(title, init_w, init_h, flags);
+        }
+        if (p->window != NULL) {
+            SDL_SetWindowPosition(p->window, SDL_WINDOWPOS_CENTERED,
+                                  SDL_WINDOWPOS_CENTERED);
         }
     }
     if (getenv("EIDOS_RENDERER_REPORT") != NULL) {
@@ -1506,25 +1525,25 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
         /* The window's icon (the executable's own on Windows comes from
          * assets/eidos.rc; this one is for every platform's title bar and
          * task switcher). */
-        SDL_Surface *icon = SDL_CreateRGBSurfaceWithFormatFrom(
-            (void *)k_eidos_icon_rgba, EIDOS_ICON_SIDE, EIDOS_ICON_SIDE, 32,
-            EIDOS_ICON_SIDE * 4, SDL_PIXELFORMAT_RGBA32);
+        SDL_Surface *icon = SDL_CreateSurfaceFrom(
+            EIDOS_ICON_SIDE, EIDOS_ICON_SIDE, SDL_PIXELFORMAT_RGBA32,
+            (void *)k_eidos_icon_rgba, EIDOS_ICON_SIDE * 4);
 
         if (icon != NULL) {
             SDL_SetWindowIcon(p->window, icon);
-            SDL_FreeSurface(icon);
+            SDL_DestroySurface(icon);
         }
     }
 
     /*
-     * No SDL_RENDERER_PRESENTVSYNC: the pacer above is the timebase, and a
+     * No vsync on the renderer: the pacer above is the timebase, and a
      * 60.000 Hz or 144 Hz display would otherwise pull the game off the DS's
      * 59.8261 Hz.  Letting SDL pick the driver keeps the dummy video driver
      * (SDL_VIDEODRIVER=dummy, which the headless test uses) working, where
      * it falls back to the software renderer.
      */
     if (p->gl == NULL) {
-        p->renderer = SDL_CreateRenderer(p->window, -1, 0);
+        p->renderer = SDL_CreateRenderer(p->window, NULL);
         if (p->renderer == NULL) {
             fprintf(stderr, "eidos: SDL_CreateRenderer failed: %s\n",
                     SDL_GetError());
@@ -1545,13 +1564,12 @@ int eidos_platform_init(EidosPlatform **out, const EidosPlatformConfig *cfg)
     }
     p->perf_start = SDL_GetPerformanceCounter();
 
-    /* Gamepads.  Positions, not labels, on Nintendo pads too (the default
-     * table is positional), set before the subsystem reads the hint.  A
-     * machine where the subsystem cannot start still runs, on the keyboard.
-     * Pads already plugged in arrive as SDL_CONTROLLERDEVICEADDED events at
-     * the first pump. */
-    SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
-    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == 0) {
+    /* Gamepads.  SDL3 names the face buttons by position on every pad,
+     * Nintendo pads too (the default table is positional).  A machine where
+     * the subsystem cannot start still runs, on the keyboard.  Pads already
+     * plugged in arrive as SDL_EVENT_GAMEPAD_ADDED events at the first
+     * pump. */
+    if (SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
         p->pad_subsystem = 1;
     } else {
         fprintf(stderr, "eidos: no gamepad support (%s); keyboard only\n",
@@ -1583,12 +1601,12 @@ void eidos_platform_quit(EidosPlatform *p)
     if (p == NULL) {
         return;
     }
-    if (p->audio_dev != 0) {
-        SDL_CloseAudioDevice(p->audio_dev);
+    if (p->audio_dev != NULL) {
+        SDL_DestroyAudioStream(p->audio_dev);
     }
     for (i = 0; i < MAX_PADS; i++) {
         if (p->pads[i] != NULL) {
-            SDL_GameControllerClose(p->pads[i]);
+            SDL_CloseGamepad(p->pads[i]);
         }
     }
     for (i = 0; i < 2; i++) {
@@ -1635,10 +1653,10 @@ int eidos_platform_pump(EidosPlatform *p)
     p->m_pressed = p->m_released = p->m_rpressed = p->m_wheel = 0;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
-        case SDL_QUIT:
+        case SDL_EVENT_QUIT:
             p->quit = 1;
             break;
-        case SDL_MOUSEBUTTONDOWN:
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
             p->pad_last = 0;
             if (ev.button.button == SDL_BUTTON_LEFT) {
                 p->m_pressed = 1;
@@ -1646,16 +1664,16 @@ int eidos_platform_pump(EidosPlatform *p)
                 p->m_rpressed = 1;
             }
             break;
-        case SDL_MOUSEBUTTONUP:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
             if (ev.button.button == SDL_BUTTON_LEFT) {
                 p->m_released = 1;
             }
             break;
-        case SDL_MOUSEWHEEL:
+        case SDL_EVENT_MOUSE_WHEEL:
             p->m_wheel += ev.wheel.direction == SDL_MOUSEWHEEL_FLIPPED
-                          ? -ev.wheel.y : ev.wheel.y;
+                          ? -ev.wheel.integer_y : ev.wheel.integer_y;
             break;
-        case SDL_TEXTINPUT:
+        case SDL_EVENT_TEXT_INPUT:
             if (p->text_mode) {
                 size_t n = strlen(ev.text.text);
 
@@ -1665,23 +1683,23 @@ int eidos_platform_pump(EidosPlatform *p)
                 }
             }
             break;
-        case SDL_KEYDOWN:
+        case SDL_EVENT_KEY_DOWN:
             p->pad_last = 0;
-            if (p->text_mode && !(ev.key.keysym.mod & KMOD_ALT) &&
-                (ev.key.keysym.scancode == SDL_SCANCODE_BACKSPACE ||
-                 ev.key.keysym.scancode == SDL_SCANCODE_RETURN ||
-                 ev.key.keysym.scancode == SDL_SCANCODE_KP_ENTER)) {
+            if (p->text_mode && !(ev.key.mod & SDL_KMOD_ALT) &&
+                (ev.key.scancode == SDL_SCANCODE_BACKSPACE ||
+                 ev.key.scancode == SDL_SCANCODE_RETURN ||
+                 ev.key.scancode == SDL_SCANCODE_KP_ENTER)) {
                 if (p->text_len + 1 < (int)sizeof(p->text)) {
                     p->text[p->text_len++] =
-                        ev.key.keysym.scancode == SDL_SCANCODE_BACKSPACE ? '\b' : '\n';
+                        ev.key.scancode == SDL_SCANCODE_BACKSPACE ? '\b' : '\n';
                 }
                 break;
             }
             if (ev.key.repeat) {
                 break;
             }
-            if (ev.key.keysym.scancode == SDL_SCANCODE_RETURN &&
-                (ev.key.keysym.mod & KMOD_ALT)) {
+            if (ev.key.scancode == SDL_SCANCODE_RETURN &&
+                (ev.key.mod & SDL_KMOD_ALT)) {
                 /* Alt+Enter: windowed <-> borderless.  The Return that
                  * did it is not a Start press. */
                 p->swallow_sc = SDL_SCANCODE_RETURN;
@@ -1693,45 +1711,49 @@ int eidos_platform_pump(EidosPlatform *p)
                         0, 0);
                 }
             } else if (p->cap_state == EIDOS_CAPTURE_PENDING &&
-                       ev.key.keysym.scancode != SDL_SCANCODE_F12) {
-                if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                       ev.key.scancode != SDL_SCANCODE_F12) {
+                if (ev.key.scancode == SDL_SCANCODE_ESCAPE) {
                     p->cap_state = EIDOS_CAPTURE_CANCELLED;
                 } else {
-                    p->cap.scancode = (int)ev.key.keysym.scancode;
+                    p->cap.scancode = (int)ev.key.scancode;
                     p->cap_state = EIDOS_CAPTURE_KEY;
                 }
-            } else if (ev.key.keysym.scancode == SDL_SCANCODE_F12) {
+            } else if (ev.key.scancode == SDL_SCANCODE_F12) {
                 /* Escape does nothing here: a stray press closed the game.
                  * The window's close button quits. */
                 p->shot_request = 1;
             }
             break;
-        case SDL_KEYUP:
-            if ((int)ev.key.keysym.scancode == p->swallow_sc) {
+        case SDL_EVENT_KEY_UP:
+            if ((int)ev.key.scancode == p->swallow_sc) {
                 p->swallow_sc = -1;
             }
             break;
-        case SDL_CONTROLLERBUTTONDOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
             p->pad_last = 1;
             if (p->cap_state == EIDOS_CAPTURE_PENDING) {
                 p->cap.pad_kind = EIDOS_PADBIND_BUTTON;
-                p->cap.pad_index = ev.cbutton.button;
+                p->cap.pad_index = ev.gbutton.button;
                 p->cap_state = EIDOS_CAPTURE_PAD;
             }
             break;
-        case SDL_CONTROLLERAXISMOTION:
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
             if (p->cap_state == EIDOS_CAPTURE_PENDING &&
-                (ev.caxis.value >= PAD_AXIS_THRESHOLD ||
-                 ev.caxis.value <= -PAD_AXIS_THRESHOLD)) {
-                p->cap.pad_kind = ev.caxis.value > 0 ? EIDOS_PADBIND_AXIS_POS
+                (ev.gaxis.value >= PAD_AXIS_THRESHOLD ||
+                 ev.gaxis.value <= -PAD_AXIS_THRESHOLD)) {
+                p->cap.pad_kind = ev.gaxis.value > 0 ? EIDOS_PADBIND_AXIS_POS
                                                      : EIDOS_PADBIND_AXIS_NEG;
-                p->cap.pad_index = ev.caxis.axis;
+                p->cap.pad_index = ev.gaxis.axis;
                 p->cap_state = EIDOS_CAPTURE_PAD;
             }
             break;
-        case SDL_WINDOWEVENT:
-            if ((ev.window.event == SDL_WINDOWEVENT_MAXIMIZED ||
-                 ev.window.event == SDL_WINDOWEVENT_RESTORED) &&
+        case SDL_EVENT_WINDOW_MAXIMIZED:
+        case SDL_EVENT_WINDOW_RESTORED:
+        case SDL_EVENT_WINDOW_RESIZED:
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        case SDL_EVENT_WINDOW_EXPOSED:
+            if ((ev.type == SDL_EVENT_WINDOW_MAXIMIZED ||
+                 ev.type == SDL_EVENT_WINDOW_RESTORED) &&
                 p->display_mode == EIDOS_DISPLAY_WINDOWED &&
                 !(SDL_GetWindowFlags(p->window) & SDL_WINDOW_MINIMIZED)) {
                 /* Remembered for the next run (a restore from minimized
@@ -1739,11 +1761,11 @@ int eidos_platform_pump(EidosPlatform *p)
                 eidos_settings_on_maximize(
                     p, (SDL_GetWindowFlags(p->window) & SDL_WINDOW_MAXIMIZED) != 0);
             }
-            if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED &&
+            if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
                 p->display_mode == EIDOS_DISPLAY_WINDOWED &&
                 !(SDL_GetWindowFlags(p->window) &
-                  (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP |
-                   SDL_WINDOW_MINIMIZED | SDL_WINDOW_MAXIMIZED))) {
+                  (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MINIMIZED |
+                   SDL_WINDOW_MAXIMIZED))) {
                 /* A maximized size is the desktop's, not the player's: it is
                  * never remembered (it would reopen in the wrong shape). */
                 int cw = 0, ch = 0;
@@ -1752,18 +1774,18 @@ int eidos_platform_pump(EidosPlatform *p)
                 eidos_settings_on_resize(p, cw, ch);
             }
             if (p->presented &&
-                (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
-                 ev.window.event == SDL_WINDOWEVENT_EXPOSED)) {
+                (ev.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
+                 ev.type == SDL_EVENT_WINDOW_EXPOSED)) {
                 render(p);
             }
             break;
-        case SDL_CONTROLLERDEVICEADDED:
+        case SDL_EVENT_GAMEPAD_ADDED:
             if (p->pad_subsystem) {
-                pad_open(p, ev.cdevice.which);
+                pad_open(p, ev.gdevice.which);
             }
             break;
-        case SDL_CONTROLLERDEVICEREMOVED:
-            pad_close(p, (SDL_JoystickID)ev.cdevice.which);
+        case SDL_EVENT_GAMEPAD_REMOVED:
+            pad_close(p, ev.gdevice.which);
             break;
         default:
             break;
@@ -1789,7 +1811,7 @@ int eidos_platform_pump(EidosPlatform *p)
         in.touch_y = p->touch_y;
         bw_input_set_host(&in);
     }
-    eidos_settings_idle(p, SDL_GetTicks());
+    eidos_settings_idle(p, (u32)SDL_GetTicks());
     return p->quit ? 0 : 1;
 }
 
@@ -2037,7 +2059,8 @@ void eidos_platform_view_scale(const EidosPlatform *p, s32 *kx, s32 *ky)
 int eidos_platform_mouse(const EidosPlatform *p, struct EidosUiMouse *m)
 {
     int mx = 0, my = 0, ww = 0, wh = 0, ow = 0, oh = 0;
-    Uint32 buttons;
+    float fx = 0.0f, fy = 0.0f;
+    SDL_MouseButtonFlags buttons;
 
     if (m == NULL) {
         return 0;
@@ -2051,8 +2074,10 @@ int eidos_platform_mouse(const EidosPlatform *p, struct EidosUiMouse *m)
     m->released = p->m_released;
     m->right_pressed = p->m_rpressed;
     m->wheel = p->m_wheel;
-    buttons = SDL_GetMouseState(&mx, &my);
-    m->down = (buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+    buttons = SDL_GetMouseState(&fx, &fy);
+    mx = (int)fx;
+    my = (int)fy;
+    m->down = (buttons & SDL_BUTTON_MASK(SDL_BUTTON_LEFT)) != 0;
     if (SDL_GetMouseFocus() != p->window) {
         return 0;
     }
@@ -2128,9 +2153,9 @@ void eidos_platform_text_mode(EidosPlatform *p, int on)
     p->text_mode = on != 0;
     p->text_len = 0;
     if (on) {
-        SDL_StartTextInput();
+        SDL_StartTextInput(p->window);
     } else {
-        SDL_StopTextInput();
+        SDL_StopTextInput(p->window);
     }
 }
 
@@ -2310,16 +2335,15 @@ static int screenshot_gl(EidosPlatform *p, const char *path)
                (size_t)cw * 3u);
     }
     free(rgb);
-    surf = SDL_CreateRGBSurfaceWithFormatFrom(crop, cw, ch, 24, cw * 3,
-                                              SDL_PIXELFORMAT_RGB24);
+    surf = SDL_CreateSurfaceFrom(cw, ch, SDL_PIXELFORMAT_RGB24, crop, cw * 3);
     if (surf == NULL) {
         free(crop);
         return -1;
     }
     rc = SDL_SaveBMP(surf, path);
-    SDL_FreeSurface(surf);
+    SDL_DestroySurface(surf);
     free(crop);
-    return rc == 0 ? 0 : -1;
+    return rc ? 0 : -1;
 }
 
 int eidos_platform_screenshot(EidosPlatform *p, const char *path)
@@ -2373,9 +2397,8 @@ int eidos_platform_screenshot(EidosPlatform *p, const char *path)
         }
     }
 
-    surf = SDL_CreateRGBSurfaceWithFormatFrom(pixels, (int)w, (int)h, 24,
-                                              (int)pitch,
-                                              SDL_PIXELFORMAT_RGB24);
+    surf = SDL_CreateSurfaceFrom((int)w, (int)h, SDL_PIXELFORMAT_RGB24, pixels,
+                                 (int)pitch);
     if (surf == NULL) {
         fprintf(stderr, "eidos: surface for the screenshot failed: %s\n",
                 SDL_GetError());
@@ -2383,9 +2406,9 @@ int eidos_platform_screenshot(EidosPlatform *p, const char *path)
         return -1;
     }
     rc = SDL_SaveBMP(surf, path);
-    SDL_FreeSurface(surf);
+    SDL_DestroySurface(surf);
     free(pixels);
-    if (rc != 0) {
+    if (!rc) {
         fprintf(stderr, "eidos: SDL_SaveBMP(%s) failed: %s\n", path,
                 SDL_GetError());
         return -1;

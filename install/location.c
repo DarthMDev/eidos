@@ -30,6 +30,9 @@
 #else
 #include <unistd.h>
 #endif
+#ifdef __wasm__
+#include "wasm_host.h"
+#endif
 #ifdef __APPLE__
 #include <stdint.h>
 #include <mach-o/dyld.h>
@@ -182,7 +185,13 @@ int bw_os_app_home(char *out, size_t n)
 {
     const char *home = getenv("HOME");
 
-#if defined(__ANDROID__)
+#if defined(__wasm__)
+    /* The module's environment is the host's, but its folder rules are
+     * the platform's: the host answers (sdk/wasm_host.h). */
+    (void)home;
+    (void)put;
+    return bw_host_os_path(BW_HOST_PATH_APP_HOME, out, (unsigned)n);
+#elif defined(__ANDROID__)
     /* Context.getFilesDir() is a Java call: the front end passes it to
      * bw_setup_set_home (SDL_AndroidGetInternalStoragePath). */
     (void)home;
@@ -216,7 +225,10 @@ int bw_os_app_home(char *out, size_t n)
 
 int bw_os_exe_dir(char *out, size_t n)
 {
-#if defined(__APPLE__)
+#if defined(__wasm__)
+    (void)strip_file;
+    return bw_host_os_path(BW_HOST_PATH_EXE_DIR, out, (unsigned)n);
+#elif defined(__APPLE__)
     char buf[4096];
     uint32_t size = sizeof(buf);
 

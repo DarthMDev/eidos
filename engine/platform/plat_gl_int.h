@@ -5,8 +5,14 @@
 #ifndef EIDOS_PLAT_GL_INT_H
 #define EIDOS_PLAT_GL_INT_H
 
-#include <SDL.h>
-#include <SDL_opengl.h>
+#if defined(__wasm__)
+/* The wasm32 build: every GL entry point is an import the host program
+ * answers (tools/wasm_gl_imports.py), so the prototypes are declared and
+ * the loader (plat_gl.c) takes their addresses. */
+#define GL_GLEXT_PROTOTYPES 1
+#endif
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_opengl.h>
 
 #include "plat_gl.h"
 

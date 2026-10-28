@@ -8,9 +8,26 @@ This file records that revision.
 
 ## The pin
 
-- Revision: `4d377d121c8c8d29045d9cf9af034fed83f86583`
-- Date: 2026-10-21 18:54:55 +0100
-- Subject: btlv_effvm.c: the 0x256 threshold and the 0x261..0x262 window are relative to BTLV_EFFECT_MOVE_END
+- Revision: `515b939e9bde05118592f7b8fe11684902b9facc`
+- Date: 2026-10-28 11:22:17 +0100
+- Subject: Two more callbacks return their real values (GTS category input, wifi battle report)
+
+The step from `177e37c797`: functions the DS returned a value from but the C
+typed void (the sprite renderer's OAM entry callbacks, the dex skin tile
+getter, the screen wipes' pattern handlers, the GTS category input and the
+online battle reports) return it, which the 64-bit
+build needs (a void function returns 0
+there, where a 32-bit build kept a leftover register by luck); two that
+returned a leftover register value have a host form; every header declares
+the struct tags its prototypes use; size_t is the host C library's on a
+host; register addresses are spelled
+`IOREG_ADDR(...)` (tools/dsaddr.py reads it as the number) and some data is
+declared in per-file headers (tools/armdata.py reads those too).
+
+The step from `4d377d121c`: the 64-bit ready source (real pointer types,
+recovered structs, host layout fixes), side-effecting operands read in DS
+order, and defined host forms for loops that read past an array. Every
+build of the port is 64-bit from this pin on.
 
 The step from `1b2d89887a`: the battle view's split between move effects
 and other effects is a name, `BTLV_EFFECT_MOVE_END` (0x231), and the field

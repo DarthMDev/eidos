@@ -19,7 +19,8 @@
 #include <string.h>
 
 #define SDL_MAIN_HANDLED
-#include <SDL.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 
 #include "g3d.h"
 #include "hw3d.h"
@@ -228,7 +229,7 @@ static u8 g_behind[W * H * 4];
 static int window_pixels(SDL_Window *win, int w, int h, int *dw, int *dh)
 {
     SDL_SetWindowSize(win, w, h);
-    SDL_GL_GetDrawableSize(win, dw, dh);
+    SDL_GetWindowSizeInPixels(win, dw, dh);
     return *dw > 0 && *dh > 0;
 }
 
@@ -428,11 +429,11 @@ int main(void)
     setvbuf(stdout, NULL, _IONBF, 0);   /* a crash must not eat the log */
     test_sort();
     SDL_SetMainReady();
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
         printf("test_gpu3d: SKIP (no video: %s)\n", SDL_GetError());
         return 0;
     }
-    win = SDL_CreateWindow("test_gpu3d", 0, 0, W, H,
+    win = SDL_CreateWindow("test_gpu3d", W, H,
                            SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL);
     printf("  window %p\n", (void *)win);
     gl = win != NULL ? eidos_gl_create(win) : NULL;

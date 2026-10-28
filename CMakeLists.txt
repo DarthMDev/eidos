@@ -17,7 +17,7 @@
 #
 
 cmake_minimum_required(VERSION 3.16)
-project(eidos VERSION 0.1.5 LANGUAGES C)
+project(eidos VERSION 0.1.6 LANGUAGES C)
 
 # The version players and the lobby see (docs/distribution.md).  A release
 # build (EIDOS_RELEASE=ON, the release workflow) is the plain number; any
@@ -41,6 +41,12 @@ message(STATUS "eidos: version ${EIDOS_VERSION_STRING}")
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+# Strict C99 on glibc hides the POSIX calls the port's Linux code uses
+# (nanosleep, clock_gettime, setenv, getaddrinfo); _DEFAULT_SOURCE shows
+# them again, as macOS and the BSDs do by default.  The language stays C99.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_compile_definitions(_DEFAULT_SOURCE)
+endif()
 
 # Where the aletheia decompilation checkout lives.  eidos consumes matched
 # sources, layout/ manifests and tools/assets/ scripts from it as an external
@@ -169,7 +175,12 @@ if(EIDOS_SOURCE_TREE STREQUAL "game")
             message(FATAL_ERROR "tools/gamespell.py failed (${_gs_rc})")
         endif()
     endif()
-    add_compile_options("SHELL:-include ${EIDOS_GAMESPELL_H}")
+    if(MSVC)
+        # cl.exe and clang-cl spell a forced include /FI
+        add_compile_options("/FI${EIDOS_GAMESPELL_H}")
+    else()
+        add_compile_options("SHELL:-include ${EIDOS_GAMESPELL_H}")
+    endif()
     # Game bytes some src/game files include from build/gen/ (tools/aletheiagen.py).
     get_filename_component(_eidos_extract_dir "${BW_DATA_ROOT_ABS}" DIRECTORY)
     if(EXISTS "${_eidos_extract_dir}/arm9_dec.bin")
@@ -304,6 +315,19 @@ if(MSVC)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/msvc.cmake)
 else()
     add_compile_options(-Wall -Wextra -fsigned-char)
+    # A local the game reads before it writes it (GF_STANDARD_SeedLcg64
+    # hashes a 20-byte buffer it never fills) gets whatever the host stack
+    # held, which differs between compilers and platforms: the 32-bit and
+    # 64-bit builds then seeded their random numbers differently from the
+    # same input.  Zero is one answer for every GCC and Clang build, so a
+    # run repeats exactly on every platform the release covers (the DS's own
+    # value was stack garbage too).  MSVC has no such switch: its builds
+    # (development only, never packaged) can still seed differently.
+    include(CheckCCompilerFlag)
+    check_c_compiler_flag(-ftrivial-auto-var-init=zero EIDOS_HAVE_AUTO_VAR_INIT)
+    if(EIDOS_HAVE_AUTO_VAR_INIT)
+        add_compile_options(-ftrivial-auto-var-init=zero)
+    endif()
     # MinGW lays structs out the way MSVC does by default: a 64-bit member is
     # aligned to 8 and bitfields pack by their declared type.  mwccarm aligns
     # a 64-bit member to 4 and packs bitfields as GCC does, so the game's
@@ -324,8 +348,14 @@ else()
     # is one of them: it reads a file's size through fstat, and a struct
     # stat laid out the DS way puts st_size four bytes off the one the
     # runtime wrote (a 256 MiB cartridge read as 2^60 bytes).
-    if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-        add_compile_options(-mno-align-double)
+    if((WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 4) OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
+        # (the wasm32 build has no such flag: sdk/wasm_layout.h does it)
+        if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
+            add_compile_options("SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/sdk/wasm_layout.h"
+                                -Wno-pragma-pack)
+        else()
+            add_compile_options(-mno-align-double)
+        endif()
         file(GLOB _eidos_native_align
              ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/*.c
              ${CMAKE_CURRENT_SOURCE_DIR}/install/*.c
@@ -341,8 +371,22 @@ else()
              ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_picker.c
              ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_settings.c
              ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_wizard.c)
-        set_source_files_properties(${_eidos_native_align} PROPERTIES
-            COMPILE_OPTIONS -malign-double)
+        if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
+            set_property(SOURCE ${_eidos_native_align} APPEND PROPERTY
+                COMPILE_DEFINITIONS BW_WASM_NATIVE_LAYOUT=1)
+            # the port's own sources (not the game's): sdk/wasm_layout.h
+            # keeps the C library's structs natural for them
+            file(GLOB_RECURSE _eidos_port_sources
+                 ${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.c
+                 ${CMAKE_CURRENT_SOURCE_DIR}/engine/*.c
+                 ${CMAKE_CURRENT_SOURCE_DIR}/demo/*.c
+                 ${CMAKE_CURRENT_SOURCE_DIR}/install/*.c)
+            set_property(SOURCE ${_eidos_port_sources} APPEND PROPERTY
+                COMPILE_DEFINITIONS BW_WASM_PORT_SOURCE=1)
+        else()
+            set_source_files_properties(${_eidos_native_align} PROPERTIES
+                COMPILE_OPTIONS -malign-double)
+        endif()
     endif()
     # The matched sources are written to reproduce mwccarm's output, not to
     # please a modern warning set.  They are compiled with the same warnings
@@ -873,8 +917,8 @@ if(EIDOS_WASM AND EXISTS "${EIDOS_WAMR_ROOT}/build-scripts/runtime_lib.cmake")
     endif()
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cmake/wamr ${CMAKE_BINARY_DIR}/wamr)
     target_link_libraries(eidos PUBLIC eidos_wamr)
-    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_wasm.c
-        PROPERTIES COMPILE_DEFINITIONS EIDOS_HAVE_WAMR=1)
+    set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_wasm.c APPEND PROPERTY
+        COMPILE_DEFINITIONS EIDOS_HAVE_WAMR=1)
     message(STATUS "eidos: wasm code mods on (${EIDOS_WAMR_ROOT})")
 else()
     message(STATUS "eidos: wasm code mods off (run tools/fetch_wamr.py)")
@@ -906,6 +950,18 @@ if(EIDOS_TLS AND EXISTS "${EIDOS_MBEDTLS_ROOT}/library/ssl_tls.c")
     set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
     set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
     add_subdirectory(${EIDOS_MBEDTLS_ROOT} ${CMAKE_BINARY_DIR}/mbedtls EXCLUDE_FROM_ALL)
+    if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
+        # no platform entropy or sockets there (cmake/mbedtls_wasm.h)
+        target_compile_definitions(mbedcrypto PUBLIC
+            "MBEDTLS_USER_CONFIG_FILE=\"${CMAKE_CURRENT_SOURCE_DIR}/cmake/mbedtls_wasm.h\"")
+        # The C library's headers before sdk/wasm_layout.h's pack(4), as for
+        # the port's own files; its structs get the layout sdk/mod_net.c sees
+        foreach(_t mbedcrypto mbedx509 mbedtls everest p256m)
+            if(TARGET ${_t})
+                target_compile_definitions(${_t} PRIVATE BW_WASM_PORT_SOURCE=1)
+            endif()
+        endforeach()
+    endif()
     target_link_libraries(eidos PUBLIC mbedtls mbedx509 mbedcrypto)
     set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/mod_net.c APPEND PROPERTY
         COMPILE_DEFINITIONS EIDOS_HAVE_TLS=1)
@@ -963,12 +1019,9 @@ if(BW_HAVE_LIBM)
 endif()
 
 # sdk/plat_thread.c: pthreads off Windows (Threads::Threads is empty where
-# the C library already has them, and on Win32).
-if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
-    # wasm2c's native host owns threads. The module calls explicit imports
-    # from sdk/plat_thread.c rather than linking a guest pthread library.
-    message(STATUS "WASI: threading primitives supplied by the native host imports")
-else()
+# the C library already has them, and on Win32).  The wasm32 build has no
+# threads of its own: they are the host's fibers (sdk/wasm_host.h).
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     find_package(Threads REQUIRED)
     target_link_libraries(eidos PUBLIC Threads::Threads)
@@ -1012,14 +1065,14 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT MSVC)
 endif()
 
 # ---------------------------------------------------------------------------
-# SDL2, optional
+# SDL3, optional
 # ---------------------------------------------------------------------------
 #
 # Needed only by engine/platform/ and the eidos_view demo.  Where it is
 # looked for, the opt-in configure-time fetch (EIDOS_SDL_FETCH) and the link
-# probe are in cmake/sdl2.cmake.
+# probe are in cmake/sdl3.cmake.
 #
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/sdl2.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/sdl3.cmake)
 
 # ---------------------------------------------------------------------------
 # The platform layer
@@ -1061,9 +1114,11 @@ if(EIDOS_SDL_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/world
     )
-    target_link_libraries(eidos_platform PUBLIC eidos eidos_setup eidos_sdl2)
+    target_link_libraries(eidos_platform PUBLIC eidos eidos_setup eidos_sdl3)
     # The GPU presenter (plat_gl.c) calls the GL 1.1 core entry points directly.
-    if(WIN32)
+    if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
+        # the wasm32 build: GL is the host's, like SDL3 (host/)
+    elseif(WIN32)
         target_link_libraries(eidos_platform PUBLIC opengl32)
     elseif(APPLE)
         target_link_libraries(eidos_platform PUBLIC "-framework OpenGL")
@@ -1144,9 +1199,9 @@ if(EIDOS_SDL_FOUND)
             "sub_020315D4=PROCSYS_FreeProcWork"
             "func_020306F0=GFL_HEAP_DeleteChecked"
             "func_020312F8=PROCSYS_ReplaceGlobal")
-        set_source_files_properties(
+        set_property(SOURCE
             ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform/mod_options_proc.c
-            PROPERTIES COMPILE_DEFINITIONS "${_eidos_modopts_defs}")
+            APPEND PROPERTY COMPILE_DEFINITIONS "${_eidos_modopts_defs}")
     endif()
 endif()
 
@@ -1155,14 +1210,17 @@ endif()
 # each extern locally with the prototype that call site needs, so prototypes
 # for the same function differ between translation units by design, and a
 # local that is never read is sometimes what fixes the register allocation
-# (src/matched/func_02060814.c's `feature`).
+# (src/matched/func_02060814.c's `feature`).  A fourth: an SDK file that
+# reaches past the end of the object its data binding names (the DS's BSS
+# runs on into the next one; src/matched/arm9_sdk/func_0208B548.c's MicBss)
+# is how the DS code addresses it, and is reported as -Warray-bounds.
 # Under MSVC the same three are spelled in cmake/msvc.cmake.
 if(MSVC)
     set_source_files_properties(${BW_MATCHED_SOURCES} PROPERTIES
         COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS}")
 else()
     set_source_files_properties(${BW_MATCHED_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
+        COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-array-bounds")
 endif()
 
 # Two matched files name one DS object under two different names: the DS
@@ -1671,7 +1729,7 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
     eidos_dsaddr(_bw_snd_matched ${_bw_snd_matched})
     if(NOT MSVC)
         set_source_files_properties(${_bw_snd_matched} PROPERTIES
-            COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
+            COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-array-bounds")
     else()
         set_source_files_properties(${_bw_snd_matched} PROPERTIES
             COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS}")
@@ -1798,6 +1856,7 @@ add_test(NAME test_one_layout COMMAND test_one_layout)
 # section 1).  It links against nothing: a mod reaches the port through the
 # host table alone.
 add_library(test_mod_lib MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_loader.c)
+target_compile_definitions(test_mod_lib PRIVATE BW_MOD_LIBRARY=1)
 target_compile_definitions(test_mod_lib PRIVATE BW_MOD_TEST_LIBRARY=1)
 target_include_directories(test_mod_lib PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -1822,6 +1881,7 @@ add_test(NAME test_mod_savedata COMMAND test_mod_savedata)
 # a tiny shared library that binds a handler to an event and records what it
 # was handed.
 add_library(test_mod_e2e_lib MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mod_endtoend.c)
+target_compile_definitions(test_mod_e2e_lib PRIVATE BW_MOD_LIBRARY=1)
 target_compile_definitions(test_mod_e2e_lib PRIVATE BW_MOD_TEST_LIBRARY=1)
 target_include_directories(test_mod_e2e_lib PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -1997,7 +2057,7 @@ endforeach()
 eidos_dsaddr(_bw_pxi_test_sources ${_bw_pxi_test_originals})
 if(NOT MSVC)
     set_source_files_properties(${_bw_pxi_test_sources} PROPERTIES
-        COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
+        COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas;-Wno-array-bounds")
 else()
     set_source_files_properties(${_bw_pxi_test_sources} PROPERTIES
         COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS};${EIDOS_MATCHED_PRAGMA_OPTION}")
@@ -2096,7 +2156,7 @@ foreach(_set FIRMWARE BACKUP)
     eidos_dsaddr(_bw_${_set}_sources ${_originals})
     if(NOT MSVC)
         set_source_files_properties(${_bw_${_set}_sources} PROPERTIES
-            COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
+            COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas;-Wno-array-bounds")
     else()
         set_source_files_properties(${_bw_${_set}_sources} PROPERTIES
             COMPILE_OPTIONS "${EIDOS_MATCHED_COMPILE_OPTIONS};${EIDOS_MATCHED_PRAGMA_OPTION}")
@@ -2200,7 +2260,7 @@ function(eidos_matched_test_sources out_var)
     eidos_dsaddr(_copies ${_new})
     if(NOT MSVC)
         set_source_files_properties(${_copies} PROPERTIES COMPILE_OPTIONS
-            "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas")
+            "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-unknown-pragmas;-Wno-array-bounds")
     else()
         set_source_files_properties(${_copies} PROPERTIES COMPILE_OPTIONS
             "${EIDOS_MATCHED_COMPILE_OPTIONS};${EIDOS_MATCHED_PRAGMA_OPTION}")
@@ -2470,7 +2530,7 @@ eidos_armdata(test_armdata_real
     MATCHED ${BW_ARMDATA_REAL_COPIES})
 if(NOT MSVC)
     set_property(SOURCE ${BW_ARMDATA_REAL_COPIES} APPEND PROPERTY COMPILE_OPTIONS
-        "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes")
+        "-Wno-unused-parameter;-Wno-unused-variable;-Wno-missing-prototypes;-Wno-array-bounds")
 else()
     set_property(SOURCE ${BW_ARMDATA_REAL_COPIES} APPEND PROPERTY COMPILE_OPTIONS
         "${EIDOS_MATCHED_COMPILE_OPTIONS}")
@@ -2532,18 +2592,18 @@ if(EIDOS_SDL_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/platform)
     # The port's bitmap font is the platform layer's now: the first-run
     # window and the run-status panel both draw with it.
-    target_link_libraries(eidos_wizard PUBLIC eidos_setup eidos_sdl2 eidos_platform)
+    target_link_libraries(eidos_wizard PUBLIC eidos_setup eidos_sdl3 eidos_platform)
 
     add_executable(eidos_view ${CMAKE_CURRENT_SOURCE_DIR}/demo/eidos_view.c)
     target_link_libraries(eidos_view PRIVATE eidos_platform eidos_wizard)
 
-    # SDL2.dll has to sit next to the executable on Windows: there is no
+    # SDL3.dll has to sit next to the executable on Windows: there is no
     # installer and nothing on PATH.
     if(EIDOS_SDL_RUNTIME)
         add_custom_command(TARGET eidos_view POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:eidos_view>"
-            COMMENT "Copying SDL2.dll next to eidos_view")
+            COMMENT "Copying SDL3.dll next to eidos_view")
     endif()
 
     # eidos_spots -- the battle spot editor (docs/battle-backdrop.md): the
@@ -2595,7 +2655,7 @@ if(EIDOS_SDL_FOUND)
         add_custom_command(TARGET eidos_spots POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:eidos_spots>"
-            COMMENT "Copying SDL2.dll next to eidos_spots")
+            COMMENT "Copying SDL3.dll next to eidos_spots")
     endif()
 
     add_executable(test_view ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_view.c)
@@ -2623,7 +2683,7 @@ if(EIDOS_SDL_FOUND)
         add_custom_command(TARGET test_platform_input POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:test_platform_input>"
-            COMMENT "Copying SDL2.dll next to test_platform_input")
+            COMMENT "Copying SDL3.dll next to test_platform_input")
     endif()
     add_test(NAME test_platform_input COMMAND test_platform_input)
     set_tests_properties(test_platform_input PROPERTIES
@@ -2639,7 +2699,7 @@ if(EIDOS_SDL_FOUND)
         add_custom_command(TARGET test_gpu3d POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:test_gpu3d>"
-            COMMENT "Copying SDL2.dll next to test_gpu3d")
+            COMMENT "Copying SDL3.dll next to test_gpu3d")
     endif()
     add_test(NAME test_gpu3d COMMAND test_gpu3d)
 
@@ -2654,7 +2714,7 @@ if(EIDOS_SDL_FOUND)
         add_custom_command(TARGET test_settings POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:test_settings>"
-            COMMENT "Copying SDL2.dll next to test_settings")
+            COMMENT "Copying SDL3.dll next to test_settings")
     endif()
     add_test(NAME test_settings COMMAND test_settings)
     set_tests_properties(test_settings PROPERTIES
@@ -2670,7 +2730,7 @@ if(EIDOS_SDL_FOUND)
         add_custom_command(TARGET test_settings_ui POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${EIDOS_SDL_RUNTIME}" "$<TARGET_FILE_DIR:test_settings_ui>"
-            COMMENT "Copying SDL2.dll next to test_settings_ui")
+            COMMENT "Copying SDL3.dll next to test_settings_ui")
     endif()
     add_test(NAME test_settings_ui COMMAND test_settings_ui)
     set_tests_properties(test_settings_ui PROPERTIES
@@ -2739,6 +2799,41 @@ target_compile_definitions(eidos_boot PRIVATE
 # Development builds keep theirs.
 if(WIN32 AND EIDOS_RELEASE)
     target_link_options(eidos_boot PRIVATE -mwindows)
+endif()
+# The wasm32 build (docs/lp64.md): the module the host program runs.  Its
+# own data and heap start at 128 MiB, so the DS's windows below are free
+# for the identity mapping (sdk/host_vm.c); what it calls of SDL3 and GL is
+# left to the host as imports (--import-undefined: an undefined function
+# becomes an import, an undefined object stays an error, where
+# --allow-undefined would give it address 0); the host keeps each fiber's
+# stack pointer.
+if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
+    set_target_properties(eidos_boot PROPERTIES SUFFIX ".wasm")
+    target_link_options(eidos_boot PRIVATE
+        "-Wl,--global-base=134217728"
+        "-Wl,--initial-memory=268435456"
+        "-Wl,--max-memory=2147483648"
+        "-Wl,-z,stack-size=8388608"
+        "-Wl,--import-undefined"
+        "-Wl,--export=__stack_pointer"
+        "-Wl,--export=__wrap_malloc"
+        "-Wl,--export=__wrap_free"
+        "-Wl,--no-gc-sections")
+    # A call whose prototype differs from the definition's links to a
+    # trapping stub; tools/wasm_sigfix.py makes each stub call the
+    # definition the way the DS would.  The definitions stay in the module
+    # (no section garbage collection) for the calls that only reach them
+    # through such a stub.
+    # The heap behind the host's lock, and a sleep that lets the other
+    # fibers run (sdk/wasm_heap.c).
+    target_sources(eidos_boot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/wasm_heap.c)
+    foreach(_f malloc calloc realloc free posix_memalign aligned_alloc nanosleep)
+        target_link_options(eidos_boot PRIVATE "-Wl,--wrap=${_f}")
+    endforeach()
+    add_custom_command(TARGET eidos_boot POST_BUILD
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/wasm_sigfix.py
+                $<TARGET_FILE:eidos_boot> -o $<TARGET_FILE:eidos_boot>
+        VERBATIM)
 endif()
 # The executable's icon on Windows (assets/eidos.rc; tools/mkicon.py makes
 # assets/icon.ico from assets/icon.png).
@@ -2887,8 +2982,10 @@ if(EIDOS_BOOT)
     # (strtod, atof, strtoul, strtol, strtoll, atoi, atoll), the stdio it kept
     # (fclose, fread, fseek, ftell, rewind, sprintf, vsnprintf), the string
     # routines (strlen, strcpy, strcmp, strchr, strstr, strncpy, strcat,
-    # strncmp, strcspn, memmove, memchr), qsort, srand and the maths
-    # (fabs, pow, sin, frexp, ldexp).  The game's strtoul reads __ctype_map, a
+    # strncmp, strcspn, memmove, memchr), qsort, rand, srand, the wide
+    # strings (fwide, wcscpy, wcslen) and the maths (fabs, floor, copysign,
+    # cos, sin, pow, scalbn, nan, frexp, ldexp).  A statically linked C
+    # library (the wasm32 build) refuses two definitions outright.  The game's strtoul reads __ctype_map, a
     # DS address the port binds only when it installs the ARM9 image
     # (tools/armdata.py), the game's rewind/fseek lock a DS mutex, and the
     # game's fclose expects the game's own FILE: a port caller that mixes the
@@ -2902,13 +2999,7 @@ if(EIDOS_BOOT)
     # no boot unit defines it, so the game's callers already reach the host's.
     set_source_files_properties(${EIDOS_BOOT_MATCHED_WRAPPERS} PROPERTIES
         COMPILE_DEFINITIONS
-        "atof=MSL_atof;atoi=MSL_atoi;atoll=MSL_atoll;fabs=MSL_fabs;fclose=MSL_fclose;fread=MSL_fread;frexp=MSL_frexp;fseek=MSL_fseek;ftell=MSL_ftell;ldexp=MSL_ldexp;memchr=MSL_memchr;memmove=MSL_memmove;pow=MSL_pow;qsort=MSL_qsort;rewind=MSL_rewind;sin=MSL_sin;sprintf=MSL_sprintf;srand=MSL_srand;strcat=MSL_strcat;strchr=MSL_strchr;strcmp=MSL_strcmp;strcpy=MSL_strcpy;strcspn=MSL_strcspn;strlen=MSL_strlen;strncmp=MSL_strncmp;strncpy=MSL_strncpy;strstr=MSL_strstr;strtod=MSL_strtod;strtol=MSL_strtol;strtoll=MSL_strtoll;strtoul=MSL_strtoul;vsnprintf=MSL_vsnprintf")
-    if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
-        # WASI libc groups these with other routines into archive members,
-        # so its definitions enter even when the game already defines them.
-        set_property(SOURCE ${EIDOS_BOOT_MATCHED_WRAPPERS} APPEND PROPERTY
-            COMPILE_DEFINITIONS copysign=MSL_copysign floor=MSL_floor rand=MSL_rand)
-    endif()
+        "atof=MSL_atof;atoi=MSL_atoi;atoll=MSL_atoll;copysign=MSL_copysign;cos=MSL_cos;fabs=MSL_fabs;fclose=MSL_fclose;floor=MSL_floor;fread=MSL_fread;frexp=MSL_frexp;fseek=MSL_fseek;ftell=MSL_ftell;fwide=MSL_fwide;ldexp=MSL_ldexp;memchr=MSL_memchr;memmove=MSL_memmove;nan=MSL_nan;pow=MSL_pow;qsort=MSL_qsort;rand=MSL_rand;rewind=MSL_rewind;scalbn=MSL_scalbn;sin=MSL_sin;sprintf=MSL_sprintf;srand=MSL_srand;strcat=MSL_strcat;strchr=MSL_strchr;strcmp=MSL_strcmp;strcpy=MSL_strcpy;strcspn=MSL_strcspn;strlen=MSL_strlen;strncmp=MSL_strncmp;strncpy=MSL_strncpy;strstr=MSL_strstr;strtod=MSL_strtod;strtol=MSL_strtol;strtoll=MSL_strtoll;strtoul=MSL_strtoul;vsnprintf=MSL_vsnprintf;wcscpy=MSL_wcscpy;wcslen=MSL_wcslen")
 endif()
 
 if(NOT _eidos_ovls STREQUAL "")
@@ -3020,6 +3111,9 @@ add_executable(test_bmap_spots ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bmap_spots
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/world/bmap_spots.c)
 target_include_directories(test_bmap_spots PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/engine/world)
+if(BW_HAVE_LIBM)
+    target_link_libraries(test_bmap_spots PRIVATE m)
+endif()
 add_test(NAME test_bmap_spots COMMAND test_bmap_spots)
 
 # The interface kit's test (engine/ui/kit.c, assets.c, assets_icons.c, assets_sprites.c): the

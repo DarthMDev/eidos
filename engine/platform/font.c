@@ -2,7 +2,7 @@
  * engine/platform/font.c -- the setup window's bitmap font.
  *
  * Why it exists: the first-run wizard runs before there is any game data,
- * so it cannot borrow the game's own font, and SDL2 draws no text.  A
+ * so it cannot borrow the game's own font, and SDL draws no text.  A
  * TrueType renderer (SDL_ttf, stb_truetype) would be a dependency and a
  * font file to ship for two screens of English; this is the printable
  * ASCII range drawn by hand for eidos, 5 x 7 pixels with two rows of

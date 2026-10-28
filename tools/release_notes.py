@@ -17,17 +17,25 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# (file name without the version, what it is): the order of the table.
+# (file name, {ver} for the version; what it is): the order of the table.
+# The launchers have no version in their names (the README links
+# .../releases/latest/download/<name>); the games keep it, as installed
+# launchers look for eidos-*-<platform> (launcher/src-tauri/src/versions.rs).
 DOWNLOADS = [
     ("eidos-launcher-windows-setup.exe",
      "Windows: the launcher. It installs and updates eidos and keeps your "
      "profiles and mods. Start here."),
-    ("eidos-windows.zip",
+    ("eidos-launcher-macos.dmg",
+     "macOS (Apple silicon): the launcher. Not signed by Apple: open "
+     "`READ ME FIRST.txt` inside it for the one Terminal line it needs."),
+    ("eidos-launcher-linux-x86_64.AppImage",
+     "Linux: the launcher. Make it executable and run it."),
+    ("eidos-{ver}-windows.zip",
      "Windows: eidos on its own. Unzip it anywhere and run `eidos.exe`."),
-    ("eidos-macos.zip",
-     "macOS: eidos on its own. The build is not signed: right-click `eidos` "
-     "and choose Open the first time."),
-    ("eidos-linux-x86_64.AppImage",
+    ("eidos-{ver}-macos.zip",
+     "macOS (Apple silicon): eidos on its own. Not signed by Apple: "
+     "`README.txt` inside it has the one Terminal line it needs."),
+    ("eidos-{ver}-linux-x86_64.AppImage",
      "Linux: eidos on its own. Make it executable and run it."),
 ]
 
@@ -47,7 +55,22 @@ def changelog_section(version):
         return None
     m = re.search(r"^## %s\s*$(.*?)(?=^## |\Z)" % re.escape(version), text,
                   re.M | re.S)
-    return m.group(1).strip() if m else None
+    return unwrap(m.group(1).strip()) if m else None
+
+
+def unwrap(text):
+    """CHANGELOG.md is wrapped at 72 columns, but a release body keeps every
+    line break, so each list item and paragraph becomes one line."""
+    out = []
+    for line in text.split("\n"):
+        s = line.strip()
+        starts = (not s or s.startswith(("- ", "* ", "#", "|", "```"))
+                  or re.match(r"\d+\. ", s))
+        if out and out[-1].strip() and not starts:
+            out[-1] = out[-1].rstrip() + " " + s
+        else:
+            out.append(line.rstrip())
+    return "\n".join(out)
 
 
 def notes(version, assets):
@@ -63,13 +86,15 @@ def notes(version, assets):
     out.append("| File | |")
     out.append("| --- | --- |")
     for name, what in DOWNLOADS:
+        name = name.format(ver=version)
         if have is not None and name not in have:
             continue
         out.append("| `%s` | %s |" % (name, what))
     out.append("")
     out.append("On the first start, eidos asks for your own Pokemon Black or "
-               "White ROM. The same files are also attached with the version "
-               "in their names, and `SHA256SUMS` lists the checksum of each.")
+               "White ROM. `SHA256SUMS` lists the checksum of each file; "
+               "`latest.json` and the `.app.tar.gz` are for the launcher's "
+               "own updates.")
     out.append("")
     out.append("---")
     out.append("")

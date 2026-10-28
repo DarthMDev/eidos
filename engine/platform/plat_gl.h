@@ -12,7 +12,7 @@
 #ifndef EIDOS_PLAT_GL_H
 #define EIDOS_PLAT_GL_H
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 typedef struct EidosGl EidosGl;
 

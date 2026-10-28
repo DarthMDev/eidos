@@ -86,9 +86,9 @@ What comparable projects use (checked 2026-10-04):
   profile. It still works, including on Apple Silicon, and Apple has announced no
   removal date. Metal is the long term route there.
 
-SDL2 gives the window, input and audio only; its 2D renderer cannot run custom
+SDL3 gives the window, input and audio only; its 2D renderer cannot run custom
 shaders. SDL3's GPU layer wraps Vulkan, Direct3D 12 and Metal and may replace
-hand written backends later; eidos is on SDL2 today.
+hand written backends later; eidos is on SDL3 today.
 
 ## Design rules for the interface
 
@@ -140,7 +140,7 @@ visible 3D layer read the frame back synchronously.
   seam) keeps pixels crisp at any window size and is soft only below about 2x.
   eidos uses the one-pixel-seam form in the presenter shader
   (`engine/platform/plat_gl.c`) and has a test that reads the window back.
-- **Windows scaling**: SDL2 apps are not DPI aware by default, so Windows
+- **Windows scaling**: SDL2 apps were not DPI aware by default, so Windows
   stretches the finished window bitmap (blur) on a display set to 125 or 150
   percent. SDL's `SDL_WINDOWS_DPI_SCALING` hint makes the process DPI aware and
   measures windows in DPI-scaled points while the GL drawable is in real pixels

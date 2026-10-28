@@ -13,10 +13,10 @@ same steps; docs/release.md says how.
 What each platform makes (names are fixed; the launcher downloads by them):
 
   windows  eidos-<version>-windows.zip
-           eidos.exe (the build's eidos_boot.exe), SDL2.dll, LICENSE,
+           eidos.exe (the build's eidos_boot.exe), SDL3.dll, LICENSE,
            LEGAL.md, README.txt.  The files sit at the top of the zip.
   macos    eidos-<version>-macos.zip
-           eidos (the build's eidos_boot), libSDL2 beside it with the load
+           eidos (the build's eidos_boot), libSDL3 beside it with the load
            path rewritten to @executable_path, LICENSE, LEGAL.md,
            README.txt.  Unsigned.
   linux    eidos-<version>-linux-x86_64.AppImage
@@ -52,7 +52,8 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# The game executable is the build target eidos_boot.  The package name is
+# The game executable is the build target eidos_boot, or in the 64-bit
+# build (tools/build64.py) the host program, eidos.  The package name is
 # eidos.
 TARGET = "eidos_boot"
 
@@ -89,10 +90,12 @@ Source and updates: https://github.com/Project-Holon/eidos
 """
 
 MAC_NOTE = """
-This build is not signed. macOS may refuse to open it the first time. Open
-Terminal in this folder and run:
+This build is not signed by Apple, so macOS blocks it the first time and
+says it cannot be opened. Open Terminal, go to this folder (type cd and a
+space, drag the folder onto the Terminal window, press Return), then run:
   xattr -dr com.apple.quarantine .
-or right-click the file and choose Open, then confirm.
+This removes the "downloaded from the internet" mark from these files
+only. You do not need to turn off Gatekeeper.
 """
 
 
@@ -195,17 +198,17 @@ def sha256(path):
 
 def package_windows(args, scratch):
     pkg = Package()
-    pkg.add("eidos.exe", find_exe(args.build_dir, [TARGET + ".exe"]), 0o755)
-    sdl = find_lib(args.build_dir, ["SDL2.dll"],
+    pkg.add("eidos.exe", find_exe(args.build_dir, [TARGET + ".exe", "eidos.exe"]), 0o755)
+    sdl = find_lib(args.build_dir, ["SDL3.dll"],
                    [os.path.dirname(a) for a in args.lib])
     for extra in args.lib:
         if os.path.isfile(extra):
             pkg.add(os.path.basename(extra), extra)
-    if not any(a == "SDL2.dll" for a, _, _ in pkg.items):
+    if not any(a == "SDL3.dll" for a, _, _ in pkg.items):
         if not sdl:
-            raise Refused("SDL2.dll not found in %s (pass --lib PATH)"
+            raise Refused("SDL3.dll not found in %s (pass --lib PATH)"
                           % args.build_dir)
-        pkg.add("SDL2.dll", sdl)
+        pkg.add("SDL3.dll", sdl)
     common(pkg, args.version, "eidos.exe", "%APPDATA%\\eidos", scratch)
     out = os.path.join(args.out, "eidos-%s-windows.zip" % args.version)
     pkg.write_zip(out)
@@ -214,9 +217,9 @@ def package_windows(args, scratch):
 
 def package_macos(args, scratch):
     pkg = Package()
-    exe = find_exe(args.build_dir, [TARGET])
+    exe = find_exe(args.build_dir, [TARGET, "eidos"])
     pkg.add("eidos", exe, 0o755)
-    # Copy the executable and the SDL2 library to a scratch folder so the
+    # Copy the executable and the SDL3 library to a scratch folder so the
     # load path can be rewritten without touching the build directory.
     work = os.path.join(scratch, "mac")
     os.makedirs(work)
@@ -225,7 +228,7 @@ def package_macos(args, scratch):
     pkg.items = [("eidos", exe_copy, 0o755)]
     libs = [a for a in args.lib if os.path.isfile(a)]
     if not libs:
-        found = find_lib(args.build_dir, ["libSDL2-2.0.0.dylib", "libSDL2.dylib"], [])
+        found = find_lib(args.build_dir, ["libSDL3.0.dylib", "libSDL3.dylib"], [])
         libs = [found] if found else []
     for lib in libs:
         dst = os.path.join(work, os.path.basename(lib))
@@ -274,7 +277,7 @@ exec "$HERE/usr/bin/eidos" "$@"
 
 
 def package_linux(args, scratch):
-    exe = find_exe(args.build_dir, [TARGET])
+    exe = find_exe(args.build_dir, [TARGET, "eidos"])
     check_source(exe)
     appdir = os.path.join(args.out, "eidos.AppDir")
     if os.path.isdir(appdir):
@@ -284,7 +287,7 @@ def package_linux(args, scratch):
         os.makedirs(os.path.join(appdir, sub))
     shutil.copy2(exe, os.path.join(appdir, "usr/bin/eidos"))
     os.chmod(os.path.join(appdir, "usr/bin/eidos"), 0o755)
-    icon = os.path.join(ROOT, "assets", "icon.png")
+    icon = os.path.join(ROOT, "assets", "icon-256.png")     # tools/mkicon.py
     check_name("eidos.png")
     shutil.copy2(icon, os.path.join(appdir, "eidos.png"))
     shutil.copy2(icon, os.path.join(appdir, "usr/share/icons/hicolor/256x256/apps/eidos.png"))
@@ -368,8 +371,8 @@ def self_test():
     """The deny-list refuses what it must and accepts what it must."""
     bad = ["black.nds", "a/0/0/2", "extract/data/x.txt", "data/foo",
            "arm9_dec.bin", "x/y.narc", "saves/slot1.sav"]
-    good = ["eidos.exe", "SDL2.dll", "README.txt", "LICENSE", "LEGAL.md",
-            "usr/lib/libSDL2-2.0.so.0", "eidos.png"]
+    good = ["eidos.exe", "SDL3.dll", "README.txt", "LICENSE", "LEGAL.md",
+            "usr/lib/libSDL3.so.0", "eidos.png"]
     for b in bad:
         try:
             check_name(b)
@@ -400,7 +403,7 @@ def main(argv):
     ap.add_argument("--version")
     ap.add_argument("--out", default=".")
     ap.add_argument("--lib", action="append", default=[],
-                    help="a shared library to include (repeat); SDL2.dll "
+                    help="a shared library to include (repeat); SDL3.dll "
                          "is found in the build directory when not given")
     ap.add_argument("--linuxdeploy", help="path to linuxdeploy (linux)")
     ap.add_argument("--self-test", action="store_true")

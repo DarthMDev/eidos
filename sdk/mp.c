@@ -176,7 +176,10 @@ extern int GAME_DATA_SaveMain(void *gameData) BW_MP_WEAK;
 
 /* The game system (src/game/arm9/gamesystem.c): its global's first word is
  * the running one, and the field and the event are read from it. */
-extern void *bw_dsref__GameSystemGlobal BW_MP_WEAK;
+/* A weak definition rather than a weak reference: a build without the
+ * game's data binding (no boot) leaves it NULL, and x86-64 PE cannot leave
+ * an object reference undefined.  sdk/armdata.c's binding overrides it. */
+void *bw_dsref__GameSystemGlobal BW_MP_WEAK = NULL;
 extern void *GAMESYSTEM_GetGameData(const void *gameSystem) BW_MP_WEAK;
 extern void *GAMESYSTEM_GetEvent(const void *gameSystem) BW_MP_WEAK;
 extern void *GAMESYSTEM_GetFieldMap(const void *gameSystem) BW_MP_WEAK;
@@ -2650,7 +2653,7 @@ static void *field_quiet_game_data(void)
 {
     void *gs;
 
-    if (&bw_dsref__GameSystemGlobal == NULL || bw_dsref__GameSystemGlobal == NULL ||
+    if (bw_dsref__GameSystemGlobal == NULL ||
         GAMESYSTEM_GetGameData == NULL ||
         GAMESYSTEM_GetEvent == NULL || GAMESYSTEM_GetFieldMap == NULL) {
         return NULL;
@@ -2687,7 +2690,7 @@ static void *field_present(void)
 {
     void *gs;
 
-    if (&bw_dsref__GameSystemGlobal == NULL || bw_dsref__GameSystemGlobal == NULL ||
+    if (bw_dsref__GameSystemGlobal == NULL ||
         GAMESYSTEM_GetFieldMap == NULL) {
         return NULL;
     }
@@ -3051,6 +3054,9 @@ void bw_mp_hold_wait(void)
     bw_host_sleep_ms(16);
 #elif defined(_WIN32)
     Sleep(16);
+#elif defined(__wasm__)
+    /* the other fibers run meanwhile (a libc sleep would stop them all) */
+    bw_thread_sleep_ns(16000000ull);
 #else
     struct timespec ts;
 

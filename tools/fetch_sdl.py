@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 """
-tools/fetch_sdl.py -- SDL2 for every toolchain, from the official release,
+tools/fetch_sdl.py -- SDL3 for every toolchain, from the official release,
 into a cache outside the repository.
 
-eidos needs SDL2 only for the platform layer (engine/platform/): the window,
+eidos needs SDL3 only for the platform layer (engine/platform/): the window,
 the keyboard, the audio device and the frame pacer.  Everything else in this
 repository, the engine library and every test but test_view, builds and runs
-without it, so SDL2 is an optional dependency and this script is optional
+without it, so SDL3 is an optional dependency and this script is optional
 too.  On Linux and macOS the system package is the normal way to get it
-(docs/building.md, "SDL2 on every platform"); this script is for the toolchains that
+(docs/building.md, "SDL3 on every platform"); this script is for the toolchains that
 have no package manager behind them, and for any host as a last resort.
 
 Three flavours of the same pinned release, all from the libsdl-org GitHub
 release page, each verified against a SHA-256 recorded below:
 
-  mingw   SDL2-devel-<ver>-mingw.tar.gz: headers, import libraries and
-          SDL2.dll for x86_64-w64-mingw32 and i686-w64-mingw32.
-  vc      SDL2-devel-<ver>-VC.zip: headers, SDL2.lib and SDL2.dll for x64
+  mingw   SDL3-devel-<ver>-mingw.tar.gz: headers, import libraries and
+          SDL3.dll for x86_64-w64-mingw32 and i686-w64-mingw32.
+  vc      SDL3-devel-<ver>-VC.zip: headers, SDL3.lib and SDL3.dll for x64
           and x86.  This is what cl.exe and clang-cl link against; the MinGW
           import library does not work with link.exe.
-  source  SDL2-<ver>.tar.gz, configured, built and installed with CMake
+  source  SDL3-<ver>.tar.gz, configured, built and installed with CMake
           into a prefix named after the compiler that asked for it.  The
           fallback for a host with no system package and no prebuilt
-          flavour (Linux without libsdl2-dev, an ILP32 build on a 64-bit
+          flavour (Linux without libsdl3-dev, an ILP32 build on a 64-bit
           distribution, a toolchain the other two do not cover).
 
 Where things go.  Nothing is written into the repository.  The cache is,
@@ -37,10 +37,10 @@ so every checkout and every git worktree on the machine shares one download.
 Inside it:
 
   downloads/<archive>            the verified archive
-  SDL2-<ver>-mingw/              the unpacked mingw package
-  SDL2-<ver>-vc/                 the unpacked VC package
-  SDL2-<ver>-src/                the unpacked source
-  SDL2-<ver>-<tag>/              a source build's install prefix
+  SDL3-<ver>-mingw/              the unpacked mingw package
+  SDL3-<ver>-vc/                 the unpacked VC package
+  SDL3-<ver>-src/                the unpacked source
+  SDL3-<ver>-<tag>/              a source build's install prefix
 
 An unpacked tree is used only if it carries the stamp file this script writes
 after a verified, complete extraction (.eidos-sha256, holding the archive's
@@ -50,11 +50,11 @@ mistaken for a good one.
 Why the hashes are recorded here.  A hash fetched from the same server as
 the archive proves nothing; a hash in the repository is the one part of
 this a compromised download cannot satisfy.  The values below match the
-asset digests GitHub publishes for release-2.32.10.  Upgrading is: change
+asset digests GitHub publishes for release-3.4.18.  Upgrading is: change
 SDL_VERSION, put the new hashes in PACKAGES (print one with --print-sha), and
 re-run.
 
-CMake drives this script itself (cmake/sdl2.cmake): --locate at every
+CMake drives this script itself (cmake/sdl3.cmake): --locate at every
 configure, which never touches the network, and a fetch at configure time
 only when -DEIDOS_SDL_FETCH=ON.  Standard library only.
 
@@ -68,7 +68,7 @@ Usage:
     python tools/fetch_sdl.py --force             # re-download and re-extract
     python tools/fetch_sdl.py --print-sha FILE    # hash an archive and stop
 
-    # build from source with a given compiler into SDL2-<ver>-<tag>/
+    # build from source with a given compiler into SDL3-<ver>-<tag>/
     python tools/fetch_sdl.py --flavor source --build --tag linux-gcc-64 \\
         [--cmake-arg=-DCMAKE_C_COMPILER=gcc ...]
 
@@ -88,21 +88,21 @@ import tempfile
 import urllib.request
 import zipfile
 
-SDL_VERSION = "2.32.10"
+SDL_VERSION = "3.4.18"
 SDL_RELEASE = ("https://github.com/libsdl-org/SDL/releases/download/release-%s/"
                % SDL_VERSION)
 
 # flavour -> (archive name, SHA-256, directory the archive unpacks to)
 PACKAGES = {
-    "mingw": ("SDL2-devel-%s-mingw.tar.gz" % SDL_VERSION,
-              "83a5d74012311edc3c0d40ea6faecbe57ad692aa033fa5dc273cc937e3938ff2",
-              "SDL2-%s" % SDL_VERSION),
-    "vc": ("SDL2-devel-%s-VC.zip" % SDL_VERSION,
-           "af347939395a58b365846aaea27391e69f9ec9d4dd650d6ac40802159b418a6e",
-           "SDL2-%s" % SDL_VERSION),
-    "source": ("SDL2-%s.tar.gz" % SDL_VERSION,
-               "5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165",
-               "SDL2-%s" % SDL_VERSION),
+    "mingw": ("SDL3-devel-%s-mingw.tar.gz" % SDL_VERSION,
+              "049b9dd711e3fb3f8d84feb998dfec54a75e17cf539c4a80ff4d058d839771cf",
+              "SDL3-%s" % SDL_VERSION),
+    "vc": ("SDL3-devel-%s-VC.zip" % SDL_VERSION,
+           "78d84602ae616cfe26b33a73b7d3b9b6b56e8a6650e53d92c9c6ca938f747acd",
+           "SDL3-%s" % SDL_VERSION),
+    "source": ("SDL3-%s.tar.gz" % SDL_VERSION,
+               "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3",
+               "SDL3-%s" % SDL_VERSION),
 }
 
 MINGW_TRIPLETS = {"x64": "x86_64-w64-mingw32", "x86": "i686-w64-mingw32"}
@@ -131,12 +131,12 @@ def default_cache():
 
 
 def tree_dir(cache, flavor):
-    return os.path.join(cache, "SDL2-%s-%s" % (
+    return os.path.join(cache, "SDL3-%s-%s" % (
         SDL_VERSION, "src" if flavor == "source" else flavor))
 
 
 def prefix_dir(cache, tag):
-    return os.path.join(cache, "SDL2-%s-%s" % (SDL_VERSION, tag))
+    return os.path.join(cache, "SDL3-%s-%s" % (SDL_VERSION, tag))
 
 
 def host_flavor():
@@ -263,12 +263,12 @@ def prebuilt_prefix(cache, flavor, arch):
         return None
     if flavor == "mingw":
         pre = os.path.join(target, MINGW_TRIPLETS[arch])
-        need = [("include", "SDL2", "SDL.h"), ("lib", "libSDL2.dll.a"),
-                ("bin", "SDL2.dll")]
+        need = [("include", "SDL3", "SDL.h"), ("lib", "libSDL3.dll.a"),
+                ("bin", "SDL3.dll")]
     else:
         pre = target
-        need = [("include", "SDL.h"), ("lib", arch, "SDL2.lib"),
-                ("lib", arch, "SDL2.dll")]
+        need = [("include", "SDL3", "SDL.h"), ("lib", arch, "SDL3.lib"),
+                ("lib", arch, "SDL3.dll")]
     if all(os.path.isfile(os.path.join(pre, *p)) for p in need):
         return pre
     return None
@@ -279,14 +279,14 @@ def source_prefix(cache, tag):
     if not stamped(pre, PACKAGES["source"][1]):
         return None
     for sub in ("lib", "lib64"):
-        if os.path.isfile(os.path.join(pre, sub, "cmake", "SDL2",
-                                       "SDL2Config.cmake")):
+        if os.path.isfile(os.path.join(pre, sub, "cmake", "SDL3",
+                                       "SDL3Config.cmake")):
             return pre
     return None
 
 
 def build_source(cache, tag, cmake_args, generator):
-    """Configure, build and install the source flavour into SDL2-<ver>-<tag>."""
+    """Configure, build and install the source flavour into SDL3-<ver>-<tag>."""
     if tag in ("mingw", "vc", "src"):
         print("--tag %s is reserved" % tag, file=sys.stderr)
         return None
@@ -306,7 +306,7 @@ def build_source(cache, tag, cmake_args, generator):
            "-DCMAKE_INSTALL_PREFIX=" + pre,
            # The shared library and its CMake package: no tests and no
            # static copy.  (eidos defines SDL_MAIN_HANDLED and keeps its own
-           # main(), so whatever SDL2main SDL builds alongside is unused.)
+           # main(), so whatever SDL3main SDL builds alongside is unused.)
            "-DSDL_SHARED=ON", "-DSDL_STATIC=OFF", "-DSDL_TEST=OFF"]
     if generator:
         cfg += ["-G", generator]
@@ -315,7 +315,7 @@ def build_source(cache, tag, cmake_args, generator):
     # must not count as eidos warnings in tools/check.py): they go to a log
     # beside the prefix, whose tail is shown if a step fails.
     log = pre + ".log"
-    print("building SDL2 %s from source as %s (log: %s)"
+    print("building SDL3 %s from source as %s (log: %s)"
           % (SDL_VERSION, tag, log), flush=True)
     with open(log, "w", encoding="utf-8", errors="replace") as fh:
         for cmd in (cfg,
@@ -349,7 +349,7 @@ def report(cache):
         print("  %-6s %s" % (flavor, ", ".join(arches) if arches else "absent"))
         found = found or bool(arches)
     builds = []
-    stem = "SDL2-%s-" % SDL_VERSION
+    stem = "SDL3-%s-" % SDL_VERSION
     if os.path.isdir(cache):
         for name in sorted(os.listdir(cache)):
             tag = name[len(stem):]
@@ -363,7 +363,7 @@ def report(cache):
 
 def main(argv):
     ap = argparse.ArgumentParser(
-        description="Fetch the pinned SDL2 release into a cache outside "
+        description="Fetch the pinned SDL3 release into a cache outside "
                     "the repository (see the module docstring).")
     ap.add_argument("--flavor", choices=("mingw", "vc", "source", "all"),
                     help="which package (default: mingw on Windows, "
@@ -428,13 +428,13 @@ def main(argv):
             if not pre:
                 status = 1
                 continue
-            print("SDL2 %s built: %s" % (SDL_VERSION, pre))
+            print("SDL3 %s built: %s" % (SDL_VERSION, pre))
             continue
         target = fetch(cache, flavor, args.force)
         if not target:
             status = 1
             continue
-        print("SDL2 %s %s ready in %s" % (SDL_VERSION, flavor, target))
+        print("SDL3 %s %s ready in %s" % (SDL_VERSION, flavor, target))
     return status
 
 

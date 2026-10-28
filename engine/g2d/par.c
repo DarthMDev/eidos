@@ -16,6 +16,45 @@
 #include "g2d.h"
 #include "plat_thread.h"
 
+#if defined(__wasm__)
+
+/*
+ * The wasm32 build: the game's threads are fibers of one host thread, so a
+ * pool of them would run its tasks one after another.  The host program
+ * runs the tasks on its own threads instead (sdk/wasm_host.h, par_run;
+ * host/par.c), each calling back in through bw_par_task.  A call from one
+ * of those threads (a task that splits again) runs its tasks in place.
+ */
+#include <stdint.h>
+
+#include "wasm_host.h"
+
+__attribute__((export_name("bw_par_task")))
+void bw_par_task(unsigned fn, void *ctx, unsigned index)
+{
+    ((void (*)(void *, unsigned))(uintptr_t)fn)(ctx, index);
+}
+
+unsigned g2d_par_workers(void)
+{
+    return bw_host_par_workers();
+}
+
+void g2d_par_run(unsigned n, void (*fn)(void *ctx, unsigned index), void *ctx)
+{
+    unsigned i;
+
+    if (n > 1u && bw_host_par_workers() > 0u) {
+        bw_host_par_run((unsigned)(uintptr_t)fn, ctx, n);
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        fn(ctx, i);
+    }
+}
+
+#else /* a native build: the pool below */
+
 #define PAR_MAX_WORKERS 7u
 #define PAR_QUEUE 256u
 
@@ -173,3 +212,5 @@ void g2d_par_run(unsigned n, void (*fn)(void *ctx, unsigned index), void *ctx)
         bw_mutex_unlock(g_m);
     }
 }
+
+#endif /* __wasm__ */

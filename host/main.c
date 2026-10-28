@@ -1,0 +1,318 @@
+/*
+ * host/main.c -- eidos's 64-bit program for the wasm32 build: set up the
+ * module's world (host/wasi.c, host/fiber.c), instantiate it and run its
+ * main on this thread, which is the module's fiber 0.
+ *
+ * A trap (an access outside the module's memory, a call through a pointer
+ * of the wrong type, an `unreachable`) ends the program with its kind and
+ * exit code 3.  The module's own exit is WASI's proc_exit.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+#include <SDL3/SDL.h>
+
+#include "host.h"
+#include "picker.h"
+#include "plat_save.h"
+#include "setup.h"
+#include "wasm-rt-exceptions.h"
+#include "wasm-rt-impl.h"
+
+w2c_game g_game;
+struct w2c_wasi__snapshot__preview1 g_wasi;
+struct w2c_eidos g_eidos;
+struct w2c_env g_env;
+
+/* clock(): the process's processor time, which WASI does not have; the
+ * module only times its own work with it. */
+u64 w2c_env_clock(struct w2c_env *e)
+{
+    (void)e;
+    return (u64)clock() * (1000000u / CLOCKS_PER_SEC);
+}
+
+/* The ROM dialog (install/picker.h), the platform's own. */
+u32 w2c_eidos_pick_rom(struct w2c_eidos *e, u32 title, u32 out, u32 n)
+{
+    char buf[1024];
+    int rc;
+
+    (void)e;
+    buf[0] = 0;
+    rc = bw_pick_rom(NULL, (const char *)host_ptr(title, 0), buf, sizeof buf);
+    if (n > 0) {
+        size_t len = strlen(buf);
+
+        if (len >= n) {
+            len = n - 1;
+        }
+        memcpy(host_ptr(out, n), buf, len);
+        ((char *)host_ptr(out, n))[len] = 0;
+    }
+    return (u32)rc;
+}
+
+/* A console for the program's messages (sdk/plat_crash.h,
+ * bw_plat_console_open): a release build on Windows is a windowed program
+ * and has none until `eidos --console` asks. */
+void w2c_eidos_console_open(struct w2c_eidos *e)
+{
+    (void)e;
+#if defined(_WIN32)
+    if (GetConsoleWindow() != NULL) {
+        return;                         /* started from a terminal */
+    }
+    if (!AttachConsole(ATTACH_PARENT_PROCESS) && !AllocConsole()) {
+        return;
+    }
+    (void)freopen("CONOUT$", "w", stdout);
+    (void)freopen("CONOUT$", "w", stderr);
+#endif
+}
+
+/* The heap's lock (sdk/wasm_heap.c): one recursive mutex for the module's
+ * malloc, from the module's threads and the host's alike.  malloc is the
+ * only code that grows the memory, so the lock also keeps a worker's copy
+ * of the memory's size (host/par.c) in step: the copy takes the shared
+ * size on the way in and hands a grown one back on the way out. */
+static SDL_Mutex *g_heap;
+
+void w2c_eidos_heap_lock(struct w2c_eidos *e)
+{
+    w2c_game *inst = host_instance();
+
+    (void)e;
+    SDL_LockMutex(g_heap);
+    if (inst != &g_game) {
+        inst->w2c_memory = g_game.w2c_memory;
+    }
+}
+
+void w2c_eidos_heap_unlock(struct w2c_eidos *e)
+{
+    w2c_game *inst = host_instance();
+
+    (void)e;
+    if (inst != &g_game && inst->w2c_memory.pages > g_game.w2c_memory.pages) {
+        g_game.w2c_memory = inst->w2c_memory;
+    }
+    SDL_UnlockMutex(g_heap);
+}
+
+/* The module's own malloc and free, which take the lock themselves
+ * (sdk/wasm_heap.c, exported as __wrap_malloc and __wrap_free). */
+u32 host_malloc(u32 n)
+{
+    return w2c_game_0x5F_wrap_malloc(&g_game, n);
+}
+
+void host_free(u32 a)
+{
+    w2c_game_0x5F_wrap_free(&g_game, a);
+}
+
+/* The time zone (sdk/wasm_host.h's tz_offset): local time minus UTC at
+ * `t`, by the platform's own rules, daylight saving included. */
+u64 w2c_eidos_tz_offset(struct w2c_eidos *e, u64 t)
+{
+    time_t tt = (time_t)(long long)t;
+    struct tm lt;
+
+    (void)e;
+#if defined(_WIN32)
+    if (localtime_s(&lt, &tt) != 0) {
+        return 0;
+    }
+    return (u64)(long long)(_mkgmtime(&lt) - tt);
+#else
+    if (localtime_r(&tt, &lt) == NULL) {
+        return 0;
+    }
+    return (u64)(long long)(timegm(&lt) - tt);
+#endif
+}
+
+#if defined(HOST_INDIRECT_LOG)
+/* The diagnostic build's report of a call through a pointer of another
+ * type (tools/wasm2c_patch.py): the caller's name and the target's address
+ * in this executable, for addr2line; each pair once. */
+void host_indirect_mismatch(const char *caller, void *target)
+{
+    static struct { const char *caller; void *target; } seen[4096];
+    static int n;
+    int i;
+
+    for (i = 0; i < n; i++) {
+        if (seen[i].caller == caller && seen[i].target == target) {
+            return;
+        }
+    }
+    if (n < 4096) {
+        seen[n].caller = caller;
+        seen[n].target = target;
+        n++;
+    }
+    fprintf(stderr, "indirect: %s -> exe+0x%llx\n", caller,
+            (unsigned long long)((char *)target - (char *)GetModuleHandleW(NULL)));
+}
+#endif
+
+/* A call through a DS code address (tools/wasm2c_patch.py): the module
+ * knows which function the build compiled for it.  The lookup runs on the
+ * calling thread's own instance and stack, and under the heap's lock, as
+ * it keeps a table of the addresses it has reported. */
+u32 host_code_index(u32 x)
+{
+    u32 r;
+
+    SDL_LockMutex(g_heap);
+    r = w2c_game_bw_code_index(host_instance(), x);
+    SDL_UnlockMutex(g_heap);
+    return r;
+}
+
+/* The platform's folders (sdk/wasm_host.h's os_path): the same functions
+ * a native build calls, compiled here for the platform. */
+u32 w2c_eidos_os_path(struct w2c_eidos *e, u32 kind, u32 out, u32 n)
+{
+    char buf[4096];
+    size_t len;
+    int rc;
+
+    (void)e;
+    switch (kind) {
+    case 0:  rc = bw_os_app_home(buf, sizeof buf); break;
+    case 1:  rc = bw_os_exe_dir(buf, sizeof buf); break;
+    case 2:  rc = bw_plat_default_save_dir(buf, sizeof buf); break;
+    default: rc = -1; break;
+    }
+    len = strlen(buf);
+    if (rc != 0 || n == 0 || len >= n) {
+        return (u32)-1;
+    }
+    memcpy(host_ptr(out, n), buf, len + 1);
+    return 0;
+}
+
+/* A trap: the native frames, as the executable's own addresses, for
+ * addr2line (the translated functions carry the module's names). */
+void host_trap(wasm_rt_trap_t code)
+{
+    fprintf(stderr, "eidos: the game stopped (wasm trap: %s)\n", wasm_rt_strerror(code));
+#if defined(_WIN32)
+    {
+        void *frames[48];
+        unsigned short n = CaptureStackBackTrace(0, 48, frames, NULL);
+        HMODULE self = GetModuleHandleW(NULL);
+        unsigned short i;
+
+        for (i = 0; i < n; i++) {
+            fprintf(stderr, "  frame %2u  exe+0x%llx\n", i,
+                    (unsigned long long)((char *)frames[i] - (char *)self));
+        }
+    }
+#endif
+    fflush(stderr);
+    exit(3);
+}
+
+#if defined(_WIN32)
+/* A fault outside a wasm trap (the host's own code, a driver): where it
+ * happened and the native frames, the way host_trap reports. */
+static LONG WINAPI host_fault(EXCEPTION_POINTERS *ep)
+{
+    HMODULE self = GetModuleHandleW(NULL);
+
+    fprintf(stderr, "eidos: the program stopped (exception 0x%08lX at exe+0x%llx)\n",
+            (unsigned long)ep->ExceptionRecord->ExceptionCode,
+            (unsigned long long)((char *)ep->ExceptionRecord->ExceptionAddress - (char *)self));
+    if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION
+            && ep->ExceptionRecord->NumberParameters >= 2) {
+        uintptr_t a = (uintptr_t)ep->ExceptionRecord->ExceptionInformation[1];
+        uintptr_t base = (uintptr_t)g_game.w2c_memory.data;
+
+        fprintf(stderr, "eidos: %s 0x%llx (module address 0x%llx)\n",
+                ep->ExceptionRecord->ExceptionInformation[0] ? "write to" : "read of",
+                (unsigned long long)a, (unsigned long long)(a - base));
+    }
+    host_trap(WASM_RT_TRAP_NONE);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
+#if defined(_WIN32)
+#include <dbghelp.h>
+
+/* EIDOS_HOST_STALL=<seconds>: after that long, the frames the main thread
+ * stands in, the way host_trap prints them, and the program ends.  For a
+ * run that hangs (a wait no fiber ever ends). */
+static HANDLE g_main_thread;
+
+static DWORD WINAPI stall_watch(LPVOID arg)
+{
+    HMODULE self = GetModuleHandleW(NULL);
+    CONTEXT ctx;
+    STACKFRAME64 f;
+    int i;
+
+    Sleep((DWORD)(uintptr_t)arg * 1000u);
+    SuspendThread(g_main_thread);
+    memset(&ctx, 0, sizeof ctx);
+    ctx.ContextFlags = CONTEXT_FULL;
+    GetThreadContext(g_main_thread, &ctx);
+    memset(&f, 0, sizeof f);
+    f.AddrPC.Offset = ctx.Rip;
+    f.AddrPC.Mode = AddrModeFlat;
+    f.AddrStack.Offset = ctx.Rsp;
+    f.AddrStack.Mode = AddrModeFlat;
+    f.AddrFrame.Offset = ctx.Rbp;
+    f.AddrFrame.Mode = AddrModeFlat;
+    SymInitialize(GetCurrentProcess(), NULL, TRUE);
+    fprintf(stderr, "eidos: the main thread after %u s:\n", (unsigned)(uintptr_t)arg);
+    for (i = 0; i < 48 && StackWalk64(IMAGE_FILE_MACHINE_AMD64, GetCurrentProcess(),
+                                       g_main_thread, &f, &ctx, NULL,
+                                       SymFunctionTableAccess64, SymGetModuleBase64, NULL); i++) {
+        fprintf(stderr, "  frame %2d  exe+0x%llx\n", i,
+                (unsigned long long)(f.AddrPC.Offset - (DWORD64)(uintptr_t)self));
+    }
+    fflush(stderr);
+    ExitProcess(4);
+    return 0;
+}
+#endif
+
+int main(int argc, char **argv)
+{
+#if defined(_WIN32)
+    if (getenv("EIDOS_HOST_STALL") != NULL) {
+        DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(),
+                        &g_main_thread, 0, FALSE, DUPLICATE_SAME_ACCESS);
+        CreateThread(NULL, 0, stall_watch,
+                     (LPVOID)(uintptr_t)atoi(getenv("EIDOS_HOST_STALL")), 0, NULL);
+    }
+#endif
+#if defined(_WIN32)
+    SetUnhandledExceptionFilter(host_fault);
+#endif
+    g_heap = SDL_CreateMutex();
+    wasm_rt_init();
+    host_wasi_init();
+    host_fibers_init();
+    g_wasi.argc = argc;
+    g_wasi.argv = argv;
+    wasm2c_game_instantiate(&g_game, &g_eidos, &g_env, &g_wasi);
+    /* a trap ends the program in host_trap (host/CMakeLists.txt) */
+    w2c_game_0x5Fstart(&g_game);
+    wasm2c_game_free(&g_game);
+    wasm_rt_free();
+    return 0;
+}

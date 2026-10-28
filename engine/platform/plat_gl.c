@@ -487,8 +487,13 @@ EidosGl *eidos_gl_create(SDL_Window *window)
         free(g);
         return NULL;
     }
+#if defined(__wasm__)
+#define GL_ENTRY(N) (&N)                     /* an import (plat_gl_int.h) */
+#else
+#define GL_ENTRY(N) SDL_GL_GetProcAddress(#N)
+#endif
 #define X(T, N) \
-    g->N = (T)SDL_GL_GetProcAddress(#N); \
+    g->N = (T)GL_ENTRY(N); \
     if (g->N == NULL) { eidos_gl_destroy(g); return NULL; }
     GL_FUNCS(X)
 #undef X
@@ -681,7 +686,7 @@ void eidos_gl_destroy(EidosGl *g)
         if (g->prog3 != 0 && g->glDeleteProgram != NULL) {
             g->glDeleteProgram(g->prog3);
         }
-        SDL_GL_DeleteContext(g->ctx);
+        SDL_GL_DestroyContext(g->ctx);
     }
     free(g);
 }

@@ -479,7 +479,17 @@ static void title_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
             hh = 17;
             y = H - hh - ph - clampi(H / 10, 8, 30);
             ui_panel(c, px, y, pw, ph, CUT_DEF, 5, UI_BODY, UI_EDGE2, 215);
-            ui_fill(c, px + 3, y + 3, 2, ph - 6, UI_CYAN, 255);
+            {
+                /* the bar's top follows the cut corner, a pixel inside it
+                 * (the panel's inside starts where column + row >= 8) */
+                int bx;
+
+                for (bx = 3; bx < 5; bx++) {
+                    int top = 9 - bx > 3 ? 9 - bx : 3;
+
+                    ui_fill(c, px + bx, y + top, 1, ph - 3 - top, UI_CYAN, 255);
+                }
+            }
             ui_text(c, px + (pw - tw) / 2, y + ui_text_y(ph, UI_FONT_LARGE), s,
                     UI_WHITE, UI_GREY, UI_FONT_LARGE, 1);
         }

@@ -277,6 +277,8 @@ static const char *k_vsb =
     "uniform vec3 u_eye;\n"
     "uniform vec3 u_pivot;\n"
     "uniform int u_bb;\n"
+    "uniform vec3 u_uv0;\n"
+    "uniform vec3 u_uv1;\n"
     "out vec2 v_st;\n"
     "out vec3 v_rgb;\n"
     "out vec3 v_pos;\n"
@@ -296,7 +298,8 @@ static const char *k_vsb =
     "    }\n"
     "    vec4 p = vec4(q, 1.0);\n"
     "    v_pos = q;\n"
-    "    v_st = a_st;\n"
+    "    /* the draw's texture animation this frame (identity: none) */\n"
+    "    v_st = vec2(dot(u_uv0, vec3(a_st, 1.0)), dot(u_uv1, vec3(a_st, 1.0)));\n"
     "    v_rgb = a_rgb.rgb;\n"
     "    gl_Position = vec4(dot(u_r0, p), dot(u_r1, p), dot(u_r2, p), dot(u_r3, p));\n"
     "}\n";
@@ -318,6 +321,7 @@ static const char *k_fsb =
     "uniform sampler2D u_texture;\n"
     "uniform float u_alpha;\n"
     "uniform float u_cut;\n"
+    "uniform float u_cut_hi;\n"
     "uniform int u_front;\n"
     "uniform vec4 u_poke[32];\n"
     "uniform int u_npoke;\n"
@@ -345,8 +349,12 @@ static const char *k_fsb =
     "            if (abs(sx) < 0.47 * hgt && uy > -1.0 && uy < hgt) {\n"
     "                if (u_poke[i].w < 0.0) { behind = true; }   /* a shield: never covered */\n"
     "                /* in front of this Pokemon: drawn again; behind it\n"
-    "                   (a nearer Pokemon covers it): never over that one */\n"
-    "                if (along <= L - 0.3) { keep = true; } else { behind = true; }\n"
+    "                   (a nearer Pokemon covers it): never over that one,\n"
+    "                   tested against the sprite's own size, not the loose\n"
+    "                   box (a near Pokemon's loose box reaches the far one\n"
+    "                   on screen, and the map in front of the far one went) */\n"
+    "                if (along <= L - 0.3) { keep = true; }\n"
+    "                else if (abs(sx) < 0.25 * hgt && uy < 0.6 * hgt) { behind = true; }\n"
     "            }\n"
     "        }\n"
     "        if (!keep || behind) { discard; }\n"
@@ -354,7 +362,7 @@ static const char *k_fsb =
     "    vec4 c = vec4(v_rgb, 1.0);\n"
     "    if (u_tex == 1) { c *= texture(u_texture, v_st); }\n"
     "    float a = c.a * u_alpha;\n"
-    "    if (a < u_cut) { discard; }\n"
+    "    if (a < u_cut || a >= u_cut_hi) { discard; }\n"
     "    if (u_cut > 0.4) { a = 1.0; }\n"
     "    if (u_fog.z > 0.0) {\n"
     "        float f = clamp((length(v_pos.xz - u_fog.xy) - u_fog.z) / u_fog.w, 0.0, 1.0);\n"
@@ -383,10 +391,17 @@ typedef struct BdPiece {
     float mid[3];
 } BdPiece;
 
+/* A see-through draw whose material is opaque (alpha 31: the texture alone
+ * has soft or cut-out texels): its solid texels draw in the depth pass with
+ * the opaque map, so only its soft edges are blended, and they need no
+ * triangle order of their own. */
+#define BD_CORE_CUT 0.99f
+#define BD_SOFT_ONLY(d) ((d)->alpha >= 31u)
+
 typedef struct Gl3dBackdrop {
-    GLuint prog, vao, vbo;
-    GLint u_r[4], u_pivot, u_bb, u_atm, u_sky, u_eye, u_foc, u_fog, u_fogc, u_tex, u_texture, u_alpha, u_cut;
-    GLint u_front, u_poke, u_npoke, u_grass;
+    GLuint prog, vao, vbo, ibo;
+    GLint u_r[4], u_pivot, u_bb, u_atm, u_sky, u_eye, u_foc, u_fog, u_fogc, u_tex, u_texture, u_alpha, u_cut, u_cut_hi;
+    GLint u_front, u_poke, u_npoke, u_grass, u_uv0, u_uv1;
     const void *scene;          /* the scene on the GPU                    */
     unsigned gen;
     float reach;                /* half-width of the placed map, battle units */
@@ -396,6 +411,11 @@ typedef struct Gl3dBackdrop {
     unsigned n_piece;
     unsigned *order;
     float *dist;
+    GLuint *idx;                /* their vertices far to near (the ibo's)  */
+    unsigned n_idx;
+    unsigned *at;               /* where each piece in the order starts    */
+    float idx_eye[3];           /* the camera the ibo was sorted for       */
+    int idx_ok;
 } Gl3dBackdrop;
 
 static Gl3dBackdrop g_bd;
@@ -411,9 +431,14 @@ static void backdrop_free_scene(void)
     free(g_bd.piece);
     free(g_bd.order);
     free(g_bd.dist);
+    free(g_bd.idx);
+    free(g_bd.at);
+    g_bd.at = NULL;
     g_bd.piece = NULL;
     g_bd.order = NULL;
     g_bd.dist = NULL;
+    g_bd.idx = NULL;
+    g_bd.idx_ok = 0;
     g_bd.n_piece = 0;
     g_bd.scene = NULL;
 }
@@ -434,17 +459,21 @@ static void backdrop_pieces(const BmapScene *sc)
             BdPiece *pc;
             unsigned j;
 
-            e = a + 3;              /* one triangle: an object can be both near and far */
-            if (e > d->first + d->count) {
+            /* one triangle (an object can be both near and far), or the
+             * whole draw when only its soft edges blend */
+            e = BD_SOFT_ONLY(d) ? d->first + d->count / 3u * 3u : a + 3;
+            if (e > d->first + d->count || e == a) {
                 break;              /* a draw whose count is not whole triangles */
             }
             if (n == cap) {
-                BdPiece *np = (BdPiece *)realloc(g_bd.piece, (cap = cap ? cap * 2 : 64) * sizeof *np);
+                unsigned ncap = cap ? cap * 2 : 64;
+                BdPiece *np = (BdPiece *)realloc(g_bd.piece, ncap * sizeof *np);
 
                 if (np == NULL) {
                     break;
                 }
                 g_bd.piece = np;
+                cap = ncap;
             }
             pc = &g_bd.piece[n++];
             pc->draw = i;
@@ -461,7 +490,17 @@ static void backdrop_pieces(const BmapScene *sc)
     g_bd.n_piece = n;
     g_bd.order = (unsigned *)malloc((n > 0 ? n : 1) * sizeof *g_bd.order);
     g_bd.dist = (float *)malloc((n > 0 ? n : 1) * sizeof *g_bd.dist);
-    if (g_bd.order == NULL || g_bd.dist == NULL) {
+    {
+        unsigned k, verts = 0;
+
+        for (k = 0; k < n; k++) {
+            verts += g_bd.piece[k].count;
+        }
+        g_bd.idx = (GLuint *)malloc((verts > 0 ? verts : 1) * sizeof *g_bd.idx);
+    }
+    g_bd.at = (unsigned *)malloc((n > 0 ? n : 1) * sizeof *g_bd.at);
+    g_bd.idx_ok = 0;
+    if (g_bd.order == NULL || g_bd.dist == NULL || g_bd.idx == NULL || g_bd.at == NULL) {
         g_bd.n_piece = 0;
     }
 }
@@ -478,6 +517,9 @@ static void backdrop_destroy(EidosGl *g)
     backdrop_free_scene();
     if (g_bd.vbo != 0) {
         g->glDeleteBuffers(1, &g_bd.vbo);
+    }
+    if (g_bd.ibo != 0) {
+        g->glDeleteBuffers(1, &g_bd.ibo);
     }
     if (g_bd.vao != 0) {
         g->glDeleteVertexArrays(1, &g_bd.vao);
@@ -514,12 +556,16 @@ static int backdrop_init(EidosGl *g)
     g_bd.u_texture = g->glGetUniformLocation(g_bd.prog, "u_texture");
     g_bd.u_alpha = g->glGetUniformLocation(g_bd.prog, "u_alpha");
     g_bd.u_cut = g->glGetUniformLocation(g_bd.prog, "u_cut");
+    g_bd.u_cut_hi = g->glGetUniformLocation(g_bd.prog, "u_cut_hi");
     g_bd.u_front = g->glGetUniformLocation(g_bd.prog, "u_front");
     g_bd.u_poke = g->glGetUniformLocation(g_bd.prog, "u_poke");
     g_bd.u_npoke = g->glGetUniformLocation(g_bd.prog, "u_npoke");
     g_bd.u_grass = g->glGetUniformLocation(g_bd.prog, "u_grass");
+    g_bd.u_uv0 = g->glGetUniformLocation(g_bd.prog, "u_uv0");
+    g_bd.u_uv1 = g->glGetUniformLocation(g_bd.prog, "u_uv1");
     g->glGenVertexArrays(1, &g_bd.vao);
     g->glGenBuffers(1, &g_bd.vbo);
+    g->glGenBuffers(1, &g_bd.ibo);
     return 0;
 }
 
@@ -840,6 +886,9 @@ static void backdrop_draw(EidosGl *g, const G3dBackdrop *b, int front)
     const BmapScene *sc = (const BmapScene *)b->scene;
     float r[4][4];
     unsigned pass, i;
+    /* the field plays its animations a frame a field frame (60 a second) */
+    unsigned uv_frame = (unsigned)(SDL_GetTicks() * 60u / 1000u);
+    int uv_set = 1;
 
     if (g_bd.prog == 0 || sc == NULL || sc->nv == 0) {
         return;
@@ -924,9 +973,12 @@ static void backdrop_draw(EidosGl *g, const G3dBackdrop *b, int front)
             glDepthMask(GL_TRUE);
         }
         unsigned n = pass == 1 && g_bd.n_piece > 0 ? g_bd.n_piece : sc->nd;
+        int sorted = pass == 1 && g_bd.n_piece > 0;
 
-        if (pass == 1 && g_bd.n_piece > 0) {
-            /* the see-through parts far to near from this camera */
+        if (sorted && !(g_bd.idx_ok && g_bd.idx_eye[0] == b->eye[0] &&
+                        g_bd.idx_eye[1] == b->eye[1] && g_bd.idx_eye[2] == b->eye[2])) {
+            /* the see-through parts far to near from this camera, as one
+             * index buffer (the back and the front pass share it) */
             for (i = 0; i < g_bd.n_piece; i++) {
                 const float *m = g_bd.piece[i].mid;
                 float dx = m[0] - b->eye[0], dy = m[1] - b->eye[1], dz = m[2] - b->eye[2];
@@ -935,24 +987,49 @@ static void backdrop_draw(EidosGl *g, const G3dBackdrop *b, int front)
                 g_bd.dist[i] = dx * dx + dy * dy + dz * dz;
             }
             qsort(g_bd.order, g_bd.n_piece, sizeof *g_bd.order, piece_far_first);
+            g_bd.n_idx = 0;
+            for (i = 0; i < g_bd.n_piece; i++) {
+                const BdPiece *pc = &g_bd.piece[g_bd.order[i]];
+                unsigned k;
+
+                g_bd.at[i] = g_bd.n_idx;
+                for (k = 0; k < pc->count; k++) {
+                    g_bd.idx[g_bd.n_idx++] = pc->first + k;
+                }
+            }
+            g->glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_bd.ibo);
+            g->glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                            (GLsizeiptr)((size_t)g_bd.n_idx * sizeof *g_bd.idx),
+                            g_bd.idx, GL_STREAM_DRAW);
+            memcpy(g_bd.idx_eye, b->eye, sizeof g_bd.idx_eye);
+            g_bd.idx_ok = 1;
         }
         for (i = 0; i < n; i++) {
             const BmapDraw *d;
-            unsigned first, count;
+            unsigned first, count, run = 1;
 
-            if (pass == 1 && g_bd.n_piece > 0) {
+            if (sorted) {
                 const BdPiece *pc = &g_bd.piece[g_bd.order[i]];
 
                 d = &sc->d[pc->draw];
                 first = pc->first;
                 count = pc->count;
+                /* the next triangles in the order that come from the same
+                 * draw (the same texture and state): one call for all */
+                while (i + run < n && g_bd.piece[g_bd.order[i + run]].draw == pc->draw) {
+                    run++;
+                }
             } else {
                 d = &sc->d[i];
                 first = d->first;
                 count = d->count;
             }
-            if ((d->translucent != 0) != (pass == 1) || count == 0
-                || d->alpha == 0 || first + count > sc->nv) {
+            /* the depth pass also takes the solid texels of a draw whose
+             * soft edges blend later */
+            if (((d->translucent != 0) != (pass == 1)
+                 && !(pass == 0 && d->translucent && BD_SOFT_ONLY(d)))
+                || count == 0 || d->alpha == 0 || first + count > sc->nv) {
+                i += run - 1;
                 continue;
             }
             if (d->cull == 0) {
@@ -967,12 +1044,40 @@ static void backdrop_draw(EidosGl *g, const G3dBackdrop *b, int front)
             } else {
                 g->glUniform1i(g_bd.u_tex, 0);
             }
+            if (d->uvanim != 0 && d->uvanim <= sc->nuva && sc->uva[d->uvanim - 1].frames > 0) {
+                const BmapUvAnim *ua = &sc->uva[d->uvanim - 1];
+                const float *m = ua->m + (size_t)(uv_frame % ua->frames) * 6u;
+
+                g->glUniform3fv(g_bd.u_uv0, 1, m);
+                g->glUniform3fv(g_bd.u_uv1, 1, m + 3);
+                uv_set = 1;
+            } else if (uv_set) {
+                static const float id[6] = { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f };
+
+                g->glUniform3fv(g_bd.u_uv0, 1, id);
+                g->glUniform3fv(g_bd.u_uv1, 1, id + 3);
+                uv_set = 0;
+            }
             g->glUniform1i(g_bd.u_bb, d->billboard);
             g->glUniform1i(g_bd.u_grass, d->grass);
             g->glUniform3fv(g_bd.u_pivot, 1, d->pivot);
             g->glUniform1f(g_bd.u_alpha, (float)d->alpha / 31.0f);
-            g->glUniform1f(g_bd.u_cut, pass == 1 ? 0.02f : 0.5f);
-            glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)count);
+            if (pass == 0) {
+                g->glUniform1f(g_bd.u_cut, d->translucent ? BD_CORE_CUT : 0.5f);
+                g->glUniform1f(g_bd.u_cut_hi, 2.0f);
+            } else {
+                g->glUniform1f(g_bd.u_cut, 0.02f);
+                g->glUniform1f(g_bd.u_cut_hi, BD_SOFT_ONLY(d) ? BD_CORE_CUT : 2.0f);
+            }
+            if (sorted) {
+                unsigned end = i + run < g_bd.n_piece ? g_bd.at[i + run] : g_bd.n_idx;
+
+                glDrawElements(GL_TRIANGLES, (GLsizei)(end - g_bd.at[i]), GL_UNSIGNED_INT,
+                               (const void *)((size_t)g_bd.at[i] * sizeof(GLuint)));
+                i += run - 1;
+            } else {
+                glDrawArrays(GL_TRIANGLES, (GLint)first, (GLsizei)count);
+            }
         }
     }
     glDepthMask(GL_TRUE);

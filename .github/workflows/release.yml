@@ -22,6 +22,11 @@ on:
         description: "Also make a draft release (tag name v<version>-test)"
         type: boolean
         default: false
+      only:
+        description: "Build only part (a tag builds everything)"
+        type: choice
+        options: [all, launchers, windows, linux, macos]
+        default: all
 
 permissions:
   contents: write
@@ -60,8 +65,9 @@ jobs:
   windows:
     name: windows
     needs: meta
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'windows' }}
     runs-on: ${{ fromJSON(vars.EIDOS_RUNNER_WINDOWS || '["windows-2022"]') }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         shell: msys2 {0}
@@ -69,6 +75,7 @@ jobs:
       EIDOS_SDL_CACHE: ${{ github.workspace }}/.cache/sdl
       EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
       EIDOS_MBEDTLS_CACHE: ${{ github.workspace }}/.cache/mbedtls
+      EIDOS_WASM_CACHE: ${{ github.workspace }}/.cache/wasm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -77,21 +84,22 @@ jobs:
           ref: ${{ needs.meta.outputs.pin }}
           token: ${{ secrets.ALETHEIA_TOKEN || github.token }}
           path: aletheia
-      # 32-bit MinGW-w64: the game builds for 32-bit pointers (docs/pointer-width.md).
+      # 64-bit MinGW-w64: every build is 64-bit (docs/pointer-width.md); the
+      # game itself is the wasm32 build (docs/lp64.md, tools/build64.py).
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW32
+          msystem: MINGW64
           update: false
           install: >-
-            mingw-w64-i686-cmake
-            mingw-w64-i686-ninja
-            mingw-w64-i686-python
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-python
             zip
             unzip
       - uses: actions/cache@v4
         with:
           path: .cache
-          key: deps-windows-${{ hashFiles('tools/fetch_sdl.py', 'tools/fetch_wamr.py', 'tools/fetch_mbedtls.py') }}
+          key: deps-windows-${{ hashFiles('tools/fetch_sdl.py', 'tools/fetch_wamr.py', 'tools/fetch_mbedtls.py', 'tools/fetch_wasm.py') }}
       # The compiler the release is tested with, not MSYS2's newest: the
       # same xPack GCC 14.2 build the port is developed and played on.
       # MSYS2's GCC 16 builds a test_mod_wasm that crashes (2026-10-23).
@@ -106,38 +114,49 @@ jobs:
             unzip -q "$zip" -d .cache/gcc
             rm "$zip"
           fi
-          .cache/gcc/xpack-mingw-w64-gcc-14.2.0-1/bin/i686-w64-mingw32-gcc --version | head -1
-      - name: Fetch SDL2, WAMR, Mbed TLS (each is checked against a recorded SHA-256)
+          .cache/gcc/xpack-mingw-w64-gcc-14.2.0-1/bin/x86_64-w64-mingw32-gcc --version | head -1
+      - name: Fetch SDL3, WAMR, Mbed TLS, the wasm toolchain (each is checked against a recorded SHA-256)
         run: |
           python tools/fetch_sdl.py --flavor mingw
           python tools/fetch_wamr.py
           python tools/fetch_mbedtls.py
+          gcc_bin="$PWD/.cache/gcc/xpack-mingw-w64-gcc-14.2.0-1/bin"
+          CC="$gcc_bin/x86_64-w64-mingw32-gcc.exe" CXX="$gcc_bin/x86_64-w64-mingw32-g++.exe" \
+            python tools/fetch_wasm.py
       - name: Stand-ins for the few ROM bytes the sources include (docs/release.md)
         run: python tools/package_release.py placeholders --aletheia-root aletheia
-      # The flags of the build players test with: the game's C relies on
-      # wrapping arithmetic and loose aliasing, as the DS compiler gave it.
-      - name: Configure
+      # The engine's tests, built natively in the reference configuration
+      # (32-bit pointers, docs/pointer-width.md): the configuration the
+      # game is developed in, and the one the 64-bit build keeps (wasm32).
+      # A native 64-bit build of the game code is a later milestone
+      # (docs/lp64.md).  The flags of the build players test with: the
+      # game's C relies on wrapping arithmetic and loose aliasing, as the
+      # DS compiler gave it.
+      - name: Configure the tests
         run: |
           gcc_bin="$(cygpath -m "$PWD/.cache/gcc/xpack-mingw-w64-gcc-14.2.0-1/bin")"
           cmake -S . -B build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake \
             -DCMAKE_C_COMPILER="$gcc_bin/i686-w64-mingw32-gcc.exe" \
             -DCMAKE_RC_COMPILER="$gcc_bin/i686-w64-mingw32-windres.exe" \
             -DCMAKE_C_FLAGS="-O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
             -DALETHEIA_ROOT="$(cygpath -m "$PWD/aletheia")" \
-            -DBW_DATA_ROOT="$(cygpath -m "$PWD/no-game-data/extract/data")" \
-            -DEIDOS_BOOT=ON -DEIDOS_OVERLAYS=ALL \
-            -DEIDOS_RELEASE=ON \
-            -DEIDOS_DEFAULT_RELAY="$EIDOS_DEFAULT_RELAY"
-      - name: Build
+            -DBW_DATA_ROOT="$(cygpath -m "$PWD/no-game-data/extract/data")"
+      - name: Build the tests
         run: cmake --build build
       - name: Test (no ROM; tests that need one skip themselves)
         run: ctest --test-dir build --output-on-failure -j 4
+      # The game: the wasm32 module, wasm2c, and the native 64-bit program.
+      - name: Build the game
+        run: |
+          gcc_bin="$(cygpath -m "$PWD/.cache/gcc/xpack-mingw-w64-gcc-14.2.0-1/bin")"
+          python tools/build64.py --build-dir build64 --release \
+            --aletheia-root "$(cygpath -m "$PWD/aletheia")" \
+            --data-root "$(cygpath -m "$PWD/no-game-data/extract/data")" \
+            --cc "$gcc_bin/x86_64-w64-mingw32-gcc.exe" \
+            --relay "$EIDOS_DEFAULT_RELAY"
       - name: Package
         run: |
-          python tools/package_release.py windows --build-dir build --version "${{ needs.meta.outputs.version }}" --out dist
-          # a name without the version, for .../releases/latest/download/
-          cp "dist/eidos-${{ needs.meta.outputs.version }}-windows.zip" dist/eidos-windows.zip
+          python tools/package_release.py windows --build-dir build64/host --version "${{ needs.meta.outputs.version }}" --out dist
       - uses: actions/upload-artifact@v4
         with:
           name: package-windows
@@ -148,15 +167,14 @@ jobs:
   linux:
     name: linux
     needs: meta
-    # The game builds only with 32-bit pointers for now (docs/lp64.md); a
-    # 64-bit Linux build waits on that.  Set the repository variable
-    # EIDOS_BUILD_64BIT to true to try it.
-    if: vars.EIDOS_BUILD_64BIT == 'true'
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'linux' }}
     runs-on: ubuntu-22.04     # the oldest glibc we ship against
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
       EIDOS_MBEDTLS_CACHE: ${{ github.workspace }}/.cache/mbedtls
+      EIDOS_WASM_CACHE: ${{ github.workspace }}/.cache/wasm
+      EIDOS_SDL_CACHE: ${{ github.workspace }}/.cache/sdl
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -171,38 +189,54 @@ jobs:
         timeout-minutes: 15
         uses: awalsh128/cache-apt-pkgs-action@v1.4.3
         with:
-          packages: ninja-build libsdl2-dev libgl1-mesa-dev libfuse2 file
+          # SDL3 is built from its source release (tools/fetch_sdl.py): the
+          # runner's distribution has no SDL3 package.  These are the
+          # development files its video, audio and input back ends need.
+          packages: ninja-build gcc-multilib libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libdrm-dev libgbm-dev libpulse-dev libasound2-dev libudev-dev libdbus-1-dev libibus-1.0-dev libfuse2 file
           version: "1"
       - uses: actions/cache@v4
         with:
           path: .cache
-          key: deps-linux-${{ hashFiles('tools/fetch_wamr.py', 'tools/fetch_mbedtls.py') }}
-      - name: Fetch WAMR and Mbed TLS (each is checked against a recorded SHA-256)
+          key: deps-linux-${{ hashFiles('tools/fetch_sdl.py', 'tools/fetch_wamr.py', 'tools/fetch_mbedtls.py', 'tools/fetch_wasm.py') }}
+      - name: Fetch SDL3, WAMR, Mbed TLS, the wasm toolchain (each is checked against a recorded SHA-256)
         run: |
+          python3 tools/fetch_sdl.py --flavor mingw     # the module's SDL3 headers
+          python3 tools/fetch_sdl.py --flavor source --build --tag linux-x64
           python3 tools/fetch_wamr.py
           python3 tools/fetch_mbedtls.py
+          python3 tools/fetch_wasm.py
       - name: Stand-ins for the few ROM bytes the sources include (docs/release.md)
         run: python3 tools/package_release.py placeholders --aletheia-root aletheia
-      - name: Configure
+      # The engine's tests in the reference configuration (32-bit pointers,
+      # cmake/ilp32-toolchain.cmake); the platform layer is left out, as
+      # there is no 32-bit SDL3 here.
+      - name: Configure the tests
         run: |
           cmake -S . -B build -G Ninja \
-            -DCMAKE_C_FLAGS="-O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/ilp32-toolchain.cmake \
+            -DCMAKE_C_FLAGS="-m32 -O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
+            -DEIDOS_SDL=OFF \
             -DALETHEIA_ROOT="$PWD/aletheia" \
-            -DBW_DATA_ROOT="$PWD/no-game-data/extract/data" \
-            -DEIDOS_BOOT=ON -DEIDOS_OVERLAYS=ALL \
-            -DEIDOS_RELEASE=ON \
-            -DEIDOS_DEFAULT_RELAY="$EIDOS_DEFAULT_RELAY"
-      - name: Build
+            -DBW_DATA_ROOT="$PWD/no-game-data/extract/data"
+      - name: Build the tests
         run: cmake --build build
       - name: Test (no ROM; tests that need one skip themselves)
         run: ctest --test-dir build --output-on-failure -j 4
+      - name: Build the game
+        run: |
+          python3 tools/build64.py --build-dir build64 --release \
+            --aletheia-root "$PWD/aletheia" \
+            --data-root "$PWD/no-game-data/extract/data" \
+            --sdl3-prefix "$(python3 tools/fetch_sdl.py --locate source --tag linux-x64)" \
+            --relay "$EIDOS_DEFAULT_RELAY"
       - name: linuxdeploy (pinned, checked)
         run: |
           curl -sSL -o linuxdeploy "$LINUXDEPLOY_URL"
           echo "$LINUXDEPLOY_SHA256  linuxdeploy" | sha256sum -c -
           chmod +x linuxdeploy
       - name: Package
-        run: python3 tools/package_release.py linux --build-dir build --version "${{ needs.meta.outputs.version }}" --out dist --linuxdeploy "$PWD/linuxdeploy"
+        run: |
+          python3 tools/package_release.py linux --build-dir build64/host --version "${{ needs.meta.outputs.version }}" --out dist --linuxdeploy "$PWD/linuxdeploy"
       - uses: actions/upload-artifact@v4
         with:
           name: package-linux
@@ -213,13 +247,14 @@ jobs:
   macos:
     name: macos
     needs: meta
-    # macOS has no 32-bit programs: it waits on the 64-bit build, as Linux.
-    if: vars.EIDOS_BUILD_64BIT == 'true'
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'macos' }}
     runs-on: macos-14
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       EIDOS_WAMR_CACHE: ${{ github.workspace }}/.cache/wamr
       EIDOS_MBEDTLS_CACHE: ${{ github.workspace }}/.cache/mbedtls
+      EIDOS_WASM_CACHE: ${{ github.workspace }}/.cache/wasm
+      EIDOS_SDL_CACHE: ${{ github.workspace }}/.cache/sdl
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -232,33 +267,31 @@ jobs:
         timeout-minutes: 15
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
-        run: brew install ninja sdl2
+        run: brew install ninja sdl3
       - uses: actions/cache@v4
         with:
           path: .cache
-          key: deps-macos-${{ hashFiles('tools/fetch_wamr.py', 'tools/fetch_mbedtls.py') }}
-      - name: Fetch WAMR and Mbed TLS (each is checked against a recorded SHA-256)
+          key: deps-macos-${{ hashFiles('tools/fetch_sdl.py', 'tools/fetch_wamr.py', 'tools/fetch_mbedtls.py', 'tools/fetch_wasm.py') }}
+      - name: Fetch WAMR, Mbed TLS, the wasm toolchain (each is checked against a recorded SHA-256)
         run: |
+          python3 tools/fetch_sdl.py --flavor mingw     # the module's SDL3 headers
           python3 tools/fetch_wamr.py
           python3 tools/fetch_mbedtls.py
+          python3 tools/fetch_wasm.py
       - name: Stand-ins for the few ROM bytes the sources include (docs/release.md)
         run: python3 tools/package_release.py placeholders --aletheia-root aletheia
-      - name: Configure
+      # No native tests here: macOS has no 32-bit target, and the engine's
+      # tests run in the reference configuration on Windows and Linux.
+      - name: Build the game
         run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_C_FLAGS="-O2 -fno-strict-aliasing -fwrapv -fno-delete-null-pointer-checks -fno-omit-frame-pointer" \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
-            -DALETHEIA_ROOT="$PWD/aletheia" \
-            -DBW_DATA_ROOT="$PWD/no-game-data/extract/data" \
-            -DEIDOS_BOOT=ON -DEIDOS_OVERLAYS=ALL \
-            -DEIDOS_RELEASE=ON \
-            -DEIDOS_DEFAULT_RELAY="$EIDOS_DEFAULT_RELAY"
-      - name: Build
-        run: cmake --build build
-      - name: Test (no ROM; tests that need one skip themselves)
-        run: ctest --test-dir build --output-on-failure -j 4
+          python3 tools/build64.py --build-dir build64 --release \
+            --aletheia-root "$PWD/aletheia" \
+            --data-root "$PWD/no-game-data/extract/data" \
+            --sdl3-prefix "$(brew --prefix sdl3)" \
+            --relay "$EIDOS_DEFAULT_RELAY"
       - name: Package
-        run: python3 tools/package_release.py macos --build-dir build --version "${{ needs.meta.outputs.version }}" --out dist --lib "$(brew --prefix sdl2)/lib/libSDL2-2.0.0.dylib"
+        run: |
+          python3 tools/package_release.py macos --build-dir build64/host --version "${{ needs.meta.outputs.version }}" --out dist --lib "$(brew --prefix sdl3)/lib/libSDL3.0.dylib"
       - uses: actions/upload-artifact@v4
         with:
           name: package-macos
@@ -269,6 +302,7 @@ jobs:
   launcher:
     name: launcher (windows)
     needs: meta
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'launchers' }}
     runs-on: windows-2022
     timeout-minutes: 45
     steps:
@@ -325,22 +359,19 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           mkdir -p out
+          # a launcher's name has no version: the README's download button
+          # points at .../releases/latest/download/<this>, the newest release
           cp launcher/src-tauri/target/release/bundle/nsis/*-setup.exe \
-             "out/eidos-launcher-${VERSION}-windows-setup.exe"
-          # the same file under a name without the version: the website's
-          # download button points at .../releases/latest/download/<this>,
-          # which always gives the newest release
-          cp "out/eidos-launcher-${VERSION}-windows-setup.exe" \
              out/eidos-launcher-windows-setup.exe
-          # latest.json: what a running launcher reads to update itself
-          # (.../releases/latest/download/latest.json)
+          # this platform's part of latest.json, what a running launcher
+          # reads to update itself (the release job joins the parts)
           sig=$(ls launcher/src-tauri/target/release/bundle/nsis/*-setup.exe.sig 2>/dev/null | head -1)
           if [ -n "$sig" ]; then
-            python tools/launcher_update_json.py --version "$VERSION" \
+            python tools/launcher_update_json.py part --platform windows-x86_64 \
               --signature "$sig" \
-              --url "https://github.com/${REPO}/releases/download/${TAG}/eidos-launcher-${VERSION}-windows-setup.exe" \
-              --notes "eidos launcher ${VERSION}" > out/latest.json
-            cat out/latest.json
+              --url "https://github.com/${REPO}/releases/download/${TAG}/eidos-launcher-windows-setup.exe" \
+              > out/updater-windows.json
+            cat out/updater-windows.json
           fi
       - uses: actions/upload-artifact@v4
         with:
@@ -348,10 +379,121 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  # Linux and macOS launchers, signed for their own updates the same way:
+  # the AppImage replaces itself, the macOS app from its .app.tar.gz.
+  launcher-unix:
+    name: launcher (${{ matrix.os }})
+    needs: meta
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'launchers' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-22.04
+            bundles: appimage
+          - os: macos
+            runner: macos-14
+            bundles: app
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages (Linux)
+        if: matrix.os == 'linux'
+        timeout-minutes: 15
+        uses: awalsh128/cache-apt-pkgs-action@v1.4.3
+        with:
+          packages: libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libfuse2 file patchelf
+          version: "1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: launcher/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher/src-tauri
+      - name: The release's version
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            for (const f of ["launcher/package.json", "launcher/src-tauri/tauri.conf.json"]) {
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = process.env.VERSION;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+            }'
+          perl -0pi -e 's/^version = ".*?"/version = "$ENV{VERSION}"/m' launcher/src-tauri/Cargo.toml
+          grep -m1 '^version' launcher/src-tauri/Cargo.toml
+      - name: Test
+        shell: bash
+        working-directory: launcher/src-tauri
+        run: cargo test
+      - name: Build the bundle
+        shell: bash
+        working-directory: launcher
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm ci
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            npx tauri build --bundles ${{ matrix.bundles }}
+          else
+            echo "::warning::no TAURI_SIGNING_PRIVATE_KEY secret: the launcher is not signed for updates"
+            npx tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
+      - name: Name it
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-test', needs.meta.outputs.version) }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p out
+          b=launcher/src-tauri/target/release/bundle
+          dl="https://github.com/${REPO}/releases/download/${TAG}"
+          if [ "${{ matrix.os }}" = linux ]; then
+            name="eidos-launcher-linux-x86_64.AppImage"
+            cp $b/appimage/*.AppImage "out/$name"
+            sig=$(ls $b/appimage/*.AppImage.sig 2>/dev/null | head -1)
+            platform=linux-x86_64
+          else
+            # the disk image by hand: Tauri's cannot hold other files, and
+            # this one carries the first-start steps (launcher/dmg)
+            stage=$(mktemp -d)
+            ditto $b/macos/*.app "$stage/$(basename $b/macos/*.app)"
+            ln -s /Applications "$stage/Applications"
+            cp "launcher/dmg/READ ME FIRST.txt" "$stage/"
+            hdiutil create -volname "eidos launcher" -srcfolder "$stage" \
+              -fs HFS+ -format UDZO -ov out/eidos-launcher-macos.dmg
+            # what a running launcher updates itself from (latest.json)
+            name="eidos-launcher-macos.app.tar.gz"
+            sig=$(ls $b/macos/*.app.tar.gz.sig 2>/dev/null | head -1)
+            [ -n "$sig" ] && cp $b/macos/*.app.tar.gz "out/$name"
+            platform=darwin-aarch64
+          fi
+          if [ -n "$sig" ]; then
+            python3 tools/launcher_update_json.py part --platform "$platform" \
+              --signature "$sig" --url "$dl/$name" > "out/updater-${{ matrix.os }}.json"
+            cat "out/updater-${{ matrix.os }}.json"
+          fi
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ matrix.os }}
+          path: out/*
+          if-no-files-found: error
+
   # ---------------------------------------------------------------- Release
   release:
     name: draft release
-    needs: [meta, windows, linux, macos, launcher]
+    needs: [meta, windows, linux, macos, launcher, launcher-unix]
     if: >-
       !cancelled() && needs.windows.result == 'success' &&
       needs.launcher.result == 'success' &&
@@ -368,6 +510,13 @@ jobs:
         env:
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
+          # latest.json from each launcher's part (none: no signing key)
+          if ls dist/updater-*.json >/dev/null 2>&1; then
+            python3 tools/launcher_update_json.py join --version "$VERSION" \
+              --notes "eidos launcher ${VERSION}" dist/updater-*.json > dist/latest.json
+            rm dist/updater-*.json
+            cat dist/latest.json
+          fi
           cd dist
           sha256sum eidos-* > SHA256SUMS
           cat SHA256SUMS
