@@ -807,18 +807,48 @@ static void cap_tex_setup(GLuint t, int w, int h, const unsigned char *px)
  * capture (the bank's content, 256 x 192 RGBA): the first frame, or after
  * the game wrote the bank itself.
  */
+/* EIDOS_DEBUG_CAP: where eidos_gl_capture stops and which GL error is
+ * pending at each step, for the first 40 frames that capture.  A diagnosis
+ * aid for drivers that refuse what others accept (macOS). */
+static int cap_dbg_left = -1;
+
+static void cap_dbg(const char *step)
+{
+    GLenum e;
+
+    if (cap_dbg_left < 0) {
+        cap_dbg_left = getenv("EIDOS_DEBUG_CAP") != NULL ? 40 : 0;
+    }
+    if (cap_dbg_left == 0) {
+        return;
+    }
+    e = glGetError();
+    fprintf(stderr, "cap %s: GL error %04X\n", step, (unsigned)e);
+}
+
 int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
                      const unsigned char *behind,
                      const struct G3dSnapshot *snap, int scale, int blend,
                      int eva, int evb, const unsigned char *b1x)
 {
-    int w = 256 * scale, h = 192 * scale, next, i;
+    int w = 256 * scale, h = 192 * scale, next, i, r3;
 
     if (g == NULL || !g->have3d || g->progc == 0 || g->prog3 == 0
         || a2d == NULL || behind == NULL || snap == NULL || scale < 1) {
+        cap_dbg("refused (no 3D, programs or input)");
         return -1;
     }
-    if (eidos_gl_render3d(g, snap, w, h) != 0) {
+    cap_dbg("before the 3D render");
+    r3 = eidos_gl_render3d(g, snap, w, h);
+    if (cap_dbg_left > 0) {
+        fprintf(stderr, "cap render3d %dx%d returned %d (scale %d blend %d valid %d b1x %d)\n",
+                w, h, r3, scale, blend, g->cap_valid, b1x != NULL);
+        cap_dbg("after the 3D render");
+    }
+    if (r3 != 0) {
+        if (cap_dbg_left > 0) {
+            cap_dbg_left--;
+        }
         return -1;
     }
     if (g->cap_fbo == 0) {
@@ -839,6 +869,10 @@ int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
         g->cap_valid = 0;
     }
     if (blend && !g->cap_valid && b1x == NULL) {
+        cap_dbg("refused (blend with no valid capture before)");
+        if (cap_dbg_left > 0) {
+            cap_dbg_left--;
+        }
         return -1;
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -856,9 +890,15 @@ int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
     g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                               g->capa_tex, 0);
     if (g->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        if (cap_dbg_left > 0) {
+            fprintf(stderr, "cap source FBO incomplete: %04X\n",
+                    (unsigned)g->glCheckFramebufferStatus(GL_FRAMEBUFFER));
+            cap_dbg_left--;
+        }
         g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
         return -1;
     }
+    cap_dbg("after the uploads and the FBO");
     glViewport(0, 0, w, h);
     glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);
@@ -881,6 +921,7 @@ int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
     g->glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, g->cap_src[0]);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    cap_dbg("after source A");
 
     /* the capture: A alone, or mixed with the capture before it */
     next = g->cap_cur ^ 1;
@@ -902,6 +943,11 @@ int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
     g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     g->cap_cur = next;
     g->cap_valid = 1;
+    if (cap_dbg_left > 0) {
+        cap_dbg("after the capture");
+        cap_dbg_left--;
+        return 0;
+    }
     return glGetError() == GL_NO_ERROR ? 0 : -1;
 }
 
