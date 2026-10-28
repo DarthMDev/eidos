@@ -178,11 +178,18 @@
     background: var(--panel-2);
     border-top: 2px solid var(--outline);
   }
+  /* the row keeps the play buttons beside the profile down to the
+   * window's smallest width: the profile and the buttons give up width
+   * before anything wraps */
   .profile {
-    width: 13rem;
+    flex: 0 1 13rem;
+    min-width: 8rem;
+  }
+  .profile select {
+    width: 100%;
   }
   .which {
-    flex: 1;
+    flex: 1 0 auto;
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
@@ -195,15 +202,16 @@
   }
   .plays .play {
     flex: 1 1 0;
-    min-width: 10rem;
+    min-width: 8.5rem;
     justify-content: center;
     font-size: 1.15rem;
-    padding: 0.75rem 1.6rem;
+    padding: 0.75rem 1.25rem;
   }
   /* the icon's middle on the label's capitals, not on its line box */
   .plays .play :global(svg) {
     position: relative;
     top: 1px;
+    flex-shrink: 0;
   }
   .plays.single .play {
     flex: none;

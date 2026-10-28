@@ -3,13 +3,16 @@
 //! Without a token GitHub answers 60 API requests an hour per internet
 //! connection, and every program on that connection shares them. So:
 //!
-//! - the last list is kept on disk with its ETag, and each refresh asks
-//!   "changed since?"; a "not modified" answer does not count against the
-//!   limit;
-//! - when the API refuses (403, 429) or cannot be reached, the releases
-//!   feed (`releases.atom`, not rate limited) gives the tags, and each tag
-//!   the saved list does not know gets the asset names the release workflow
-//!   always uploads (docs/release.md);
+//! - the releases feed (`releases.atom`, not rate limited) is asked first:
+//!   when every tag in it is in the saved list, that list is the answer and
+//!   the API is not asked at all;
+//! - otherwise (a new release, no saved list, or a token for a private
+//!   repository, whose feed needs a login) the API is asked; the last list
+//!   is kept on disk with its ETag, and each request asks "changed since?",
+//!   an answer that does not count against the limit;
+//! - when the API refuses (403, 429) or cannot be reached, each tag of the
+//!   feed the saved list does not know gets the asset names the release
+//!   workflow always uploads (docs/release.md);
 //! - when both fail, the saved list is shown as it is.
 
 use std::fs;
@@ -49,6 +52,17 @@ pub fn list(layout: &Layout, repo: &str, token: Option<&str>) -> Result<Vec<Rele
             .and_then(|c| releases::parse_releases(&c.body).ok())
     };
     let agent = agent();
+    let known = saved().unwrap_or_default();
+
+    // the feed first: no quota, and enough when nothing is new
+    let tags = if token.is_none() { feed(&agent, repo).ok() } else { None };
+    // (the feed holds only the newest releases, so the answer is the whole
+    // saved list, older versions included)
+    if let Some(tags) = tags.as_ref().filter(|t| !t.is_empty()) {
+        if tags.iter().all(|(tag, _, _)| known.iter().any(|r| &r.tag_name == tag)) {
+            return Ok(known);
+        }
+    }
 
     let mut req = agent
         .get(&format!("{API}/repos/{repo}/releases?per_page=100"))
@@ -85,8 +99,11 @@ pub fn list(layout: &Layout, repo: &str, token: Option<&str>) -> Result<Vec<Rele
         Err(e) => e.to_string(),
     };
 
-    let known = saved().unwrap_or_default();
-    if let Ok(tags) = feed(&agent, repo) {
+    let tags = match tags {
+        Some(t) => Ok(t),
+        None => feed(&agent, repo),
+    };
+    if let Ok(tags) = tags {
         if !tags.is_empty() {
             return Ok(tags
                 .into_iter()
