@@ -133,7 +133,7 @@ class PortTools(unittest.TestCase):
             self.assertIn("u32 src;", command)
             self.assertIn("u32 dst;", command)
             self.assertIn("uptr src;", common)
-            self.assertIn(str(output_dir / "card_common.h"), output.read_text())
+            self.assertIn((output_dir / "card_common.h").as_posix(), output.read_text())
             self.assertEqual(header.read_text(), original)
 
     def test_wrapped_register_address(self):

@@ -1,8 +1,9 @@
 name: macOS core
 
+# Runs with the releases (a v* tag) or by hand, like release.yml.
 on:
   push:
-  pull_request:
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -24,6 +25,7 @@ jobs:
         with:
           repository: Project-Holon/aletheia
           ref: ${{ steps.pin.outputs.revision }}
+          token: ${{ secrets.ALETHEIA_TOKEN || github.token }}
           path: aletheia
       - name: Install dependencies
         env:

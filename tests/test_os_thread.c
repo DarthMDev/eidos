@@ -16,11 +16,15 @@
  *   - the switch callback sees every switch.
  */
 
+#ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
+#endif
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include "os_test.h"
 #include "port_test.h"
@@ -347,6 +351,7 @@ static int test_os_sleep(void)
     return 0;
 }
 
+#ifndef _WIN32
 /* Optional synthetic save I/O in a caller-supplied scratch directory. The
  * same guest executable exercises the host's WASI files, not a mock VFS. */
 static int test_host_files(const char *directory)
@@ -383,6 +388,7 @@ static int test_host_files(const char *directory)
     BW_CHECK_EQ("host removes directory", rmdir(child), 0);
     return 0;
 }
+#endif
 
 int main(int argc, char **argv)
 {
@@ -398,7 +404,12 @@ int main(int argc, char **argv)
     /* A reset stops every game thread's host thread. */
     bw_os_reset();
     BW_CHECK_EQ("reset leaves no host threads", bw_os_host_threads(), 0);
+#ifndef _WIN32
     if (argc > 1) fail |= test_host_files(argv[1]);
+#else
+    (void)argc;
+    (void)argv;
+#endif
 
     (void)fail;
     BW_REPORT("test_os_thread");

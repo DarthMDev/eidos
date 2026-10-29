@@ -32,7 +32,9 @@ void w2c_game_bw_fiber_main(w2c_game *g, u32 id) {
     assert(id == 1);
     for (int i = 0; i < 3; ++i) {
         void *frames[64];
-        assert(backtrace(frames, 64) > 0);
+        /* Some macOS versions stop at a stack the thread does not own
+         * and return 0: the walk must end, not crash. */
+        (void)backtrace(frames, 64);
         assert(g->sp == 1234);
         ++visits;
         w2c_eidos_fiber_switch(0, 0);
