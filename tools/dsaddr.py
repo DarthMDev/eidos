@@ -1549,6 +1549,25 @@ def build_report(root: str) -> str:
     return "\n".join(out)
 
 
+def _need(source: str, old: str, new: str) -> str:
+    """A patch of aletheia's text that must find that text.  Without it the
+    copy keeps the DS layout silently, so a change in aletheia stops the
+    build here instead."""
+    if old not in source:
+        raise SystemExit("dsaddr.py: the text to patch is gone; review the "
+                         "patch against aletheia: %r" % old)
+    return source.replace(old, new)
+
+
+def _need_re(pattern, repl, source: str, flags: int = 0) -> str:
+    """_need for a pattern."""
+    out, count = re.subn(pattern, repl, source, flags=flags)
+    if count == 0:
+        raise SystemExit("dsaddr.py: the text to patch is gone; review the "
+                         "patch against aletheia: %r" % pattern)
+    return out
+
+
 def native_matched_types(source: str, path: str) -> str:
     """Keep recovered DS scalar names fixed-width in generated host copies."""
     source = re.sub(
@@ -1560,7 +1579,7 @@ def native_matched_types(source: str, path: str) -> str:
                                      "unsigned int", m.group()), source, flags=re.S)
     if path.replace("\\", "/").endswith("/src/matched/arm9/func_02035F38.c"):
         # KEY_MainSys's getter returns the native Key object, not an integer.
-        source = source.replace("extern u32 func_0203521C(u32 *p);",
+        source = _need(source, "extern u32 func_0203521C(u32 *p);",
                                 "extern void *func_0203521C(u32 *p);")
     return source
 
@@ -1616,56 +1635,56 @@ def main(argv=None) -> int:
         source = native_matched_types(source, src_path)
     if src_path.replace("\\", "/").endswith("/src/game/arm9/tcb_list.c"):
         source = "#include <stddef.h>\n" + source
-        source = source.replace("return (idx << 5) + 0x38;",
+        source = _need(source, "return (idx << 5) + 0x38;",
                                 "return offsetof(struct TcbSystem, freeStackStorage) + "
                                 "idx * (sizeof(struct TcbTask *) + sizeof(struct TcbTask));")
     if src_path.replace("\\", "/").endswith("/src/game/arm9/card_backup.c"):
         # ARM7 consumes the original 32-bit command protocol. Native buffer
         # pointers must cross that boundary as registered DS addresses.
         source = "#include <stdint.h>\nextern unsigned int bw_ds_wire_addr(uintptr_t);\n" + source
-        source = source.replace("const u32 arg = (uptr)p->cmd;",
+        source = _need(source, "const u32 arg = (uptr)p->cmd;",
                                 "const u32 arg = bw_ds_wire_addr((uintptr_t)p->cmd);")
-        source = re.sub(r"(p->cmd->(?:src|dst)\s*=\s*)([^;]+);",
+        source = _need_re(r"(p->cmd->(?:src|dst)\s*=\s*)([^;]+);",
                         r"\1bw_ds_wire_addr((uintptr_t)(\2));", source)
     if 'include/G_EnvModule.h"' in source and "struct EnvEntry {" in source:
         # The heap manager and its readers must agree with src/game's
         # pointer-typed HeapRecord at every host pointer width.
-        source = re.sub(r"\bu32\s+field04;", "void *field04;", source)
-        source = re.sub(r"\bu32\s+field08;", "void *field08;", source)
+        source = _need_re(r"\bu32\s+field04;", "void *field04;", source)
+        source = _need_re(r"\bu32\s+field08;", "void *field08;", source)
         source = source.replace("u32 GFL_HEAP_GetParentHeap(", "void *GFL_HEAP_GetParentHeap(")
         source = source.replace("u32 GFL_HEAP_GetBlock(", "void *GFL_HEAP_GetBlock(")
     if src_path.replace("\\", "/").endswith("/src/game/arm9/nns_fnd_expheap.c"):
         # The native common header grows with its link and child-list
         # pointers. Its recovered aliases must use those same offsets.
         source = "#include <stddef.h>\n" + source
-        source = source.replace("pad_00[0x18]", "pad_00[offsetof(NNSiFndHeapHead, heapStart)]")
-        source = source.replace("pad00[0x0c]", "pad00[offsetof(NNSiFndHeapHead, childList)]")
-        source = source.replace("u32 min_val;", "uptr min_val;")
-        source = source.replace("u32 max_val;", "uptr max_val;")
-        source = source.replace("struct DList *list, u32 val", "struct DList *list, uptr val")
-        source = source.replace("NNSi_FndFindListContainHeap(u32 a)", "NNSi_FndFindListContainHeap(uptr a)")
-        source = source.replace("NNSi_FndInitMBlock(int *p", "NNSi_FndInitMBlock(sptr *p")
-        source = source.replace("int  pair[2];", "sptr pair[2];")
-        source = source.replace("(u8 *)heap + 0x38", "(u8 *)heap + sizeof(struct ExpHeap)")
-        source = source.replace("(char *)q + 0x10", "(char *)q + sizeof(struct MBlock)")
-        source = source.replace("NNS_FndInitList(&pHeapHd->childList, 4)",
+        source = _need(source, "pad_00[0x18]", "pad_00[offsetof(NNSiFndHeapHead, heapStart)]")
+        source = _need(source, "pad00[0x0c]", "pad00[offsetof(NNSiFndHeapHead, childList)]")
+        source = _need(source, "u32 min_val;", "uptr min_val;")
+        source = _need(source, "u32 max_val;", "uptr max_val;")
+        source = _need(source, "struct DList *list, u32 val", "struct DList *list, uptr val")
+        source = _need(source, "NNSi_FndFindListContainHeap(u32 a)", "NNSi_FndFindListContainHeap(uptr a)")
+        source = _need(source, "NNSi_FndInitMBlock(int *p", "NNSi_FndInitMBlock(sptr *p")
+        source = _need(source, "int  pair[2];", "sptr pair[2];")
+        source = _need(source, "(u8 *)heap + 0x38", "(u8 *)heap + sizeof(struct ExpHeap)")
+        source = _need(source, "(char *)q + 0x10", "(char *)q + sizeof(struct MBlock)")
+        source = _need(source, "NNS_FndInitList(&pHeapHd->childList, 4)",
                                 "NNS_FndInitList(&pHeapHd->childList, offsetof(NNSiFndHeapHead, link))")
-        source = source.replace("NNS_FndInitList(&sRootList, 4)",
+        source = _need(source, "NNS_FndInitList(&sRootList, 4)",
                                 "NNS_FndInitList(&sRootList, offsetof(NNSiFndHeapHead, link))")
     if src_path.replace("\\", "/").endswith("/src/game/arm9/os_arena.c"):
         # The recovered host form widened the arena pointer but left its
         # unsigned alignment mask at 32 bits, clearing the high address.
-        source = source.replace("u32 inv;", "uptr inv;")
-        source = source.replace("u32 mask;", "uptr mask;")
-        source = source.replace("(u32)(n)", "(uptr)(n)")
+        source = _need(source, "u32 inv;", "uptr inv;")
+        source = _need(source, "u32 mask;", "uptr mask;")
+        source = _need(source, "(u32)(n)", "(uptr)(n)")
     if src_path.replace("\\", "/").endswith("/src/game/arm9/tcbl.c"):
         # src/game has real pointers, but these two row-stride literals
         # still count DS header bytes. Adapt only the generated host copy.
-        source = source.replace("tcbl->workSize + 0x18",
+        source = _need(source, "tcbl->workSize + 0x18",
                                 "tcbl->workSize + sizeof(struct TcblTask)")
-        source = source.replace("(((workSize + 3) & ~3) + 0x18)",
+        source = _need(source, "(((workSize + 3) & ~3) + 0x18)",
                                 "(((workSize + sizeof(void *) - 1) & ~(sizeof(void *) - 1)) + sizeof(struct TcblTask))")
-        source = source.replace("tcbl->workSize = workSize;",
+        source = _need(source, "tcbl->workSize = workSize;",
                                 "tcbl->workSize = (workSize + sizeof(void *) - 1) & ~(sizeof(void *) - 1);")
         source = "#define tcbl_File sub_0203101C_File\n" + source
     if a.cut_list or a.cut_asm:
@@ -1792,7 +1811,7 @@ def _rewrite_local_headers(src_path, out_path, seen):
         if hp.replace("\\", "/").endswith("/src/game/arm9/card_common.h"):
             # Only the shared command is wire data. CARDiCommon's working
             # pointers remain pointer-sized on the host.
-            text = re.sub(r"(typedef struct CARDiCommandArg\b.*?} CARDiCommandArg;)",
+            text = _need_re(r"(typedef struct CARDiCommandArg\b.*?} CARDiCommandArg;)",
                           lambda m: m.group(0).replace("uptr src;", "u32 src;")
                                                    .replace("uptr dst;", "u32 dst;"),
                           text, flags=re.S)
