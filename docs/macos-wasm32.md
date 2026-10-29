@@ -23,8 +23,9 @@ python3 tools/lp64/layouts.py --build build-macos \
   --details-json ../macos-layout-audit.json
 ```
 
-Measured against Aletheia `751566854b4e3974969a78f046b9d78d4436a8b0`,
-using this branch's generated source copies:
+The initial audit, before the native scalar and pointer layout fixes,
+used Aletheia `751566854b4e3974969a78f046b9d78d4436a8b0` and generated
+source copies from that checkpoint:
 
 | Comparison | Compared records | Different layouts | Units with differences |
 |---|---:|---:|---:|
@@ -70,52 +71,30 @@ scheduler wasm2c: host pointers 8 bytes, game pointers 4 bytes, 329 checks, fail
 WABT's macOS ARM64 release archive was checked against its published SHA256:
 `wabt-1.0.42-macos-arm64.tar.gz.sha256`.
 
-## Full-game work remaining
+## Full-game build
 
-The smoke test is not a playable game. The full port still needs the wasm32
-build configuration and libc sysroot, the prototype-adapter/link pass from
-`tools/lp64/sigfix.py`, native file/time/SDL imports, and the thread/run-token
-bridge described in `docs/lp64.md`. `plat_thread.c` now declares explicit `eidos` host imports when compiled
-for WASI, with opaque 32-bit handles and an exported thread callback dispatcher.
-The import boundary compiles with WASI SDK 25 and native macOS; the embedder
-still needs to implement these imports, per-thread shadow stacks and unwind
-handling. `os_thread.c` still uses native setjmp/longjmp, so the existing
-prototype runner cannot run the full game unchanged.
+The full game uses the shared two-stage build in `tools/build64.py`:
+WASI compilation and signature repair, followed by wasm2c translation and
+native compilation of `host/`. See `docs/lp64.md` for its architecture.
+The SDK's imports are declared in `sdk/wasm_host.h`; the game threads use
+host fibers, with a separate module stack for each fiber. Socket waits yield
+to the other fibers, and filesystem calls use `host/wasi.c`.
 
-Validate the host bridge with thread and filesystem tests, then boot using
-the player's extracted assets. New game, field movement, opening battles,
-and save/continue remain the playability checks before packaging a macOS app.
-The direct LP64 boot remains a diagnostic build; its latest observed stop is
-a DS callback table read as native pointers during `GFL_NET_SetupHeaps`.
+With the toolchain already installed by `tools/fetch_wasm.py` and SDL3
+available from Homebrew:
 
-## Relocated build checkpoint
+```sh
+python3 tools/build64.py --build-dir build-macos64 \
+  --aletheia-root ../aletheia --sdl3-prefix "$(brew --prefix sdl3)"
+```
 
-Repositories are `/Users/michael/github/eidos` and
-`/Users/michael/github/aletheia`. Both were moved with Git history and all
-uncommitted work verified against file hashes. ROM data, tool downloads,
-profiles and logs remain under the original Documents/Codex workspace.
-Old absolute-path build trees are retained as `build-macos-pre-move` and
-`build-macos-core-pre-move`. The fresh `build-macos` points at the new paths;
-all eight targeted native regression tests pass. The relocated wasm2c
-scheduler still passes 329 checks.
+`EIDOS_WASM` controls the optional mod runtime, not whether the game itself
+is compiled to WebAssembly. The full build enables that runtime and relay
+TLS. Generated sources and native objects are managed by CMake/Ninja,
+including header dependencies and compiler options.
 
-A WASI SDK 25 build now configures successfully in `build-wasm32` with
-`EIDOS_SDL=OFF`, `EIDOS_WASM=OFF`, `EIDOS_TLS=OFF`, `EIDOS_BOOT=ON` and
-`EIDOS_OVERLAYS=ALL`. Here `EIDOS_WASM` controls the optional mod runtime,
-not the game's compilation target. `eidos_boot_game` compiles successfully
-with 429 selected game units. This is an object-library build, not a linked
-or playable game.
-
-A keep-going build of the SDK found four failing source files:
-
-| Source | Native dependency needing a host boundary |
-|---|---|
-| `sdk/mod_net.c` | resolver and socket APIs (`netdb.h`) |
-| `sdk/mp.c` | sleep (`nanosleep`) |
-| `sdk/plat_crash.c` | signals and watchdog pthreads |
-| `sdk/os_thread.c` | setjmp/longjmp unwinding |
-
-The next step is to supply native implementations and per-thread stack
-handling for the threading imports, then move the four dependencies above
-behind that host interface. SDL/file imports and a complete link follow.
-No PR has been opened.
+The standalone scheduler smoke test only checks the compiler/runtime path.
+Before packaging a macOS app, verify boot with extracted assets, new game,
+field movement, battles, and save/continue in the full build. Direct LP64
+builds remain diagnostic because the game's data layouts assume 32-bit
+pointers.

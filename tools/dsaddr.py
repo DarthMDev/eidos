@@ -27,7 +27,9 @@ is the type uint32_t names on every target eidos builds for;
 tests/test_dsaddr.py compiles the prelude next to sdk/dsmem.h to prove the
 two declarations agree on the compiler in use.
 
-A file with nothing to rewrite is copied byte for byte.
+The address rewrite leaves files without address uses unchanged. Generated
+host copies also retain the DS widths of recovered u32/s32 typedefs and
+shared RTC records, and adapt selected declarations at native pointer boundaries.
 
 The same rewrite applies where a name provably stands for a DS address
 (see "Names that stand for DS addresses" below): a file-local constant
@@ -1547,6 +1549,22 @@ def build_report(root: str) -> str:
     return "\n".join(out)
 
 
+def native_matched_types(source: str, path: str) -> str:
+    """Keep recovered DS scalar names fixed-width in generated host copies."""
+    source = re.sub(
+        r"(?m)^([ \t]*typedef[ \t]+(?:volatile[ \t]+)?(?:unsigned[ \t]+|signed[ \t]+)?)"
+        r"long([ \t]+(?:u32|s32|vu32|vs32)[ \t]*;)", r"\1int\2", source)
+    # convert.o spells these shared SDK fields directly rather than as u32.
+    source = re.sub(r"typedef struct (RTCDate|RTCTime)\b.*?\} \1;",
+                    lambda m: re.sub(r"\bunsigned\s+long\b(?!\s+long)",
+                                     "unsigned int", m.group()), source, flags=re.S)
+    if path.replace("\\", "/").endswith("/src/matched/arm9/func_02035F38.c"):
+        # KEY_MainSys's getter returns the native Key object, not an integer.
+        source = source.replace("extern u32 func_0203521C(u32 *p);",
+                                "extern void *func_0203521C(u32 *p);")
+    return source
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("inputs", nargs="*")
@@ -1594,6 +1612,8 @@ def main(argv=None) -> int:
     src_path = a.inputs[0]
     name = a.name or os.path.abspath(src_path)
     source = _read(src_path)
+    if "/src/matched/" in os.path.abspath(src_path).replace("\\", "/"):
+        source = native_matched_types(source, src_path)
     if src_path.replace("\\", "/").endswith("/src/game/arm9/tcb_list.c"):
         source = "#include <stddef.h>\n" + source
         source = source.replace("return (idx << 5) + 0x38;",

@@ -2477,6 +2477,8 @@ endif()
 if(APPLE)
     add_test(NAME test_macos_link COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_macos_link.py)
+    add_test(NAME test_host_wasi COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_host_wasi.py)
 endif()
 
 # --- the ARM9 image's data (sdk/armdata.c, tools/armdata.py) ----------------

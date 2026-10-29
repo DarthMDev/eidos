@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
-        run: brew install ninja sdl2
+        run: brew install ninja sdl3
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
@@ -36,6 +36,8 @@ jobs:
             -DALETHEIA_ROOT="$PWD/aletheia" \
             -DEIDOS_BOOT=OFF -DEIDOS_WASM=OFF -DEIDOS_TLS=OFF
       - name: Build
-        run: cmake --build build --parallel 4
+        run: |
+          cmake --build build --target eidos_platform --parallel 4
+          cmake --build build --parallel 4
       - name: Test
         run: ctest --test-dir build --output-on-failure --parallel 4

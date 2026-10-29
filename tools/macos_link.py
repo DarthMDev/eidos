@@ -10,6 +10,7 @@ import argparse
 import os
 import shlex
 import subprocess
+import sys
 
 
 def weak_symbols(output):
@@ -45,12 +46,30 @@ def main():
         parser.error("missing linker command")
     inputs = [p for p in expand_response(command[1:])
               if p.endswith((".o", ".a")) and os.path.isfile(p)]
-    weak, required = set(), set()
+    weak = set()
     if inputs:
         output = subprocess.check_output([args.nm, "-m", *inputs], text=True)
-        weak, required = weak_symbols(output)
+        weak, _ = weak_symbols(output)
     flags = ["-Wl,-U," + symbol for symbol in sorted(weak)]
-    return subprocess.call(command + flags)
+    result = subprocess.call(command + flags)
+    if result or not weak:
+        return result
+    # An archive can contain strong references in members the linker never
+    # extracts. Check the finished image so only references actually linked
+    # into this executable decide whether a provider is required. Imports
+    # satisfied by a dylib are not dynamically looked up.
+    expanded = expand_response(command[1:])
+    executable = expanded[expanded.index("-o") + 1] if "-o" in expanded else "a.out"
+    output = subprocess.check_output([args.nm, "-m", executable], text=True)
+    _, required = weak_symbols("\n".join(
+        line for line in output.splitlines() if "(dynamically looked up)" in line))
+    missing = weak & required
+    if missing:
+        os.unlink(executable)
+        print("macos_link: missing required providers: " + ", ".join(sorted(missing)),
+              file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -39,12 +39,36 @@ class Symbols(unittest.TestCase):
             provider.write_text("int optional(void) { return 7; }\n")
             subprocess.run(command + [str(provider)], check=True)
             self.assertEqual(subprocess.run([str(exe)]).returncode, 7)
+            dylib = root / "libprovider.dylib"
+            subprocess.run(["cc", "-dynamiclib", str(provider), "-o", str(dylib)], check=True)
+            subprocess.run(command + [str(dylib)], check=True)
+            self.assertEqual(subprocess.run([str(exe)]).returncode, 7)
+            unused = root / "unused.c"
+            unused.write_text("extern int optional(void);\n"
+                              "int unused(void) { return optional(); }\n")
+            unused_obj = root / "unused.o"
+            archive = root / "libunused.a"
+            subprocess.run(["cc", "-c", str(unused), "-o", str(unused_obj)], check=True)
+            subprocess.run(["ar", "rcs", str(archive), str(unused_obj)], check=True)
+            subprocess.run(command + [str(archive)], check=True)
+            self.assertEqual(subprocess.run([str(exe)]).returncode, 0,
+                             "an unused archive member must not require its provider")
             source.write_text("extern int required(void);\n"
                               "int main(void) { return required(); }\n")
             subprocess.run(["cc", "-c", str(source), "-o", str(obj)], check=True)
             failed = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn("_required", failed.stderr)
+            weak = root / "weak.c"
+            weak.write_text("extern int required(void) __attribute__((weak));\n"
+                            "int another(void) { return required ? required() : 0; }\n")
+            weak_obj = root / "weak.o"
+            subprocess.run(["cc", "-c", str(weak), "-o", str(weak_obj)], check=True)
+            failed = subprocess.run(command + [str(weak_obj)], capture_output=True, text=True)
+            self.assertNotEqual(failed.returncode, 0,
+                                "a weak reference must not hide a required provider")
+            self.assertIn("_required", failed.stderr)
+            self.assertFalse(exe.exists(), "do not leave an executable with a missing provider")
 
 
 if __name__ == "__main__":

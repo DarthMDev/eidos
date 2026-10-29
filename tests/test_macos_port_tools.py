@@ -10,11 +10,60 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import armdata
 import dsaddr
 import wasm32_layout
+import gamespell
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools/lp64"))
 import layouts
 
 
 class PortTools(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("clang"), "clang required for scalar layout")
+    def test_matched_sdk_scalars_keep_ds_width(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "src/matched/arm9_sdk/checker.c"
+            source.parent.mkdir(parents=True)
+            source.write_text("typedef unsigned long u32;\n"
+                              "typedef long s32;\n"
+                              "typedef volatile unsigned long vu32;\n"
+                              "typedef unsigned long native_word;\n"
+                              "typedef unsigned long long u64;\n"
+                              "struct Work { char pad[0x388]; u32 checker[2]; };\n"
+                              "typedef struct RTCDate { unsigned long year, month, day; int week; } RTCDate;\n"
+                              "typedef char rtc_size[sizeof(RTCDate) == 16 ? 1 : -1];\n"
+                              "typedef char word[sizeof(u32) == 4 ? 1 : -1];\n"
+                              "typedef char signed_word[sizeof(s32) == 4 ? 1 : -1];\n"
+                              "typedef char volatile_word[sizeof(vu32) == 4 ? 1 : -1];\n"
+                              "typedef char wide_word[sizeof(u64) == 8 ? 1 : -1];\n"
+                              "typedef char native[sizeof(native_word) == sizeof(unsigned long) ? 1 : -1];\n"
+                              "typedef char checker[__builtin_offsetof(struct Work, checker) + sizeof(u32) == 0x38C ? 1 : -1];\n")
+            output = root / "host.c"
+            subprocess.run([sys.executable, str(Path(dsaddr.__file__)), str(source),
+                            "-o", str(output)], check=True)
+            subprocess.run([shutil.which("clang"), "-fsyntax-only", str(output)], check=True)
+            subprocess.run([shutil.which("clang"), "--target=wasm32-unknown-unknown",
+                            "-fsyntax-only", str(output)], check=True)
+
+    def test_heap_replacement_preserves_alias_forwarder(self):
+        root = Path(gamespell.PORT_ROOT)
+        replacement = str(root / "stubs/reimpl_02060A08.c")
+        sources = {
+            replacement: "void *func_02060A08(void *h, int n, int a) { return alloc(n); }",
+            str(root / "sdk/aliases.c"):
+                "void *NNSi_FndAllocFromExpHeapHead(void *h, int n, int a) {\n"
+                "return func_02060A08(h, n, a);\n}",
+        }
+        cmake = "set(BW_HEAP_REIMPL ${CMAKE_CURRENT_SOURCE_DIR}/stubs/reimpl_02060A08.c)"
+        _, _, definer = gamespell.port_names(sources)
+        names = {0x02060A08: "NNSi_FndAllocFromExpHeapHead"}
+        self.assertEqual(gamespell.replacement_copies(
+            cmake, sources, definer, {}, names, set(), set()), {})
+        # Without a forwarder, the replacement must provide the game's name.
+        sources.pop(str(root / "sdk/aliases.c"))
+        _, _, definer = gamespell.port_names(sources)
+        self.assertEqual(gamespell.replacement_copies(
+            cmake, sources, definer, {}, names, set(), set()),
+            {"func_02060A08": "NNSi_FndAllocFromExpHeapHead"})
+
     @unittest.skipUnless(shutil.which("clang"), "clang required for packet layout")
     def test_wasm_packet_alignment_is_scoped(self):
         original = ("typedef struct GdsPacketDownload {\n"

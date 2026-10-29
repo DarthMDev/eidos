@@ -51,11 +51,6 @@
 
 #include <sys/stat.h>
 
-#ifdef __wasi__
-__attribute__((import_module("eidos"), import_name("sleep_ms")))
-extern void bw_host_sleep_ms(unsigned ms);
-#endif
-
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -3050,9 +3045,7 @@ void bw_mp_frame_at(u64 t)
 
 void bw_mp_hold_wait(void)
 {
-#ifdef __wasi__
-    bw_host_sleep_ms(16);
-#elif defined(_WIN32)
+#ifdef _WIN32
     Sleep(16);
 #elif defined(__wasm__)
     /* the other fibers run meanwhile (a libc sleep would stop them all) */

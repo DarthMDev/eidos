@@ -33,9 +33,9 @@ get_filename_component(EIDOS_OVLINK_TOOL "${EIDOS_OVLINK_TOOL}" ABSOLUTE)
 get_filename_component(_eidos_ovl_tools "${EIDOS_OVLINK_TOOL}" DIRECTORY)
 
 set(EIDOS_OVLINK_PLATFORM_ARGS)
-if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
-    # The game module has no native platform settings UI. Retain its own
-    # title/options menus rather than injecting calls to an absent model.
+if(CMAKE_SYSTEM_NAME STREQUAL "WASI" AND DEFINED EIDOS_SDL AND NOT EIDOS_SDL)
+    # Headless diagnostic modules have no platform settings UI. The shared
+    # SDL host supports the regular settings patches in full-game builds.
     list(APPEND EIDOS_OVLINK_PLATFORM_ARGS --no-platform-ui)
 endif()
 
