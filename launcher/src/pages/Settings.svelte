@@ -2,7 +2,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import ThemePicker from "morphe/ThemePicker.svelte";
   import { toast } from "morphe/menu.svelte";
-  import { getSettings, message, openFolder, saveSettings, type Overview } from "../lib/backend";
+  import { getSettings, message, openFolder, saveSettings, setRom, type Game, type Overview } from "../lib/backend";
   import Icon from "../lib/Icon.svelte";
   import { autoUpdate, checkForUpdate, setAutoUpdate, updates } from "../lib/updater.svelte";
 
@@ -16,6 +16,7 @@
   let token = $state("");
   let clearToken = $state(false);
   let auto = $state(autoUpdate());
+  let roms = $state<Record<Game, string | null>>({ black: null, white: null });
 
   $effect(() => {
     getSettings().then((s) => {
@@ -23,8 +24,31 @@
       indexUrl = s.indexUrl;
       localBuild = s.localBuild ?? "";
       tokenSet = s.tokenSet;
+      roms = { black: s.romBlack, white: s.romWhite };
     });
   });
+
+  const games: [Game, string][] = [
+    ["black", "Pokémon Black"],
+    ["white", "Pokémon White"],
+  ];
+
+  async function chooseRom(game: Game, label: string) {
+    const path = await open({ multiple: false, title: label, filters: [{ name: "DS ROM", extensions: ["nds"] }] });
+    if (typeof path === "string") await applyRom(game, path);
+  }
+
+  async function applyRom(game: Game, path: string | null) {
+    try {
+      const s = await setRom(game, path);
+      roms = { black: s.romBlack, white: s.romWhite };
+      toast(path ? "ROM saved." : "ROM removed.");
+    } catch (e) {
+      toast(message(e), true);
+    }
+  }
+
+  const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
   async function pickBuild() {
     const path = await open({ directory: true, multiple: false, title: "Folder with an eidos build" });
@@ -65,6 +89,29 @@
     <h2 class="section-label">Appearance</h2>
     <div class="window block">
       <ThemePicker />
+    </div>
+  </div>
+
+  <div>
+    <h2 class="section-label">ROMs</h2>
+    <div class="window block">
+      {#each games as [game, label] (game)}
+        <div class="inline rom">
+          <div class="grow">
+            <div class="title">{label}</div>
+            {#if roms[game]}
+              <div class="muted small path" title={roms[game]}>{fileName(roms[game] ?? "")}</div>
+            {:else}
+              <div class="muted small">Not set</div>
+            {/if}
+          </div>
+          {#if roms[game]}
+            <button class="quiet" onclick={() => applyRom(game, null)} title="Remove"><Icon name="trash" size={15} /></button>
+          {/if}
+          <button onclick={() => chooseRom(game, label)}><Icon name="folder" size={15} />Choose</button>
+        </div>
+      {/each}
+      <span class="muted small">Your own dumps. eidos makes its game data from the Black ROM when it needs to.</span>
     </div>
   </div>
 
@@ -137,6 +184,14 @@
   }
   .title {
     font-weight: 600;
+  }
+  .rom .grow {
+    min-width: 0;
+  }
+  .path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .check {
     gap: 0.6rem;

@@ -207,8 +207,8 @@ static struct {
  * horizontal into a texture, then vertical onto the window with the dark
  * tint.
  *
- * k_fsu: the interface canvas, premultiplied RGBA, sampled nearest and
- * blended over what is there.
+ * k_fsu: the interface canvas, straight RGBA, sampled nearest and blended
+ * over what is there.
  */
 static const char *k_fsw =
     "#version 330 core\n"
@@ -223,6 +223,7 @@ static const char *k_fsw =
     "uniform int dil;\n"
     "uniform int hasz;\n"
     "uniform int hide2d;\n"
+    "uniform int crop;\n"
     "uniform float bfac;\n"
     "uniform vec3 sent;\n"
     "in vec2 uv;\n"
@@ -230,13 +231,19 @@ static const char *k_fsw =
     SHARP_FN
     "void main() {\n"
     "    vec2 f = vec2(gl_FragCoord.x, win.y - gl_FragCoord.y);\n"
-    "    vec4 g = texture(g3d, gl_FragCoord.xy / win);\n"
+    "    vec2 duv = (f - dsr.xy) / dsr.zw;\n"
+    /* a cropped world's 3D was rendered at the DS rectangle's size */
+    "    vec4 g = texture(g3d, crop != 0 ? vec2(duv.x, 1.0 - duv.y) : gl_FragCoord.xy / win);\n"
     "    vec3 P = g.rgb;\n"
     "    float A = g.a;\n"
     "    if (bmode == 1) { P = (1.0 - bfac) * P + bfac * A; }\n"
     "    else if (bmode == 2) { P = (1.0 - bfac) * P; }\n"
-    "    vec2 duv = (f - dsr.xy) / dsr.zw;\n"
     "    bool inside = hide2d == 0 && duv.x >= 0.0 && duv.y >= 0.0 && duv.x < 1.0 && duv.y < 1.0;\n"
+    /* A scene drawn for the DS's own frame: nothing outside its rectangle. */
+    "    if (crop != 0 && (duv.x < 0.0 || duv.y < 0.0 || duv.x >= 1.0 || duv.y >= 1.0)) {\n"
+    "        color = vec4(0.0, 0.0, 0.0, 1.0);\n"
+    "        return;\n"
+    "    }\n"
     /* Outside the DS rectangle the world shows its 3D, except where the
      * game covers the edge of its screen with black 2D (a wipe, a fade to
      * black that the game draws with a layer, not the brightness): that
@@ -328,11 +335,11 @@ static const char *k_fsu =
  * (else the fallback draws the two screens as the other layouts do).
  */
 static struct {
-    int on, world, screen, hide2d, blur, no_fade, hold, keep, dark, mix;
+    int on, world, screen, hide2d, crop, blur, no_fade, hold, keep, dark, mix;
     SDL_Rect ds;                   /* the DS screen's rectangle in the window */
     GLuint progw, progb, progu;
     GLint w_tex, w_behind, w_g3d, w_zero, w_texsize, w_dsr, w_win, w_bmode,
-          w_dil, w_hasz, w_hide2d, w_bfac, w_sent, w_rect;
+          w_dil, w_hasz, w_hide2d, w_crop, w_bfac, w_sent, w_rect;
     GLint b_src, b_win, b_dir, b_tint, b_rect;
     GLint u_ctex, u_rect;
     GLuint ctex;                   /* the canvas */
@@ -601,6 +608,7 @@ EidosGl *eidos_gl_create(SDL_Window *window)
         g_one.w_dil = g->glGetUniformLocation(g_one.progw, "dil");
         g_one.w_hasz = g->glGetUniformLocation(g_one.progw, "hasz");
         g_one.w_hide2d = g->glGetUniformLocation(g_one.progw, "hide2d");
+        g_one.w_crop = g->glGetUniformLocation(g_one.progw, "crop");
         g_one.w_bfac = g->glGetUniformLocation(g_one.progw, "bfac");
         g_one.w_sent = g->glGetUniformLocation(g_one.progw, "sent");
     }
@@ -807,18 +815,48 @@ static void cap_tex_setup(GLuint t, int w, int h, const unsigned char *px)
  * capture (the bank's content, 256 x 192 RGBA): the first frame, or after
  * the game wrote the bank itself.
  */
+/* EIDOS_DEBUG_CAP: where eidos_gl_capture stops and which GL error is
+ * pending at each step, for the first 40 frames that capture.  A diagnosis
+ * aid for drivers that refuse what others accept (macOS). */
+static int cap_dbg_left = -1;
+
+static void cap_dbg(const char *step)
+{
+    GLenum e;
+
+    if (cap_dbg_left < 0) {
+        cap_dbg_left = getenv("EIDOS_DEBUG_CAP") != NULL ? 40 : 0;
+    }
+    if (cap_dbg_left == 0) {
+        return;
+    }
+    e = glGetError();
+    fprintf(stderr, "cap %s: GL error %04X\n", step, (unsigned)e);
+}
+
 int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
                      const unsigned char *behind,
                      const struct G3dSnapshot *snap, int scale, int blend,
                      int eva, int evb, const unsigned char *b1x)
 {
-    int w = 256 * scale, h = 192 * scale, next, i;
+    int w = 256 * scale, h = 192 * scale, next, i, r3;
 
     if (g == NULL || !g->have3d || g->progc == 0 || g->prog3 == 0
         || a2d == NULL || behind == NULL || snap == NULL || scale < 1) {
+        cap_dbg("refused (no 3D, programs or input)");
         return -1;
     }
-    if (eidos_gl_render3d(g, snap, w, h) != 0) {
+    cap_dbg("before the 3D render");
+    r3 = eidos_gl_render3d(g, snap, w, h);
+    if (cap_dbg_left > 0) {
+        fprintf(stderr, "cap render3d %dx%d returned %d (scale %d blend %d valid %d b1x %d)\n",
+                w, h, r3, scale, blend, g->cap_valid, b1x != NULL);
+        cap_dbg("after the 3D render");
+    }
+    if (r3 != 0) {
+        if (cap_dbg_left > 0) {
+            cap_dbg_left--;
+        }
         return -1;
     }
     if (g->cap_fbo == 0) {
@@ -839,6 +877,10 @@ int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
         g->cap_valid = 0;
     }
     if (blend && !g->cap_valid && b1x == NULL) {
+        cap_dbg("refused (blend with no valid capture before)");
+        if (cap_dbg_left > 0) {
+            cap_dbg_left--;
+        }
         return -1;
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -856,9 +898,15 @@ int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
     g->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                               g->capa_tex, 0);
     if (g->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        if (cap_dbg_left > 0) {
+            fprintf(stderr, "cap source FBO incomplete: %04X\n",
+                    (unsigned)g->glCheckFramebufferStatus(GL_FRAMEBUFFER));
+            cap_dbg_left--;
+        }
         g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
         return -1;
     }
+    cap_dbg("after the uploads and the FBO");
     glViewport(0, 0, w, h);
     glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);
@@ -881,6 +929,7 @@ int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
     g->glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, g->cap_src[0]);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    cap_dbg("after source A");
 
     /* the capture: A alone, or mixed with the capture before it */
     next = g->cap_cur ^ 1;
@@ -902,6 +951,11 @@ int eidos_gl_capture(EidosGl *g, const unsigned char *a2d,
     g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     g->cap_cur = next;
     g->cap_valid = 1;
+    if (cap_dbg_left > 0) {
+        cap_dbg("after the capture");
+        cap_dbg_left--;
+        return 0;
+    }
     return glGetError() == GL_NO_ERROR ? 0 : -1;
 }
 
@@ -1031,7 +1085,8 @@ void eidos_gl_one_set(EidosGl *g, int on, int world, int screen,
     g_one.world = on && world && ds != NULL && screen >= 0 && screen < 2;
     g_one.screen = screen;
     g_one.hide2d = hide_2d != 0;
-    g_one.blur = blur != 0;
+    g_one.crop = (no_fade & (1 << 18)) != 0;
+    g_one.blur = blur < 0 ? 0 : blur > 16 ? 16 : blur;
     g_one.no_fade = (no_fade & 1) != 0;
     g_one.hold = (no_fade & 2) != 0;
     g_one.keep = (no_fade & 4) != 0;
@@ -1120,11 +1175,10 @@ static int one_bind_target(EidosGl *g, int i, int w, int h)
  * window's height so the blur looks the same at any size. */
 static void one_blur(EidosGl *g, int out_w, int out_h)
 {
-    float step = (float)out_h / 180.f;
-
-    if (step < 1.f) {
-        step = 1.f;
-    }
+    /* the strength eases in and out (g_one.blur 1..16): the taps spread
+     * and the tint darkens with it */
+    float a = (float)g_one.blur / 16.f;
+    float step = (float)out_h / 180.f * a;
     glDisable(GL_BLEND);
     g->glBindVertexArray(g->vao);
     g->glUseProgram(g_one.progb);
@@ -1142,7 +1196,7 @@ static void one_blur(EidosGl *g, int out_w, int out_h)
     g->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, out_w, out_h);
     g->glUniform2f(g_one.b_dir, 0.f, step);
-    g->glUniform1f(g_one.b_tint, 0.45f);
+    g->glUniform1f(g_one.b_tint, 1.f - 0.55f * a);
     glBindTexture(GL_TEXTURE_2D, g_one.btex[1]);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
@@ -1153,7 +1207,8 @@ static void one_world(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
     const int use_w = g_one.progw != 0 && g->prog3 != 0 && g->tw[s] != 0 &&
                       s != g->cap_screen && g->behind_w == g->tw[s] &&
                       g->behind_h == g->th[s] &&
-                      eidos_gl_3d_matches(g, s, out_w, out_h);
+                      eidos_gl_3d_matches(g, s, g_one.crop ? g_one.ds.w : out_w,
+                                          g_one.crop ? g_one.ds.h : out_h);
     int blur = g_one.blur && g_one.progb != 0;
     int frozen = g_one.frozen_ok && g_one.fw == out_w && g_one.fh == out_h;
     int dark = g->bmode != 0 && g->bfac > 0.f;
@@ -1223,6 +1278,7 @@ static void one_world(EidosGl *g, int out_w, int out_h, const SDL_Rect dst[2])
         g->glUniform1i(g_one.w_dil, g->dilate);
         g->glUniform1i(g_one.w_hasz, g->has_zero);
         g->glUniform1i(g_one.w_hide2d, g_one.hide2d);
+        g->glUniform1i(g_one.w_crop, g_one.crop);
         g->glUniform3fv(g_one.w_sent, 1, sent);
         g->glActiveTexture(GL_TEXTURE3);
         glBindTexture(GL_TEXTURE_2D, g->zero_tex);
@@ -1325,7 +1381,10 @@ static void one_canvas(EidosGl *g, int out_w, int out_h)
     g->glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, g_one.ctex);
     glEnable(GL_BLEND);
-    g->glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE,
+    /* the canvas is straight RGBA (engine/ui/kit.c): a pixel fading out
+     * keeps its colour and loses its alpha, so it is weighed by its alpha
+     * here, or a fading panel would brighten toward white */
+    g->glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE,
                            GL_ONE_MINUS_SRC_ALPHA);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glDisable(GL_BLEND);

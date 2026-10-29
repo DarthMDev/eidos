@@ -1139,6 +1139,48 @@ static void render_frame(void)
     }
 
     g3d_geom_sort(&g_hw.geom, (int)(g_hw.swap_param & 1u));
+    if (getenv("EIDOS_DEBUG_G3D_HASH") != NULL) {
+        /* Checking two machines against each other: every 60 frames, FNV-1a
+         * hashes of the frame's transformed vertices and polygons, and the
+         * registers the picture depends on.  Equal hashes on both: the 3D
+         * input is the same, and a difference comes later. */
+        /* "all": every frame, not every 60th */
+        static u32 frames;
+        int every = getenv("EIDOS_DEBUG_G3D_HASH")[0] == 'a';
+
+        if ((++frames % 60u) == 0 || every) {
+            u32 hv = 2166136261u, hp = 2166136261u, k;
+            const u8 *b;
+
+            for (k = 0; k < g_hw.geom.n_verts; k++) {
+                const G3dVertex *v = &g_hw.geom.verts[k];
+                s32 f[9] = { v->x, v->y, v->z, v->w, v->s, v->t, v->r, v->g, v->b };
+                u32 j;
+
+                for (b = (const u8 *)f, j = 0; j < sizeof(f); j++) {
+                    hv = (hv ^ b[j]) * 16777619u;
+                }
+            }
+            for (k = 0; k < g_hw.geom.n_polys; k++) {
+                const G3dPoly *p = &g_hw.geom.polys[k];
+                u32 f[4] = { p->first, p->count, p->attr, p->teximage };
+                u32 j;
+
+                for (b = (const u8 *)f, j = 0; j < sizeof(f); j++) {
+                    hp = (hp ^ b[j]) * 16777619u;
+                }
+            }
+            fprintf(stderr, "g3d hash frame %u: verts %u %08X polys %u %08X d3 %04X clear %08X/%04X fog %08X/%04X\n",
+                    frames, g_hw.geom.n_verts, hv, g_hw.geom.n_polys, hp, d3, cc, cd,
+                    bw_io_read32(G3D_HW_FOG_COLOR), bw_io_read16(G3D_HW_FOG_OFFSET));
+            if (g_hw.geom.n_verts > 0) {
+                const G3dVertex *v = &g_hw.geom.verts[0];
+
+                fprintf(stderr, "g3d hash frame %u: vertex 0 x %d y %d z %d w %d\n",
+                        frames, (int)v->x, (int)v->y, (int)v->z, (int)v->w);
+            }
+        }
+    }
     {
         static u32 swaps;
 
@@ -1232,6 +1274,24 @@ static void render_frame(void)
     }
     cache_clear();
     rear_passes(t, d3, cc, cd);
+    if (getenv("EIDOS_DEBUG_G3D_HASH") != NULL) {
+        /* the rasteriser's output: its hash and how much of it is drawn */
+        static u32 frames;
+        int every = getenv("EIDOS_DEBUG_G3D_HASH")[0] == 'a';
+
+        if ((++frames % 60u) == 0 || every) {
+            u32 h = 2166136261u, k, drawn = 0, n = t->width * t->height;
+
+            for (k = 0; k < n * 4u; k++) {
+                h = (h ^ t->rgba[k]) * 16777619u;
+            }
+            for (k = 0; k < n; k++) {
+                drawn += t->rgba[k * 4u + 3u] != 0;
+            }
+            fprintf(stderr, "g3d out frame %u: %ux%u %08X drawn %u of %u\n",
+                    frames, t->width, t->height, h, drawn, n);
+        }
+    }
 
     g_hw.unsup_frame = unsup;
     g_hw.have_frame = 1;

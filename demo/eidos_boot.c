@@ -344,6 +344,7 @@ typedef struct BootRun {
     u32 hi_n;          /* the n those buffers are sized for              */
     u8 *behind;        /* the 3D screen with its 3D layer off, 256x192   */
     u8 *ui_px[2];      /* the screens at 1x for the interface layer (ONE) */
+    u8 *ui_objs[2];    /* their OBJ layers alone, when a recipe asks      */
     int gpu3d_ok;      /* the last frame could use the GPU rasteriser    */
     u8 *frame1x;       /* the GPU's 3D frame at DS size (read back)      */
     int frame1x_valid; /* the GPU drew this frame's 3D (frame1x or sentinel) */
@@ -1133,6 +1134,22 @@ static void boot_ui_frame(BootRun *run)
             if (run->ui_px[i] != NULL) {
                 g2d_hw_box_downsample(src[i], run->hi_sn[i], run->ui_px[i]);
                 in.screen_rgba[i] = run->ui_px[i];
+            }
+        }
+    }
+    {
+        /* the OBJ layers a recipe asked for last frame */
+        int want = eidos_ui_objs_wanted(), i;
+
+        for (i = 0; i < 2; i++) {
+            if ((want & (1 << i)) == 0) {
+                continue;
+            }
+            if (run->ui_objs[i] == NULL) {
+                run->ui_objs[i] = (u8 *)calloc(1, (size_t)256 * 192 * 4);
+            }
+            if (run->ui_objs[i] != NULL && g2d_hw_objs_dsmem(i, run->ui_objs[i]) == 0) {
+                in.objs_rgba[i] = run->ui_objs[i];
             }
         }
     }

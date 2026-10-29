@@ -1235,6 +1235,9 @@ static void draw_moves(EidosUiCtx *c, const SummaryView *s, int x, int y, int w,
             }
             move_info(mv, &m2);
             (void)msg_text(BANK_MOVE, mv, name, (int)sizeof name, 0);
+            if (ui_move_name_modern((int)mv) != NULL) {
+                snprintf(name, sizeof name, "%s", ui_move_name_modern((int)mv));
+            }
             ui_move_row(c, x, yy, w, m2.type, name,
                         i < 4 ? (int)pv(s->mon, P_PP1 + (u32)i) : 0,
                         i < 4 ? (int)pv(s->mon, P_MAXPP1 + (u32)i) : 0, sel || hov == i);

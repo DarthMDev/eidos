@@ -138,8 +138,9 @@ int  ui_keycap_w(const char *label);
 /* A rectangle (sx, sy, w, h) of a DS screen as the game composed it
  * (EidosUiFrame.screen_rgba), drawn at (x, y) scaled by k.  key non-zero
  * leaves out the backdrop: the colour at the rectangle's top-left corner
- * wherever it reaches the rectangle's edge.  The way to show a picture the
- * game draws and the kit cannot decode (a Pokemon's front sprite). */
+ * wherever it reaches the rectangle's edge.  For a whole pane the game
+ * draws (a map, a form list); icons and sprites come from the game's data
+ * (ui_mon_front_anim, ui_item_icon) or its OBJ layer (eidos_ui_want_objs). */
 void ui_blit_screen(EidosUiCtx *c, int x, int y, const u8 *screen,
                     int sx, int sy, int w, int h, int k, int key);
 
@@ -149,6 +150,13 @@ const UiImage *ui_mon_icon(u16 species, u8 form, int frame);
 const UiImage *ui_overworld(u16 sprite, int dir, int frame);  /* walk frames */
 const UiImage *ui_trainer_front(u16 trainer_class);
 const UiImage *ui_mon_front(u16 species, u8 form, int shiny);
+/* The front as the game animates it: the idle loop at `t` frames, and
+ * where the rig's origin (the point its frames line up on) falls in the
+ * image.  The image lasts until the next call. */
+const UiImage *ui_mon_front_anim(u16 species, int shiny, u32 t, int *ox, int *oy);
+/* That loop drawn in a box: the largest whole scale that fits, standing on
+ * the box's bottom, centred. */
+void ui_mon_front_draw(EidosUiCtx *c, u16 species, int shiny, u32 t, int x, int y, int w, int h);
 
 /* ------------------------------------------------------------------ */
 /* Pieces (docs/ui-kit.md, "Pieces")                                   */
@@ -202,7 +210,14 @@ void ui_cursor_corners(EidosUiCtx *c, int x, int y, int w, int h, u32 color);
  * unknown mark (an unseen Pokemon) is UI_TYPE_UNKNOWN. */
 #define UI_TYPE_UNKNOWN 17
 const char *ui_type_name(int type);
+/* The spelling later games give a move whose Black and White name was
+ * squeezed into 12 letters ("Dragon Breath"), or NULL. */
+const char *ui_move_name_modern(int id);
 u32  ui_type_color(int type);
+/* recipe_dex.c: a species' name from the game's text (> 0 when found) and
+ * its two types (the same number twice for one type). */
+int  ui_species_name(int species, char *out, int cap);
+void ui_species_types(int species, int *t1, int *t2);
 
 /* Each returns the width it drew, where that depends on the text. */
 int  ui_keycap(EidosUiCtx *c, int x, int y, const char *label);

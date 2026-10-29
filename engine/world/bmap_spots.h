@@ -58,6 +58,7 @@ BmapSpot *bmap_spots_get(int i);
  * trainer row whose sight line or neighbouring tiles hold the player, or a
  * wild area row whose box holds them.  -1 when none. */
 int       bmap_spots_find(unsigned zone, int trainer, float px, float pz);
+int       bmap_spots_find_trainer(unsigned zone, int trainer_id, float px, float pz);
 /* The placement for row e (NULL: none) and the player at (px, pz), facing
  * the game's 16-bit angle. */
 void      bmap_spots_spec(const BmapSpot *e, float px, float pz, unsigned facing,

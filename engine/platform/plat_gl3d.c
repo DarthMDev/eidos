@@ -1393,7 +1393,19 @@ static void fog_pass(EidosGl *g, GlFb *f, const G3dSnapshot *s)
 
 static int msaa_target(EidosGl *g, GlFb *f, int w, int h)
 {
-    if ((long)w * (long)h > MSAA_MAX_PIXELS) {
+    /* the ID buffer is an integer target: a driver whose integer formats
+     * take fewer samples (macOS: GL_MAX_INTEGER_SAMPLES is 1) rejects its
+     * storage with GL_INVALID_OPERATION, and that error failed the frame */
+    static GLint samples = -1;
+
+    if (samples < 0) {
+        GLint any = 0, integer = 0;
+
+        glGetIntegerv(GL_MAX_SAMPLES, &any);
+        glGetIntegerv(GL_MAX_INTEGER_SAMPLES, &integer);
+        samples = any < integer ? any : integer;
+    }
+    if (samples < MSAA_SAMPLES || (long)w * (long)h > MSAA_MAX_PIXELS) {
         return 0;
     }
     if (f->ms_fbo == 0) {

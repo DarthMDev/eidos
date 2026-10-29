@@ -19,6 +19,10 @@ pub struct Settings {
     pub index_url: String,
     /// A folder holding a build of eidos, offered as the version "Local build".
     pub local_build: Option<PathBuf>,
+    /// The player's Pokemon Black ROM, given to the game (src/rom.rs).
+    pub rom_black: Option<PathBuf>,
+    /// The player's Pokemon White ROM.
+    pub rom_white: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -28,6 +32,8 @@ impl Default for Settings {
             token: String::new(),
             index_url: String::new(),
             local_build: None,
+            rom_black: None,
+            rom_white: None,
         }
     }
 }

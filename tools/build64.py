@@ -5,7 +5,11 @@ tools/build64.py -- the 64-bit game program, both stages (docs/lp64.md,
 
     python tools/build64.py --build-dir build64 [--release]
         [--aletheia-root DIR] [--data-root DIR] [--sdl3-prefix DIR]
-        [--cc HOST-CC] [--relay URL] [--fetch]
+        [--cc HOST-CC] [--relay URL] [--fetch] [--fast] [--parts N]
+        [--host-jobs N]
+
+--fast is for testing: the generated C at -O1, in 96 smaller files, 8
+compiled at once.  Releases keep the default (-O2, 32 files, 4 at once).
 
 Stage one configures this project for wasm32 with wasi-sdk and builds the
 module (BUILD/module/eidos_boot.wasm).  Stage two configures host/ with the
@@ -79,10 +83,22 @@ def main():
     ap.add_argument("--relay", default=None, help="EIDOS_DEFAULT_RELAY")
     ap.add_argument("--host-opt", default="-O2", help="wasm-opt's level (EIDOS_HOST_OPT)")
     ap.add_argument("--fetch", action="store_true", help="fetch the toolchain first")
-    ap.add_argument("--host-jobs", type=int, default=4,
+    ap.add_argument("--fast", action="store_true",
+                    help="a quick build for testing: the generated C at -O1, in "
+                         "more, smaller files, more of them at once (releases "
+                         "keep -O2)")
+    ap.add_argument("--parts", type=int, default=None,
+                    help="how many C files wasm2c writes (EIDOS_HOST_PARTS); "
+                         "smaller files need less memory each")
+    ap.add_argument("--host-jobs", type=int, default=None,
                     help="stage two's parallel compiles: each generated file takes "
                          "1-2 GB to compile")
     a = ap.parse_args()
+    # the release build: 32 files of 1-2 GB each to compile, 4 at a time;
+    # the quick one: 96 smaller files at -O1, which need much less memory
+    # each, so 8 at a time
+    parts = a.parts if a.parts is not None else (96 if a.fast else 32)
+    jobs = a.host_jobs if a.host_jobs is not None else (8 if a.fast else 4)
 
     t = tool_paths(a.fetch)
     sdl = sdl3_prefix(a.sdl3_prefix)
@@ -127,12 +143,14 @@ def main():
         "-DEIDOS_WASM_MODULE=%s" % os.path.join(mod, "eidos_boot.wasm"),
         "-DWABT_ROOT=%s" % t["WABT_ROOT"], "-DWASM2C=%s" % t["WASM2C"],
         "-DWASM_OPT=%s" % t["WASM_OPT"], "-DSDL3_PREFIX=%s" % sdl,
-        "-DEIDOS_HOST_OPT=%s" % a.host_opt, "-DCMAKE_C_FLAGS=-O2",
+        "-DEIDOS_HOST_OPT=%s" % a.host_opt,
+        "-DCMAKE_C_FLAGS=%s" % ("-O1" if a.fast else "-O2"),
+        "-DEIDOS_HOST_PARTS=%d" % parts,
         "-DEIDOS_HOST_WINDOWED=%s" % ("ON" if a.release else "OFF")]
     if a.cc:
         args.append("-DCMAKE_C_COMPILER=%s" % a.cc)
     run(args)
-    run(["cmake", "--build", host, "--parallel", str(a.host_jobs)])
+    run(["cmake", "--build", host, "--parallel", str(jobs)])
     return 0
 
 

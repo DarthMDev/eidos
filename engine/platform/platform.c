@@ -1110,7 +1110,8 @@ static void render(EidosPlatform *p)
                              (p->ui_view.no_fade ? 1 : 0) | (p->ui_view.hold_world ? 2 : 0) |
                              (p->ui_view.keep_world ? 4 : 0) |
                              ((p->ui_view.dark & 31) << 8) |
-                             ((p->ui_view.cap_mix & 31) << 13));
+                             ((p->ui_view.cap_mix & 31) << 13) |
+                             (p->ui_view.ds_only ? 1 << 18 : 0));
         } else {
             eidos_gl_one_set(p->gl, 0, 0, 0, NULL, 0, 0, 0);
         }
@@ -1961,6 +1962,14 @@ int eidos_platform_set_3d(EidosPlatform *p, int screen, const u8 *behind,
             int ow, oh;
 
             out_size(p, &ow, &oh);
+            if (p->ui_view.ds_only) {
+                /* the DS's own frame: the 3D is the DS rectangle's size */
+                EidosWorldGeometry wg;
+
+                eidos_world_geometry(ow, oh, p->ui_view.zoom, &wg);
+                ow = wg.ds.w;
+                oh = wg.ds.h;
+            }
             if (ow > 0 && oh > 0 && ow <= 8192 && oh <= 8192) {
                 rw = ow;
                 rh = oh;
@@ -2044,7 +2053,7 @@ void eidos_platform_view_scale(const EidosPlatform *p, s32 *kx, s32 *ky)
     int ow = 0, oh = 0;
 
     wg.kx = wg.ky = 4096;
-    if (world_active(p)) {
+    if (world_active(p) && !p->ui_view.ds_only) {
         out_size(p, &ow, &oh);
         eidos_world_geometry(ow, oh, p->ui_view.zoom, &wg);
     }

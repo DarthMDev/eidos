@@ -55,6 +55,7 @@
 #include "assets.h"
 #include "kit.h"
 #include "port.h"
+#include "g2d.h"
 
 #define ITEM_MAX        627
 #define ITEM_TABLE_ADDR 0x0209EB6Cu
@@ -71,6 +72,8 @@ static UiOwned *g_mon[ICON_MEMBERS * 2];
 static u8      *g_mon_pal;          /* member 0 of a/0/0/7                  */
 static u32      g_mon_pal_size;
 static int      g_mon_pal_tried;
+
+static void rig_drop(void);
 
 static u32 rd16(const u8 *p) { return (u32)p[0] | ((u32)p[1] << 8); }
 
@@ -113,6 +116,7 @@ void ui_icons_reset(void)
     g_mon_pal = NULL;
     g_mon_pal_size = 0;
     g_mon_pal_tried = 0;
+    rig_drop();
 }
 
 /* 16 colours from an NCLR member (the TTLP data starts 0x28 in). */
@@ -242,21 +246,180 @@ const UiImage *ui_mon_icon(u16 species, u8 form, int frame)
 }
 
 /* ------------------------------------------------------------------ */
-/* Sprites: not decoded                                                */
+/* Pokemon fronts                                                      */
 /* ------------------------------------------------------------------ */
 
 /*
- * Pokemon fronts: archive a/0/0/4 holds 20 members per species (species *
- * 20 + n): n 18 and 19 are the normal and shiny palettes, n 0..8 and 9..17
- * two bundles each of character sheets (LZ11), a cell bank, a cell
- * animation and a multi-cell resource.  The picture is not one image: the
- * multi-cell resource places body-part cells (the poseable rig described in
- * the decomp's tools/assets/rig.py), so a front needs the NMCR node table,
- * the NANR sequences and the part transforms of the first pose, plus the
- * LZ11 decoder, all in C.  Trainer fronts are the same shape in another
- * archive (rig.py tried a/0/7/2).  Not done: the kit returns NULL.
+ * Archive a/0/0/4 holds 20 members per species (species * 20 + n): n 0..8
+ * the front's bundle (character sheets, the cell bank, the cell animation,
+ * the multi-cell resource), n 9..17 a second bundle, n 18 and 19 the
+ * normal and shiny palettes.  The picture is a rig of body-part cells
+ * (engine/g2d/rig.c loads it, g2d_compose_pose poses it); the multi-cell
+ * group 0 is the idle animation the game loops in battle and on the
+ * starter stage.  One rig is kept at a time.
  */
+#define RIG_ARCHIVE  "a/0/0/4"
+#define RIG_BLOCK    20u
+#define RIG_FRONT    9u
+#define RIG_PAL      18u
 
+static BwArcFile g_rig_arc;
+static int       g_rig_arc_state;           /* 0 not tried, 1 open, -1 failed */
+static G2dRig    g_rig;
+static int       g_rig_species = -1, g_rig_shiny, g_rig_ok;
+static u32       g_rig_t = 0xFFFFFFFFu;
+static UiImage   g_front;
+static u8       *g_front_px;
+static int       g_front_ox, g_front_oy;
+
+static void rig_drop(void)
+{
+    if (g_rig_ok) {
+        g2d_rig_free(&g_rig);
+    }
+    memset(&g_rig, 0, sizeof g_rig);
+    g_rig_ok = 0;
+    g_rig_species = -1;
+    g_rig_t = 0xFFFFFFFFu;
+    free(g_front_px);
+    g_front_px = NULL;
+    memset(&g_front, 0, sizeof g_front);
+}
+
+static int rig_use(u16 species, int shiny)
+{
+    if (g_rig_species == (int)species && g_rig_shiny == shiny) {
+        return g_rig_ok;
+    }
+    rig_drop();
+    g_rig_species = species;
+    g_rig_shiny = shiny;
+    if (g_rig_arc_state == 0) {
+        g_rig_arc_state = bw_arc_open(&g_rig_arc, RIG_ARCHIVE) == 0 ? 1 : -1;
+    }
+    if (g_rig_arc_state != 1 || species == 0) {
+        return 0;
+    }
+    if (g2d_rig_load(&g_rig, &g_rig_arc, (u32)species * RIG_BLOCK, RIG_FRONT) != 0) {
+        memset(&g_rig, 0, sizeof g_rig);
+        return 0;
+    }
+    g_rig_ok = 1;
+    if (g2d_rig_load_palette(&g_rig, &g_rig_arc,
+                             (u32)species * RIG_BLOCK + RIG_PAL + (shiny ? 1u : 0u)) != 0
+        || g_rig.nmcr.num_multi_cell == 0) {
+        rig_drop();
+        g_rig_species = species;
+        g_rig_shiny = shiny;
+        return 0;
+    }
+    return 1;
+}
+
+const UiImage *ui_mon_front_anim(u16 species, int shiny, u32 t, int *ox, int *oy)
+{
+    G2dPose pose;
+    u32 i, n;
+
+    if (!rig_use(species, shiny)) {
+        return NULL;
+    }
+    if (t != g_rig_t || g_front_px == NULL) {
+        if (g2d_compose_pose(&g_rig.ncgr, &g_rig.ncer, g_rig.has_nanr ? &g_rig.nanr : NULL,
+                             &g_rig.nmcr.groups[0], t, g_rig.palette.count, &pose) != 0) {
+            return g_front_px != NULL ? &g_front : NULL;    /* keep the last frame */
+        }
+        n = pose.width * pose.height;
+        free(g_front_px);
+        g_front_px = (u8 *)malloc((size_t)n * 4u);
+        if (g_front_px == NULL) {
+            g2d_pose_free(&pose);
+            return NULL;
+        }
+        for (i = 0; i < n; i++) {
+            u8 v = pose.indices[i];
+            u8 *d = g_front_px + (size_t)i * 4u;
+
+            if (v == 0 || v >= g_rig.palette.count) {
+                d[0] = d[1] = d[2] = d[3] = 0;
+                continue;
+            }
+            d[0] = g_rig.palette.colors[v].r;
+            d[1] = g_rig.palette.colors[v].g;
+            d[2] = g_rig.palette.colors[v].b;
+            d[3] = 255;
+        }
+        g_front.w = (int)pose.width;
+        g_front.h = (int)pose.height;
+        g_front.rgba = g_front_px;
+        g_front_ox = pose.ox;
+        g_front_oy = pose.oy;
+        g_rig_t = t;
+        g2d_pose_free(&pose);
+    }
+    if (ox != NULL) *ox = g_front_ox;
+    if (oy != NULL) *oy = g_front_oy;
+    return &g_front;
+}
+
+/* The front in its idle loop in the box (x, y, w, h): the largest whole
+ * scale at which the loop's first frame fits, that frame's drawn pixels
+ * centred and standing on the box's bottom, the later frames placed by
+ * the rig's origin so the loop moves about a fixed point. */
+void ui_mon_front_draw(EidosUiCtx *c, u16 species, int shiny, u32 t, int x, int y, int w, int h)
+{
+    static int f_species = -1, f_shiny, f_x0, f_y0, f_w, f_h, f_ox, f_oy;
+    const UiImage *im;
+    int ox, oy, k;
+
+    if (species != f_species || shiny != f_shiny) {
+        int xx, yy, x0, y0, x1 = -1, y1 = -1;
+
+        im = ui_mon_front_anim(species, shiny, 0, &f_ox, &f_oy);
+        if (im == NULL) {
+            return;
+        }
+        x0 = im->w;
+        y0 = im->h;
+        for (yy = 0; yy < im->h; yy++) {
+            for (xx = 0; xx < im->w; xx++) {
+                if (im->rgba[((size_t)yy * (size_t)im->w + (size_t)xx) * 4 + 3] != 0) {
+                    if (xx < x0) x0 = xx;
+                    if (xx > x1) x1 = xx;
+                    if (yy < y0) y0 = yy;
+                    if (yy > y1) y1 = yy;
+                }
+            }
+        }
+        if (x1 < x0) {
+            return;
+        }
+        f_species = species;
+        f_shiny = shiny;
+        f_x0 = x0;
+        f_y0 = y0;
+        f_w = x1 - x0 + 1;
+        f_h = y1 - y0 + 1;
+    }
+    k = w / f_w < h / f_h ? w / f_w : h / f_h;
+    if (k < 1) {
+        k = 1;
+    } else if (k > 2) {
+        k = 2;              /* a large window's bigger box: no giant sprites */
+    }
+    im = ui_mon_front_anim(species, shiny, t, &ox, &oy);
+    if (im != NULL) {
+        /* the first frame's drawn box at the bottom centre, its origin
+         * there; this frame placed by its own origin */
+        int gx = x + (w - f_w * k) / 2 + (f_ox - f_x0) * k;
+        int gy = y + h - f_h * k + (f_oy - f_y0) * k;
+
+        ui_image(c, gx - ox * k, gy - oy * k, im, k);
+    }
+}
+
+/* Trainer fronts are the same shape in another archive (rig.py tried
+ * a/0/7/2).  Not done: the kit returns NULL. */
 const UiImage *ui_trainer_front(u16 trainer_class)
 {
     (void)trainer_class;
@@ -265,8 +428,6 @@ const UiImage *ui_trainer_front(u16 trainer_class)
 
 const UiImage *ui_mon_front(u16 species, u8 form, int shiny)
 {
-    (void)species;
     (void)form;
-    (void)shiny;
-    return NULL;
+    return ui_mon_front_anim(species, shiny, 0, NULL, NULL);
 }

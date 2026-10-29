@@ -17,7 +17,7 @@
 #
 
 cmake_minimum_required(VERSION 3.16)
-project(eidos VERSION 0.1.6 LANGUAGES C)
+project(eidos VERSION 0.1.7 LANGUAGES C)
 
 # The version players and the lobby see (docs/distribution.md).  A release
 # build (EIDOS_RELEASE=ON, the release workflow) is the plain number; any
@@ -1104,6 +1104,7 @@ if(EIDOS_SDL_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_pc.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_input.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_field.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/recipe_starter.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/kit.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets.c
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/ui/assets_icons.c

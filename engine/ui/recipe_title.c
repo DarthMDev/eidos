@@ -53,6 +53,9 @@
 extern void *bw_dsref_g_ProcSys TT_WEAK;
 extern void *bw_dsref_ov088_d_021BD574 TT_WEAK;     /* title ProcData      */
 extern void *bw_dsref_ov088_d_021BD66C TT_WEAK;     /* menu ProcData       */
+extern void *bw_dsref_ov088_d_0209DF9C TT_WEAK;     /* intro cutscene ProcData */
+extern void *bw_dsref__GameSystemGlobal TT_WEAK;
+extern int bw_overlay_is_loaded(u32 id) TT_WEAK;
 
 extern void  *SAVE_CONTROL_Get(void) TT_WEAK;
 extern void  *SYSTEM_DATA_GetMyStatus(void *save) TT_WEAK;
@@ -825,7 +828,10 @@ static int card_draw(EidosUiCtx *c, int x, int y, int w, int h, const SaveInfo *
     const UiImage *fig = NULL;
 
     ui_panel(c, x, y, w, h, CUT_DEF, 8, body, edge, 245);
-    ui_fill(c, x + 2, y + 2, w - 4, tb - 4, on ? 0x00718Fu : 0x061E38u, 255);
+    /* the header strip keeps the card's cut corner (a plain fill squared
+     * the top left off again) */
+    ui_panel(c, x + 2, y + 2, w - 4, tb - 4, UI_CUT_TL, 7,
+             on ? 0x00718Fu : 0x061E38u, on ? 0x00718Fu : 0x061E38u, 255);
     ui_fill(c, x + 2, y + tb - 2, w - 4, 1, on ? UI_CYAN : UI_NAVY2, 255);
     ui_text(c, x + 10, y + 2 + ui_text_y(tb - 4, UI_FONT_LARGE), "CONTINUE", UI_WHITE,
                  CARD_SHADE, UI_FONT_LARGE, 1);
@@ -1296,7 +1302,8 @@ static const EidosUiRecipe recipe_menu = {
 
 /*
  * Everything else the boot stack runs before the game (the logos and the
- * copyright in ov088, the opening cinematic in ov179, the new-game intro):
+ * copyright in ov088, the opening cinematic in ov179, the new-game intro and
+ * the cutscene after it):
  * one screen shown big in the middle of the window, the one that holds
  * the picture, rather than the two DS screens side by side.  No interface.
  */
@@ -1306,6 +1313,34 @@ static int boot_match(void)
 
     if (p == NULL || scene(NULL) != TT_SCENE_NONE) {
         return 0;
+    }
+    if (p->overlayId == 0xFFFFFFFFu) {
+        /* The cutscene after the professor's intro (the Unova flyover, the
+         * season card, the walk to the house) runs as a main-program proc
+         * before any field map exists, so no field recipe takes it.  That
+         * proc is the game's main one for the whole game, so the cutscene
+         * is told by what is not there yet: no field map (GameSystem
+         * fieldMap +0x20) and no battle (overlay 94).  Otherwise every
+         * gap between two of the game's screens would come here. */
+        void *const *c = &bw_dsref_ov088_d_0209DF9C != NULL ? &bw_dsref_ov088_d_0209DF9C : NULL;
+        void *gs = (&bw_dsref__GameSystemGlobal != NULL && bw_dsref__GameSystemGlobal != NULL)
+                   ? *(void **)bw_dsref__GameSystemGlobal : NULL;
+
+        static int field_seen;
+
+        if (gs != NULL && *(u32 *)((u8 *)gs + 0x20) != 0u) {
+            field_seen = 1;
+        }
+        /* the cutscene comes once, before the first field of a run: once a
+         * field has been up, an app that closed it (the Bag, the trainer
+         * card) is not the cutscene */
+        if (field_seen) {
+            return 0;
+        }
+        if (bw_overlay_is_loaded != NULL && bw_overlay_is_loaded(94)) {
+            return 0;
+        }
+        return addr_is(p->data, c, 0x0209DF9Cu);
     }
     return p->overlayId == 88 || p->overlayId == 179;
 }
@@ -1338,6 +1373,16 @@ static void boot_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
     (void)c;
     view->mode = EIDOS_VIEW_WORLD;
     view->zoom = 1.0f;
+    /* The title program's scenes, the new-game intro among them, are drawn
+     * for the DS's frame (banners that run off its edges, sprites placed
+     * for its shape): no widened 3D, nothing outside the DS rectangle.  The
+     * opening cinematic and the flyover after the intro are 3D scenes and
+     * fill the window. */
+    {
+        TtProc *p = root_proc();
+
+        view->ds_only = p != NULL && p->overlayId == 88;
+    }
     /* the screen with the picture; a clear lead is needed to switch, so a
      * fade does not make the view jump between the two */
     if (shown < 0 || (shown == 0 && bottom > top * 2 + 2000) ||

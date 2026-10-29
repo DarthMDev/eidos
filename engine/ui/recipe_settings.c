@@ -13,6 +13,7 @@
  * its keyboard.
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "ui.h"
@@ -54,6 +55,51 @@ static void q_step(u32 frame)
     memmove(g_q, g_q + 1, (size_t)(g_qn - 1) * sizeof(g_q[0]));
     g_qn--;
     g_next = frame + 5;
+}
+
+/* ------------------------------------------------------------------ */
+/* Text that fits                                                      */
+/* ------------------------------------------------------------------ */
+
+/* `s` as drawn in at most `maxw` pixels: itself when it fits, else
+ * shortened with "...": a path keeps its end (the folder's own name), any
+ * other text its start.  Cuts fall between UTF-8 characters. */
+static const char *fit(char *buf, size_t n, const char *s, int maxw, int font)
+{
+    size_t len = strlen(s), k;
+    int path = strchr(s, '/') != NULL || strchr(s, '\\') != NULL;
+
+    if (ui_text_w(s, font) <= maxw || n < 8) {
+        return s;
+    }
+    if (path) {
+        for (k = 1; k < len; k++) {
+            if (((unsigned char)s[k] & 0xC0u) == 0x80u) {
+                continue;                   /* inside a character          */
+            }
+            if (len - k + 4 > n) {
+                continue;
+            }
+            memcpy(buf, "...", 3);
+            memcpy(buf + 3, s + k, len - k + 1);
+            if (ui_text_w(buf, font) <= maxw) {
+                return buf;
+            }
+        }
+    } else {
+        for (k = len < n - 4 ? len : n - 4; k > 0; k--) {
+            if (((unsigned char)s[k] & 0xC0u) == 0x80u) {
+                continue;
+            }
+            memcpy(buf, s, k);
+            memcpy(buf + k, "...", 4);
+            if (ui_text_w(buf, font) <= maxw) {
+                return buf;
+            }
+        }
+    }
+    snprintf(buf, n, "...");
+    return buf;
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,26 +225,33 @@ static void settings_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *i
                 }
             }
         } else if (value[0] != '\0') {
-            int vw = ui_text_w(value, UI_FONT_LARGE);
-            int vx = mx + 8 + rw - 12 - vw;
+            /* from the right: the right arrow, the value, the left arrow;
+             * the value at most half the row (a long one is shortened) */
+            int adj = eidos_sui_row_adjustable(i);
+            int right = mx + 8 + rw - 8, aw = 14, vw, vx;
+            char shown[96];
+            const char *v = fit(shown, sizeof(shown), value, rw / 2, UI_FONT_LARGE);
 
-            if (eidos_sui_row_adjustable(i)) {
+            vw = ui_text_w(v, UI_FONT_LARGE);
+            vx = right - vw - (adj ? aw + 4 : 4);
+            if (adj) {
                 EidosUiRect lr, rr;
                 int ls, rs;
 
-                lr.x = vx - 18; lr.y = ry; lr.w = 14; lr.h = rowh;
-                rr.x = mx + 8 + rw - 12; rr.y = ry; rr.w = 12; rr.h = rowh;
+                rr.x = right - aw; rr.y = ry; rr.w = aw; rr.h = rowh;
+                lr.x = vx - 4 - aw; lr.y = ry; lr.w = aw; lr.h = rowh;
                 ls = eidos_ui_hit(lr);
                 rs = eidos_ui_hit(rr);
-                ui_text(c, lr.x + 2, ry + ui_text_y(rowh, UI_FONT_LARGE), "\xE2\x86\x90",
+                ui_text(c, lr.x + (aw - ui_text_w("\xE2\x86\x90", UI_FONT_LARGE)) / 2,
+                        ry + ui_text_y(rowh, UI_FONT_LARGE), "\xE2\x86\x90",
                         (ls & EIDOS_UI_HOVER) ? UI_WHITE : UI_CYAN, -1, UI_FONT_LARGE, 1);
-                ui_text(c, rr.x, ry + ui_text_y(rowh, UI_FONT_LARGE), "\xE2\x86\x92",
+                ui_text(c, rr.x + (aw - ui_text_w("\xE2\x86\x92", UI_FONT_LARGE)) / 2,
+                        ry + ui_text_y(rowh, UI_FONT_LARGE), "\xE2\x86\x92",
                         (rs & EIDOS_UI_HOVER) ? UI_WHITE : UI_CYAN, -1, UI_FONT_LARGE, 1);
-                vx -= 12;
                 if (ls & EIDOS_UI_CLICK) { target = i; target_adj = -1; }
                 if (rs & EIDOS_UI_CLICK) { target = i; target_adj = 1; }
             }
-            ui_text(c, vx, ry + ui_text_y(rowh, UI_FONT_LARGE), value, UI_LIGHT, UI_EDGE,
+            ui_text(c, vx, ry + ui_text_y(rowh, UI_FONT_LARGE), v, UI_LIGHT, UI_EDGE,
                     UI_FONT_LARGE, 1);
         }
         if ((st & EIDOS_UI_CLICK) && target < 0) {
@@ -218,8 +271,12 @@ static void settings_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *i
         for (j = 0; j < hn && j < 2; j++) {
             char line[96];
 
+            char shown[96];
+
             eidos_sui_help_line(j, line, sizeof(line));
-            ui_text(c, mx + 16, hy + 2 + j * 13, line, UI_LIGHT, UI_EDGE, UI_FONT_MEDIUM, 1);
+            ui_text(c, mx + 16, hy + 2 + j * 13,
+                    fit(shown, sizeof(shown), line, mw - 32, UI_FONT_MEDIUM),
+                    UI_LIGHT, UI_EDGE, UI_FONT_MEDIUM, 1);
         }
     }
 

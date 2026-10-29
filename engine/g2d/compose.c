@@ -373,6 +373,8 @@ int g2d_compose_pose(const G2dNcgr *ncgr, const G2dNcer *ncer,
 
     ox = -minx + margin;
     oy = -miny + margin;
+    out->ox = ox;
+    out->oy = oy;
     out->width = (u32)(maxx - minx) + (u32)margin * 2u;
     out->height = (u32)(maxy - miny) + (u32)margin * 2u;
     out->indices = (u8 *)calloc((size_t)out->width * out->height, 1);

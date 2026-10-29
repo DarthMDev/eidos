@@ -571,16 +571,42 @@ static long long io_rw_here(u32 fd, u32 iovs, u32 n, int wr, long long at)
  * pread); the C library mixes them with plain reads on one file. */
 static long long io_rw(u32 fd, u32 iovs, u32 n, int wr, long long at)
 {
-    long long r, pos = -1;
+    long long r, pos = -1, from = -1;
+    int trace = !wr && fd > 2 && fd < FDS_MAX && g_fd[fd].used && !g_fd[fd].is_dir
+                && getenv("EIDOS_DEBUG_IO") != NULL;
 
-    if (at >= 0 && fd > 2 && fd < FDS_MAX && g_fd[fd].used && !g_fd[fd].is_dir) {
+    if ((at >= 0 || trace) && fd > 2 && fd < FDS_MAX && g_fd[fd].used && !g_fd[fd].is_dir) {
 #if defined(_WIN32)
         pos = _lseeki64(g_fd[fd].native, 0, SEEK_CUR);
 #else
         pos = (long long)lseek(g_fd[fd].native, 0, SEEK_CUR);
 #endif
+        from = at >= 0 ? at : pos;
+        if (at < 0) {
+            pos = -1;               /* a plain read moves the position on */
+        }
     }
     r = io_rw_here(fd, iovs, n, wr, at);
+    if (trace && r >= 0) {
+        /* EIDOS_DEBUG_IO: each read, its place, its length and an FNV-1a
+         * hash of the bytes, to compare two machines */
+        u32 h = 2166136261u, i, left = (u32)r;
+
+        for (i = 0; i < n && left > 0; i++) {
+            u32 b = ld32(iovs + i * 8u), l = ld32(iovs + i * 8u + 4u), k;
+            const u8 *d = (const u8 *)P(b);
+
+            if (l > left) {
+                l = left;
+            }
+            for (k = 0; k < l; k++) {
+                h = (h ^ d[k]) * 16777619u;
+            }
+            left -= l;
+        }
+        fprintf(stderr, "io read fd %u at %lld %s len %lld hash %08X\n", fd, from,
+                at >= 0 ? "pread" : "read", r, h);
+    }
     if (pos >= 0) {
 #if defined(_WIN32)
         _lseeki64(g_fd[fd].native, pos, SEEK_SET);
@@ -898,11 +924,21 @@ u32 w2c_wasi__snapshot__preview1_path_open(struct w2c_wasi__snapshot__preview1 *
         free(p);
         return errno_wasi(e);
     }
-    free(p);
     fd = alloc_fd();
     if (fd < 0) {
+        free(p);
         return W_EIO;
     }
+    if (getenv("EIDOS_DEBUG_IO") != NULL) {
+        /* the path from the data folder down (no user folders in the log) */
+        const char *rel = strstr(p, "/data/");
+
+        if (rel == NULL) {
+            rel = strstr(p, "\\data\\");
+        }
+        fprintf(stderr, "io open fd %d %s\n", fd, rel != NULL ? rel + 6 : p);
+    }
+    free(p);
     g_fd[fd].native = nfd;
     g_fd[fd].append = (fdflags & 1u) != 0;
     st32(out, (u32)fd);

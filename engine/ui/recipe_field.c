@@ -326,110 +326,108 @@ static const int k_slot_x[6] = { 8, 136, 8, 136, 8, 136 };
 static const int k_slot_y[6] = { 24, 24, 72, 72, 120, 120 };
 
 #define ICON_W 30
-#define ICON_H 32
+#define ICON_H 40              /* tall enough for the tallest (the Bag, female) */
 
 typedef struct MenuIcon {
     int ok;
     int w, h;                       /* the cropped picture                  */
-    u8 px[ICON_W * ICON_H * 4];     /* RGBA, A 0 where the plate showed     */
+    u8 px[ICON_W * ICON_H * 4];     /* RGBA, A 0 around the picture         */
+    int lit;                        /* taken while its button was lit       */
 } MenuIcon;
 
 static MenuIcon g_icons[8];         /* by button id                         */
 
-static int near_colour(const u8 *a, const u8 *b, int tol)
+/* The button's picture: the game draws it as sprites over the button's
+ * plate (a BG), so the bottom screen's OBJ layer alone (objs, from
+ * eidos_ui_want_objs) holds just the picture, whatever the plate looks
+ * like (a lit button is cyan). */
+/* The Pokedex's and the Bag's pictures stand taller than the others and
+ * than the button: those are shrunk a little to this height (each output
+ * pixel the average of the input pixels it covers, so it stays smooth);
+ * the others are left as the game draws them. */
+#define ICON_TALL 26
+
+static void icon_shrink(MenuIcon *ic, int th)
 {
-    int d = abs((int)a[0] - (int)b[0]) + abs((int)a[1] - (int)b[1]) +
-            abs((int)a[2] - (int)b[2]);
+    static u8 out[ICON_W * ICON_H * 4];
+    int tw = (ic->w * th + ic->h / 2) / ic->h, x, y;
 
-    return d <= tol;
-}
-
-/* Cut the button's picture out of the game's bottom screen: the plate's
- * colours are the ones along the window's border, and everything of those
- * colours that reaches the border is the plate. */
-static void icon_grab(MenuIcon *ic, const u8 *scr, int sx, int sy)
-{
-    enum { TOL = 30 };
-    u8 pal[24][3];
-    int np = 0, x, y, sp = 0;
-    static u8 mask[ICON_W * ICON_H];
-    static int stack[ICON_W * ICON_H * 2];
-    int minx = ICON_W, miny = ICON_H, maxx = -1, maxy = -1;
-
-    if (scr == NULL || sx < 0 || sy < 0 || sx + ICON_W > 256 || sy + ICON_H > 192) {
-        return;
+    if (tw < 1) {
+        tw = 1;
     }
-    memset(mask, 0, sizeof(mask));
-    for (y = 0; y < ICON_H; y++) {
-        for (x = 0; x < ICON_W; x++) {
-            const u8 *p;
-            int i, known = 0;
+    for (y = 0; y < th; y++) {
+        for (x = 0; x < tw; x++) {
+            /* the source box of this pixel, in 1/256ths */
+            int sx0 = x * ic->w * 256 / tw, sx1 = (x + 1) * ic->w * 256 / tw;
+            int sy0 = y * ic->h * 256 / th, sy1 = (y + 1) * ic->h * 256 / th;
+            int64_t acc[4] = { 0, 0, 0, 0 }, area = 0;
+            int u, v;
 
-            if (x != 0 && y != 0 && x != ICON_W - 1 && y != ICON_H - 1) {
-                continue;
-            }
-            p = scr + ((size_t)(sy + y) * 256 + (size_t)(sx + x)) * 4;
-            for (i = 0; i < np; i++) {
-                if (near_colour(p, pal[i], 6)) {
-                    known = 1;
-                    break;
+            for (v = sy0 / 256; v * 256 < sy1; v++) {
+                int wy = (v * 256 + 256 < sy1 ? v * 256 + 256 : sy1) - (v * 256 > sy0 ? v * 256 : sy0);
+
+                for (u = sx0 / 256; u * 256 < sx1; u++) {
+                    int wx = (u * 256 + 256 < sx1 ? u * 256 + 256 : sx1) - (u * 256 > sx0 ? u * 256 : sx0);
+                    const u8 *p = ic->px + ((size_t)v * (size_t)ic->w + (size_t)u) * 4;
+                    int64_t wgt = (int64_t)wx * wy, aw = wgt * p[3];
+
+                    acc[0] += aw * p[0];
+                    acc[1] += aw * p[1];
+                    acc[2] += aw * p[2];
+                    acc[3] += aw;
+                    area += wgt;
                 }
             }
-            if (!known && np < 24) {
-                pal[np][0] = p[0];
-                pal[np][1] = p[1];
-                pal[np][2] = p[2];
-                np++;
-            }
-            stack[sp++] = y * ICON_W + x;
-        }
-    }
-    while (sp > 0) {
-        int i = stack[--sp], px = i % ICON_W, py = i / ICON_W, k, hit = 0;
-        const u8 *p = scr + ((size_t)(sy + py) * 256 + (size_t)(sx + px)) * 4;
+            {
+                u8 *d = out + ((size_t)y * (size_t)tw + (size_t)x) * 4;
 
-        if (mask[i]) {
-            continue;
-        }
-        for (k = 0; k < np; k++) {
-            if (near_colour(p, pal[k], TOL)) {
-                hit = 1;
-                break;
+                if (acc[3] > 0) {
+                    d[0] = (u8)(acc[0] / acc[3]);
+                    d[1] = (u8)(acc[1] / acc[3]);
+                    d[2] = (u8)(acc[2] / acc[3]);
+                    d[3] = (u8)(acc[3] / area);
+                } else {
+                    d[0] = d[1] = d[2] = d[3] = 0;
+                }
             }
         }
-        if (!hit) {
-            continue;
-        }
-        mask[i] = 1;
-        if (px > 0 && !mask[i - 1] && sp < ICON_W * ICON_H * 2) stack[sp++] = i - 1;
-        if (px < ICON_W - 1 && !mask[i + 1] && sp < ICON_W * ICON_H * 2) stack[sp++] = i + 1;
-        if (py > 0 && !mask[i - ICON_W] && sp < ICON_W * ICON_H * 2) stack[sp++] = i - ICON_W;
-        if (py < ICON_H - 1 && !mask[i + ICON_W] && sp < ICON_W * ICON_H * 2) stack[sp++] = i + ICON_W;
     }
-    memset(ic->px, 0, sizeof(ic->px));
+    memcpy(ic->px, out, (size_t)tw * (size_t)th * 4);
+    ic->w = tw;
+    ic->h = th;
+}
+
+static void icon_grab(MenuIcon *ic, const u8 *objs, int sx, int sy)
+{
+    int x, y, x0 = ICON_W, y0 = ICON_H, x1 = -1, y1 = -1;
+
+    if (objs == NULL || sx < 0 || sy < 0 || sx + ICON_W > 256 || sy + ICON_H > 192) {
+        return;
+    }
     for (y = 0; y < ICON_H; y++) {
         for (x = 0; x < ICON_W; x++) {
-            const u8 *p = scr + ((size_t)(sy + y) * 256 + (size_t)(sx + x)) * 4;
-            u8 *d = ic->px + ((size_t)y * ICON_W + (size_t)x) * 4;
-
-            if (mask[y * ICON_W + x]) {
-                continue;
+            if (objs[((size_t)(sy + y) * 256 + (size_t)(sx + x)) * 4 + 3] != 0) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
             }
-            d[0] = p[0];
-            d[1] = p[1];
-            d[2] = p[2];
-            d[3] = 255;
-            if (x < minx) minx = x;
-            if (x > maxx) maxx = x;
-            if (y < miny) miny = y;
-            if (y > maxy) maxy = y;
         }
     }
-    if (maxx >= minx && maxy >= miny) {
-        ic->ok = 1;
-        ic->w = ICON_W;
-        ic->h = ICON_H;
+    if (x1 < x0) {
+        return;
     }
+    /* the picture alone, trimmed to what the game draws */
+    ic->w = x1 - x0 + 1;
+    ic->h = y1 - y0 + 1;
+    for (y = 0; y < ic->h; y++) {
+        memcpy(ic->px + (size_t)y * (size_t)ic->w * 4,
+               objs + ((size_t)(sy + y0 + y) * 256 + (size_t)(sx + x0)) * 4, (size_t)ic->w * 4);
+    }
+    if (ic->h > ICON_TALL) {
+        icon_shrink(ic, ICON_TALL);
+    }
+    ic->ok = 1;
 }
 
 /* The button shape: a folder tab at the top left (its right edge slants),
@@ -520,15 +518,16 @@ static void draw_button(EidosUiCtx *c, int x, int y, int w, int h, const char *l
     }
     if (icon != NULL && icon->ok) {
         UiImage im;
-        int iy = y + t + (h - t - icon->h) / 2;
+        int iy = y + (h - icon->h) / 2 + 1;
         EidosUiRect saved;
 
         im.w = icon->w;
         im.h = icon->h;
         im.rgba = icon->px;
         ui_push(c, 0, 0, &saved);
-        ui_clip(c, x + 3, y + t + 1, 40, h - t - 2);
-        ui_image(c, x + 6, iy, &im, 1);
+        /* inside the button: the tall pictures are shrunk to fit it */
+        ui_clip(c, x + 3, y + 2, 40, h - 4);
+        ui_image(c, x + 6 + (ICON_W - icon->w) / 2, iy, &im, 1);
         ui_pop(c, 0, 0, &saved);
     }
     ui_text(c, x + 6 + ICON_W + 6, y + t + ui_text_y(h - t, UI_FONT_LARGE), label,
@@ -602,6 +601,10 @@ static int menu_match(void)
 
 static int g_menu_frame_open;
 static int g_menu_leaving;          /* the menu is closing or opening an app */
+static int g_menu_shown;            /* its panels are on show                */
+static u32 g_menu_last_frame;       /* the last frame it ran                 */
+static int g_menu_closing;          /* closing to the field (not to an app)  */
+static int g_scrim;                 /* the world's dimming behind it, 0..90  */
 
 static void menu_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
 {
@@ -624,8 +627,23 @@ static void menu_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
     view->no_fade = 1;          /* a fade from here opens an app over it  */
     view->keep_world = 1;
     g_menu_frame_open++;
+    g_menu_last_frame = in->frame;
     if (!field_now(&f) || f.panel == NULL) {
         return;
+    }
+    /* back from an app that closed the field (the Bag, the trainer card):
+     * until the field runs again its 3D is empty (the sky's clear colour),
+     * so the last picture of the field stands, and is not kept from */
+    {
+        /* the game fades its own screen in from black as the field comes
+         * back (master brightness, BLDY): its 3D may still be empty then */
+        u32 mb = bw_io_read16(0x0400006Cu);
+        int faded = ((mb >> 14) & 3u) == 2u && (mb & 0x1Fu) != 0u;
+
+        if (f.main_state != 1 || faded) {
+            view->hold_world = 1;
+            view->keep_world = 0;
+        }
     }
     menu = f.panel;
     layout = menu[0x21];
@@ -642,22 +660,36 @@ static void menu_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
 
         if (st == 4) {
             wr32(menu + 0x0C, 5);           /* BACK_ANIM -> DECIDE        */
+            g_menu_closing = 1;
         }
         if (st >= 4) {
-            if (!g_menu_leaving) {
-                g_menu_leaving = 1;
-                eidos_ui_crossfade();
+            g_menu_shown = 0;
+            if (g_menu_closing) {
+                /* back to the field: the menu fades out at once, the
+                 * dimming with it; the next opening eases in again */
+                if (!g_menu_leaving) {
+                    eidos_ui_crossfade();
+                }
+                g_scrim = 0;
+            } else {
+                /* opening an app: the menu's last picture stays until the
+                 * app is up and crossfades from it */
+                eidos_ui_hold_canvas();
             }
+            g_menu_leaving = 1;
             return;
         }
         g_menu_leaving = 0;
+        g_menu_closing = 0;
     }
     {
-        /* the world steps back a little while the menu is up, easing in */
-        u32 age = eidos_ui_scene_age();
-        int a = age >= 8 ? 90 : (int)(90 * age / 8);
-
-        ui_fill(c, 0, 0, cw, ch, 0x000008u, a);
+        /* the world steps back a little while the menu is up, easing in
+         * when it opens from the field; back from an app it is already
+         * there, so the world does not light up and dim again */
+        if (g_scrim < 90) {
+            g_scrim = g_scrim + 12 > 90 ? 90 : g_scrim + 12;
+        }
+        ui_fill(c, 0, 0, cw, ch, 0x000008u, g_scrim);
     }
 
     /* Which slots hold a button, and which one the game's cursor is on. */
@@ -732,16 +764,41 @@ static void menu_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
             snprintf(label[i], 40, "%s", dflt[btn_of[i]]);
         }
     }
-    /* The icons: cut from the game's screen while the menu has settled. */
-    if (ready && in->screen_rgba[1] != NULL) {
+    /* The icons: taken from the game's sprites once the menu has settled;
+     * the lit button's picture may be mid-animation, so it is taken again
+     * once that button is no longer lit. */
+    eidos_ui_want_objs(1);
+    if (ready && in->objs_rgba[1] != NULL) {
         for (i = 0; i < n; i++) {
             int s = slot_of[i];
+            MenuIcon *ic = &g_icons[btn_of[i]];
 
-            if (!g_icons[btn_of[i]].ok || s == sel) {
-                if (!g_icons[btn_of[i]].ok) {
-                    icon_grab(&g_icons[btn_of[i]], in->screen_rgba[1],
-                              k_slot_x[s] + 2, k_slot_y[s] + 7);
-                }
+            if (!ic->ok || (ic->lit && s != sel)) {
+                icon_grab(ic, in->objs_rgba[1], k_slot_x[s] + 2, k_slot_y[s] + 2);
+                ic->lit = s == sel;
+            }
+        }
+    }
+
+    /* The panels show once the game's menu has settled and every icon is
+     * cut from it, and then fade in together (the first opening of a
+     * session waits the few frames the game's menu takes to slide in). */
+    {
+        int all = n > 0;
+
+        for (i = 0; i < n; i++) {
+            if (!g_icons[btn_of[i]].ok) {
+                all = 0;
+            }
+        }
+        if (!all) {
+            g_menu_shown = 0;
+            return;
+        }
+        if (!g_menu_shown) {
+            g_menu_shown = 1;
+            if (g_menu_frame_open > 1) {
+                eidos_ui_crossfade();
             }
         }
     }
@@ -890,6 +947,9 @@ static void menu_reset(void)
 {
     memset(g_icons, 0, sizeof(g_icons));
     g_menu_frame_open = 0;
+    g_menu_shown = 0;
+    g_menu_closing = 0;
+    g_scrim = 0;
 }
 
 static const EidosUiRecipe recipe_menu = {
@@ -1044,7 +1104,10 @@ static void field_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
         int ok = field_now(&f);
         fprintf(stderr, "eidos: ui field %u ok %d main %u dispcnt %08x bldcnt %04x alpha %04x cap %08x\n", in->frame, ok, ok ? f.main_state : 0u, (unsigned)bw_io_read32(0x04000000u), (unsigned)bw_io_read16(0x04000050u), (unsigned)bw_io_read16(0x04000052u), (unsigned)bw_io_read32(0x04000064u));
     }
-    if (!field_now(&f) || f.main_state != 1) {
+    /* right after the menu the field is still settling (its main state
+     * is not back to running for some 20 frames): the bar stays all the
+     * same, so it does not blink out between the menu and the field */
+    if (!field_now(&f) || (f.main_state != 1 && in->frame - g_menu_last_frame > 90u)) {
         /* not running yet (the start sequence, the season card) or closing
          * (a zone change, a door): the world alone, no bar, so nothing
          * flashes; while the game shows no wide world (a door shows a
@@ -1093,8 +1156,12 @@ static void field_run(EidosUiCtx *c, EidosUiView *view, const EidosUiFrame *in)
             eidos_ui_press(BW_KEY_B, 4);
         }
     }
-    if (banner_shown(&f) || (GAMESYSTEM_IsEventActive != NULL
-                             && GAMESYSTEM_IsEventActive(f.gs) != 0)) {
+    /* Opening and closing the menu are events too: right after the menu
+     * the bar is simply there, fading in with the menu fading out. */
+    if (in->frame - g_menu_last_frame <= 90u && !banner_shown(&f)) {
+        g_bar_slide = 0;
+    } else if (banner_shown(&f) || (GAMESYSTEM_IsEventActive != NULL
+                                    && GAMESYSTEM_IsEventActive(f.gs) != 0)) {
         g_bar_slide = g_bar_slide + 3 < bh + 1 ? g_bar_slide + 3 : bh + 1;
     } else {
         g_bar_slide = g_bar_slide > 2 ? g_bar_slide - 2 : 0;
